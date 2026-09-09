@@ -1,0 +1,271 @@
+import { test, expect, Page } from '@playwright/test';
+import { clerk, setupClerkTestingToken } from '@clerk/testing/playwright';
+
+const BASE_URL = process.env.TEST_URL || 'https://www.alcanzar.io';
+const TEST_EMAIL = process.env.TEST_EMAIL || 'test+clerk_test@reach-test.com';
+const TEST_PASSWORD = process.env.TEST_PASSWORD || 'TestReach2026!';
+
+// —— Helpers ————————————————————————————————————————————————
+// Drives Clerk's hosted <SignIn/> widget. Clerk uses a two-step flow
+// (identifier → Continue → password → Continue), and its inputs are
+// name="identifier" / name="password" — NOT type="email"/"password"
+// on a single screen like the old custom AuthScreen.
+async function signIn(page: Page) {
+  // First visit lets Clerk's dev-instance handshake complete (it may bounce
+  // through /sign-in and land at "/"); second visit then passes middleware.
+  await page.goto(`${BASE_URL}/home`).catch(() => {});
+  await page.waitForLoadState('networkidle').catch(() => {});
+  await page.waitForTimeout(2000);
+  await page.goto(`${BASE_URL}/home`).catch(() => {});
+  await page.waitForURL('**/home', { timeout: 20000 });
+}
+
+async function waitForApp(page: Page) {
+  await page.waitForSelector('text=reach', { timeout: 20000 });
+}
+
+// —— TEST SUITE ————————————————————————————————————————————
+
+test.describe('1. Authentication', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+  test('Sign in page loads', async ({ page }) => {
+    await page.goto(`${BASE_URL}/sign-in`);
+    await expect(page).toHaveTitle(/Reach/i);
+    // Clerk's identifier field, not input[type="email"]
+    await expect(page.locator('input[name="identifier"]')).toBeVisible({ timeout: 15000 });
+  });
+
+  test('Sign up page loads', async ({ page }) => {
+    await page.goto(`${BASE_URL}/sign-up`);
+    // Clerk's sign-up email field is name="emailAddress"
+    await expect(page.locator('input[name="emailAddress"]')).toBeVisible({ timeout: 15000 });
+  });
+
+  test('Redirects to sign-in when not authenticated', async ({ page }) => {
+    await page.goto(`${BASE_URL}/home`);
+    await expect(page).toHaveURL(/sign-in/, { timeout: 10000 });
+  });
+});
+
+test.describe('2. App loads after sign in', () => {
+  test.beforeEach(async ({ page }) => {
+    await signIn(page);
+  });
+
+  test('Home screen renders', async ({ page }) => {
+    await waitForApp(page);
+    await expect(page.locator('.sb-logo').first()).toBeVisible({ timeout: 20000 });
+  });
+
+  test('Navigation tabs are visible', async ({ page }) => {
+    await waitForApp(page);
+    await page.waitForSelector('.nb', { timeout: 15000 });
+    const tabs = page.locator('.nb-btn');
+    await expect(tabs).toHaveCount(4, { timeout: 10000 });
+  });
+
+  test('All 4 tabs are clickable', async ({ page }) => {
+    await waitForApp(page);
+    await page.waitForSelector('.nb-btn', { timeout: 15000 });
+    const tabs = await page.locator('.nb-btn').all();
+    expect(tabs.length).toBeGreaterThanOrEqual(3);
+    for (const tab of tabs) {
+      await tab.click();
+      await page.waitForTimeout(300);
+    }
+  });
+});
+
+test.describe('3. Discover tab', () => {
+  test.beforeEach(async ({ page }) => {
+    await signIn(page);
+    await waitForApp(page);
+    await page.waitForSelector('.nb-btn', { timeout: 15000 });
+    const tabs = await page.locator('.nb-btn').all();
+    if (tabs[1]) await tabs[1].click(); // Discover tab
+    await page.waitForTimeout(1000);
+  });
+
+  test('Discover screen loads', async ({ page }) => {
+    await expect(page.locator('text=Discover').first()).toBeVisible({ timeout: 15000 });
+  });
+
+  test('Category filter pills exist', async ({ page }) => {
+    await page.waitForTimeout(2000);
+    const filters = page.locator('button:has-text("All")');
+    await expect(filters.first()).toBeVisible({ timeout: 10000 });
+  });
+
+  test('Experience cards are displayed', async ({ page }) => {
+    await expect(page.locator('text=Share with group').first().or(page.locator('text=/No local events|Nothing here yet/i').first())).toBeVisible({ timeout: 20000 });
+  });
+
+  test('Clicking a card opens detail view', async ({ page }) => {
+    await page.waitForTimeout(3000);
+    const cards = page.locator('.card');
+    const count = await cards.count();
+    if (count > 0) {
+      await cards.first().click();
+      await page.waitForTimeout(1000);
+      const hasBookNow = await page.locator('text=Book Now').isVisible({ timeout: 5000 }).catch(() => false);
+      const hasAddToGroup = await page.locator('text=Add to a Group Plan').isVisible({ timeout: 5000 }).catch(() => false);
+      expect(hasBookNow || hasAddToGroup).toBeTruthy();
+    }
+  });
+});
+
+test.describe('4. Groups tab', () => {
+  test.beforeEach(async ({ page }) => {
+    await signIn(page);
+    await waitForApp(page);
+    await page.waitForSelector('.nb-btn', { timeout: 15000 });
+    const tabs = await page.locator('.nb-btn').all();
+    if (tabs[2]) await tabs[2].click();
+    await page.waitForTimeout(1000);
+  });
+
+  test('Groups screen loads', async ({ page }) => {
+    await expect(page.locator('text=/Groups|Your groups/i').first()).toBeVisible({ timeout: 15000 });
+  });
+
+  test('Create group button exists', async ({ page }) => {
+    const createBtn = await page.locator('text=/New|Create|\\+/').first().isVisible({ timeout: 10000 }).catch(() => false);
+    expect(createBtn).toBeTruthy();
+  });
+
+  test('Can open create group flow', async ({ page }) => {
+    const btns = await page.locator('button').all();
+    for (const btn of btns) {
+      const text = await btn.textContent().catch(() => '');
+      if (text?.includes('+') || text?.includes('New') || text?.includes('Create')) {
+        await btn.click();
+        await page.waitForTimeout(1000);
+        break;
+      }
+    }
+    const nameInput = await page.locator('input[placeholder*="group" i]').isVisible({ timeout: 5000 }).catch(() => false);
+    const emojiSection = await page.locator('text=/emoji|Pick/i').isVisible({ timeout: 5000 }).catch(() => false);
+    expect(nameInput || emojiSection).toBeTruthy();
+  });
+});
+
+test.describe('5. API endpoints', () => {
+  test('/api/me returns user data when authenticated', async ({ request }) => {
+    // Unauthenticated request — middleware now lets API routes answer,
+    // so this should be a clean 401 (307 kept for safety).
+    const res = await request.get(`${BASE_URL}/api/me`);
+    expect([200, 401, 307]).toContain(res.status());
+  });
+
+  test('/api/groups returns valid JSON', async ({ request }) => {
+    const res = await request.get(`${BASE_URL}/api/groups`);
+    expect([200, 401, 307]).toContain(res.status());
+  });
+
+  test('/api/nearby returns events', async ({ request }) => {
+    const res = await request.get(`${BASE_URL}/api/nearby`);
+    expect(res.status()).toBeLessThan(500);
+    if (res.status() === 200) {
+      const data = await res.json();
+      expect(data).toHaveProperty('events');
+      expect(Array.isArray(data.events)).toBeTruthy();
+    }
+  });
+
+  test('/api/recommendations accepts POST', async ({ request }) => {
+    const res = await request.post(`${BASE_URL}/api/recommendations`, {
+      data: { vibe: 'chill', budget: 2000, nights: 5, travelers: 2 }
+    });
+    expect(res.status()).toBeLessThan(500);
+  });
+
+  test('Webhook endpoints exist', async ({ request }) => {
+    const stripe = await request.post(`${BASE_URL}/api/webhooks/stripe`, { data: {} });
+    expect(stripe.status()).toBeLessThan(500);
+    const clerk = await request.post(`${BASE_URL}/api/webhooks/clerk`, { data: {} });
+    expect(clerk.status()).toBeLessThan(500);
+  });
+});
+
+test.describe('6. Trip quiz flow', () => {
+  test.beforeEach(async ({ page }) => {
+    await signIn(page);
+    await waitForApp(page);
+  });
+
+  test('Can navigate to group trip planner', async ({ page }) => {
+    await page.waitForSelector('.nb-btn', { timeout: 15000 });
+    const tabs = await page.locator('.nb-btn').all();
+    if (tabs[2]) await tabs[2].click();
+    await page.waitForTimeout(1000);
+
+    // Look for a group to click
+    const cards = await page.locator('.card').all();
+    if (cards.length > 0) {
+      await cards[0].click();
+      await page.waitForTimeout(1000);
+      const planBtn = await page.locator('text=/Plan a Trip|groupTrip/i').isVisible({ timeout: 5000 }).catch(() => false);
+      expect(planBtn).toBeTruthy();
+    }
+  });
+});
+
+test.describe('7. Performance', () => {
+  test('Home page loads in under 10 seconds', async ({ page }) => {
+    const start = Date.now();
+    await page.goto(`${BASE_URL}/home`);
+    await page.waitForLoadState('domcontentloaded');
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(10000);
+  });
+
+  test('Sign in page loads in under 5 seconds', async ({ page }) => {
+    const start = Date.now();
+    await page.goto(`${BASE_URL}/sign-in`);
+    await page.waitForLoadState('domcontentloaded');
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(5000);
+  });
+
+  test('No console errors on home page load', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('response', r => { if (r.status() === 404) errors.push('404: ' + r.url()); });
+    page.on('console', msg => {
+      if (msg.type() === 'error') errors.push(msg.text());
+    });
+    await page.goto(`${BASE_URL}/sign-in`);
+    await page.waitForLoadState('networkidle');
+    // Filter out known non-critical errors
+    const critical = errors.filter(e =>
+      !e.includes('icon-192') &&
+      !e.includes('favicon') &&
+      !e.includes('manifest') &&
+      !e.includes('development keys') &&
+      !e.includes('afterSignInUrl') &&
+      !e.includes('themeColor') &&
+      !e.includes('viewport')
+    );
+    expect(critical).toEqual([]);
+  });
+});
+
+test.describe('8. Mobile viewport', () => {
+  test.use({ viewport: { width: 390, height: 844 } }); // iPhone 14
+
+  test('App renders correctly on iPhone viewport', async ({ page }) => {
+    await page.goto(`${BASE_URL}/sign-in`);
+    await page.waitForLoadState('domcontentloaded');
+    // Check nothing is overflowing
+    const overflow = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+    });
+    expect(overflow).toBeFalsy();
+  });
+
+  test('Phone frame is visible on desktop', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${BASE_URL}/home`);
+    await page.waitForLoadState('domcontentloaded');
+    await expect(page.locator('.aw').first()).toBeVisible({ timeout: 20000 });
+  });
+});

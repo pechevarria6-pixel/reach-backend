@@ -1,0 +1,81 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
+import { createServerClient } from '@/lib/supabase';
+import { stripe } from '@/lib/stripe';
+import { sendDeletionConfirmation } from '@/lib/email';
+
+// GET — download all user data (GDPR Article 20)
+export async function GET() {
+  const { userId: clerkId } = auth();
+  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const supabase = createServerClient();
+  const { data: user } = await supabase.from('users').select('*').eq('clerk_id', clerkId).single();
+  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+  const [groups, payments, votes, loyalty, auditLogs] = await Promise.all([
+    supabase.from('group_members').select('groups(name, emoji)').eq('user_id', user.id),
+    supabase.from('payments').select('id, amount_cents, status, created_at').eq('user_id', user.id),
+    supabase.from('votes').select('plan_id, option, voted_at').eq('user_id', user.id),
+    supabase.from('loyalty_programs').select('program_name, tier, points').eq('user_id', user.id),
+    supabase.from('audit_logs').select('action, created_at').eq('user_id', user.id).limit(100),
+  ]);
+
+  await supabase.from('audit_logs').insert({ user_id: user.id, action: 'data_export_requested', resource: 'users', resource_id: user.id, success: true });
+
+  const export_data = {
+    export_date: new Date().toISOString(),
+    gdpr_basis: 'GDPR Article 20 — Right to Data Portability',
+    user: { id: user.id, email: user.email, name: user.name, auth_provider: user.auth_provider, created_at: user.created_at, preferences: { seat: user.seat_preference, dietary: user.dietary_needs, climate: user.climate_preference }, consent: { personalized: user.consent_personalized, analytics: user.consent_analytics, marketing: user.consent_marketing } },
+    groups: groups.data, payments: payments.data, votes: votes.data,
+    loyalty_programs: loyalty.data, audit_log: auditLogs.data,
+    note: 'Encrypted fields (passport, loyalty numbers) excluded for security. Card data managed by Stripe — visit stripe.com/privacy.',
+  };
+
+  return new NextResponse(JSON.stringify(export_data, null, 2), {
+    headers: { 'Content-Type': 'application/json', 'Content-Disposition': `attachment; filename="reach-data-${new Date().toISOString().split('T')[0]}.json"` },
+  });
+}
+
+// DELETE — request account deletion (GDPR Article 17)
+export async function DELETE(req: NextRequest) {
+  const { userId: clerkId } = auth();
+  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const body = await req.json();
+  if (body.confirm !== 'DELETE') return NextResponse.json({ error: 'Must confirm with {"confirm":"DELETE"}' }, { status: 400 });
+
+  const supabase = createServerClient();
+  const { data: user } = await supabase.from('users').select('id, email, stripe_customer_id, deletion_requested_at').eq('clerk_id', clerkId).single();
+  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  if (user.deletion_requested_at) return NextResponse.json({ message: 'Deletion already scheduled', scheduled_at: user.deletion_requested_at });
+
+  const deletionDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+  await supabase.from('deletion_requests').insert({ user_id: user.id, clerk_id: clerkId, email: user.email, scheduled_for: deletionDate.toISOString() });
+  await supabase.from('users').update({ deletion_requested_at: new Date().toISOString(), deletion_scheduled_at: deletionDate.toISOString() }).eq('id', user.id);
+
+  if (user.stripe_customer_id) {
+    try { await stripe.customers.del(user.stripe_customer_id); } catch {}
+  }
+
+  await sendDeletionConfirmation(user.email, deletionDate.toLocaleDateString());
+
+  return NextResponse.json({ message: 'Account deletion scheduled', deletion_date: deletionDate.toISOString() });
+}
+
+// PATCH — update user preferences (GDPR Article 16)
+export async function PATCH(req: NextRequest) {
+  const { userId: clerkId } = auth();
+  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const body = await req.json();
+  const allowed = ['name', 'seat_preference', 'dietary_needs', 'climate_preference', 'consent_personalized', 'consent_analytics', 'consent_marketing', 'consent_third_party', 'travel_style', 'trip_frequency', 'budget_range', 'favorite_activities', 'cuisines', 'music_genres', 'dining_vibe', 'drink_style', 'nightlife_style', 'concert_types', 'activity_vibe', 'no_way_jose'];
+  const updates = Object.fromEntries(Object.entries(body).filter(([k]) => allowed.includes(k)));
+  if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'No valid fields' }, { status: 400 });
+
+  const supabase = createServerClient();
+  await supabase.from('users').update(updates).eq('clerk_id', clerkId);
+
+  return NextResponse.json({ message: 'Profile updated', updated_fields: Object.keys(updates) });
+}
