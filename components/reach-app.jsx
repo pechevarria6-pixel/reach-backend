@@ -551,11 +551,11 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
       expData:exp,
     };
     updateGroup(group.id,g=>({...g,plans:[...g.plans,np],lastActivity:"Added: "+exp.title}));
-    if(savePlanToServer)savePlanToServer(group.id,np);
+    const _sp1=savePlanToServer?savePlanToServer(group.id,np):Promise.resolve(null);
     setSaving(false);
     setPlanPicker(false);
     toast(exp.title+" added to "+group.name+" 🎉");
-    push("planDetail",{planId:np.id,groupId:group.id});
+    _sp1.then(_rid=>push("planDetail",{planId:_rid||np.id,groupId:group.id})).catch(()=>push("planDetail",{planId:np.id,groupId:group.id}));
   };
 
   return(
@@ -1565,7 +1565,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     };
     updateGroup(groupId,g=>({...g,plans:[...g.plans,np],lastActivity:"Planning: "+trip.destination}));
     toast(trip.destination+" saved! Building itinerary… ✨");
-    if(savePlanToServer)savePlanToServer(groupId,np);
+    const _sp2=savePlanToServer?savePlanToServer(groupId,np):Promise.resolve(null);
 
     // Fetch full itinerary in background
     setBuildingItinerary(trip.id);
@@ -1594,7 +1594,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       }
     }catch(e){console.log("Itinerary generation failed",e);}
     setBuildingItinerary(null);
-    push("planDetail",{planId:np.id,groupId});
+    _sp2.then(_rid=>push("planDetail",{planId:_rid||np.id,groupId})).catch(()=>push("planDetail",{planId:np.id,groupId}));
   };
 
   const activeTrips=(trips||[]).filter(t=>!myVetoes.has(t.id));
@@ -2054,7 +2054,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
     };
     updateGroup(groupId,g=>({...g,plans:[...g.plans,newPlan]}));
     toast("Trip saved to "+selGroup?.name+"! 🎉");
-    push("planDetail",{planId:newPlan.id,groupId});
+    _sp3.then(_rid=>push("planDetail",{planId:_rid||newPlan.id,groupId})).catch(()=>push("planDetail",{planId:newPlan.id,groupId}));
   };
 
   return(
@@ -2414,7 +2414,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
     updateGroup(gid,g=>({...g,plans:[...g.plans,np],lastActivity:`Planning: ${np.title}`}));
     toast("Plan created! 🎉");
     clearDraft();
-    if(typeof savePlanToServer==="function")savePlanToServer(gid,np);
+    const _sp3=(typeof savePlanToServer==="function")?savePlanToServer(gid,np):Promise.resolve(null);
     onBack();
   };
 
