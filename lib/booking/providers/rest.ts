@@ -34,7 +34,15 @@ export const kiwiFlights: BookingProvider = {
       providerRef: best.booking_token,
       priceCents: Math.round(best.price * 100), currency: 'USD',
       detail: `${best.cityFrom} → ${best.cityTo} · ${best.airlines?.join('/')} · $${best.price}`,
-      raw: { id: best.id, route: best.route?.length },
+      // flightIdent is what /api/plans/[planId]/live queries AeroAPI with.
+      // Kiwi returns the operating carrier and number on the first leg.
+      raw: {
+        id: best.id,
+        route: best.route?.length,
+        flightIdent: best.route?.[0]
+          ? `${best.route[0].airline || ''}${best.route[0].flight_no || ''}` || null
+          : null,
+      },
     };
   },
 
@@ -69,7 +77,11 @@ export const kiwiFlights: BookingProvider = {
       vertical: 'flight', mode: 'native', status: 'confirmed', provider: 'kiwi',
       providerRef: String(json.booking_id),
       priceCents: q.priceCents, currency: 'USD',
-      detail: q.detail, raw: { booking_id: json.booking_id },
+      detail: q.detail,
+      raw: {
+        booking_id: json.booking_id,
+        flightIdent: (q.raw as { flightIdent?: string } | undefined)?.flightIdent || null,
+      },
     };
   },
 };

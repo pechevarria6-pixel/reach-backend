@@ -1,17 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireUser, isFail } from '@/lib/auth';
 
 // GET /api/groups/[id] — get a single group with members and plans
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const supabase = createServerClient();
+  const supabase = ctx.db;
 
-  const { data: user } = await supabase
-    .from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const user = ctx.user;
 
   // Verify user is a member of this group
   const { data: membership } = await supabase
@@ -39,12 +36,11 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 
 // PATCH /api/groups/[id] — update group name or emoji
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const supabase = createServerClient();
-  const { data: user } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const supabase = ctx.db;
+  const user = ctx.user;
 
   const { data: membership } = await supabase
     .from('group_members').select('role').eq('group_id', params.id).eq('user_id', user.id).single();
@@ -60,12 +56,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
 // DELETE /api/groups/[id] — delete a group (admin only)
 export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const supabase = createServerClient();
-  const { data: user } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const supabase = ctx.db;
+  const user = ctx.user;
 
   const { data: membership } = await supabase
     .from('group_members').select('role').eq('group_id', params.id).eq('user_id', user.id).single();

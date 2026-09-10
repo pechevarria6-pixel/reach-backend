@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireUser, isFail } from '@/lib/auth';
 import { z } from 'zod';
 
 function toDateOrNull(v: unknown): string | null {
@@ -28,12 +27,11 @@ const UpdatePlanSchema = z.object({
 
 // GET /api/plans/[id] — get a single plan with itinerary and votes
 export async function GET(_: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const supabase = createServerClient();
-  const { data: user } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const supabase = ctx.db;
+  const user = ctx.user;
 
   const { data: plan } = await supabase.from('plans').select('*').eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
@@ -64,14 +62,22 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
 
 // PATCH /api/plans/[id] — update a plan
 export async function PATCH(req: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const body = UpdatePlanSchema.parse(await req.json());
-  const supabase = createServerClient();
+  // safeParse, not parse: a throw here surfaces as an opaque 500 and the
+  // client cannot tell bad input from a server fault.
+  const parsed = UpdatePlanSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: 'Invalid request', details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const body = parsed.data;
+  const supabase = ctx.db;
 
-  const { data: user } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const user = ctx.user;
 
   const { data: plan } = await supabase.from('plans').select('group_id').eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
@@ -94,12 +100,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
 
 // DELETE /api/plans/[id] — delete a plan
 export async function DELETE(_: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const supabase = createServerClient();
-  const { data: user } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const supabase = ctx.db;
+  const user = ctx.user;
 
   const { data: plan } = await supabase.from('plans').select('group_id, created_by').eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });

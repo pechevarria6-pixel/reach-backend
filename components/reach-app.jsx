@@ -106,6 +106,37 @@ body{background:#050508;display:flex;justify-content:center;min-height:100vh;pad
 
 const ALL_CONTACTS = [];
 
+// Avatars need { id, name, handle, color, initials }. The API returns raw
+// `users` rows, so adapt them here. Without this every member avatar rendered
+// blank, because the user map was built only from ALL_CONTACTS — which is empty.
+const AVATAR_COLORS = ["#6C63FF","#FF6B9D","#2CC3A5","#F5A623","#4A9EFF","#B266FF","#FF7A59","#3ECF8E"];
+function initialsFor(name,email){
+  const src=(name||"").trim()||(email||"").split("@")[0]||"";
+  const parts=src.split(/[\s._-]+/).filter(Boolean);
+  if(parts.length===0)return "??";
+  if(parts.length===1)return parts[0].slice(0,2).toUpperCase();
+  return (parts[0][0]+parts[parts.length-1][0]).toUpperCase();
+}
+function colorFor(id){
+  const key=String(id||"");
+  let h=0;
+  for(let i=0;i<key.length;i++)h=(h*31+key.charCodeAt(i))>>>0;
+  return AVATAR_COLORS[h%AVATAR_COLORS.length];
+}
+function toContact(u){
+  if(!u||!u.id)return null;
+  const name=u.name||u.email?.split("@")[0]||"Member";
+  return {
+    id:u.id,
+    name,
+    handle:"@"+(u.email?u.email.split("@")[0]:"member"),
+    email:u.email||"",
+    avatar:u.avatar_url||u.avatar||null,
+    color:colorFor(u.id),
+    initials:initialsFor(u.name,u.email),
+  };
+}
+
 const INIT_GROUPS = [];
 
 const EXPS = [
@@ -3042,9 +3073,14 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   const stripeRef=useRef(null); const elementsRef=useRef(null); const payRef=useRef(null);
 
   const fmt=c=>"$"+((c||0)/100).toLocaleString(undefined,{maximumFractionDigits:0});
-  const participants=plan?.participants?.length||1;
   const targetCents=funding?.targetCents||0;
-  const myShareCents=targetCents>0?Math.ceil(targetCents/participants):Math.round((plan?.budget||0)*100);
+  // The server owns the split. This used to divide by plan.participants.length
+  // — a field the API never returns — so it fell back to 1 and every member
+  // was asked to pay for the whole trip.
+  const participants=funding?.memberCount||1;
+  const myShareCents=funding?.myRemainingCents??(
+    targetCents>0?Math.ceil(targetCents/participants):Math.round((plan?.budget||0)*100)
+  );
   const vIcon={flight:"\u2708\uFE0F",hotel:"\uD83C\uDFE8",activity:"\uD83C\uDFAF",event:"\uD83C\uDFDF\uFE0F",restaurant:"\uD83C\uDF7D\uFE0F"};
 
   const load=async()=>{
@@ -3065,7 +3101,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   const startPayment=async()=>{
     if(busy)return; setBusy(true);
     try{
-      const r=await fetch(`/api/plans/${planId}/funding`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({amountCents:myShareCents})});
+      const r=await fetch(`/api/plans/${planId}/funding`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});
       const d=await r.json().catch(()=>({}));
       if(!r.ok||!d.clientSecret)throw new Error(d.error||"Couldn't start the payment \u2014 try again.");
       setClientSecret(d.clientSecret); setPhase("pay");
@@ -3887,10 +3923,19 @@ export default function ReachApp({realUser}={}){
   const [toastMsg,setToastMsg]=useState(null);
   const [stack,setStack]=useState([]);
 
-  // User map: combines demo contacts + any real users from API
-  const um=Object.fromEntries(ALL_CONTACTS.map(u=>[u.id,u]));
+  // User map: demo contacts plus every real member seen from the API.
+  const [knownUsers,setKnownUsers]=useState({});
+  const um={...Object.fromEntries(ALL_CONTACTS.map(u=>[u.id,u])),...knownUsers};
   // Real user lookup helper — returns a placeholder if user not in map
   const getUser=(id)=>um[id]||{id,name:"Member",handle:"@member",color:C.accent,initials:"??"};
+  const rememberUsers=rows=>{
+    const seen={};
+    for(const row of rows||[]){
+      const c=toContact(row);
+      if(c)seen[c.id]=c;
+    }
+    if(Object.keys(seen).length)setKnownUsers(m=>({...m,...seen}));
+  };
 
   // ── Location state ───────────────────────────────────────
   const [userLocation,setUserLocation]=useState(null); // {lat,lng,city,airport}
@@ -3910,6 +3955,7 @@ export default function ReachApp({realUser}={}){
       if(res.ok){
         const data=await res.json();
         setUser(u=>u?({...u,...data,id:data.id}):data);
+        rememberUsers([{id:data.id,name:data.name,email:data.email,avatar_url:data.avatar}]);
       }
     }catch(e){console.log("User sync failed",e);}
   };
@@ -4009,6 +4055,10 @@ export default function ReachApp({realUser}={}){
       const {groups:data}=await res.json();
       if(!data||data.length===0){setGroupsLoading(false);return;}
 
+      // Every member row carries its user, so the avatar map can be filled in
+      // from the same response instead of staying empty.
+      rememberUsers(data.flatMap(g=>(g.group_members||[]).map(m=>m.users).filter(Boolean)));
+
       // Load groups first so UI shows immediately
       const base=data.map(g=>({
         id:g.id,
@@ -4073,6 +4123,7 @@ export default function ReachApp({realUser}={}){
       const detail=await r.json();
       const plans=(detail.plans||[]).map(p=>convertPlan(p));
       const memberIds=(detail.members||[]).map(m=>m.user_id||m.users?.id).filter(Boolean);
+      rememberUsers((detail.members||[]).map(m=>m.users).filter(Boolean));
       setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans,memberIds}:g));
     }catch(e){console.log("Refresh failed",e);}
   };

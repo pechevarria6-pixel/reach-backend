@@ -1,21 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireUser, isFail } from '@/lib/auth';
 
 // POST /api/groups/[id]/members — add a member
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
   const { email, userId } = await req.json();
-  const supabase = createServerClient();
+  const supabase = ctx.db;
 
-  const { data: requester } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!requester) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const user = ctx.user;
 
   // Must be admin to add members
   const { data: membership } = await supabase
-    .from('group_members').select('role').eq('group_id', params.id).eq('user_id', requester.id).single();
+    .from('group_members').select('role').eq('group_id', params.id).eq('user_id', ctx.user.id).single();
   if (!membership || membership.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden — admin only' }, { status: 403 });
   }
@@ -43,21 +41,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
 // DELETE /api/groups/[id]/members — remove a member
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
   const { userId: targetUserId } = await req.json();
-  const supabase = createServerClient();
+  const supabase = ctx.db;
 
-  const { data: requester } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!requester) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const user = ctx.user;
 
   const { data: membership } = await supabase
-    .from('group_members').select('role').eq('group_id', params.id).eq('user_id', requester.id).single();
+    .from('group_members').select('role').eq('group_id', params.id).eq('user_id', ctx.user.id).single();
 
   // Admin can remove anyone, members can only remove themselves
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  if (membership.role !== 'admin' && requester.id !== targetUserId) {
+  if (membership.role !== 'admin' && ctx.user.id !== targetUserId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

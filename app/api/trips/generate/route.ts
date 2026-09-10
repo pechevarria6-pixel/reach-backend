@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireGroupMember, isFail } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   const body = await req.json();
   const {
     groupId, startDate, endDate, budgetPerPerson,
@@ -13,7 +9,12 @@ export async function POST(req: NextRequest) {
     detailTripId = null, // if set, generate full itinerary for one trip
   } = body;
 
-  const supabase = createServerClient();
+  // This reads every member's dietary needs, budget and preferences, so the
+  // caller has to actually be in the group.
+  if (!groupId) return NextResponse.json({ error: 'groupId required' }, { status: 400 });
+  const ctx = await requireGroupMember(groupId);
+  if (isFail(ctx)) return ctx.error;
+  const supabase = ctx.db;
 
   const { data: members } = await supabase
     .from('group_members')

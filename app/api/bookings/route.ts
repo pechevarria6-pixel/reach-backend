@@ -4,16 +4,10 @@
 // to Supabase `bookings`, notifies nothing (frontend polls plan status).
 // GET /api/bookings?planId=… — list bookings for a plan.
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createClient } from '@supabase/supabase-js';
+import { requirePlanMember, isFail } from '@/lib/auth';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
 import { kiwiFlights, viatorActivities, ticketmasterEvents, conciergeRestaurants } from '@/lib/booking/providers/rest';
-
-const supabase = () => createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
 
 const PROVIDERS: Record<Vertical, BookingProvider> = {
   hotel: liteApiHotels,
@@ -24,13 +18,14 @@ const PROVIDERS: Record<Vertical, BookingProvider> = {
 };
 
 export async function POST(req: NextRequest) {
-  const { userId } = auth();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
   const body = await req.json().catch(() => null);
   if (!body?.planId || !Array.isArray(body?.items) || body.items.length === 0) {
     return NextResponse.json({ error: 'planId and items[] required' }, { status: 400 });
   }
+
+  // Booking spends money against a plan; only members of its group may do it.
+  const ctx = await requirePlanMember(body.planId);
+  if (isFail(ctx)) return ctx.error;
 
   const dryRun = body.dryRun === true;      // quote-only pass for the review screen
   // Default flow is now PROPOSE: quote every item and store it as
@@ -47,7 +42,8 @@ export async function POST(req: NextRequest) {
     }
     // Attach shared context
     item.planId = body.planId;
-    item.groupId = body.groupId;
+    // Trust the plan's own group, not whatever the client claimed.
+    item.groupId = ctx.plan.group_id as string;
     item.travelers = item.travelers?.length ? item.travelers : body.travelers;
 
     try {
@@ -60,10 +56,10 @@ export async function POST(req: NextRequest) {
       results.push(result);
 
       if (!dryRun) {
-        await supabase().from('bookings').insert({
+        await ctx.db.from('bookings').insert({
           plan_id: body.planId,
-          group_id: body.groupId,
-          booked_by: userId,
+          group_id: ctx.plan.group_id,
+          booked_by: ctx.user.id,
           vertical: result.vertical,
           provider: result.provider,
           mode: result.mode,
@@ -96,11 +92,11 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const { userId } = auth();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const planId = req.nextUrl.searchParams.get('planId');
   if (!planId) return NextResponse.json({ error: 'planId required' }, { status: 400 });
-  const { data, error } = await supabase()
+  const ctx = await requirePlanMember(planId);
+  if (isFail(ctx)) return ctx.error;
+  const { data, error } = await ctx.db
     .from('bookings').select('*').eq('plan_id', planId).order('created_at', { ascending: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ bookings: data });

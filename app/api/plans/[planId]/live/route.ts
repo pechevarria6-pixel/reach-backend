@@ -5,20 +5,14 @@
 // cheap and fine for launch). Degrades gracefully without the key.
 // GET → { flights: [{ ident, status, gate, scheduled, estimated, delayMin }] }
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = () => createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { requirePlanMember, isFail } from '@/lib/auth';
 
 export async function GET(_req: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId } = auth();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requirePlanMember(params.planId);
+  if (isFail(ctx)) return ctx.error;
 
   // Flight idents come from bookings (native) and captured confirmations.
-  const { data: bookings } = await supabase()
+  const { data: bookings } = await ctx.db
     .from('bookings')
     .select('vertical, provider_ref, detail, response_payload, request_payload')
     .eq('plan_id', params.planId)
@@ -35,8 +29,11 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
   const results = [];
   for (const b of bookings || []) {
     // Ident (e.g. "UA1234") from the stored payloads; fall back to skipping.
+    // Providers write `flightIdent` into response_payload at book() time; older
+    // rows predate that field, so fall back to the request's own flight number.
     const payload = (b.response_payload || {}) as Record<string, unknown>;
-    const ident = (payload.flightIdent as string) || null;
+    const request = (b.request_payload || {}) as { flight?: { flightNumber?: string } };
+    const ident = (payload.flightIdent as string) || request.flight?.flightNumber || null;
     if (!ident) { results.push({ detail: b.detail, status: 'unknown ident' }); continue; }
     try {
       const res = await fetch(`https://aeroapi.flightaware.com/aeroapi/flights/${ident}`, {

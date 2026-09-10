@@ -14,7 +14,16 @@ export async function POST(req: NextRequest) {
   const { userId: clerkId } = auth();
   if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const body = Schema.parse(await req.json());
+  // safeParse, not parse: a throw here surfaces as an opaque 500 and the
+  // client cannot tell bad input from a server fault.
+  const parsed = Schema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: 'Invalid request', details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const body = parsed.data;
   const supabase = createServerClient();
 
   const { data: user } = await supabase

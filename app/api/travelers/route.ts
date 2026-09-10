@@ -3,22 +3,17 @@
 // booking form (native or redirected) ever asks for anything twice.
 // Sources: users table (name/email/dob) + loyalty columns already in schema.
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = () => createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { requireGroupMember, isFail } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
-  const { userId } = auth();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const groupId = req.nextUrl.searchParams.get('groupId');
   if (!groupId) return NextResponse.json({ error: 'groupId required' }, { status: 400 });
 
-  const db = supabase();
-  const { data: members, error } = await db
+  // Traveler records carry names, emails and dates of birth — group members only.
+  const ctx = await requireGroupMember(groupId);
+  if (isFail(ctx)) return ctx.error;
+
+  const { data: members, error } = await ctx.db
     .from('group_members').select('user_id, users(*)').eq('group_id', groupId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

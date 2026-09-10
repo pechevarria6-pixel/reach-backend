@@ -8,7 +8,7 @@
 //   concierge lane (restaurants)         → ticket moves to 'pending' for ops
 // Body (optional): { note?: string }
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { requirePlanMember, isFail } from '@/lib/auth';
 import { createClient } from '@supabase/supabase-js';
 import { BookingItemRequest, BookingProvider, Vertical } from '@/lib/booking/types';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
@@ -28,13 +28,18 @@ const PROVIDERS: Record<Vertical, BookingProvider> = {
 };
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const { userId } = auth();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const db = supabase();
-  const { data: booking, error: fetchErr } = await db
+  // Look the booking up first so we know which plan to authorize against.
+  // Approval executes a real purchase, so this endpoint used to let any
+  // signed-in user spend another group's money.
+  const lookup = supabase();
+  const { data: booking, error: fetchErr } = await lookup
     .from('bookings').select('*').eq('id', params.id).single();
   if (fetchErr || !booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+
+  const ctx = await requirePlanMember(booking.plan_id);
+  if (isFail(ctx)) return ctx.error;
+  const db = ctx.db;
+
   if (booking.status !== 'awaiting_approval') {
     return NextResponse.json({ error: `Cannot approve a booking in status '${booking.status}'` }, { status: 409 });
   }
@@ -103,7 +108,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         detail: result.detail || booking.detail,
         response_payload: result.raw || booking.response_payload,
         error: result.error || null,
-        approved_by: userId,
+        approved_by: ctx.user.id,
         approved_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -116,7 +121,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const msg = e instanceof Error ? e.message : 'Execution failed';
     await db.from('bookings').update({
       status: 'failed', error: msg,
-      approved_by: userId, approved_at: new Date().toISOString(),
+      approved_by: ctx.user.id, approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', params.id);
     return NextResponse.json({ error: msg }, { status: 502 });

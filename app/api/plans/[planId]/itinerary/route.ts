@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireUser, isFail } from '@/lib/auth';
 import { z } from 'zod';
 
 const ItemSchema = z.object({
@@ -16,14 +15,22 @@ const ItemSchema = z.object({
 
 // POST /api/plans/[id]/itinerary — add item
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const body = ItemSchema.parse(await req.json());
-  const supabase = createServerClient();
+  // safeParse, not parse: a throw here surfaces as an opaque 500 and the
+  // client cannot tell bad input from a server fault.
+  const parsed = ItemSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: 'Invalid request', details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+  const body = parsed.data;
+  const supabase = ctx.db;
 
-  const { data: user } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const user = ctx.user;
 
   const { data: plan } = await supabase.from('plans').select('group_id').eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
@@ -41,14 +48,13 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
 // PUT /api/plans/[id]/itinerary — replace entire itinerary
 export async function PUT(req: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
   const { items } = await req.json();
-  const supabase = createServerClient();
+  const supabase = ctx.db;
 
-  const { data: user } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const user = ctx.user;
 
   const { data: plan } = await supabase.from('plans').select('group_id').eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth, currentUser } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireUser, isFail } from '@/lib/auth';
 import { z } from 'zod';
 
 const CreateGroupSchema = z.object({
@@ -11,14 +10,9 @@ const CreateGroupSchema = z.object({
 
 // GET /api/groups — get all groups for the current user
 export async function GET() {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const supabase = createServerClient();
-
-  let { data: user } = await supabase
-    .from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ groups: [] });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
+  const { db: supabase, user } = ctx;
 
   const { data: memberships } = await supabase
     .from('group_members')
@@ -44,27 +38,20 @@ export async function GET() {
 
 // POST /api/groups — create a new group
 export async function POST(req: NextRequest) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
+  const { db: supabase, user } = ctx;
 
-  const body = CreateGroupSchema.parse(await req.json());
-  const supabase = createServerClient();
-
-  let { data: user } = await supabase
-    .from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) {
-    const cu = await currentUser();
-    const email = cu?.primaryEmailAddress?.emailAddress
-      ?? cu?.emailAddresses?.[0]?.emailAddress
-      ?? `${clerkId}@no-email.reach`;
-    const name = [cu?.firstName, cu?.lastName].filter(Boolean).join(' ') || null;
-    const { data: created, error: userErr } = await supabase.from('users').insert({ clerk_id: clerkId, email, name }).select('id').single();
-    if (userErr || !created) {
-      console.error('[groups POST] user insert failed', userErr);
-      return NextResponse.json({ error: "Couldn't set up your profile" }, { status: 500 });
-    }
-    user = created;
+  // safeParse, not parse: a throw here surfaces as an opaque 500 and the
+  // client cannot tell bad input from a server fault.
+  const parsed = CreateGroupSchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: 'Invalid request', details: parsed.error.flatten() },
+      { status: 400 }
+    );
   }
+  const body = parsed.data;
 
   // Create group
   const { data: group, error } = await supabase
@@ -80,11 +67,15 @@ export async function POST(req: NextRequest) {
   // Add creator as admin
   await supabase.from('group_members').insert({ group_id: group.id, user_id: user.id, role: 'admin' });
 
-  // Add additional members if provided
-  if (body.memberIds?.length) {
-    await supabase.from('group_members').insert(
-      body.memberIds.map(uid => ({ group_id: group.id, user_id: uid, role: 'member' }))
+  // Add additional members if provided. The creator is already an admin, so
+  // including them again would violate the (group_id, user_id) unique
+  // constraint and drop the whole batch.
+  const extras = [...new Set(body.memberIds || [])].filter(uid => uid !== user.id);
+  if (extras.length) {
+    const { error: memberErr } = await supabase.from('group_members').insert(
+      extras.map(uid => ({ group_id: group.id, user_id: uid, role: 'member' }))
     );
+    if (memberErr) console.error('[groups POST] member insert failed', memberErr);
   }
 
   await supabase.from('audit_logs').insert({ user_id: user.id, action: 'group_created', resource: 'groups', resource_id: group.id, success: true });

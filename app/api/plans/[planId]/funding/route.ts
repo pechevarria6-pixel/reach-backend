@@ -1,21 +1,17 @@
 // ─── /api/plans/[planId]/funding — collect-then-approve ──────────────────
 // Nobody fronts money for the group. Each member contributes their share;
 // the approve endpoint refuses to execute until the plan is fully funded.
-// GET  → { targetCents, collectedCents, funded, contributions[] }
-// POST { amountCents } → creates a Stripe PaymentIntent for my share,
-//        returns clientSecret for the app's payment sheet.
-// (Stripe webhook marks contributions 'succeeded' — see webhook note below.)
+// GET  → { targetCents, collectedCents, funded, myShareCents, contributions[] }
+// POST { amountCents? } → PaymentIntent for my share, returns clientSecret.
+//
+// The share is computed here, not in the client. The client used to divide by
+// `plan.participants.length` — a field the API never returned — so it fell
+// back to 1 and asked every member to pay for the entire trip.
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createClient } from '@supabase/supabase-js';
+import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
-const supabase = () => createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-async function fundingStatus(planId: string) {
-  const db = supabase();
+async function fundingStatus(db: SupabaseClient, planId: string, groupId: string, userId: string) {
   // Target = sum of every non-failed booking priced on this plan
   const { data: bookings } = await db
     .from('bookings')
@@ -26,29 +22,68 @@ async function fundingStatus(planId: string) {
 
   const { data: contributions } = await db
     .from('contributions').select('*').eq('plan_id', planId);
-  const collectedCents = (contributions || [])
-    .filter(c => c.status === 'succeeded')
+  const succeeded = (contributions || []).filter(c => c.status === 'succeeded');
+  const collectedCents = succeeded.reduce((s, c) => s + c.amount_cents, 0);
+
+  const memberIds = await groupMemberIds(db, groupId);
+  const heads = Math.max(1, memberIds.length);
+
+  // Split evenly and hand the leftover cents to the earliest members, so the
+  // shares add up to exactly the target rather than leaving a few cents short.
+  const base = Math.floor(targetCents / heads);
+  const remainder = targetCents - base * heads;
+  const idx = memberIds.indexOf(userId);
+  const myShareCents = base + (idx > -1 && idx < remainder ? 1 : 0);
+
+  const myPaidCents = succeeded
+    .filter(c => c.user_id === userId)
     .reduce((s, c) => s + c.amount_cents, 0);
 
-  return { targetCents, collectedCents, funded: targetCents > 0 && collectedCents >= targetCents, contributions: contributions || [] };
+  return {
+    targetCents,
+    collectedCents,
+    funded: targetCents > 0 && collectedCents >= targetCents,
+    memberCount: memberIds.length,
+    myShareCents,
+    myPaidCents,
+    myRemainingCents: Math.max(0, myShareCents - myPaidCents),
+    contributions: contributions || [],
+  };
 }
 
 export async function GET(_req: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId } = auth();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  return NextResponse.json(await fundingStatus(params.planId));
+  const ctx = await requirePlanMember(params.planId);
+  if (isFail(ctx)) return ctx.error;
+  return NextResponse.json(
+    await fundingStatus(ctx.db, params.planId, ctx.plan.group_id as string, ctx.user.id)
+  );
 }
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId } = auth();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requirePlanMember(params.planId);
+  if (isFail(ctx)) return ctx.error;
+
   if (!process.env.STRIPE_SECRET_KEY) {
     return NextResponse.json({ error: 'STRIPE_SECRET_KEY not set' }, { status: 500 });
   }
+
   const body = await req.json().catch(() => ({}));
-  const amountCents = Number(body.amountCents);
+  const status = await fundingStatus(
+    ctx.db, params.planId, ctx.plan.group_id as string, ctx.user.id
+  );
+
+  // Default to what this member actually owes. An explicit amount is honoured
+  // but capped at the outstanding share, so a stale client can't overcharge.
+  const requested = Number(body.amountCents);
+  const amountCents = Number.isFinite(requested) && requested > 0
+    ? Math.min(Math.round(requested), status.myRemainingCents)
+    : status.myRemainingCents;
+
   if (!amountCents || amountCents < 50) {
-    return NextResponse.json({ error: 'amountCents (>= 50) required' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'Nothing left to pay on this plan', funding: status },
+      { status: 400 }
+    );
   }
 
   // Create the PaymentIntent via Stripe's REST API (no SDK dependency)
@@ -56,7 +91,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     amount: String(amountCents),
     currency: 'usd',
     'metadata[plan_id]': params.planId,
-    'metadata[user_id]': userId,
+    'metadata[user_id]': ctx.user.id,
     'metadata[kind]': 'reach_contribution',
     'automatic_payment_methods[enabled]': 'true',
   });
@@ -73,20 +108,19 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({ error: pi?.error?.message || 'Stripe error' }, { status: 502 });
   }
 
-  const { data, error } = await supabase().from('contributions').insert({
+  const { data, error } = await ctx.db.from('contributions').insert({
     plan_id: params.planId,
-    group_id: body.groupId || null,
-    user_id: userId,
+    group_id: ctx.plan.group_id,
+    user_id: ctx.user.id,
     amount_cents: amountCents,
     stripe_payment_intent: pi.id,
     status: 'pending',
   }).select().single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ contribution: data, clientSecret: pi.client_secret });
+  return NextResponse.json({ contribution: data, clientSecret: pi.client_secret, amountCents });
 }
 
 // The Stripe webhook marks these succeeded on payment_intent.succeeded where
 // metadata.kind === 'reach_contribution'. The /funding/confirm endpoint does
 // the same check on demand, for clients that finish before the webhook lands.
-export { fundingStatus };

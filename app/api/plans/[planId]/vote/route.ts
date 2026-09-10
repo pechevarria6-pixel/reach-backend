@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireUser, isFail } from '@/lib/auth';
 
 // POST /api/plans/[id]/vote — cast a vote
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
   const { option } = await req.json();
   if (!option) return NextResponse.json({ error: 'option is required' }, { status: 400 });
 
-  const supabase = createServerClient();
-  const { data: user } = await supabase.from('users').select('id').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const supabase = ctx.db;
+  const user = ctx.user;
 
   // Verify plan exists and is in voting status
   const { data: plan } = await supabase.from('plans').select('*, groups(group_members(*))').eq('id', params.planId).single();
@@ -35,10 +33,10 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
 // GET /api/plans/[id]/vote — get current vote tallies
 export async function GET(_: NextRequest, { params }: { params: { planId: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const supabase = createServerClient();
+  const supabase = ctx.db;
   const { data: votes } = await supabase.from('votes').select('option').eq('plan_id', params.planId);
 
   const tally: Record<string, number> = {};

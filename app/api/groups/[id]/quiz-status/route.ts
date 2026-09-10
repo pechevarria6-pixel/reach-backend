@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireGroupMember, isFail } from '@/lib/auth';
 
 // GET /api/groups/[id]/quiz-status — who has completed their preference quiz
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
-  const supabase = createServerClient();
+  // This returns every member's name, email and preferences, so it must be
+  // restricted to the group itself rather than any signed-in user.
+  const ctx = await requireGroupMember(params.id);
+  if (isFail(ctx)) return ctx.error;
+  const supabase = ctx.db;
 
   // Get all group members with their preference data
   const { data: members } = await supabase
