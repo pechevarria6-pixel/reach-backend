@@ -7,6 +7,9 @@
     "skipLibCheck": true,
     "strict": false,
     "noEmit": true,
+    // Node's type-stripping test runner resolves the real ".ts" path, so the
+    // unit tests import with the extension. Safe here because noEmit is on.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

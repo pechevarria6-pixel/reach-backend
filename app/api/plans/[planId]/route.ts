@@ -1,16 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
+import { toDateOrNull } from '@/lib/dates';
 import { z } from 'zod';
-
-function toDateOrNull(v: unknown): string | null {
-  if (typeof v !== 'string') return null;
-  const s = v.trim();
-  if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const parsed = new Date(s);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().split('T')[0];
-}
 
 const UpdatePlanSchema = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -41,9 +32,10 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
     .from('group_members').select('role').eq('group_id', plan.group_id).eq('user_id', user.id).single();
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const [itineraryRes, votesRes] = await Promise.all([
+  const [itineraryRes, votesRes, membersRes] = await Promise.all([
     supabase.from('itinerary_items').select('*').eq('plan_id', params.planId).order('sort_order'),
     supabase.from('votes').select('option, user_id').eq('plan_id', params.planId),
+    supabase.from('group_members').select('user_id, users(id, name, email, avatar_url)').eq('group_id', plan.group_id),
   ]);
 
   // Build vote tally
@@ -51,8 +43,12 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
   votesRes.data?.forEach(v => { tally[v.option] = (tally[v.option] || 0) + 1; });
   const myVote = votesRes.data?.find(v => v.user_id === user.id)?.option || null;
 
+  const participants = (membersRes.data || []).map(m => m.user_id);
+
   return NextResponse.json({
-    plan,
+    plan: { ...plan, participants },
+    participants,
+    members: membersRes.data || [],
     itinerary: itineraryRes.data || [],
     votes: tally,
     myVote,

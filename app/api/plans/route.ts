@@ -1,19 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
+import { toDateOrNull } from '@/lib/dates';
 import { z } from 'zod';
-
-// The client stores dates as display strings ("Sat, Mar 8", "Dates TBD").
-// Anything that isn't a real calendar date becomes NULL rather than blowing up
-// the INSERT with a Postgres date-parse error and silently losing the plan.
-function toDateOrNull(v: unknown): string | null {
-  if (typeof v !== 'string') return null;
-  const s = v.trim();
-  if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  const parsed = new Date(s);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().split('T')[0];
-}
 
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),

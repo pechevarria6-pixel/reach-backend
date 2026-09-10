@@ -1,0 +1,4 @@
+{
+  "type": "module",
+  "//": "Scopes ESM to the unit tests only. The repo root stays CommonJS because next.config.js uses module.exports."
+}

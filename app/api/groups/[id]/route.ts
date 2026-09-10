@@ -26,10 +26,15 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
     supabase.from('plans').select('*').eq('group_id', params.id).order('created_at', { ascending: false }),
   ]);
 
+  // Plans are group-wide, so everyone in the group is a participant. The
+  // client renders traveler counts and avatars from this; without it every
+  // server-loaded plan showed "0 travelers" and no faces.
+  const participants = (membersRes.data || []).map(m => m.user_id);
+
   return NextResponse.json({
     group: groupRes.data,
     members: membersRes.data,
-    plans: plansRes.data,
+    plans: (plansRes.data || []).map(p => ({ ...p, participants })),
     myRole: membership.role,
   });
 }

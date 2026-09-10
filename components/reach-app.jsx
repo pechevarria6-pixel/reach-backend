@@ -2817,6 +2817,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         const r=await fetch(`/api/plans/${planId}`);
         if(!r.ok)return;
         const data=await r.json();
+        if(data.participants?.length)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,participants:data.participants}:p)}));
         // Update vote tally from server
         if(data.votes)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:data.votes,myVote:data.myVote}:p)}));
         if(data.myVote)setMyVote(data.myVote);
@@ -4079,7 +4080,7 @@ export default function ReachApp({realUser}={}){
           const r=await fetch(`/api/groups/${g.id}`);
           if(!r.ok)return g;
           const detail=await r.json();
-          const plans=(detail.plans||[]).map(p=>convertPlan(p));
+          const plans=(detail.plans||[]).map(p=>convertPlan(p,g.memberIds));
           return{...g,plans,lastActivity:plans.length>0?`${plans.length} plan${plans.length>1?"s":""}`:g.lastActivity};
         }catch{return g;}
       }));
@@ -4088,8 +4089,9 @@ export default function ReachApp({realUser}={}){
     finally{setGroupsLoading(false);}
   };
 
-  // Convert API plan format to app format
-  const convertPlan=(p)=>({
+  // Convert API plan format to app format. `fallbackMembers` covers plan rows
+  // that came back without participants attached.
+  const convertPlan=(p,fallbackMembers)=>({
     id:p.id,
     title:p.title,
     type:p.type||"trip",
@@ -4098,7 +4100,7 @@ export default function ReachApp({realUser}={}){
     startDate:p.start_date||null,
     endDate:p.end_date||null,
     budget:Math.round((p.budget_cents||0)/100),
-    participants:p.participants||[],
+    participants:p.participants||fallbackMembers||[],
     itinerary:(p.itinerary||[]).map(item=>({
       time:item.scheduled_time||"",
       title:item.title,
@@ -4121,8 +4123,8 @@ export default function ReachApp({realUser}={}){
       const r=await fetch(`/api/groups/${groupId}`);
       if(!r.ok)return;
       const detail=await r.json();
-      const plans=(detail.plans||[]).map(p=>convertPlan(p));
       const memberIds=(detail.members||[]).map(m=>m.user_id||m.users?.id).filter(Boolean);
+      const plans=(detail.plans||[]).map(p=>convertPlan(p,memberIds));
       rememberUsers((detail.members||[]).map(m=>m.users).filter(Boolean));
       setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans,memberIds}:g));
     }catch(e){console.log("Refresh failed",e);}

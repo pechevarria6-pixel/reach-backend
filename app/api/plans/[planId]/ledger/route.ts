@@ -8,6 +8,7 @@
 // splitting the bill were never the same person and settle-up was nonsense.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
+import { evenSplit, settleUp } from '@/lib/money';
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -61,40 +62,21 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
     const parties: string[] = e.split_between || [];
     if (parties.length === 0) continue;
     add(e.paid_by, e.amount_cents);
-    // Distribute the remainder a cent at a time so shares sum to the total
-    // exactly; rounding each share independently leaves the ledger unbalanced.
-    const base = Math.floor(e.amount_cents / parties.length);
-    const remainder = e.amount_cents - base * parties.length;
-    parties.forEach((uid, i) => add(uid, -(base + (i < remainder ? 1 : 0))));
+    evenSplit(e.amount_cents, parties.length).forEach((share, i) => add(parties[i], -share));
   }
 
   // Contributions were fetched but never counted, so money already collected
   // for the trip did not reduce anyone's balance.
   const target = (contributions || []).reduce((s, c) => s + c.amount_cents, 0);
   if (target > 0 && members.length > 0) {
-    const base = Math.floor(target / members.length);
-    const remainder = target - base * members.length;
-    members.forEach((uid, i) => add(uid, -(base + (i < remainder ? 1 : 0))));
+    evenSplit(target, members.length).forEach((share, i) => add(members[i], -share));
     for (const c of contributions || []) add(c.user_id, c.amount_cents);
-  }
-
-  // Minimal-transfer settle-up (greedy: biggest debtor pays biggest creditor)
-  const debtors = Object.entries(net).filter(([, v]) => v < 0).map(([id, v]) => ({ id, amt: -v })).sort((a, b) => b.amt - a.amt);
-  const creditors = Object.entries(net).filter(([, v]) => v > 0).map(([id, v]) => ({ id, amt: v })).sort((a, b) => b.amt - a.amt);
-  const settleUp: { from: string; to: string; amountCents: number }[] = [];
-  let i = 0, j = 0;
-  while (i < debtors.length && j < creditors.length) {
-    const pay = Math.min(debtors[i].amt, creditors[j].amt);
-    if (pay > 0) settleUp.push({ from: debtors[i].id, to: creditors[j].id, amountCents: pay });
-    debtors[i].amt -= pay; creditors[j].amt -= pay;
-    if (debtors[i].amt === 0) i++;
-    if (creditors[j].amt === 0) j++;
   }
 
   return NextResponse.json({
     contributions: contributions || [],
     expenses: expenses || [],
     netBalances: net,
-    settleUp,
+    settleUp: settleUp(net),
   });
 }

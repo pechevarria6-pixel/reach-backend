@@ -9,6 +9,7 @@
 // back to 1 and asked every member to pay for the entire trip.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
+import { shareFor } from '@/lib/money';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 async function fundingStatus(
@@ -28,19 +29,13 @@ async function fundingStatus(
   const collectedCents = succeeded.reduce((s, c) => s + c.amount_cents, 0);
 
   const memberIds = await groupMemberIds(db, groupId);
-  const heads = Math.max(1, memberIds.length);
 
   // Before anything is priced there is nothing to collect against, so fall
   // back to the plan's own budget. `targetCents` still reports the booking
   // total, because that is what the approve gate compares against.
   const basisCents = targetCents > 0 ? targetCents : Math.max(0, budgetCents || 0);
 
-  // Split evenly and hand the leftover cents to the earliest members, so the
-  // shares add up to exactly the basis rather than leaving a few cents short.
-  const base = Math.floor(basisCents / heads);
-  const remainder = basisCents - base * heads;
-  const idx = memberIds.indexOf(userId);
-  const myShareCents = base + (idx > -1 && idx < remainder ? 1 : 0);
+  const myShareCents = shareFor(basisCents, memberIds, userId);
 
   const myPaidCents = succeeded
     .filter(c => c.user_id === userId)

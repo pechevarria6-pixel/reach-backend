@@ -11,6 +11,7 @@
 //         affordability guardrail vs my stated budget_range.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
+import { evenSplit } from '@/lib/money';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const DAY = 86400000;
@@ -32,10 +33,9 @@ async function planShareCents(
   // meant the first member to set a goal was told to save for the entire trip,
   // and every later goal silently changed what a share was worth.
   const heads = Math.max(1, (await groupMemberIds(db, groupId)).length);
-  if (total > 0) return Math.ceil(total / heads);
-
-  // Fall back to the plan's stated budget if nothing is priced yet
-  return Math.ceil((budgetCents || 0) / heads);
+  const basis = total > 0 ? total : (budgetCents || 0);
+  // Largest share, so nobody is told to save less than they may owe.
+  return evenSplit(basis, heads)[0];
 }
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
