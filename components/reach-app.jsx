@@ -4076,6 +4076,7 @@ export default function ReachApp({realUser}={}){
           headers:{"Content-Type":"application/json"},
           body:JSON.stringify({name:group.name,emoji:group.emoji,memberIds:group.memberIds||[]}),
         });
+      try{const _d=await res.clone().json().catch(()=>null);const _realId=_d&&_d.group&&_d.group.id;if(res.ok&&_realId){setGroups(gs=>gs.map(g=>g.id===group.id?{...g,id:_realId}:g));}else if(!res.ok){setGroups(gs=>gs.filter(g=>g.id!==group.id));}}catch(_e){}
         if(res.ok){
           const {group:saved}=await res.json();
           // Replace temp ID with real server ID
