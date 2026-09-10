@@ -5,6 +5,9 @@ const isPublicRoute = createRouteMatcher([
   '/sign-in(.*)',
   '/sign-up(.*)',
   '/api/webhooks/(.*)',
+  // An invite link has to be openable by someone with no account yet. The
+  // page shows only the group name and who invited them — never the address.
+  '/invite/(.*)',
   '/privacy',
   '/terms',
 ]);

@@ -17,9 +17,10 @@ report Success.
 | 2 | `sql/bookings.sql` | the bookings table |
 | 3 | `sql/engine-v3.sql` | connected_accounts, contributions, expenses |
 | 4 | `sql/savings-v1.sql` | savings_goals, savings_checkins |
-| 5 | `sql/migrate-clerk-ids-to-user-ids.sql` | **rewrites existing rows.** See below. |
+| 5 | `sql/invites-v1.sql` | group_invites — lets you add someone who has no account yet |
+| 6 | `sql/migrate-clerk-ids-to-user-ids.sql` | **rewrites existing rows.** See below. |
 
-### About step 5
+### About the migration
 
 The booking and funding tables used to store the Clerk id (`user_2abc…`)
 where every other table stores the `users.id` UUID. The same person was
@@ -151,18 +152,33 @@ In order — each step depends on the one before:
 5. Open the plan. The traveler count should match the group size, not zero.
 6. Open checkout. Your share should be roughly the trip total divided by the
    number of members, **not** the whole trip.
+7. Invite an address with no Reach account (Edit Group → type a full email →
+   Invite). It should appear under "Invited". Sign up in a private window with
+   that address; you should land in the group without clicking anything.
 
 ---
+
+## Invites
+
+`POST /api/groups/[id]/members` with an `email` adds the person if they have
+an account and creates an invite if they don't. An invite is claimed the first
+time that address authenticates, so the normal path needs no link click.
+
+`/invite/<token>` is a public page for the emailed link. It covers the case
+where someone signs up with a different address than the one invited, and it
+never reveals the invited address to whoever opens it.
+
+Claiming only honours an address Clerk reports as **verified** — otherwise
+signing up as someone else's email would be enough to join their group.
+
+Invites expire after 30 days. Without `RESEND_API_KEY` the invite is still
+created and valid; the API returns `acceptUrl` and the app copies it to the
+clipboard so you can send it yourself.
 
 ## Known gaps
 
 These are understood and deliberately not fixed yet:
 
-- **Members must already have an account.** `POST /api/groups/[id]/members`
-  looks a person up by email and 404s if they have never signed in. There is
-  no invite-a-stranger flow.
-- **Group loading is N+1.** The client fetches the group list, then one
-  request per group for its plans.
 - **`CheckoutScreen` in `components/reach-app.jsx` is unreachable.** Only
   `CheckoutScreenV2` is routed. The old component is ~300 lines of dead UI.
 - **`/api/payments` is not called by the app.** The live flow is

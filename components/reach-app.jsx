@@ -1003,27 +1003,91 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
 }
 
 // ─── EDIT GROUP ───────────────────────────────────────────────────────────────
-function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast}){
+function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup}){
   const group=groups.find(g=>g.id===groupId);if(!group)return null;
   const [name,setName]=useState(group.name);
   const [emoji,setEmoji]=useState(group.emoji);
-  const [members,setMembers]=useState(group.memberIds);
   const emojis=["🎓","👨‍👩‍👧‍👦","💼","🏖️","🎸","🍕","🏔️","✈️","🎉","🌍"];
-  const [searchQuery,setSearchQuery]=useState("");
-  const [searchResults,setSearchResults]=useState([]);
+
+  const members=group.memberIds||[];
+  const [invites,setInvites]=useState([]);
+  const [q,setQ]=useState("");
+  const [results,setResults]=useState([]);
   const [searching,setSearching]=useState(false);
-  const searchUsers=async(q)=>{
-    setSearchQuery(q);
-    if(!q||q.length<2){setSearchResults([]);return;}
+  const [busy,setBusy]=useState(false);
+
+  const isEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v||"").trim());
+
+  const loadInvites=async()=>{
+    try{
+      const r=await fetch(`/api/groups/${groupId}/invites`);
+      if(r.ok){const d=await r.json();setInvites(d.invites||[]);}
+    }catch(e){}
+  };
+  useEffect(()=>{loadInvites();},[groupId]);
+
+  const search=async v=>{
+    setQ(v);
+    if(!v||v.length<2){setResults([]);return;}
     setSearching(true);
     try{
-      const res=await fetch("/api/users/search?q="+encodeURIComponent(q));
-      if(res.ok){const {users}=await res.json();setSearchResults(users||[]);}
-    }catch(e){setSearchResults([]);}
+      const r=await fetch("/api/users/search?q="+encodeURIComponent(v));
+      if(r.ok){const d=await r.json();setResults((d.users||[]).filter(u=>!members.includes(u.id)));}
+    }catch(e){setResults([]);}
     finally{setSearching(false);}
   };
-  const nonMembers=ALL_CONTACTS.filter(u=>!members.includes(u.id));
-  const save=()=>{updateGroup(groupId,g=>({...g,name,emoji,memberIds:members}),{sync:true});toast("Group updated");onBack();};
+
+  // Membership changes hit the server immediately. They used to be collected
+  // in local state and dropped on Save, which only ever sent name and emoji.
+  const addMember=async payload=>{
+    if(busy)return;setBusy(true);
+    try{
+      const r=await fetch(`/api/groups/${groupId}/members`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't add them");
+      if(d.invited){
+        toast(d.emailed?`Invite sent to ${d.email}`:`Invite ready for ${d.email}`);
+        if(!d.emailed&&d.acceptUrl){try{await navigator.clipboard?.writeText(d.acceptUrl);toast("Invite link copied");}catch(e){}}
+        loadInvites();
+      }else{
+        toast("Added to the group");
+        if(refreshGroup)refreshGroup(groupId);
+      }
+      setQ("");setResults([]);
+    }catch(e){toast(e.message);}
+    finally{setBusy(false);}
+  };
+
+  const removeMember=async uid=>{
+    if(busy)return;setBusy(true);
+    try{
+      const r=await fetch(`/api/groups/${groupId}/members`,{
+        method:"DELETE",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({userId:uid}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't remove them");
+      toast("Removed from the group");
+      if(refreshGroup)refreshGroup(groupId);
+    }catch(e){toast(e.message);}
+    finally{setBusy(false);}
+  };
+
+  const revokeInvite=async id=>{
+    try{
+      await fetch(`/api/groups/${groupId}/invites`,{
+        method:"DELETE",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({id}),
+      });
+      toast("Invite withdrawn");loadInvites();
+    }catch(e){toast("Couldn't withdraw that invite");}
+  };
+
+  const save=()=>{updateGroup(groupId,g=>({...g,name,emoji}),{sync:true});toast("Group updated");onBack();};
+
   return(
     <div className="sc">
       <div style={{padding:"12px 20px 18px"}}>
@@ -1042,19 +1106,41 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast}){
           ))}
         </div>
       </div>
+
       <div style={{height:1,background:C.border,margin:"6px 0 14px"}}/>
-      <div style={{padding:"0 20px 10px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+
+      <div style={{padding:"0 20px 10px"}}>
+        <span className="sl">Add someone</span>
+        <input className="inp" value={q} onChange={e=>search(e.target.value)}
+          placeholder="Search by name, or type an email to invite"
+          style={{width:"100%",marginTop:8}}/>
+        {searching&&<div style={{fontSize:12,color:C.t2,marginTop:8}}>Searching…</div>}
+        {!searching&&results.length===0&&isEmail(q)&&(
+          <button className="bsm bsm-p" style={{marginTop:10}} disabled={busy}
+            onClick={()=>addMember({email:q.trim()})}>
+            {busy?"Sending…":`Invite ${q.trim()}`}
+          </button>
+        )}
+        {!searching&&results.length===0&&q.length>=2&&!isEmail(q)&&(
+          <div style={{fontSize:12,color:C.t2,marginTop:8}}>
+            Nobody found. Type their full email address to invite them.
+          </div>
+        )}
+      </div>
+
+      {results.map(u=>{
+        const c=toContact(u);
+        return(
+          <div key={u.id} className="ri" onClick={()=>addMember({userId:u.id})}>
+            <Av u={c} lg/>
+            <div className="ri-inf"><div className="ri-t">{c.name}</div><div className="ri-s">{c.handle}</div></div>
+            <button className="bsm bsm-p">+ Add</button>
+          </div>
+        );
+      })}
+
+      <div style={{padding:"14px 20px 10px"}}>
         <span className="sl">Members ({members.length})</span>
-        <button style={{background:"linear-gradient(135deg,#C49A38,"+C.accent+")",color:"white",border:"none",
-          borderRadius:12,padding:"7px 14px",fontSize:12,fontWeight:600,cursor:"pointer",
-          fontFamily:"'Space Grotesk',sans-serif",boxShadow:"0 3px 12px rgba(212,168,67,0.2)"}}
-          onClick={()=>{
-            const msg="Hey! Join our group on Reach to help plan our next trip together. Download the app and take the quick quiz: https://reach-backend-gamma.vercel.app";
-            if(navigator.share){navigator.share({title:"Join us on Reach",text:msg});}
-            else{navigator.clipboard?.writeText(msg);alert("Invite link copied!");}
-          }}>
-          + Invite
-        </button>
       </div>
       {members.map(uid=>{
         const u=um[uid];if(!u)return null;
@@ -1062,22 +1148,29 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast}){
           <div key={uid} className="ri">
             <Av u={u} lg/>
             <div className="ri-inf"><div className="ri-t">{u.name}</div><div className="ri-s">{u.handle}</div></div>
-            <button className="bsm bsm-r" onClick={()=>setMembers(m=>m.filter(id=>id!==uid))}>Remove</button>
+            <button className="bsm bsm-r" disabled={busy} onClick={()=>removeMember(uid)}>Remove</button>
           </div>
         );
       })}
-      {nonMembers.length>0&&(
+
+      {invites.length>0&&(
         <>
-          <div style={{padding:"14px 20px 10px"}}><span className="sl">Add Members</span></div>
-          {nonMembers.map(u=>(
-            <div key={u.id} className="ri" onClick={()=>setMembers(m=>[...m,u.id])}>
-              <Av u={u} lg/>
-              <div className="ri-inf"><div className="ri-t">{u.name}</div><div className="ri-s">{u.handle}</div></div>
-              <button className="bsm bsm-p">+ Add</button>
+          <div style={{padding:"14px 20px 10px"}}>
+            <span className="sl">Invited ({invites.length})</span>
+          </div>
+          {invites.map(inv=>(
+            <div key={inv.id} className="ri">
+              <div className="av-lg" style={{background:C.s3,color:C.t2,fontSize:18}}>✉️</div>
+              <div className="ri-inf">
+                <div className="ri-t">{inv.email}</div>
+                <div className="ri-s">Waiting for them to sign in</div>
+              </div>
+              <button className="bsm bsm-r" onClick={()=>revokeInvite(inv.id)}>Withdraw</button>
             </div>
           ))}
         </>
       )}
+
       <div style={{padding:"18px 20px 30px"}}>
         <button className="bp" onClick={save}>Save Changes</button>
       </div>
@@ -1093,9 +1186,11 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
   const [name,setName]=useState("");
   const [emoji,setEmoji]=useState("🎉");
   const [members,setMembers]=useState([]);
+  const [inviteEmails,setInviteEmails]=useState([]);
   const [searchQuery,setSearchQuery]=useState("");
   const [searchResults,setSearchResults]=useState([]);
   const [searching,setSearching]=useState(false);
+  const isEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v||"").trim());
   const searchUsers=async(q)=>{
     setSearchQuery(q);
     if(!q||q.length<2){setSearchResults([]);return;}
@@ -1106,10 +1201,16 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
     }catch(e){}
     finally{setSearching(false);}
   };
+  const addInviteEmail=()=>{
+    const e=searchQuery.trim().toLowerCase();
+    if(!isEmail(e))return;
+    setInviteEmails(list=>list.includes(e)?list:[...list,e]);
+    setSearchQuery("");setSearchResults([]);
+  };
   const emojis=["🎓","👨‍👩‍👧‍👦","💼","🏖️","🎸","🍕","🏔️","✈️","🎉","🌍"];
   const create=()=>{
     const tempId="g_local_"+Date.now();
-    const finalEmoji=(emoji&&emoji!==DEFAULT_GROUP_EMOJI)?emoji:inferGroupEmoji(name);const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:members,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
+    const finalEmoji=(emoji&&emoji!==DEFAULT_GROUP_EMOJI)?emoji:inferGroupEmoji(name);const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:members,inviteEmails,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
     setGroups(gs=>[...gs,newGroup]);
     toast(`${name} created!`);
     // Save to server in background
@@ -1142,8 +1243,11 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
           <div style={{padding:"0 20px 12px"}}>
             <input className="inp" value={searchQuery||""} onChange={e=>searchUsers(e.target.value)} placeholder="Search by name or email..." style={{marginBottom:8}}/>
             {searching&&<div style={{fontSize:12,color:C.t3,padding:"4px 0"}}>Searching...</div>}
-            {(searchQuery||"").length>=2&&searchResults.length===0&&!searching&&(
-              <div style={{fontSize:12,color:C.t3,padding:"8px 0"}}>No users found — they need to sign up at reach-backend-gamma.vercel.app first.</div>
+            {(searchQuery||"").length>=2&&searchResults.length===0&&!searching&&isEmail(searchQuery)&&(
+              <button className="bsm bsm-p" onClick={addInviteEmail}>Invite {searchQuery.trim()}</button>
+            )}
+            {(searchQuery||"").length>=2&&searchResults.length===0&&!searching&&!isEmail(searchQuery)&&(
+              <div style={{fontSize:12,color:C.t3,padding:"8px 0"}}>Nobody found. Type their full email address to invite them.</div>
             )}
             {(searchQuery||"").length<2&&(
               <div style={{fontSize:12,color:C.t3,padding:"4px 0"}}>Type a name or email address to find people.</div>
@@ -1162,9 +1266,19 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
               </div>
             );
           })}
-          {members.length>0&&(
+          {inviteEmails.map(e=>(
+            <div key={e} className="ri">
+              <div className="av-lg" style={{background:C.s3,color:C.t2,fontSize:18}}>✉️</div>
+              <div className="ri-inf"><div className="ri-t">{e}</div><div className="ri-s">Will be invited by email</div></div>
+              <button className="bsm bsm-r" onClick={()=>setInviteEmails(l=>l.filter(x=>x!==e))}>Remove</button>
+            </div>
+          ))}
+          {(members.length>0||inviteEmails.length>0)&&(
             <div style={{padding:"0 20px 12px"}}>
-              <div style={{fontSize:12,color:C.accent,fontWeight:500,marginBottom:8}}>{members.length} member{members.length!==1?"s":""} selected</div>
+              <div style={{fontSize:12,color:C.accent,fontWeight:500,marginBottom:8}}>
+                {members.length} member{members.length!==1?"s":""} selected
+                {inviteEmails.length>0?` · ${inviteEmails.length} to invite`:""}
+              </div>
             </div>
           )}
           <div style={{padding:"18px 20px 30px"}}>
@@ -4060,31 +4174,24 @@ export default function ReachApp({realUser}={}){
       // from the same response instead of staying empty.
       rememberUsers(data.flatMap(g=>(g.group_members||[]).map(m=>m.users).filter(Boolean)));
 
-      // Load groups first so UI shows immediately
-      const base=data.map(g=>({
-        id:g.id,
-        name:g.name,
-        emoji:g.emoji||"✈️",
-        memberIds:(g.group_members||[]).map(m=>m.user_id),
-        members:(g.group_members||[]).map(m=>m.users||{id:m.user_id}),
-        wallet:Math.round((g.wallet_balance_cents||0)/100),
-        tags:[],
-        lastActivity:g.updated_at?new Date(g.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"Just created",
-        plans:[],
+      // Groups, members and plans all arrive in this one response.
+      setGroups(data.map(g=>{
+        const memberIds=(g.group_members||[]).map(m=>m.user_id);
+        const plans=(g.plans||[]).map(p=>convertPlan(p,memberIds));
+        return{
+          id:g.id,
+          name:g.name,
+          emoji:g.emoji||"✈️",
+          memberIds,
+          members:(g.group_members||[]).map(m=>m.users||{id:m.user_id}),
+          wallet:Math.round((g.wallet_balance_cents||0)/100),
+          tags:[],
+          lastActivity:plans.length>0
+            ?`${plans.length} plan${plans.length>1?"s":""}`
+            :(g.updated_at?new Date(g.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"Just created"),
+          plans,
+        };
       }));
-      setGroups(base);
-
-      // Then load plans for each group in parallel
-      const withPlans=await Promise.all(base.map(async g=>{
-        try{
-          const r=await fetch(`/api/groups/${g.id}`);
-          if(!r.ok)return g;
-          const detail=await r.json();
-          const plans=(detail.plans||[]).map(p=>convertPlan(p,g.memberIds));
-          return{...g,plans,lastActivity:plans.length>0?`${plans.length} plan${plans.length>1?"s":""}`:g.lastActivity};
-        }catch{return g;}
-      }));
-      setGroups(withPlans);
     }catch(e){console.log("API unavailable, using local state",e);}
     finally{setGroupsLoading(false);}
   };
@@ -4137,7 +4244,7 @@ export default function ReachApp({realUser}={}){
         const res=await fetch("/api/groups",{
           method:"POST",
           headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({name:group.name,emoji:group.emoji,memberIds:group.memberIds||[]}),
+          body:JSON.stringify({name:group.name,emoji:group.emoji,memberIds:group.memberIds||[],inviteEmails:group.inviteEmails||[]}),
         });
         const payload=await res.json().catch(()=>null);
         const savedId=payload&&payload.group&&payload.group.id;

@@ -1,6 +1,7 @@
 import { auth, currentUser } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
+import { claimInvitesFor } from '@/lib/invites';
 
 export async function GET() {
   const { userId: clerkId } = auth();
@@ -69,7 +70,27 @@ export async function GET() {
     }
   }
 
+  // Turn any pending group invites for this address into real memberships.
+  // Only a verified address is honoured — otherwise signing up as someone
+  // else's email would be enough to join their group.
+  let joinedGroups: string[] = [];
+  if (dbUser?.id) {
+    const primary = clerkUser.emailAddresses.find(
+      e => e.id === clerkUser.primaryEmailAddressId
+    ) || clerkUser.emailAddresses[0];
+    const verified = primary?.verification?.status === 'verified';
+    if (verified && primary?.emailAddress) {
+      try {
+        const claimed = await claimInvitesFor(supabase, dbUser.id, primary.emailAddress);
+        joinedGroups = claimed.joined;
+      } catch (e) {
+        console.error('[me] invite claim failed', e);
+      }
+    }
+  }
+
   return NextResponse.json({
+    joinedGroups,
     id: dbUser?.id || clerkId,
     clerkId,
     name,
