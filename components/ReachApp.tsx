@@ -1,7 +1,13 @@
 'use client';
 // @ts-nocheck
 import { useUser } from '@clerk/nextjs';
-import ReachAppCore from './reach-app.jsx';
+import ReachAppCoreUntyped from './reach-app.jsx';
+
+// reach-app.jsx is untyped JS, so TS infers no props for it. Declare the one
+// prop the wrapper actually passes.
+const ReachAppCore = ReachAppCoreUntyped as unknown as (
+  props: { realUser: unknown }
+) => JSX.Element;
 
 export default function ReachAppWrapper() {
   const { user, isLoaded } = useUser();

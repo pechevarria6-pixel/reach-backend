@@ -536,6 +536,8 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
       title:exp.title,
       status:"planning",
       dates:eventDateStr||(bookDate||today.toISOString().split("T")[0])+(bookTime?" at "+bookTime:""),
+      startDate:bookDate||today.toISOString().split("T")[0],
+      endDate:null,
       budget:parseInt((exp.price||"0").replace(/[^0-9]/g,""))||0,
       type:getType(),
       participants:group.memberIds||[],
@@ -1556,6 +1558,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       title:trip.destination,
       status:"approved",
       dates:startDate&&endDate?startDate+" – "+endDate:"Dates TBD",
+      startDate:startDate||null,
+      endDate:endDate||null,
       budget:trip.total_per_person,
       type:"trip",
       participants:group.memberIds||[],
@@ -2039,6 +2043,8 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
       title:trip.destination,
       status:"voting",
       dates:startDate&&endDate?`${startDate} – ${endDate}`:"Dates TBD",
+      startDate:startDate||null,
+      endDate:endDate||null,
       budget:trip.total_per_person,
       type:"trip",
       participants:selGroup?.memberIds||[],
@@ -2404,6 +2410,8 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
       title:planName||(planType==="restaurant"?"Dinner out":planType==="concert"?"Concert Night":planType==="weekend"?"Weekend Away":selGroup?.name+" Trip"),
       status:voting?"voting":"planning",
       dates:dateRange,
+      startDate:(isEvent?eventDate:startDate)||null,
+      endDate:isEvent?null:(endDate||null),
       budget:parseInt(budget)||0,
       type:planType||"trip",
       participants:selGroup?.memberIds||[],
@@ -4037,6 +4045,8 @@ export default function ReachApp({realUser}={}){
     type:p.type||"trip",
     status:p.status||"planning",
     dates:p.start_date&&p.end_date?`${p.start_date} – ${p.end_date}`:p.start_date||"Dates TBD",
+    startDate:p.start_date||null,
+    endDate:p.end_date||null,
     budget:Math.round((p.budget_cents||0)/100),
     participants:p.participants||[],
     itinerary:(p.itinerary||[]).map(item=>({
@@ -4076,13 +4086,19 @@ export default function ReachApp({realUser}={}){
           headers:{"Content-Type":"application/json"},
           body:JSON.stringify({name:group.name,emoji:group.emoji,memberIds:group.memberIds||[]}),
         });
-      try{const _d=await res.clone().json().catch(()=>null);const _realId=_d&&_d.group&&_d.group.id;if(res.ok&&_realId){setGroups(gs=>gs.map(g=>g.id===group.id?{...g,id:_realId}:g));}else if(!res.ok){setGroups(gs=>gs.filter(g=>g.id!==group.id));}}catch(_e){}
-        if(res.ok){
-          const {group:saved}=await res.json();
-          // Replace temp ID with real server ID
-          setGroups(gs=>gs.map(g=>g.id===group.id?{...g,id:saved.id}:g));
-          return saved.id;
+        const payload=await res.json().catch(()=>null);
+        const savedId=payload&&payload.group&&payload.group.id;
+        if(res.ok&&savedId){
+          // Swap the temp g_local_ id for the server's real one.
+          setGroups(gs=>gs.map(g=>g.id===group.id?{...g,id:savedId}:g));
+          return savedId;
         }
+        // The group only ever existed on this device — drop it rather than
+        // leave a ghost that every later write will 404 against.
+        console.error("[saveGroupToServer]",res.status,payload);
+        setGroups(gs=>gs.filter(g=>g.id!==group.id));
+        showToast("Couldn't create that group — please try again");
+        return null;
       }else{
         await fetch(`/api/groups/${group.id}`,{
           method:"PATCH",
@@ -4094,12 +4110,26 @@ export default function ReachApp({realUser}={}){
     return group.id;
   };
 
+  // Plans carry ISO startDate/endDate; `dates` is only ever a display string.
+  // Fall back to parsing it for plans created before that field existed, and
+  // send null rather than a phrase like "Dates TBD" the database can't store.
+  const toIsoDate=v=>{
+    if(!v||typeof v!=="string")return null;
+    const t=v.trim();
+    if(!t)return null;
+    if(/^\d{4}-\d{2}-\d{2}$/.test(t))return t;
+    const d=new Date(t);
+    if(isNaN(d.getTime()))return null;
+    return d.toISOString().split("T")[0];
+  };
+
   const savePlanToServer=async(groupId,plan)=>{
     try{
-      // Parse dates correctly for both event (single) and trip (range)
       const isRange=plan.dates?.includes("–");
-      const startDate=isRange?plan.dates.split("–")[0]?.trim():plan.dates?.split(" at ")[0]||null;
-      const endDate=isRange?plan.dates.split("–")[1]?.trim():null;
+      const startDate=toIsoDate(plan.startDate)
+        ??toIsoDate(isRange?plan.dates.split("–")[0]:plan.dates?.split(" at ")[0]);
+      const endDate=toIsoDate(plan.endDate)
+        ??toIsoDate(isRange?plan.dates.split("–")[1]:null);
 
       const res=await fetch("/api/plans",{
         method:"POST",
@@ -4125,7 +4155,13 @@ export default function ReachApp({realUser}={}){
         setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans:g.plans.map(p=>p.id===plan.id?{...p,id:saved.id}:p)}:g));
         return saved.id;
       }
-    }catch(e){console.log("Plan save failed, kept locally",e);}
+      const err=await res.json().catch(()=>null);
+      console.error("[savePlanToServer]",res.status,err);
+      showToast("Couldn't save that plan — it's only on this device");
+    }catch(e){
+      console.error("[savePlanToServer]",e);
+      showToast("Couldn't save that plan — it's only on this device");
+    }
     return plan.id;
   };
 

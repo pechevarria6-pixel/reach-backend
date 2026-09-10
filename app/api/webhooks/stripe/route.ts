@@ -21,6 +21,17 @@ export async function POST(req: NextRequest) {
   switch (event.type) {
     case 'payment_intent.succeeded': {
       const intent = event.data.object as Stripe.PaymentIntent;
+
+      // Collect-then-approve contributions live in their own table and have
+      // no `payments` row. Mark the share collected and stop — the plan is
+      // booked by the approve endpoint, not by this handler.
+      if (intent.metadata.kind === 'reach_contribution') {
+        await supabase.from('contributions')
+          .update({ status: 'succeeded', updated_at: new Date().toISOString() })
+          .eq('stripe_payment_intent', intent.id);
+        break;
+      }
+
       await supabase.from('payments').update({ status: 'succeeded', stripe_charge_id: intent.latest_charge as string, mfa_verified: intent.metadata.mfa_required === 'true' }).eq('stripe_payment_intent_id', intent.id);
 
       // Check if all travelers have paid and mark plan booked
@@ -41,6 +52,14 @@ export async function POST(req: NextRequest) {
     }
     case 'payment_intent.payment_failed': {
       const intent = event.data.object as Stripe.PaymentIntent;
+
+      if (intent.metadata.kind === 'reach_contribution') {
+        await supabase.from('contributions')
+          .update({ status: 'failed', updated_at: new Date().toISOString() })
+          .eq('stripe_payment_intent', intent.id);
+        break;
+      }
+
       await supabase.from('payments').update({ status: 'failed', failure_reason: intent.last_payment_error?.message }).eq('stripe_payment_intent_id', intent.id);
       break;
     }

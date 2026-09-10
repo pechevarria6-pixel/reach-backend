@@ -3,6 +3,16 @@ import { auth } from '@clerk/nextjs/server';
 import { createServerClient } from '@/lib/supabase';
 import { z } from 'zod';
 
+function toDateOrNull(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const parsed = new Date(s);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().split('T')[0];
+}
+
 const UpdatePlanSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   status: z.enum(['planning','voting','approved','booked','completed','cancelled']).optional(),
@@ -72,6 +82,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
 
   // Handle status-specific timestamps
   const updates: any = { ...body };
+  // Same guard as POST /api/plans: never hand Postgres a display string.
+  if ('start_date' in updates) updates.start_date = toDateOrNull(updates.start_date);
+  if ('end_date' in updates) updates.end_date = toDateOrNull(updates.end_date);
   if (body.status === 'approved') updates.approved_at = new Date().toISOString();
   if (body.status === 'booked') updates.booked_at = new Date().toISOString();
 

@@ -3,6 +3,19 @@ import { auth } from '@clerk/nextjs/server';
 import { createServerClient } from '@/lib/supabase';
 import { z } from 'zod';
 
+// The client stores dates as display strings ("Sat, Mar 8", "Dates TBD").
+// Anything that isn't a real calendar date becomes NULL rather than blowing up
+// the INSERT with a Postgres date-parse error and silently losing the plan.
+function toDateOrNull(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const parsed = new Date(s);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString().split('T')[0];
+}
+
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),
   title: z.string().min(1).max(200),
@@ -39,8 +52,8 @@ export async function POST(req: NextRequest) {
     title: body.title,
     type: body.type,
     status: body.enable_voting ? 'voting' : 'planning',
-    start_date: body.start_date || null,
-    end_date: body.end_date || null,
+    start_date: toDateOrNull(body.start_date),
+    end_date: toDateOrNull(body.end_date),
     budget_cents: body.budget_cents,
     accommodation: body.accommodation || null,
     vibe: body.vibe || null,
@@ -50,7 +63,10 @@ export async function POST(req: NextRequest) {
     created_by: user.id,
   }).select().single();
 
-  if (error || !plan) return NextResponse.json({ error: 'Failed to create plan' }, { status: 500 });
+  if (error || !plan) {
+    console.error('[plans POST] insert failed', error);
+    return NextResponse.json({ error: error?.message || 'Failed to create plan' }, { status: 500 });
+  }
 
   await supabase.from('audit_logs').insert({ user_id: user.id, action: 'plan_created', resource: 'plans', resource_id: plan.id, success: true });
 

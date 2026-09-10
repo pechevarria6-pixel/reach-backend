@@ -22,10 +22,24 @@ export async function GET() {
 
   const { data: memberships } = await supabase
     .from('group_members')
-    .select('groups(*), role')
+    .select('group_id, role')
     .eq('user_id', user.id);
 
-  return NextResponse.json({ groups: memberships?.map(m => ({ ...m.groups, role: m.role })) || [] });
+  const groupIds = (memberships || []).map(m => m.group_id);
+  if (groupIds.length === 0) return NextResponse.json({ groups: [] });
+
+  // Fetch the groups themselves plus every member of each, so the client can
+  // render avatars without a second round trip per group.
+  const { data: groups } = await supabase
+    .from('groups')
+    .select('*, group_members(user_id, role, users(id, name, email, avatar_url))')
+    .in('id', groupIds);
+
+  const roleByGroup = Object.fromEntries((memberships || []).map(m => [m.group_id, m.role]));
+
+  return NextResponse.json({
+    groups: (groups || []).map(g => ({ ...g, role: roleByGroup[g.id] })),
+  });
 }
 
 // POST /api/groups — create a new group

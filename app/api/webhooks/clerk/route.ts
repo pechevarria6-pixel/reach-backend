@@ -9,23 +9,31 @@ export async function POST(req: NextRequest) {
   const svixTimestamp = req.headers.get('svix-timestamp');
   const svixSignature = req.headers.get('svix-signature');
 
-  // Allow test webhook calls without signature during development
   const webhookSecret = process.env.CLERK_WEBHOOK_SECRET;
-  
+  const hasRealSecret = !!webhookSecret && webhookSecret !== 'placeholder';
+
   let event: any;
-  
-  if (webhookSecret && webhookSecret !== 'placeholder' && svixId) {
+
+  if (hasRealSecret) {
+    if (!svixId || !svixTimestamp || !svixSignature) {
+      return NextResponse.json({ error: 'Missing signature headers' }, { status: 400 });
+    }
     try {
-      event = new Webhook(webhookSecret).verify(body, {
-        'svix-id': svixId!,
-        'svix-timestamp': svixTimestamp!,
-        'svix-signature': svixSignature!,
+      event = new Webhook(webhookSecret!).verify(body, {
+        'svix-id': svixId,
+        'svix-timestamp': svixTimestamp,
+        'svix-signature': svixSignature,
       });
     } catch {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
     }
   } else {
-    // Parse without verification for dev/placeholder secret
+    // Unsigned payloads are accepted only in local development. In production
+    // this endpoint can schedule account deletion, so an unverified body would
+    // let anyone delete any account by knowing its Clerk id.
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
+    }
     try { event = JSON.parse(body); } catch {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }

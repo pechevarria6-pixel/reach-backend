@@ -86,8 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   return NextResponse.json({ contribution: data, clientSecret: pi.client_secret });
 }
 
-// WEBHOOK NOTE: in app/api/webhooks/stripe/route.ts, on
-// payment_intent.succeeded where metadata.kind === 'reach_contribution',
-// set contributions.status = 'succeeded' by stripe_payment_intent id.
-// (Three-line addition to the existing handler.)
+// The Stripe webhook marks these succeeded on payment_intent.succeeded where
+// metadata.kind === 'reach_contribution'. The /funding/confirm endpoint does
+// the same check on demand, for clients that finish before the webhook lands.
 export { fundingStatus };

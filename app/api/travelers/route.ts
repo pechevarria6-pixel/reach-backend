@@ -22,8 +22,9 @@ export async function GET(req: NextRequest) {
     .from('group_members').select('user_id, users(*)').eq('group_id', groupId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const travelers = (members || []).map((m: { user_id: string; users: Record<string, unknown> | null }) => {
-    const u = m.users || {};
+  const travelers = (members || []).map((m: any) => {
+    // Supabase types an embedded row as an array; a to-one join returns an object.
+    const u: Record<string, unknown> = (Array.isArray(m.users) ? m.users[0] : m.users) || {};
     const name = String(u.name || '');
     return {
       userId: m.user_id,
