@@ -11,7 +11,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-async function fundingStatus(db: SupabaseClient, planId: string, groupId: string, userId: string) {
+async function fundingStatus(
+  db: SupabaseClient, planId: string, groupId: string, userId: string, budgetCents: number
+) {
   // Target = sum of every non-failed booking priced on this plan
   const { data: bookings } = await db
     .from('bookings')
@@ -28,10 +30,15 @@ async function fundingStatus(db: SupabaseClient, planId: string, groupId: string
   const memberIds = await groupMemberIds(db, groupId);
   const heads = Math.max(1, memberIds.length);
 
+  // Before anything is priced there is nothing to collect against, so fall
+  // back to the plan's own budget. `targetCents` still reports the booking
+  // total, because that is what the approve gate compares against.
+  const basisCents = targetCents > 0 ? targetCents : Math.max(0, budgetCents || 0);
+
   // Split evenly and hand the leftover cents to the earliest members, so the
-  // shares add up to exactly the target rather than leaving a few cents short.
-  const base = Math.floor(targetCents / heads);
-  const remainder = targetCents - base * heads;
+  // shares add up to exactly the basis rather than leaving a few cents short.
+  const base = Math.floor(basisCents / heads);
+  const remainder = basisCents - base * heads;
   const idx = memberIds.indexOf(userId);
   const myShareCents = base + (idx > -1 && idx < remainder ? 1 : 0);
 
@@ -55,7 +62,10 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
   return NextResponse.json(
-    await fundingStatus(ctx.db, params.planId, ctx.plan.group_id as string, ctx.user.id)
+    await fundingStatus(
+      ctx.db, params.planId, ctx.plan.group_id as string, ctx.user.id,
+      Number(ctx.plan.budget_cents) || 0
+    )
   );
 }
 
@@ -69,7 +79,8 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const body = await req.json().catch(() => ({}));
   const status = await fundingStatus(
-    ctx.db, params.planId, ctx.plan.group_id as string, ctx.user.id
+    ctx.db, params.planId, ctx.plan.group_id as string, ctx.user.id,
+    Number(ctx.plan.budget_cents) || 0
   );
 
   // Default to what this member actually owes. An explicit amount is honoured
