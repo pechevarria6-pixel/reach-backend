@@ -1053,6 +1053,8 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast}){
 }
 
 // ─── CREATE GROUP ─────────────────────────────────────────────────────────────
+const DEFAULT_GROUP_EMOJI="🎉";
+function inferGroupEmoji(n){const s=(n||"").toLowerCase();const rules=[[/birthday|bday/,"🎂"],[/ski|snow|tahoe|aspen/,"🎿"],[/beach|cabo|cancun|island|bahamas|miami|playa|lake/,"🏝️"],[/concert|show|festival|music|tour/,"🎸"],[/dinner|food|restaurant|brunch|taco|pizza|omakase/,"🍕"],[/camp|hike|hiking|trail|mountain|yosemite|zion/,"🏕️"],[/vegas|party|bachelor|bachelorette/,"🎉"],[/golf/,"⛳"],[/wedding/,"💍"],[/road ?trip|drive/,"🚗"],[/europe|paris|tokyo|london|flight|abroad|trip|travel/,"✈️"]];for(const r of rules){if(r[0].test(s))return r[1];}return DEFAULT_GROUP_EMOJI;}
 function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
   const [step,setStep]=useState(0);
   const [name,setName]=useState("");
@@ -1074,7 +1076,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
   const emojis=["🎓","👨‍👩‍👧‍👦","💼","🏖️","🎸","🍕","🏔️","✈️","🎉","🌍"];
   const create=()=>{
     const tempId="g_local_"+Date.now();
-    const newGroup={id:tempId,name,emoji,memberIds:members,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
+    const finalEmoji=(emoji&&emoji!==DEFAULT_GROUP_EMOJI)?emoji:inferGroupEmoji(name);const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:members,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
     setGroups(gs=>[...gs,newGroup]);
     toast(`${name} created!`);
     // Save to server in background
