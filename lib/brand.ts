@@ -18,9 +18,14 @@ export const BRAND = {
   accentDeep: '#C49A38',
   /** Text on gold. White on gold is 2.2:1 and fails; this is 9.0:1. */
   onAccent: '#1A1206',
-  /** Primary and muted text on dark surfaces. */
+  /** Raised surfaces. */
+  s1: '#120F09',
+  s2: '#1A1510',
+  border: '#2E2618',
+  /** Primary and muted text on dark surfaces. All clear 4.5:1 on bg. */
   t1: '#F5EDD8',
   t2: '#9A8A6A',
+  t3: '#97845E',
 } as const;
 
 /** Browser theme colour, matching the app surface rather than the surround. */

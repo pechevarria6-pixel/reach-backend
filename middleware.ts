@@ -14,11 +14,18 @@ const isPublicRoute = createRouteMatcher([
 
 export default clerkMiddleware((auth, req) => {
   if (isPublicRoute(req)) return;
+
   // API routes handle their own auth and return proper 401 JSON responses.
-  // Clerk's protect() returns 404 for unauthenticated API requests, which
+  // Clerk's protect() answers an unauthenticated API request with 404, which
   // breaks REST semantics and the Playwright API tests.
   if (req.nextUrl.pathname.startsWith('/api')) return;
-  auth().protect();
+
+  // protect() also 404s an unauthenticated *page* request, so a signed-out
+  // visitor opening /home saw "This page could not be found" instead of the
+  // sign-in screen. Redirect explicitly, and send them back where they were
+  // headed once they're in.
+  const { userId, redirectToSignIn } = auth();
+  if (!userId) return redirectToSignIn({ returnBackUrl: req.url });
 });
 
 export const config = {
