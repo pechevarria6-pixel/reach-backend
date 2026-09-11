@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
+import { BRAND } from '@/lib/brand';
 
 type Invite = {
   status: string;
@@ -12,9 +13,9 @@ type Invite = {
 };
 
 const shell: React.CSSProperties = {
-  minHeight: '100vh',
-  background: '#08080E',
-  color: '#EEEEFF',
+  minHeight: '100dvh',
+  background: BRAND.bg,
+  color: BRAND.t1,
   fontFamily: "'Space Grotesk', system-ui, sans-serif",
   display: 'flex',
   flexDirection: 'column',
@@ -26,8 +27,8 @@ const shell: React.CSSProperties = {
 };
 
 const button: React.CSSProperties = {
-  background: '#6C63FF',
-  color: 'white',
+  background: BRAND.accent,
+  color: BRAND.onAccent,
   border: 'none',
   borderRadius: 12,
   padding: '14px 28px',
@@ -74,7 +75,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     return (
       <div style={shell}>
         <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 30 }}>reach</div>
-        <p style={{ color: '#9A9AB8', maxWidth: 320 }}>{error}</p>
+        <p style={{ color: BRAND.t2, maxWidth: 320 }}>{error}</p>
         <a href="/home" style={{ ...button, textDecoration: 'none' }}>Go to Reach</a>
       </div>
     );
@@ -84,7 +85,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     return (
       <div style={shell}>
         <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 30 }}>reach</div>
-        <p style={{ color: '#9A9AB8' }}>Loading your invite…</p>
+        <p style={{ color: BRAND.t2 }}>Loading your invite…</p>
       </div>
     );
   }
@@ -97,7 +98,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     return (
       <div style={shell}>
         <div style={{ fontSize: 44 }}>{invite.groupEmoji || '✈️'}</div>
-        <p style={{ color: '#9A9AB8', maxWidth: 320 }}>{message}</p>
+        <p style={{ color: BRAND.t2, maxWidth: 320 }}>{message}</p>
         <a href="/home" style={{ ...button, textDecoration: 'none' }}>Go to Reach</a>
       </div>
     );
@@ -109,7 +110,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
       <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 30 }}>
         {invite.groupName || 'A group'}
       </div>
-      <p style={{ color: '#9A9AB8', maxWidth: 320, lineHeight: 1.5 }}>
+      <p style={{ color: BRAND.t2, maxWidth: 320, lineHeight: 1.5 }}>
         {invite.invitedBy ? `${invite.invitedBy} invited you` : 'You have been invited'} to plan
         trips together on Reach.
       </p>
@@ -127,7 +128,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
         </a>
       )}
 
-      <p style={{ color: '#6A6A88', fontSize: 12, maxWidth: 300 }}>
+      <p style={{ color: BRAND.t2, fontSize: 12, maxWidth: 300 }}>
         Signing in with the email address this was sent to joins you automatically.
       </p>
     </div>

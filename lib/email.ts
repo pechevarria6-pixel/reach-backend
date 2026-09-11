@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { emailButtonStyle } from '@/lib/brand';
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const FROM = process.env.EMAIL_FROM || 'noreply@reach.app';
@@ -58,7 +59,7 @@ export async function sendGroupInvite(
     html: `
       <h1>${opts.groupEmoji || '\u2708\uFE0F'} ${opts.groupName}</h1>
       <p>${who} to plan trips together on Reach.</p>
-      <a href="${opts.acceptUrl}" style="background:#6C63FF;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">Join ${opts.groupName}</a>
+      <a href="${opts.acceptUrl}" style="${emailButtonStyle}">Join ${opts.groupName}</a>
       <p style="color:#666;font-size:13px;">Signing in with this email address joins you automatically — the link is just a shortcut. The invite expires in 30 days.</p>
     `,
   });
@@ -72,7 +73,7 @@ export async function sendMagicLink(to: string, link: string) {
     html: `
       <h1>Sign in to Reach</h1>
       <p>Tap the button below to sign in instantly. This link expires in 10 minutes.</p>
-      <a href="${link}" style="background:#6C63FF;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;margin:16px 0;">Sign in to Reach</a>
+      <a href="${link}" style="${emailButtonStyle}">Sign in to Reach</a>
       <p>If you didn't request this, you can safely ignore this email.</p>
     `,
   });

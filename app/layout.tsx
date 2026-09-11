@@ -1,5 +1,6 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import type { Metadata, Viewport } from 'next';
+import { BRAND, THEME_COLOR } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: 'Reach — Plan experiences together',
@@ -10,8 +11,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  themeColor: '#08080E',
+  // maximumScale was 1, which blocks pinch-zoom entirely. People who need
+  // to magnify text could not.
+  maximumScale: 5,
+  viewportFit: 'cover',
+  themeColor: THEME_COLOR,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -27,7 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
           <meta name="apple-mobile-web-app-title" content="Reach" />
         </head>
-        <body style={{ margin: 0, background: '#050508' }}>
+        <body style={{ margin: 0, background: BRAND.page }}>
           {children}
         </body>
       </html>

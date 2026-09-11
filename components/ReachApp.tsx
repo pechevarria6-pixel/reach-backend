@@ -1,6 +1,7 @@
 'use client';
 // @ts-nocheck
 import { useUser } from '@clerk/nextjs';
+import { BRAND } from '@/lib/brand';
 import ReachAppCoreUntyped from './reach-app.jsx';
 
 // reach-app.jsx is untyped JS, so TS infers no props for it. Declare the one
@@ -16,11 +17,11 @@ export default function ReachAppWrapper() {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        minHeight: '100vh', background: '#08080E', flexDirection: 'column', gap: 16,
+        minHeight: '100dvh', background: BRAND.bg, flexDirection: 'column', gap: 16,
         fontFamily: 'Space Grotesk, sans-serif',
       }}>
-        <div style={{ fontFamily: 'Instrument Serif, serif', fontSize: 28, color: '#EEEEFF' }}>reach</div>
-        <div style={{ width: 32, height: 32, border: '3px solid #6C63FF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <div style={{ fontFamily: 'Instrument Serif, serif', fontSize: 28, color: BRAND.t1 }}>reach</div>
+        <div style={{ width: 32, height: 32, border: `3px solid ${BRAND.accent}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );

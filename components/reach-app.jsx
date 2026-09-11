@@ -1,32 +1,76 @@
 import { useState, useEffect, useRef } from "react";
 
+// ─── Design tokens ───────────────────────────────────────────────────────
+// The single source of truth for colour. Anything hardcoded in a style block
+// is a bug: the file used to carry three different golds (#D4A843, #D4AF37,
+// #C49A38) plus leftovers from an earlier indigo palette, so the same element
+// changed shade depending on which screen drew it.
+//
+// Contrast is measured against `bg` for body surfaces and `s2` for cards.
+// Every text pairing below clears 4.5:1.
 const C = {
-  // Backgrounds - warm deep noir
+  // Backgrounds — warm deep noir. `page` is the surround outside the app
+  // frame; it was a cool #050508 while everything inside was warm, which read
+  // as a colour cast along the edges.
+  page: "#050406",
   bg: "#0A0805", s1: "#120F09", s2: "#1A1510", s3: "#221C14",
   border: "#2E2618", borderLight: "#3D3220",
-  // Brand - warm gold
-  accent: "#D4A843", accentHover: "#E0BC68", accentDim: "rgba(212,168,67,0.12)", accentBorder: "rgba(212,168,67,0.3)",
+
+  // Brand — warm gold. `accentDeep` is the gradient foot on raised buttons.
+  accent: "#D4A843", accentDeep: "#C49A38", accentHover: "#E0BC68",
+  accentDim: "rgba(212,168,67,0.12)", accentBorder: "rgba(212,168,67,0.3)",
+
+  // Text that sits ON gold or any other saturated fill. White on gold is
+  // 2.2:1 and fails; this ink is 9.0:1.
+  onAccent: "#1A1206",
+
   // Semantic
   green: "#52C97B", greenDim: "rgba(82,201,123,0.1)",
   amber: "#F59E0B", amberDim: "rgba(245,158,11,0.1)",
   red: "#F87171", redDim: "rgba(248,113,113,0.1)",
   blue: "#60A5FA", blueDim: "rgba(96,165,250,0.1)",
   gold: "#D4A843", goldDim: "rgba(212,168,67,0.08)",
-  // Text - warm creams
-  t1: "#F5EDD8", t2: "#9A8A6A", t3: "#5C4E32", t4: "#3A2E1A",
+
+  // Text — warm creams. t3 was #5C4E32, putting section labels and inactive
+  // nav at 2.2:1. t1, t2 and t3 now clear 4.5:1 on every surface: bg, cards
+  // (s2) and raised cards (s3). t4 is the faintest tier and only clears on bg
+  // (4.5:1) — keep it for de-emphasised text on the base background, and
+  // reach for t3 on any card.
+  t1: "#F5EDD8", t2: "#9A8A6A", t3: "#97845E", t4: "#8A7550",
 };
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-body{background:#050508;display:flex;justify-content:center;min-height:100vh;padding:20px 0 40px;font-family:'Space Grotesk',sans-serif;}
-.aw{width:393px;height:852px;background:${C.bg};border-radius:50px;overflow:hidden;position:relative;border:1.5px solid rgba(212,168,67,0.25);box-shadow:0 80px 200px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.04) inset,0 1px 0 rgba(255,255,255,.08) inset,0 0 80px rgba(212,168,67,0.08);display:flex;flex-direction:column;}
+body{background:${C.page};display:flex;justify-content:center;min-height:100vh;font-family:'Space Grotesk',sans-serif;color:${C.t1};-webkit-font-smoothing:antialiased;}
+/* Inline styles don't inherit a font, which is why the family string was
+   repeated dozens of times across the file. Set it once for every control. */
+button,input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;}
+button{min-height:44px;}
+/* Small pill buttons and icon-only controls opt out of the 44px floor but
+   keep a generous tap area via padding. */
+.bsm,.nb-btn,.cb{min-height:0;}
+/* The app used to be a fixed 393x852 bezel with no media queries at all, so
+   on an actual phone the frame was wider than the viewport and taller than
+   the screen: it overflowed sideways and got clipped at the bottom. Phones
+   now get the real viewport; the decorative frame is a desktop affordance. */
+.aw{width:100%;max-width:520px;min-height:100dvh;background:${C.bg};position:relative;display:flex;flex-direction:column;overflow:hidden;
+  padding-top:env(safe-area-inset-top);}
+@media (min-width:560px) and (min-height:900px){
+  body{padding:20px 0 40px;}
+  .aw{width:393px;max-width:393px;height:852px;min-height:0;border-radius:50px;padding-top:0;
+    border:1.5px solid ${C.accentBorder};
+    box-shadow:0 80px 200px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.04) inset,0 1px 0 rgba(255,255,255,.08) inset,0 0 80px rgba(212,168,67,0.08);}
+}
 .sb{display:flex;justify-content:space-between;align-items:center;padding:14px 28px 0;flex-shrink:0;font-size:12px;font-weight:600;color:${C.t2};letter-spacing:.02em;}
+.sb-fake{display:none;}
+@media (min-width:560px) and (min-height:900px){.sb-fake{display:inline;}}
+@media (max-width:559px){.sb{justify-content:center;}}
 .sb-logo{font-family:'Instrument Serif',serif;font-size:17px;color:${C.t1};letter-spacing:-.02em;}
 .ma{flex:1;overflow:hidden;position:relative;}
-.sc{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;padding-bottom:90px;}
+.sc{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding-bottom:calc(90px + env(safe-area-inset-bottom));}
 .sc::-webkit-scrollbar{display:none;}
-.nb{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;background:rgba(6,6,16,.95);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid rgba(212,168,67,0.12);padding:10px 0 24px;z-index:100;}
+.nb{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;background:${C.bg}F2;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid ${C.accentBorder};padding:10px 0 max(24px,env(safe-area-inset-bottom));z-index:100;}
 .nb-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:500;color:${C.t3};transition:color .15s;padding:4px 0;}
 .nb-btn.active{color:${C.accent};}
 .nb-btn svg{width:22px;height:22px;transition:transform .15s;}
@@ -34,9 +78,17 @@ body{background:#050508;display:flex;justify-content:center;min-height:100vh;pad
 .nb-dot{width:4px;height:4px;border-radius:50%;background:${C.accent};margin:0 auto;opacity:0;transition:opacity .15s;}
 .nb-btn.active .nb-dot{opacity:1;}
 .pt{font-family:'Instrument Serif',serif;font-size:30px;color:${C.t1};line-height:1.1;}
+.hd{padding:8px 20px 16px;flex-shrink:0;}
+.hd-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;}
+.hd-back{display:inline-flex;align-items:center;gap:4px;background:none;border:none;cursor:pointer;color:${C.t2};font-size:13px;font-weight:500;padding:10px 14px 10px 0;margin-left:-2px;transition:color .15s;flex-shrink:0;}
+.hd-back:hover{color:${C.t1};}
+.hd-back:active{opacity:.6;}
+.hd-back svg{width:18px;height:18px;}
+.hd-ov{position:absolute;top:calc(16px + env(safe-area-inset-top));left:16px;width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;z-index:10;}
+.hd-ov:active{transform:scale(.94);}
 .sl{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:${C.t3};}
 .card{background:linear-gradient(145deg,${C.s1},${C.s2});border:1px solid ${C.border};border-radius:22px;overflow:hidden;transition:all .2s;cursor:pointer;}
-.card:hover{border-color:rgba(124,110,255,0.3);transform:translateY(-2px);box-shadow:0 8px 30px rgba(0,0,0,0.4);}
+.card:hover{border-color:${C.accentBorder};transform:translateY(-2px);box-shadow:0 8px 30px rgba(0,0,0,0.4);}
 .card:active{transform:scale(.98);}
 .pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;}
 .pill-g{background:${C.greenDim};color:${C.green};}
@@ -44,7 +96,7 @@ body{background:#050508;display:flex;justify-content:center;min-height:100vh;pad
 .pill-r{background:${C.redDim};color:${C.red};}
 .pill-p{background:${C.accentDim};color:${C.accent};}
 .pill-m{background:${C.s3};color:${C.t2};}
-.bp{width:100%;padding:16px 20px;background:linear-gradient(135deg,#C49A38,${C.accent});color:white;border:none;border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:0 4px 20px rgba(212,168,67,0.25);}
+.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:0 4px 20px rgba(212,168,67,0.25);}
 .bp:hover{transform:translateY(-1px);box-shadow:0 6px 24px rgba(212,168,67,0.35);}
 .bp:active{transform:scale(.98);}
 .bp:disabled{opacity:.35;cursor:not-allowed;}
@@ -52,7 +104,7 @@ body{background:#050508;display:flex;justify-content:center;min-height:100vh;pad
 .bs:hover{border-color:${C.borderLight};}
 .bsm{padding:7px 14px;border-radius:10px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s;}
 .bsm:hover{opacity:.85;}
-.bsm-p{background:${C.accent};color:white;}
+.bsm-p{background:${C.accent};color:${C.onAccent};}
 .bsm-g{background:${C.s3};color:${C.t2};}
 .bsm-r{background:${C.redDim};color:${C.red};}
 .bsm-gr{background:${C.greenDim};color:${C.green};}
@@ -65,7 +117,7 @@ body{background:#050508;display:flex;justify-content:center;min-height:100vh;pad
 .sh-hdl{width:36px;height:4px;border-radius:2px;background:${C.border};margin:12px auto 0;}
 .sh-hdr{padding:20px 20px 16px;border-bottom:1px solid ${C.border};display:flex;align-items:center;justify-content:space-between;}
 .sh-ttl{font-size:17px;font-weight:600;color:${C.t1};}
-.toast{position:absolute;top:70px;left:16px;right:16px;background:${C.green};color:white;border-radius:14px;padding:12px 16px;font-size:13px;font-weight:600;z-index:500;text-align:center;animation:ti .3s ease,to .3s ease 2.2s forwards;}
+.toast{position:absolute;top:70px;left:16px;right:16px;background:${C.green};color:${C.onAccent};border-radius:14px;padding:12px 16px;font-size:13px;font-weight:600;z-index:500;text-align:center;animation:ti .3s ease,to .3s ease 2.2s forwards;}
 .ri{display:flex;align-items:center;gap:12px;padding:13px 20px;cursor:pointer;transition:background .1s;}
 .ri:hover{background:${C.s2};}
 .ri-ic{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
@@ -79,7 +131,7 @@ body{background:#050508;display:flex;justify-content:center;min-height:100vh;pad
 .cb-row{display:flex;align-items:center;gap:12px;padding:12px 20px;cursor:pointer;transition:background .1s;}
 .cb-row:hover{background:${C.s2};}
 .cb{width:22px;height:22px;border-radius:7px;border:2px solid ${C.border};flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .15s;}
-.cb.ck{background:${C.accent};border-color:${C.accent};}
+.cb.ck{background:${C.accent};border-color:${C.accent};color:${C.onAccent};}
 .pb-t{height:3px;background:${C.s3};border-radius:2px;}
 .pb-f{height:100%;border-radius:2px;background:${C.accent};transition:width .3s;}
 .sd{display:flex;gap:6px;}
@@ -109,7 +161,11 @@ const ALL_CONTACTS = [];
 // Avatars need { id, name, handle, color, initials }. The API returns raw
 // `users` rows, so adapt them here. Without this every member avatar rendered
 // blank, because the user map was built only from ALL_CONTACTS — which is empty.
-const AVATAR_COLORS = ["#6C63FF","#FF6B9D","#2CC3A5","#F5A623","#4A9EFF","#B266FF","#FF7A59","#3ECF8E"];
+// Eight hues held at a similar, deliberately muted luminance so no single
+// avatar shouts louder than the others, and all dark enough that the white
+// initials clear 4.5:1. The previous set was bright and fully saturated,
+// every one of them failing contrast and fighting the warm noir surface.
+const AVATAR_COLORS = ["#8C6D1F","#9E4B57","#3F7D63","#8A5A2B","#3D6389","#6B4A80","#A0563C","#4A7A52"];
 function initialsFor(name,email){
   const src=(name||"").trim()||(email||"").split("@")[0]||"";
   const parts=src.split(/[\s._-]+/).filter(Boolean);
@@ -140,9 +196,9 @@ function toContact(u){
 const INIT_GROUPS = [];
 
 const EXPS = [
-  {id:"e1",title:"Northern Lights, Iceland",sub:"7 nights · Adventure",price:"$2,800",emoji:"🌌",bg:"linear-gradient(145deg,#1a1060,#6C63FF)",tags:["Trips"]},
-  {id:"e2",title:"Tulum Food & Culture",sub:"5 nights · Cultural",price:"$1,900",emoji:"🌮",bg:"linear-gradient(145deg,#064E3B,#10B981)",tags:["Trips"]},
-  {id:"e3",title:"Beyoncé · MSG",sub:"Concert · Aug 19",price:"$340",emoji:"🎤",bg:"linear-gradient(145deg,#78350F,#F59E0B)",tags:["Concerts"]},
+  {id:"e1",title:"Northern Lights, Iceland",sub:"7 nights · Adventure",price:"$2,800",emoji:"🌌",bg:"linear-gradient(145deg,#1a1060,${C.accent})",tags:["Trips"]},
+  {id:"e2",title:"Tulum Food & Culture",sub:"5 nights · Cultural",price:"$1,900",emoji:"🌮",bg:"linear-gradient(145deg,#064E3B,${C.green})",tags:["Trips"]},
+  {id:"e3",title:"Beyoncé · MSG",sub:"Concert · Aug 19",price:"$340",emoji:"🎤",bg:"linear-gradient(145deg,#78350F,${C.amber})",tags:["Concerts"]},
   {id:"e4",title:"Montauk Beach House",sub:"Weekend · Aug 2–4",price:"$420/night",emoji:"🌊",bg:"linear-gradient(145deg,#1E3A5F,#3B82F6)",tags:["Weekends"]},
   {id:"e5",title:"New Orleans Jazz Fest",sub:"Festival · May 2027",price:"$180/day",emoji:"🎷",bg:"linear-gradient(145deg,#4C1D95,#EC4899)",tags:["Festivals"]},
   {id:"e6",title:"Nobu Malibu",sub:"Restaurant · Dinner for groups",price:"$160/pp",emoji:"🍣",bg:"linear-gradient(145deg,#1F2937,#6B7280)",tags:["Restaurants"]},
@@ -162,6 +218,37 @@ const Ic = {
   Edit:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" width="15" height="15"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
   Plus:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="18" height="18"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
 };
+
+// ─── Screen chrome ───────────────────────────────────────────────────────
+// Every screen used to hand-roll its own back button. There were six different
+// implementations across twelve call sites, with four different bottom
+// paddings, three different labels and tap targets as small as 24px. One
+// component means one behaviour, and a 44px target everywhere.
+function ScreenHeader({onBack,label="Back",title,right,overlay=false}){
+  // Overlay: floats on a hero image, so it carries its own scrim.
+  if(overlay){
+    return(
+      <button onClick={onBack} aria-label={label} className="hd-ov">
+        <Ic.ChevL/>
+      </button>
+    );
+  }
+  // With a title, the component owns the whole header block including its
+  // padding. Without one it is just the button, which is a drop-in for the
+  // bare buttons that used to sit inside each screen's own padded wrapper.
+  const back=(
+    <button onClick={onBack} className="hd-back" aria-label={label}>
+      <Ic.ChevL/>{label?<span>{label}</span>:null}
+    </button>
+  );
+  if(!title)return back;
+  return(
+    <div className="hd">
+      <div className="hd-row">{back}{right}</div>
+      <div className="pt" style={{fontSize:24}}>{title}</div>
+    </div>
+  );
+}
 
 function Av({u,lg}){return <div className={lg?"av-lg":"av"} style={{background:u.color}}>{u.initials}</div>;}
 function AvCluster({ids,um,max=4}){const shown=ids.slice(0,max);const extra=ids.length-max;return <div className="av-cl">{shown.map(id=>{const u=um[id];return u?<div key={id} className="av" style={{background:u.color}}>{u.initials}</div>:null;})}{extra>0&&<div className="av" style={{background:C.s3,color:C.t2}}>+{extra}</div>}</div>;}
@@ -261,7 +348,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
         {upcoming.map(plan=>(
           <div key={plan.id} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
-            style={{minWidth:200,background:"linear-gradient(145deg,#1a1060,#6C63FF)",borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s"}}>
+            style={{minWidth:200,background:"linear-gradient(145deg,#1a1060,${C.accent})",borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s"}}>
             <div style={{padding:16}}>
               <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`} style={{marginBottom:10,display:"inline-flex"}}>
                 {plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":"📋 Planning"}
@@ -428,7 +515,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
               background:filter===f?C.accentDim:C.s1,
               color:filter===f?C.accent:C.t2,
               fontSize:12,fontWeight:600,cursor:"pointer",
-              whiteSpace:"nowrap",fontFamily:"'Space Grotesk',sans-serif",flexShrink:0}}>
+              whiteSpace:"nowrap",flexShrink:0}}>
             {f==="Nearby"&&userLocation?"📍 "+f:f}
           </button>
         ))}
@@ -442,7 +529,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
               📍 Near you in {city}
             </span>
             <button onClick={()=>setFilter("Nearby")}
-              style={{fontSize:12,color:C.accent,background:"none",border:"none",cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+              style={{fontSize:12,color:C.accent,background:"none",border:"none",cursor:"pointer"}}>
               See all →
             </button>
           </div>
@@ -594,8 +681,8 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   return(
     <div className="sc" style={{paddingBottom:0}}>
       {/* Header */}
-      <div style={{height:200,background:exp.bg||"linear-gradient(135deg,#1a1060,#6C63FF)",position:"relative",flexShrink:0}}>
-        <button onClick={onBack} style={{position:"absolute",top:16,left:16,width:36,height:36,borderRadius:"50%",background:"rgba(0,0,0,.4)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"white"}}><Ic.ChevL/></button>
+      <div style={{height:200,background:exp.bg||"linear-gradient(135deg,#1a1060,${C.accent})",position:"relative",flexShrink:0}}>
+        <ScreenHeader onBack={onBack} overlay/>
         <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 40%,rgba(0,0,0,.9))",display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:20}}>
           <div style={{fontSize:40,marginBottom:8}}>{exp.emoji||"🎯"}</div>
           <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:"white",lineHeight:1.2}}>{exp.title}</div>
@@ -634,7 +721,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
         <div style={{height:1,background:C.border,margin:"20px 0"}}/>
 
         {/* Book Now — direct action */}
-        <button className="bp" style={{marginBottom:10,width:"100%",background:"linear-gradient(135deg,#C49A38,"+C.accent+")"}}
+        <button className="bp" style={{marginBottom:10,width:"100%",background:"linear-gradient(135deg,${C.accentDeep},"+C.accent+")"}}
           onClick={()=>setBooking(true)}>
           🎯 Book Now
         </button>
@@ -642,7 +729,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
           onClick={()=>setPlanPicker(true)}>
           ➕ Add to a Group Plan
         </button>
-        <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",width:"100%",padding:"8px 0"}}
+        <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",width:"100%",padding:"8px 0"}}
           onClick={()=>setGpicker(true)}>
           💬 Share with a Group
         </button>
@@ -716,7 +803,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                           <button key={t} onClick={()=>setBookTime(t)}
                             style={{padding:"8px 14px",borderRadius:20,border:"1px solid "+(bookTime===t?C.accent:C.border),
                               background:bookTime===t?C.accentDim:C.s2,color:bookTime===t?C.accent:C.t2,
-                              fontSize:13,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                              fontSize:13,cursor:"pointer"}}>
                             {t}
                           </button>
                         ))}
@@ -731,7 +818,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                         <button key={n} onClick={()=>setBookGuests(n)}
                           style={{width:40,height:40,borderRadius:10,border:"1px solid "+(bookGuests===n?C.accent:C.border),
                             background:bookGuests===n?C.accentDim:C.s2,color:bookGuests===n?C.accent:C.t2,
-                            fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                            fontSize:14,fontWeight:600,cursor:"pointer"}}>
                           {n}
                         </button>
                       ))}
@@ -756,7 +843,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             {bookStep===1&&(
               <>
                 <div className="sh-hdr">
-                  <button style={{background:"none",border:"none",cursor:"pointer",color:C.t2,fontSize:13,fontFamily:"'Space Grotesk',sans-serif"}} onClick={()=>setBookStep(0)}>← Back</button>
+                  <button style={{background:"none",border:"none",cursor:"pointer",color:C.t2,fontSize:13}} onClick={()=>setBookStep(0)}>← Back</button>
                   <span className="sh-ttl">Confirm booking</span>
                   <div style={{width:48}}/>
                 </div>
@@ -894,7 +981,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
   return(
     <div className="sc">
       <div style={{padding:"12px 20px 0"}}>
-        <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,marginBottom:12,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Groups</button>
+        <ScreenHeader onBack={onBack} label="Groups"/>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
           <div>
             <div style={{fontSize:32,marginBottom:4}}>{group.emoji}</div>
@@ -905,7 +992,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
         </div>
         <div style={{display:"flex",gap:0,marginTop:16,borderBottom:`1px solid ${C.border}`}}>
           {["plans","members","wallet"].map(t=>(
-            <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"10px 0",background:"none",border:"none",borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,color:tab===t?C.accent:C.t2,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",textTransform:"capitalize",transition:"all .15s"}}>{t}</button>
+            <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"10px 0",background:"none",border:"none",borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,color:tab===t?C.accent:C.t2,fontSize:13,fontWeight:600,cursor:"pointer",textTransform:"capitalize",transition:"all .15s"}}>{t}</button>
           ))}
         </div>
       </div>
@@ -917,7 +1004,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>No plans yet</div>
               <div style={{fontSize:13,color:C.t2,marginBottom:20}}>Start planning your first experience together</div>
               <button className="bp" onClick={()=>push("groupTrip",{groupId})}>✨ Plan a Trip Together</button>
-              <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",marginTop:10,padding:"8px 0"}} onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
+              <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",marginTop:10,padding:"8px 0"}} onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
             </div>
           )}
           {group.plans.map(plan=>(
@@ -1090,10 +1177,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 
   return(
     <div className="sc">
-      <div style={{padding:"12px 20px 18px"}}>
-        <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,marginBottom:16,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Back</button>
-        <div className="pt" style={{fontSize:24}}>Edit Group</div>
-      </div>
+      <ScreenHeader onBack={onBack} label="Back" title="Edit Group"/>
       <div style={{padding:"0 20px",display:"flex",gap:12,alignItems:"center",marginBottom:18}}>
         <div style={{fontSize:44}}>{emoji}</div>
         <input className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="Group name" style={{flex:1}}/>
@@ -1220,7 +1304,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
   return(
     <div className="sc">
       <div style={{padding:"12px 20px 18px"}}>
-        <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,marginBottom:16,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Cancel</button>
+        <ScreenHeader onBack={onBack} label="Cancel"/>
         <div className="pt">{step===0?"Name your group":"Add Members"}</div>
         <div className="sd" style={{marginTop:14}}>{[0,1].map(i=><div key={i} className={`sd-d ${i<=step?"active":""}`}/>)}</div>
       </div>
@@ -1517,11 +1601,11 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
                       border:"2px solid "+(isVeto?"rgba(239,68,68,.6)":selected?C.accent:C.border),
                       background:isVeto?"rgba(239,68,68,.1)":selected?C.accentDim:C.s2,
                       cursor:"pointer",textAlign:"center",
-                      fontFamily:"'Space Grotesk',sans-serif",transition:"all .15s",
+                      transition:"all .15s",
                     }}>
                     <div style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
                     <div style={{fontSize:11,fontWeight:600,lineHeight:1.2,
-                      color:isVeto?"#EF4444":selected?C.accent:C.t1}}>{opt.l}</div>
+                      color:isVeto?C.red:selected?C.accent:C.t1}}>{opt.l}</div>
                   </button>
                 );
               })}
@@ -1564,7 +1648,7 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
         )}
         {isLast?(
           <button className="bp" style={{flex:2,
-            background:!allComplete?"linear-gradient(135deg,#F59E0B,#EF4444)":undefined}}
+            background:!allComplete?"linear-gradient(135deg,${C.amber},${C.red})":undefined}}
             onClick={handleGenerate}>
             {isSolo?"✨ Build my solo trip":allComplete?"✨ Generate trips for "+group.name:"⚠️ Generate anyway ("+completedCount+"/"+totalCount+" ready)"}
           </button>
@@ -1753,7 +1837,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     <div className="sc">
       {/* Header */}
       <div style={{padding:"12px 20px 16px",display:"flex",alignItems:"center",gap:12}}>
-        <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex"}}><Ic.ChevL/></button>
+        <ScreenHeader onBack={onBack}/>
         <div style={{flex:1}}>
           <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>
             {group.emoji} {group.name}
@@ -1782,7 +1866,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {/* Progress bar for groups */}
             <div style={{height:5,background:C.s3,borderRadius:3,marginBottom:12,overflow:"hidden"}}>
               <div style={{height:"100%",width:readyPercent+"%",borderRadius:3,
-                background:allComplete?"linear-gradient(90deg,"+C.green+",#52C97B)":"linear-gradient(90deg,#C49A38,"+C.accent+")",
+                background:allComplete?"linear-gradient(90deg,"+C.green+",${C.green})":"linear-gradient(90deg,${C.accentDeep},"+C.accent+")",
                 transition:"width .5s ease"}}/>
             </div>
 
@@ -1803,7 +1887,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     </div>
                     <div style={{flex:1}}>
                       <div style={{fontSize:13,fontWeight:500,color:C.t1}}>{m.name||"Member"}</div>
-                      <div style={{fontSize:11,color:m.quizDone?C.green:"#EF4444",marginTop:1}}>
+                      <div style={{fontSize:11,color:m.quizDone?C.green:C.red,marginTop:1}}>
                         {m.quizDone?"✓ Preferences ready":"⏳ Quiz not complete"}
                       </div>
                     </div>
@@ -1826,7 +1910,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                 border:"1px solid rgba(212,168,67,0.2)",borderRadius:18,padding:"16px"}}>
                 <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:12}}>
                   <div style={{width:40,height:40,borderRadius:12,
-                    background:"linear-gradient(135deg,rgba(124,110,255,0.2),rgba(168,85,247,0.2))",
+                    background:"linear-gradient(135deg,rgba(212,168,67,0.22),rgba(212,168,67,0.08))",
                     display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
                     ✨
                   </div>
@@ -1844,10 +1928,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   if(navigator.share){navigator.share({title:"Complete your Reach quiz",text:msg});}
                   else{navigator.clipboard?.writeText(msg);toast("Invite link copied! 📋");}
                 }} style={{width:"100%",padding:"11px 16px",
-                  background:"linear-gradient(135deg,#C49A38,"+C.accent+")",
+                  background:"linear-gradient(135deg,${C.accentDeep},"+C.accent+")",
                   color:"white",border:"none",borderRadius:14,
                   fontSize:13,fontWeight:600,cursor:"pointer",
-                  fontFamily:"'Space Grotesk',sans-serif",
+                  
                   boxShadow:"0 4px 16px rgba(212,168,67,0.25)"}}>
                   📲 Invite them to complete quiz
                 </button>
@@ -2072,7 +2156,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                         border:"1px solid rgba(239,68,68,.4)",
                         background:"rgba(239,68,68,.08)",
                         color:C.red,fontSize:13,fontWeight:600,
-                        cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                        cursor:"pointer"}}>
                       ❌ Veto
                     </button>
                     <button onClick={()=>vote(trip.id)}
@@ -2080,7 +2164,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                         border:"1px solid "+(voted?C.accent:C.border),
                         background:voted?C.accentDim:"none",
                         color:voted?C.accent:C.t2,fontSize:13,fontWeight:600,
-                        cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                        cursor:"pointer"}}>
                       {voted?"❤️ Voted":"🤍 Vote"}
                       {voteCount>0&&" ("+voteCount+")"}
                     </button>
@@ -2090,8 +2174,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                         background:buildingItinerary===trip.id?"rgba(108,99,255,.5)":C.accent,
                         color:"white",border:"none",
                         fontSize:13,fontWeight:600,
-                        cursor:buildingItinerary?"not-allowed":"pointer",
-                        fontFamily:"'Space Grotesk',sans-serif"}}>
+                        cursor:buildingItinerary?"not-allowed":"pointer"}}>
                       {buildingItinerary===trip.id?"Building… ✨":"✓ Pick this"}
                     </button>
                   </div>
@@ -2111,7 +2194,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     <div style={{fontSize:14,color:C.t2,textDecoration:"line-through"}}>{trip.destination}</div>
                   </div>
                   <button onClick={()=>veto(trip.id)}
-                    style={{fontSize:12,color:C.accent,background:"none",border:"none",cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                    style={{fontSize:12,color:C.accent,background:"none",border:"none",cursor:"pointer"}}>
                     Undo
                   </button>
                 </div>
@@ -2211,7 +2294,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
   return(
     <div className="sc">
       <div style={{padding:"12px 20px 0",display:"flex",alignItems:"center",gap:12}}>
-        <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex"}}><Ic.ChevL/></button>
+        <ScreenHeader onBack={onBack}/>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>AI Trip Planner ✨</div>
       </div>
 
@@ -2350,13 +2433,13 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
 
                   {/* Actions */}
                   <div style={{padding:"14px 18px",display:"flex",gap:8}}>
-                    <button onClick={()=>veto(trip.id)} style={{flex:1,padding:"10px",borderRadius:12,border:"1px solid "+(vetoed?C.red:C.border),background:vetoed?"rgba(239,68,68,.12)":"none",color:vetoed?C.red:C.t2,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                    <button onClick={()=>veto(trip.id)} style={{flex:1,padding:"10px",borderRadius:12,border:"1px solid "+(vetoed?C.red:C.border),background:vetoed?"rgba(239,68,68,.12)":"none",color:vetoed?C.red:C.t2,fontSize:13,fontWeight:500,cursor:"pointer"}}>
                       {vetoed?"Unveto ↩️":"❌ Hard veto"}
                     </button>
-                    <button onClick={()=>vote(trip.id)} style={{flex:1,padding:"10px",borderRadius:12,border:"1px solid "+(voted?C.accent:C.border),background:voted?C.accentDim:"none",color:voted?C.accent:C.t2,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                    <button onClick={()=>vote(trip.id)} style={{flex:1,padding:"10px",borderRadius:12,border:"1px solid "+(voted?C.accent:C.border),background:voted?C.accentDim:"none",color:voted?C.accent:C.t2,fontSize:13,fontWeight:500,cursor:"pointer"}}>
                       {voted?"Voted ❤️":"Vote ❤️"}
                     </button>
-                    <button onClick={()=>saveToPlan(trip)} style={{flex:1,padding:"10px",borderRadius:12,background:C.accent,color:"white",border:"none",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                    <button onClick={()=>saveToPlan(trip)} style={{flex:1,padding:"10px",borderRadius:12,background:C.accent,color:"white",border:"none",fontSize:13,fontWeight:600,cursor:"pointer"}}>
                       Pick this
                     </button>
                   </div>
@@ -2601,7 +2684,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
               <div style={{display:"flex",flexDirection:"column",gap:10,padding:"0 0 20px"}}>
                 <button className="bp" onClick={()=>{setShowExitConfirm(false);toast("Draft saved — pick up where you left off anytime");onBack();}}>Save draft & exit</button>
                 <button className="bs" style={{color:C.red,borderColor:C.red}} onClick={()=>{clearDraft();setShowExitConfirm(false);onBack();}}>Discard and exit</button>
-                <button style={{background:"none",border:"none",color:C.accent,fontSize:14,fontWeight:500,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",padding:"8px 0"}} onClick={()=>setShowExitConfirm(false)}>Keep planning</button>
+                <button style={{background:"none",border:"none",color:C.accent,fontSize:14,fontWeight:500,cursor:"pointer",padding:"8px 0"}} onClick={()=>setShowExitConfirm(false)}>Keep planning</button>
               </div>
             </div>
           </div>
@@ -2609,7 +2692,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
       )}
       <div style={{padding:"12px 20px 14px"}}>
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
-          <button onClick={handleBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",fontFamily:"'Space Grotesk',sans-serif",fontSize:13,alignItems:"center"}}><Ic.ChevL/></button>
+          <ScreenHeader onBack={handleBack}/>
           <div style={{flex:1}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em"}}>{STEPS[step]}</div>
@@ -2647,7 +2730,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             <div className="sl" style={{margin:"14px 0 10px"}}>What are you planning?</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               {[{id:"trip",e:"✈️",l:"Trip"},{id:"restaurant",e:"🍽️",l:"Dinner out"},{id:"concert",e:"🎵",l:"Concert"},{id:"weekend",e:"🏡",l:"Weekend Away"}].map(t=>(
-                <button key={t.id} onClick={()=>setPlanType(t.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${planType===t.id?C.accent:C.border}`,background:planType===t.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center",fontFamily:"'Space Grotesk',sans-serif"}}>
+                <button key={t.id} onClick={()=>setPlanType(t.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${planType===t.id?C.accent:C.border}`,background:planType===t.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                   <div style={{fontSize:26,marginBottom:6}}>{t.e}</div><div style={{fontSize:13,fontWeight:600,color:C.t1}}>{t.l}</div>
                 </button>
               ))}
@@ -2706,7 +2789,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                         const sun=new Date(fri.getTime()+2*86400000);
                         setStartDate(fri.toISOString().split("T")[0]);
                         setEndDate(sun.toISOString().split("T")[0]);
-                      }} style={{padding:"7px 14px",borderRadius:20,border:`1px solid ${C.border}`,background:C.s2,color:C.t2,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                      }} style={{padding:"7px 14px",borderRadius:20,border:`1px solid ${C.border}`,background:C.s2,color:C.t2,fontSize:12,fontWeight:500,cursor:"pointer"}}>
                         {preset}
                       </button>
                     ))}
@@ -2749,7 +2832,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Reach will find the best options for your group.</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
                   {CUISINES.map(c=>(
-                    <button key={c.id} onClick={()=>setCuisine(c.id)} style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${cuisine===c.id?C.accent:C.border}`,background:cuisine===c.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center",fontFamily:"'Space Grotesk',sans-serif"}}>
+                    <button key={c.id} onClick={()=>setCuisine(c.id)} style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${cuisine===c.id?C.accent:C.border}`,background:cuisine===c.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                       <div style={{fontSize:24,marginBottom:4}}>{c.e}</div><div style={{fontSize:12,fontWeight:600,color:C.t1}}>{c.l}</div>
                     </button>
                   ))}
@@ -2757,7 +2840,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div className="sl" style={{marginBottom:8}}>Atmosphere</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {["Casual & fun","Date night vibes","Special occasion","Lively & loud","Quiet & intimate"].map(a=>(
-                    <button key={a} onClick={()=>setVibe(v=>v===a?null:a)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${vibe===a?C.accent:C.border}`,background:vibe===a?C.accentDim:C.s2,color:vibe===a?C.accent:C.t2,fontSize:13,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>{a}</button>
+                    <button key={a} onClick={()=>setVibe(v=>v===a?null:a)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${vibe===a?C.accent:C.border}`,background:vibe===a?C.accentDim:C.s2,color:vibe===a?C.accent:C.t2,fontSize:13,cursor:"pointer"}}>{a}</button>
                   ))}
                 </div>
               </>
@@ -2767,7 +2850,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>This helps us find events your whole group will love.</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
                   {GENRES.map(g=>(
-                    <button key={g.id} onClick={()=>setConcertGenre(g.id)} style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${concertGenre===g.id?C.accent:C.border}`,background:concertGenre===g.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center",fontFamily:"'Space Grotesk',sans-serif"}}>
+                    <button key={g.id} onClick={()=>setConcertGenre(g.id)} style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${concertGenre===g.id?C.accent:C.border}`,background:concertGenre===g.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                       <div style={{fontSize:24,marginBottom:4}}>{g.e}</div><div style={{fontSize:12,fontWeight:600,color:C.t1}}>{g.l}</div>
                     </button>
                   ))}
@@ -2775,7 +2858,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div className="sl" style={{marginBottom:8}}>Venue type</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {["Arena","Club / Bar","Outdoor festival","Intimate venue","Theater"].map(v=>(
-                    <button key={v} onClick={()=>setDest(d=>d===v?null:v)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${dest===v?C.accent:C.border}`,background:dest===v?C.accentDim:C.s2,color:dest===v?C.accent:C.t2,fontSize:13,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>{v}</button>
+                    <button key={v} onClick={()=>setDest(d=>d===v?null:v)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${dest===v?C.accent:C.border}`,background:dest===v?C.accentDim:C.s2,color:dest===v?C.accent:C.t2,fontSize:13,cursor:"pointer"}}>{v}</button>
                   ))}
                 </div>
               </>
@@ -2786,7 +2869,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div className="sl" style={{marginBottom:10}}>Energy</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
                   {[{id:"chill",e:"🧘",l:"Chill & Relax"},{id:"active",e:"⚡",l:"High Energy"},{id:"culture",e:"🎭",l:"Culture & Arts"},{id:"mix",e:"🎲",l:"Mix It Up"}].map(v=>(
-                    <button key={v.id} onClick={()=>setVibe(v.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${vibe===v.id?C.accent:C.border}`,background:vibe===v.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center",fontFamily:"'Space Grotesk',sans-serif"}}>
+                    <button key={v.id} onClick={()=>setVibe(v.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${vibe===v.id?C.accent:C.border}`,background:vibe===v.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                       <div style={{fontSize:28,marginBottom:6}}>{v.e}</div><div style={{fontSize:13,fontWeight:600,color:C.t1}}>{v.l}</div>
                     </button>
                   ))}
@@ -2794,7 +2877,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div className="sl" style={{marginBottom:10}}>Destination style</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   {[{id:"city",e:"🏙️",l:"City"},{id:"beach",e:"🏖️",l:"Beach"},{id:"mountains",e:"🏔️",l:"Mountains"},{id:"nature",e:"🌿",l:"Nature"}].map(d=>(
-                    <button key={d.id} onClick={()=>setDest(d.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${dest===d.id?C.accent:C.border}`,background:dest===d.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center",fontFamily:"'Space Grotesk',sans-serif"}}>
+                    <button key={d.id} onClick={()=>setDest(d.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${dest===d.id?C.accent:C.border}`,background:dest===d.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                       <div style={{fontSize:28,marginBottom:6}}>{d.e}</div><div style={{fontSize:13,fontWeight:600,color:C.t1}}>{d.l}</div>
                     </button>
                   ))}
@@ -2826,7 +2909,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Choose your preferred accommodation type.</div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               {[{id:"hotel",e:"🏨",l:"Hotel",s:"Service & convenience"},{id:"rental",e:"🏡",l:"Vacation rental",s:"Space & flexibility"},{id:"luxury",e:"✨",l:"Luxury resort",s:"Premium all-inclusive"},{id:"boutique",e:"🎪",l:"Boutique / Unique",s:"One-of-a-kind stays"},{id:"hostel",e:"🎒",l:"Budget / Hostel",s:"Save money, meet people"}].map(a=>(
-                <button key={a.id} onClick={()=>setAccom(a.id)} style={{padding:"14px 16px",borderRadius:14,border:`2px solid ${accom===a.id?C.accent:C.border}`,background:accom===a.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:14,fontFamily:"'Space Grotesk',sans-serif"}}>
+                <button key={a.id} onClick={()=>setAccom(a.id)} style={{padding:"14px 16px",borderRadius:14,border:`2px solid ${accom===a.id?C.accent:C.border}`,background:accom===a.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:14}}>
                   <span style={{fontSize:26}}>{a.e}</span>
                   <div style={{flex:1}}><div style={{fontSize:14,fontWeight:600,color:C.t1}}>{a.l}</div><div style={{fontSize:12,color:C.t2}}>{a.s}</div></div>
                   {accom===a.id&&<div style={{color:C.accent}}><Ic.Check/></div>}
@@ -2842,7 +2925,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Reach won't recommend anything that crosses these lines.</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:18}}>
               {DBS.map(d=>{const sel=bks.includes(d);return(
-                <button key={d} onClick={()=>setBks(b=>sel?b.filter(x=>x!==d):[...b,d])} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${sel?C.red:C.border}`,background:sel?C.redDim:C.s2,color:sel?C.red:C.t2,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+                <button key={d} onClick={()=>setBks(b=>sel?b.filter(x=>x!==d):[...b,d])} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${sel?C.red:C.border}`,background:sel?C.redDim:C.s2,color:sel?C.red:C.t2,fontSize:13,fontWeight:500,cursor:"pointer"}}>
                   {sel?"✕ ":""}{d}
                 </button>
               );})}
@@ -2880,7 +2963,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             </div>
             <div style={{display:"flex",gap:8,marginBottom:18}}>
               {getBudgetPresets().map(v=>(
-                <button key={v} onClick={()=>setBudget(v)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${budget===v?C.accent:C.border}`,background:budget===v?C.accentDim:C.s2,color:budget===v?C.accent:C.t2,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>${parseInt(v).toLocaleString()}</button>
+                <button key={v} onClick={()=>setBudget(v)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${budget===v?C.accent:C.border}`,background:budget===v?C.accentDim:C.s2,color:budget===v?C.accent:C.t2,fontSize:12,fontWeight:600,cursor:"pointer"}}>${parseInt(v).toLocaleString()}</button>
               ))}
             </div>
             <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14,marginBottom:6}}>
@@ -2966,9 +3049,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   return(
     <div className="sc" style={{paddingBottom:0}}>
-      <div style={{background:"linear-gradient(145deg,#1a1060,#6C63FF)",padding:"18px 20px 22px",flexShrink:0}}>
+      <div style={{background:"linear-gradient(145deg,#1a1060,${C.accent})",padding:"18px 20px 22px",flexShrink:0}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-          <button onClick={onBack} style={{background:"rgba(0,0,0,.3)",border:"none",cursor:"pointer",borderRadius:"50%",width:34,height:34,display:"flex",alignItems:"center",justifyContent:"center",color:"white"}}><Ic.ChevL/></button>
+          <ScreenHeader onBack={onBack} overlay/>
           <button className="bsm" style={{background:"rgba(255,255,255,.15)",color:"white",border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
         </div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:"white",marginBottom:4}}>{plan.title}</div>
@@ -2980,7 +3063,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       </div>
       <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,background:C.s1,flexShrink:0}}>
         {tabs.map(t=>(
-          <button key={t} onClick={()=>setAtab(t)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:`2px solid ${atab===t?C.accent:"transparent"}`,color:atab===t?C.accent:C.t2,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",textTransform:"capitalize"}}>{t}</button>
+          <button key={t} onClick={()=>setAtab(t)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:`2px solid ${atab===t?C.accent:"transparent"}`,color:atab===t?C.accent:C.t2,fontSize:12,fontWeight:600,cursor:"pointer",textTransform:"capitalize"}}>{t}</button>
         ))}
       </div>
       <div style={{flex:1,overflowY:"auto",paddingBottom:20}}>
@@ -3123,7 +3206,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
     <div className="sc">
       <div style={{padding:"12px 20px 14px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Back</button>
+          <ScreenHeader onBack={onBack} label="Back"/>
           <button className="bsm bsm-p" onClick={save}>Save</button>
         </div>
         <div className="pt" style={{fontSize:24,marginTop:12}}>Edit Itinerary</div>
@@ -3149,7 +3232,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
           <div className="sl" style={{marginBottom:12}}>New item</div>
           <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
             {Object.entries(tIc).map(([type,icon])=>(
-              <button key={type} onClick={()=>setNi(n=>({...n,type}))} style={{padding:"6px 10px",borderRadius:10,border:`1.5px solid ${ni.type===type?C.accent:C.border}`,background:ni.type===type?C.accentDim:C.s3,cursor:"pointer",fontSize:12,fontFamily:"'Space Grotesk',sans-serif",color:C.t1}}>{icon} {type}</button>
+              <button key={type} onClick={()=>setNi(n=>({...n,type}))} style={{padding:"6px 10px",borderRadius:10,border:`1.5px solid ${ni.type===type?C.accent:C.border}`,background:ni.type===type?C.accentDim:C.s3,cursor:"pointer",fontSize:12,color:C.t1}}>{icon} {type}</button>
             ))}
           </div>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
@@ -3231,7 +3314,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     const boot=()=>{
       try{
         const stripe=window.Stripe(pk);
-        const elements=stripe.elements({clientSecret,appearance:{theme:"night",variables:{colorPrimary:"#D4AF37",borderRadius:"12px"}}});
+        const elements=stripe.elements({clientSecret,appearance:{theme:"night",variables:{colorPrimary:C.accent,borderRadius:"12px"}}});
         const pe=elements.create("payment");
         pe.on("ready",()=>setPayReady(true));
         pe.mount(payRef.current);
@@ -3271,7 +3354,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
 
   const chip=(label,tone)=>(<span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,letterSpacing:.3,
     background:tone==="green"?"rgba(16,185,129,.15)":tone==="gold"?"rgba(212,175,55,.15)":"rgba(255,255,255,.08)",
-    color:tone==="green"?C.green:tone==="gold"?"#D4AF37":C.t2}}>{label}</span>);
+    color:tone==="green"?C.green:tone==="gold"?C.accent:C.t2}}>{label}</span>);
 
   const lines=(bookings&&bookings.length?bookings.map(b=>({
     icon:vIcon[b.vertical]||"\u2728", l:(b.detail&&(b.detail.title||b.detail.name))||b.vertical,
@@ -3288,7 +3371,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   if(phase==="error")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:34,marginBottom:12}}>\uD83D\uDE48</div>
     <div style={{color:C.t1,fontWeight:600,marginBottom:8}}>{msg}</div>
-    <button onClick={()=>{setPhase("loading");load();}} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:"#D4AF37",color:"#0B0B10",fontWeight:700}}>Try again</button>
+    <button onClick={()=>{setPhase("loading");load();}} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700}}>Try again</button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Go back</div>
   </div></div>);
 
@@ -3297,9 +3380,9 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>You're in!</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in before we book. We'll lock everything in the moment the group is fully funded.</div>
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents+myShareCents)/Math.max(funding.targetCents,1))*100));
-      return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:"linear-gradient(90deg,#D4AF37,#10B981)"}}/></div>
+      return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:"linear-gradient(90deg,${C.accent},${C.green})"}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
-    <button onClick={()=>toast("Reminder sent to the group \uD83D\uDC4B")} style={{padding:"12px 24px",borderRadius:14,border:"none",background:"#D4AF37",color:"#0B0B10",fontWeight:700}}>Remind them?</button>
+    <button onClick={()=>toast("Reminder sent to the group \uD83D\uDC4B")} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700}}>Remind them?</button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
   </div></div>);
 
@@ -3307,7 +3390,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     <div style={{fontSize:40,marginBottom:12}}>\uD83D\uDCC8</div>
     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>Price went up a little</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>One of your bookings costs a bit more than when we quoted it. Still book it?</div>
-    <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:"#D4AF37",color:"#0B0B10",fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
+    <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Let me think</div>
   </div></div>);
 
@@ -3322,8 +3405,8 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     return(<div className="sc" style={{paddingBottom:40,position:"relative",overflow:"hidden"}}>
       <style>{`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}`}</style>
       {confetti.map(i=>(<span key={i} style={{position:"absolute",left:(i*137)%100+"%",top:-10,width:8,height:12,borderRadius:2,
-        background:["#D4AF37","#10B981","#60A5FA","#F472B6"][i%4],animation:`rfall ${2.2+(i%5)*.4}s ${(i%7)*.18}s ease-in forwards`,zIndex:5}}/>))}
-      <div style={{background:"linear-gradient(145deg,#064E3B,#10B981)",padding:"48px 28px 36px",textAlign:"center"}}>
+        background:[C.accent,C.green,C.blue,"#F472B6"][i%4],animation:`rfall ${2.2+(i%5)*.4}s ${(i%7)*.18}s ease-in forwards`,zIndex:5}}/>))}
+      <div style={{background:"linear-gradient(145deg,#064E3B,${C.green})",padding:"48px 28px 36px",textAlign:"center"}}>
         <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>\u2713</div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:"white",marginBottom:6}}>You're all booked!</div>
         <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>Powered by Stripe \u00B7 PCI-DSS compliant</div>
@@ -3346,7 +3429,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
             {chip(it.st==="confirmed"?"Booked \u2713":it.st==="pending"?"We're on it":"Booked \u2713",it.st==="pending"?"gold":"green")}
           </div>))}
         </div>
-        <button onClick={onBack} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:"#D4AF37",color:"#0B0B10",fontWeight:700,fontSize:15}}>See my itinerary</button>
+        <button onClick={onBack} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,fontSize:15}}>See my itinerary</button>
       </div>
     </div>);
   }
@@ -3360,7 +3443,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
       <div ref={payRef} style={{minHeight:220,background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}/>
       {!payReady&&<div style={{textAlign:"center",color:C.t2,fontSize:13,marginTop:10}}>Loading secure payment\u2026</div>}
       <button disabled={!payReady||busy} onClick={confirmPay}
-        style={{width:"100%",marginTop:16,padding:"15px",borderRadius:14,border:"none",background:"#D4AF37",color:"#0B0B10",fontWeight:700,fontSize:15,opacity:(!payReady||busy)?.6:1}}>
+        style={{width:"100%",marginTop:16,padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,fontSize:15,opacity:(!payReady||busy)?.6:1}}>
         {busy?"Paying\u2026":`Pay ${fmt(myShareCents)}`}</button>
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>\uD83D\uDD12 Secured by Stripe \u00B7 you only pay your share</div>
     </div>
@@ -3386,7 +3469,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
         <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1}}>{fmt(myShareCents)}</span>
       </div>
       <button disabled={busy} onClick={startPayment}
-        style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:"#D4AF37",color:"#0B0B10",fontWeight:700,fontSize:16,opacity:busy?.6:1}}>
+        style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,fontSize:16,opacity:busy?.6:1}}>
         {busy?"One sec\u2026":"Looks good"}</button>
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>Nothing books until the whole group is in \uD83E\uDD1D</div>
     </div>
@@ -3441,7 +3524,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
   // Step 4: confirmed
   if(step===4)return(
     <div className="sc" style={{paddingBottom:40}}>
-      <div style={{background:"linear-gradient(145deg,#064E3B,#10B981)",padding:"48px 28px 36px",textAlign:"center"}}>
+      <div style={{background:"linear-gradient(145deg,#064E3B,${C.green})",padding:"48px 28px 36px",textAlign:"center"}}>
         <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>✓</div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:"white",marginBottom:6}}>You're all booked!</div>
         <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>Powered by Stripe · PCI-DSS compliant</div>
@@ -3498,7 +3581,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
     <div className="sc">
       {/* Header */}
       <div style={{padding:"12px 20px 14px"}}>
-        <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,marginBottom:12,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Back</button>
+        <ScreenHeader onBack={onBack} label="Back"/>
         <div className="pt" style={{fontSize:24}}>
           {step===0?"Review booking":step===1?"How would you like to split?":step===2?"Secure payment":step===3?"Confirm your identity":""}
         </div>
@@ -3582,7 +3665,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
               <div style={{fontSize:12,fontWeight:600,color:C.t1}}>Stripe Secure Checkout</div>
               <div style={{fontSize:11,color:C.t3}}>256-bit TLS encryption · PCI-DSS Level 1 · 3D Secure</div>
             </div>
-            <div style={{fontSize:18,fontWeight:800,color:"#635BFF",fontFamily:"'Space Grotesk',sans-serif"}}>S</div>
+            <div style={{fontSize:18,fontWeight:800,color:"#635BFF"}}>S</div>
           </div>
 
           {/* Use saved card toggle */}
@@ -3679,7 +3762,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
                 <button key={i} onClick={()=>{
                   if(d==="⌫")setMfaCode(c=>c.slice(0,-1));
                   else if(d!==""&&mfaCode.length<6)setMfaCode(c=>c+String(d));
-                }} style={{height:52,borderRadius:12,background:d===""?C.bg:C.s1,border:`1px solid ${d===""?C.bg:C.border}`,color:C.t1,fontSize:18,fontWeight:500,fontFamily:"'Space Grotesk',sans-serif",cursor:d===""?"default":"pointer"}}>
+                }} style={{height:52,borderRadius:12,background:d===""?C.bg:C.s1,border:`1px solid ${d===""?C.bg:C.border}`,color:C.t1,fontSize:18,fontWeight:500,cursor:d===""?"default":"pointer"}}>
                   {d}
                 </button>
               ))}
@@ -3690,7 +3773,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
               {processing?"Verifying…":mfaCode.length===6?"Verify & Book →":"Enter 6 digits"}
             </button>
           </div>
-          <button style={{background:"none",border:"none",color:C.accent,fontSize:13,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",padding:"8px 0"}} onClick={()=>toast("A new code has been sent")}>Resend code</button>
+          <button style={{background:"none",border:"none",color:C.accent,fontSize:13,cursor:"pointer",padding:"8px 0"}} onClick={()=>toast("A new code has been sent")}>Resend code</button>
           <div style={{fontSize:11,color:C.t3,marginTop:12,lineHeight:1.5,paddingBottom:20}}>
             Required by PSD2 Strong Customer authentication (SCA) for payments over $500. This protects you from unauthorized charges.
           </div>
@@ -3713,10 +3796,7 @@ function ProfileScreen({toast,user,onSignOut}){
 
   if(section==="security")return(
     <div className="sc">
-      <div style={{padding:"12px 20px 16px"}}>
-        <button onClick={()=>setSection(null)} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,marginBottom:14,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Profile</button>
-        <div className="pt" style={{fontSize:24}}>Security</div>
-      </div>
+      <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Security"/>
       <div style={{padding:"0 20px 6px"}}><span className="sl">Sign-in methods</span></div>
       <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
         {[
@@ -3786,10 +3866,7 @@ function ProfileScreen({toast,user,onSignOut}){
 
   if(section==="payment")return(
     <div className="sc">
-      <div style={{padding:"12px 20px 16px"}}>
-        <button onClick={()=>setSection(null)} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,marginBottom:14,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Profile</button>
-        <div className="pt" style={{fontSize:24}}>Payment</div>
-      </div>
+      <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Payment"/>
       <div style={{margin:"0 20px 14px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:14,padding:14}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:20}}>🔒</span>
@@ -3856,7 +3933,7 @@ function ProfileScreen({toast,user,onSignOut}){
   if(section==="privacy")return(
     <div className="sc">
       <div style={{padding:"12px 20px 16px"}}>
-        <button onClick={()=>setSection(null)} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,marginBottom:14,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Profile</button>
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile"/>
         <div className="pt" style={{fontSize:24}}>Privacy</div>
         <div style={{fontSize:12,color:C.t2,marginTop:4}}>GDPR · CCPA · App Store 5.1 compliant</div>
       </div>
@@ -3923,7 +4000,7 @@ function ProfileScreen({toast,user,onSignOut}){
   if(section==="delete")return(
     <div className="sc">
       <div style={{padding:"12px 20px 16px"}}>
-        <button onClick={()=>{setSection("privacy");setDeleteConfirm("");}} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,display:"flex",alignItems:"center",gap:4,fontSize:13,marginBottom:14,fontFamily:"'Space Grotesk',sans-serif"}}><Ic.ChevL/> Privacy</button>
+        <ScreenHeader onBack={()=>{setSection("privacy");setDeleteConfirm("");}} label="Privacy"/>
         <div className="pt" style={{fontSize:24,color:C.red}}>Delete account</div>
       </div>
       <div style={{padding:"0 20px"}}>
@@ -3971,7 +4048,7 @@ function ProfileScreen({toast,user,onSignOut}){
       </div>
       <div style={{display:"flex",gap:10,padding:"0 20px 16px"}}>
         {[{icon:"🔒",label:"Security",key:"security",color:C.accent},{icon:"🛡️",label:"Privacy",key:"privacy",color:C.green},{icon:"💳",label:"Payment",key:"payment",color:C.amber}].map(it=>(
-          <button key={it.key} onClick={()=>setSection(it.key)} style={{flex:1,padding:"12px 8px",borderRadius:14,border:`1px solid ${C.border}`,background:C.s2,cursor:"pointer",textAlign:"center",fontFamily:"'Space Grotesk',sans-serif"}}>
+          <button key={it.key} onClick={()=>setSection(it.key)} style={{flex:1,padding:"12px 8px",borderRadius:14,border:`1px solid ${C.border}`,background:C.s2,cursor:"pointer",textAlign:"center"}}>
             <div style={{fontSize:22,marginBottom:4}}>{it.icon}</div>
             <div style={{fontSize:11,fontWeight:600,color:it.color}}>{it.label}</div>
           </button>
@@ -4421,9 +4498,13 @@ export default function ReachApp({realUser}={}){
       <div className="aw">
         {showStatusBar&&(
           <div className="sb">
-            <span>9:41</span>
+            {/* The fake "9:41 / 5G" chrome belongs to the desktop mockup frame.
+                On a real phone it sits directly under the actual status bar and
+                reads as a bug, so it is hidden there and only the wordmark
+                stays. CSS does the hiding so there is no hydration mismatch. */}
+            <span className="sb-fake">9:41</span>
             <span className="sb-logo">reach</span>
-            <span>5G ▪▪▪</span>
+            <span className="sb-fake">5G ▪▪▪</span>
           </div>
         )}
         <div className="ma" style={{top:showStatusBar?undefined:0}}>
@@ -4574,7 +4655,7 @@ function AuthScreen({onAuth,mode="signin"}){
       <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:32}}>We sent a magic link to <strong style={{color:C.t1}}>{email}</strong>. Tap it to sign in instantly — no password needed.</div>
       <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:16,width:"100%",marginBottom:24,textAlign:"left"}}>
         <div style={{fontSize:12,color:C.t3,marginBottom:8}}>Didn't receive it? Check your spam folder or</div>
-        <button style={{background:"none",border:"none",color:C.accent,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",padding:0}} onClick={()=>{setMagicSent(false);setLoading(null);}}>Resend the magic link →</button>
+        <button style={{background:"none",border:"none",color:C.accent,fontSize:14,fontWeight:600,cursor:"pointer",padding:0}} onClick={()=>{setMagicSent(false);setLoading(null);}}>Resend the magic link →</button>
       </div>
       <button className="bs" onClick={()=>setView("signin")}>← Back to sign in</button>
     </div>
@@ -4603,11 +4684,11 @@ function AuthScreen({onAuth,mode="signin"}){
         {(view==="signin"||view==="signup")&&(
           <>
             {/* Sign in with Apple — REQUIRED on iOS if any social login offered */}
-            <button onClick={()=>handleSSO("apple")} style={{width:"100%",padding:"14px 20px",borderRadius:14,border:`1px solid ${C.border}`,background:loading==="apple"?"rgba(255,255,255,.08)":"white",color:"#000",fontFamily:"'Space Grotesk',sans-serif",fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:10,transition:"opacity .15s",opacity:loading&&loading!=="apple"?.5:1}}>
+            <button onClick={()=>handleSSO("apple")} style={{width:"100%",padding:"14px 20px",borderRadius:14,border:`1px solid ${C.border}`,background:loading==="apple"?"rgba(255,255,255,.08)":"white",color:"#000",fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:10,transition:"opacity .15s",opacity:loading&&loading!=="apple"?.5:1}}>
               {loading==="apple"?<span style={{color:"#000"}}>Signing in…</span>:<><AppleIcon/><span>Continue with Apple</span></>}
             </button>
             {/* Sign in with Google */}
-            <button onClick={()=>handleSSO("google")} style={{width:"100%",padding:"14px 20px",borderRadius:14,border:`1px solid ${C.border}`,background:loading==="google"?C.s3:C.s2,color:C.t1,fontFamily:"'Space Grotesk',sans-serif",fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:16,transition:"opacity .15s",opacity:loading&&loading!=="google"?.5:1}}>
+            <button onClick={()=>handleSSO("google")} style={{width:"100%",padding:"14px 20px",borderRadius:14,border:`1px solid ${C.border}`,background:loading==="google"?C.s3:C.s2,color:C.t1,fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:16,transition:"opacity .15s",opacity:loading&&loading!=="google"?.5:1}}>
               {loading==="google"?<span>Signing in…</span>:<><GoogleIcon/><span>Continue with Google</span></>}
             </button>
             <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
@@ -4636,7 +4717,7 @@ function AuthScreen({onAuth,mode="signin"}){
             <div style={{fontSize:12,color:C.t3,marginBottom:6,fontWeight:500}}>Password</div>
             <div style={{position:"relative"}}>
               <input className="inp" type={showPw?"text":"password"} value={pw} onChange={e=>setPw(e.target.value)} placeholder={view==="signup"?"Minimum 8 characters":"Your password"} autoComplete={view==="signup"?"new-password":"current-password"} style={{paddingRight:48}}/>
-              <button onClick={()=>setShowPw(!showPw)} style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.t3,fontSize:13,fontFamily:"'Space Grotesk',sans-serif"}}>{showPw?"Hide":"Show"}</button>
+              <button onClick={()=>setShowPw(!showPw)} style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:C.t3,fontSize:13}}>{showPw?"Hide":"Show"}</button>
             </div>
           </div>
         )}
@@ -4650,8 +4731,8 @@ function AuthScreen({onAuth,mode="signin"}){
         {/* Forgot password link */}
         {view==="signin"&&(
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-            <button onClick={()=>setView("magic")} style={{background:"none",border:"none",color:C.accent,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",padding:0}}>Use a magic link instead</button>
-            <button onClick={()=>setView("forgot")} style={{background:"none",border:"none",color:C.t3,fontSize:13,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",padding:0}}>Forgot your password?</button>
+            <button onClick={()=>setView("magic")} style={{background:"none",border:"none",color:C.accent,fontSize:13,fontWeight:500,cursor:"pointer",padding:0}}>Use a magic link instead</button>
+            <button onClick={()=>setView("forgot")} style={{background:"none",border:"none",color:C.t3,fontSize:13,cursor:"pointer",padding:0}}>Forgot your password?</button>
           </div>
         )}
 
@@ -4689,9 +4770,9 @@ function AuthScreen({onAuth,mode="signin"}){
 
         {/* Toggle signin/signup */}
         <div style={{textAlign:"center",padding:"8px 0 30px"}}>
-          {view==="signin"&&<span style={{fontSize:13,color:C.t2}}>Don't have an account? <button onClick={()=>setView("signup")} style={{background:"none",border:"none",color:C.accent,fontWeight:600,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",fontSize:13}}>Sign up for free</button></span>}
-          {view==="signup"&&<span style={{fontSize:13,color:C.t2}}>Already have an account? <button onClick={()=>setView("signin")} style={{background:"none",border:"none",color:C.accent,fontWeight:600,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif",fontSize:13}}>Sign in</button></span>}
-          {(view==="magic"||view==="forgot")&&<button onClick={()=>setView("signin")} style={{background:"none",border:"none",color:C.accent,fontSize:13,fontWeight:500,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>← Back to sign in</button>}
+          {view==="signin"&&<span style={{fontSize:13,color:C.t2}}>Don't have an account? <button onClick={()=>setView("signup")} style={{background:"none",border:"none",color:C.accent,fontWeight:600,cursor:"pointer",fontSize:13}}>Sign up for free</button></span>}
+          {view==="signup"&&<span style={{fontSize:13,color:C.t2}}>Already have an account? <button onClick={()=>setView("signin")} style={{background:"none",border:"none",color:C.accent,fontWeight:600,cursor:"pointer",fontSize:13}}>Sign in</button></span>}
+          {(view==="magic"||view==="forgot")&&<button onClick={()=>setView("signin")} style={{background:"none",border:"none",color:C.accent,fontSize:13,fontWeight:500,cursor:"pointer"}}>← Back to sign in</button>}
         </div>
       </div>
     </div>
@@ -4764,7 +4845,7 @@ function BiometricScreen({onDone}){
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,width:"100%",maxWidth:260}}>
         {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((d,i)=>(
-          <button key={i} onClick={()=>d==="⌫"?del():d!==""?addDigit(String(d)):null} style={{height:64,borderRadius:16,background:d===""?C.bg:C.s2,border:`1px solid ${d===""?C.bg:C.border}`,color:C.t1,fontSize:d==="⌫"?20:22,fontWeight:500,fontFamily:"'Space Grotesk',sans-serif",cursor:d===""?"default":"pointer",transition:"background .1s"}}>{d}</button>
+          <button key={i} onClick={()=>d==="⌫"?del():d!==""?addDigit(String(d)):null} style={{height:64,borderRadius:16,background:d===""?C.bg:C.s2,border:`1px solid ${d===""?C.bg:C.border}`,color:C.t1,fontSize:d==="⌫"?20:22,fontWeight:500,cursor:d===""?"default":"pointer",transition:"background .1s"}}>{d}</button>
         ))}
       </div>
     </div>
@@ -4778,7 +4859,7 @@ function BiometricScreen({onDone}){
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1,marginBottom:10}}>Secure your account</div>
         <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:32}}>Reach stores your payment methods and booking details. Add a layer of protection — required for purchases over $500.</div>
         <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          <button onClick={()=>{setChoice("bio");setTimeout(onDone,800);}} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 18px",borderRadius:16,border:`2px solid ${C.accentBorder}`,background:C.accentDim,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+          <button onClick={()=>{setChoice("bio");setTimeout(onDone,800);}} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 18px",borderRadius:16,border:`2px solid ${C.accentBorder}`,background:C.accentDim,cursor:"pointer"}}>
             <span style={{fontSize:28}}>🤳</span>
             <div style={{textAlign:"left"}}>
               <div style={{fontSize:15,fontWeight:600,color:C.t1}}>Face ID or Touch ID</div>
@@ -4786,7 +4867,7 @@ function BiometricScreen({onDone}){
             </div>
             <div style={{marginLeft:"auto",color:C.accent}}>→</div>
           </button>
-          <button onClick={()=>setChoice("pin")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 18px",borderRadius:16,border:`1px solid ${C.border}`,background:C.s2,cursor:"pointer",fontFamily:"'Space Grotesk',sans-serif"}}>
+          <button onClick={()=>setChoice("pin")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 18px",borderRadius:16,border:`1px solid ${C.border}`,background:C.s2,cursor:"pointer"}}>
             <span style={{fontSize:28}}>🔢</span>
             <div style={{textAlign:"left"}}>
               <div style={{fontSize:15,fontWeight:600,color:C.t1}}>Set a 6-digit PIN</div>
@@ -4794,7 +4875,7 @@ function BiometricScreen({onDone}){
             </div>
             <div style={{marginLeft:"auto",color:C.t3}}>→</div>
           </button>
-          <button onClick={onDone} style={{background:"none",border:"none",color:C.t3,fontSize:13,cursor:"pointer",padding:"12px 0",fontFamily:"'Space Grotesk',sans-serif"}}>Skip for now (not recommended)</button>
+          <button onClick={onDone} style={{background:"none",border:"none",color:C.t3,fontSize:13,cursor:"pointer",padding:"12px 0"}}>Skip for now (not recommended)</button>
         </div>
       </div>
     </div>
@@ -4949,8 +5030,8 @@ function PrivacyScreen({onDone,user,setUser}){
     return(
       <div style={{display:"flex",flexDirection:"column",height:"100%",background:C.bg,alignItems:"center",justifyContent:"center",padding:32,textAlign:"center"}}>
         <div style={{width:88,height:88,borderRadius:28,
-          background:"linear-gradient(135deg,rgba(124,110,255,0.2),rgba(168,85,247,0.2))",
-          border:"1px solid rgba(124,110,255,0.3)",
+          background:"linear-gradient(135deg,rgba(212,168,67,0.22),rgba(212,168,67,0.08))",
+          border:`1px solid ${C.accentBorder}`,
           display:"flex",alignItems:"center",justifyContent:"center",fontSize:44,
           marginBottom:20,boxShadow:"0 0 40px rgba(212,168,67,0.15)"}}>
           🎉
@@ -4985,7 +5066,7 @@ function PrivacyScreen({onDone,user,setUser}){
           Start exploring →
         </button>
         <button style={{background:"none",border:"none",color:C.accent,fontSize:13,cursor:"pointer",
-          fontFamily:"'Space Grotesk',sans-serif",padding:"8px 0"}}
+          padding:"8px 0"}}
           onClick={()=>{setQuizDone(false);setQStep(0);}}>
           ✏️ Edit my preferences
         </button>
@@ -5035,12 +5116,12 @@ function PrivacyScreen({onDone,user,setUser}){
                   border:"2px solid "+(isVeto?"rgba(239,68,68,.6)":selected?C.accent:C.border),
                   background:isVeto?"rgba(239,68,68,.1)":selected?C.accentDim:C.s2,
                   cursor:"pointer",textAlign:"center",
-                  fontFamily:"'Space Grotesk',sans-serif",
+                  
                   transition:"all .15s",
                 }}>
                 <div style={{fontSize:22,marginBottom:4}}>{opt.e}</div>
                 <div style={{fontSize:11,fontWeight:600,
-                  color:isVeto?"#EF4444":selected?C.accent:C.t1,
+                  color:isVeto?C.red:selected?C.accent:C.t1,
                   lineHeight:1.2}}>{opt.l}</div>
               </button>
             );
