@@ -60,9 +60,13 @@ const ENV_GROUPS = [
     vars: [
       ['NEXT_PUBLIC_SUPABASE_URL', v => /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(v),
         'must look like https://<project>.supabase.co'],
-      ['SUPABASE_SERVICE_ROLE_KEY', v => v.length > 100,
-        'the service_role key from Supabase → Settings → API (a long JWT, not the short anon key)'],
-      ['NEXT_PUBLIC_SUPABASE_ANON_KEY', v => v.length > 100, 'the anon/public key from the same page'],
+      // Supabase issues two generations of keys. Legacy ones are long JWTs
+      // starting "eyJ"; current ones are sb_secret_… / sb_publishable_…
+      // Accept both, or a valid new-format key reads as a placeholder.
+      ['SUPABASE_SERVICE_ROLE_KEY', v => /^sb_secret_/.test(v) || v.length > 100,
+        'Supabase → Settings → API Keys → the secret key (sb_secret_…), or the legacy service_role JWT'],
+      ['NEXT_PUBLIC_SUPABASE_ANON_KEY', v => /^sb_publishable_/.test(v) || v.length > 100,
+        'Supabase → Settings → API Keys → the publishable key (sb_publishable_…), or the legacy anon JWT'],
       ['NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY', v => /^pk_(test|live)_/.test(v), 'starts with pk_test_ or pk_live_'],
       ['CLERK_SECRET_KEY', v => /^sk_(test|live)_/.test(v), 'starts with sk_test_ or sk_live_'],
     ],
@@ -150,12 +154,16 @@ section('Database');
 const url = (env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
 const key = env.SUPABASE_SERVICE_ROLE_KEY || '';
 
-if (!url || !key || key.length < 100) {
+const keyLooksReal = /^sb_secret_/.test(key) || key.length > 100;
+if (!url || !keyLooksReal) {
   bad('Skipped — Supabase credentials are missing or malformed',
       'Fix the variables above first, then run this again.');
 } else if (!/supabase\.co$/.test(new URL(url).hostname)) {
-  bad(`NEXT_PUBLIC_SUPABASE_URL points at ${new URL(url).hostname}, which is not a Supabase host`,
-      'Copy the Project URL from Supabase → Settings → API.');
+  const ref = url.match(/\/project\/([a-z0-9]{20})/);
+  bad(`NEXT_PUBLIC_SUPABASE_URL points at ${new URL(url).hostname}, not your project's API host`,
+      ref
+        ? `That is the dashboard URL. The API host is:\n      https://${ref[1]}.supabase.co`
+        : 'Copy the Project URL from Supabase → Settings → API.');
 } else {
   const headers = { apikey: key, Authorization: `Bearer ${key}` };
   const missing = [];

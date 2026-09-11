@@ -104,13 +104,41 @@ Environment variables section.
 
 ## Phase 1 — The database
 
-The repo now contains the schema. Until this phase, the tables existed only
-inside your live Supabase project and could not be recreated.
+**Checked against your live database on 2026-09-11.** 16 of the 17 tables
+already exist and hold real data: 6 users, 10 groups, 13 memberships, 2 plans.
+No money has ever moved — payments, bookings and contributions are all empty —
+so the Clerk-id migration has nothing to rewrite and can be skipped.
 
-**1.1** Open Supabase → SQL Editor → New query.
+Only two things are actually missing, and **one file fixes both**:
 
-**1.2** Run these files **in this exact order**. Open each, copy the whole
-file, paste, Run. Each should report Success.
+**1.1** Open Supabase → SQL Editor → New query, paste all of
+`sql/catch-up-2026-09-11.sql`, and Run.
+
+It adds seven columns the code reads but the database never had, and creates
+the `group_invites` table. Two of those columns are breaking features in
+production right now:
+
+`users.no_way_jose` is selected by both `/api/groups/[id]/quiz-status` and
+`/api/trips/generate`. Postgres rejects a query naming a column that does not
+exist, so **both endpoints return 400 today** — the quiz-status screen and AI
+trip generation are dead on the live site until this runs.
+
+The query at the bottom of the file prints `all columns present | invites
+table ready` when it worked.
+
+**1.2** Verify:
+
+```
+npm run doctor
+```
+
+**Phase 1 passes when** the Database section shows every table present.
+
+<details>
+<summary>Setting up a fresh database instead? Run these in order.</summary>
+
+Only needed for a brand-new Supabase project. Your existing one already has
+all of this.
 
 | # | File | Creates |
 |---|---|---|
@@ -120,33 +148,12 @@ file, paste, Run. Each should report Success.
 | 4 | `sql/savings-v1.sql` | savings_goals, savings_checkins |
 | 5 | `sql/invites-v1.sql` | group_invites |
 
-Every statement is `IF NOT EXISTS`, so running these against your existing
-project will not destroy data. Tables you already have are left alone.
+Then `sql/catch-up-2026-09-11.sql`, then
+`sql/migrate-clerk-ids-to-user-ids.sql` if the booking tables already hold
+rows keyed by Clerk ids. Every statement is `IF NOT EXISTS`, so none of it
+destroys data.
 
-**1.3** Now the migration. This one **changes existing rows**:
-
-```
-sql/migrate-clerk-ids-to-user-ids.sql
-```
-
-Your booking and funding tables store a Clerk id (`user_2abc…`) where every
-other table stores a database user id. The same person is two different people
-depending on which endpoint wrote the row, which is why settle-up produced
-nonsense and funding could not tell who had paid. This rewrites what is on
-disk to match the code.
-
-It runs inside a transaction, prints how many rows it will touch, and raises
-an exception if any Clerk id survives — so it either fully works or changes
-nothing. Running it twice is harmless.
-
-**1.4** Verify:
-
-```
-npm run doctor
-```
-
-**Phase 1 passes when** the Database section shows every table present and
-"user ids are consistent".
+</details>
 
 ---
 
