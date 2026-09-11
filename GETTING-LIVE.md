@@ -1,336 +1,280 @@
-# Getting Reach fully working
+# Getting Reach working — the complete steps
 
-Follow these in order. Each phase ends with a check that either passes or
-tells you exactly what is wrong. Do not move to the next phase until the
-current one passes — a failure early on looks like a different failure later,
-and you will lose hours chasing the wrong thing.
+Do these in order. Do not skip ahead: a problem in step 1 shows up as a
+confusing, unrelated-looking failure in step 8.
 
-At any point, run:
+After every step there is a **Check**. If a check fails, stop and fix it
+before continuing.
+
+Your project details, so you never have to look them up:
 
 ```
-npm run doctor
+Supabase project ref   ikdmlvdimdyjazffqlrf
+Supabase API URL       https://ikdmlvdimdyjazffqlrf.supabase.co
+Vercel project         reach8/reach-backend
+Live domain            https://www.alcanzar.io
 ```
-
-It checks every credential, every database table, and whether the Stripe
-webhook that gates all booking actually exists. It prints what is broken and
-what to do about it.
 
 ---
 
-## Where things actually stand
+## Already done — nothing to do here
 
-Read this before starting, so nothing surprises you.
-
-**The live site is running old code.** https://www.alcanzar.io serves, but
-seven commits of fixes are sitting unpushed on your machine. Everything
-described in the sections below as "fixed" is fixed *in the repo*, not in
-production. Production still loses plans, still charges each member for the
-whole trip, and still lets any signed-in user approve another group's
-bookings.
-
-**Nothing has been verified against a real database.** The fixes are backed
-by a clean type check, a passing build, and 25 unit tests. The unit tests
-cover the money arithmetic and invite claiming as pure logic. No API route has
-ever been run against real Supabase data in this work, because the local
-credentials are placeholders. Phase 2 is where that finally happens, and it is
-the phase most likely to surface something new.
-
-**The booking providers have never been called.** Hotels, flights and
-activities are written against the LiteAPI, Kiwi and Viator specs but have
-never made a live request. Those lanes stay off until their keys are set, and
-should be treated as unproven until you watch one succeed.
+- **Database schema is complete.** All 17 tables exist. The catch-up migration
+  ran and added the seven columns the code needed. One of them,
+  `users.no_way_jose`, was making the quiz-status screen and AI trip
+  generation return 400 on the live site.
+- **Supabase credentials work.** They were never wrong. The URL had the
+  dashboard page pasted into it instead of the API host.
+- **The code is fixed and committed.** Eleven commits, not yet pushed.
+- **No money has ever moved.** Payments, bookings and contributions are all
+  empty, so nothing financial is at risk while we work.
+- **Nothing has ever been encrypted.** Generating a fresh encryption key in
+  step 4 is therefore safe. I previously warned against this; that was wrong.
 
 ---
 
-## Phase 0 — A working local environment
+## Step 1 — Fix how Vercel stores your variables
 
-**`vercel env pull` cannot get these for you.** All 19 variables are stored in
-Vercel as **Secret** type, which is write-only by design — the CLI returns the
-literal string `[SENSITIVE]` instead of the value. They also live only in the
-Production and Preview environments, not Development, so a plain pull returns
-nothing at all.
+**This is the blocker. Everything else waits on it.**
 
-You have to copy each one from where it originally came from. Do it once,
-carefully, and keep the file.
+All 19 of your variables are marked **Sensitive** in Vercel. Sensitive
+variables are hidden from the build. Next.js bakes every `NEXT_PUBLIC_*`
+variable into the code at build time, so a sensitive one compiles in as
+`undefined`. That is why a preview deployment returned 500 on every database
+route with `supabaseUrl is required`.
 
-**0.1** Pull anyway, to get the non-secret values and confirm the project link:
+Go to **Vercel → reach-backend → Settings → Environment Variables**.
+
+**1a.** Add a new variable:
+
+| Field | Value |
+|---|---|
+| Name | `SUPABASE_URL` |
+| Value | `https://ikdmlvdimdyjazffqlrf.supabase.co` |
+| Environments | Production, Preview, Development — tick all three |
+| Sensitive | **Off** |
+
+This one is read at runtime, so a build cannot erase it.
+
+**1b.** For these two, click Edit and turn **Sensitive off**. If Vercel will
+not let you change it, delete and re-add with Sensitive off:
+
+- `NEXT_PUBLIC_SUPABASE_URL` → `https://ikdmlvdimdyjazffqlrf.supabase.co`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` → your `sb_publishable_…` key
+
+Both are public by design — they are sent to every browser that loads the
+app — so marking them sensitive protects nothing and breaks the build.
+
+**Check:** `SUPABASE_URL` is in the list and not marked Sensitive.
+
+---
+
+## Step 2 — Stripe
+
+Without these, checkout and funding cannot run. Everything else works.
+
+Go to **Stripe → Developers → API keys**, in **Test mode** (toggle, top right).
+
+**2a.** Copy both keys into Vercel, all three environments:
+
+| Vercel variable | Stripe value |
+|---|---|
+| `STRIPE_SECRET_KEY` | Secret key, starts `sk_test_` |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Publishable key, starts `pk_test_` — Sensitive **off** |
+
+**2b.** **Stripe → Developers → Webhooks → Add endpoint**:
+
+```
+Endpoint URL   https://www.alcanzar.io/api/webhooks/stripe
+Events         payment_intent.succeeded
+               payment_intent.payment_failed
+               charge.refunded
+```
+
+**2c.** Open the endpoint you just made, copy its **Signing secret** (starts
+`whsec_`) into Vercel as `STRIPE_WEBHOOK_SECRET`.
+
+This webhook is what marks a member's payment as collected. Without it,
+contributions stay pending forever and **no booking can ever be approved** —
+the flow stalls silently, with no error anywhere.
+
+**Check:** the endpoint appears in Stripe's list as Enabled.
+
+---
+
+## Step 3 — Clerk webhook
+
+**Clerk → your app → Webhooks → Add Endpoint**:
+
+```
+Endpoint URL   https://www.alcanzar.io/api/webhooks/clerk
+Events         user.created, user.updated, user.deleted
+```
+
+Copy the **Signing Secret** into Vercel as `CLERK_WEBHOOK_SECRET`.
+
+This endpoint can schedule account deletion, so it now refuses unsigned
+requests in production. With the current placeholder value it returns 500.
+
+**Check:** the endpoint shows as active in Clerk.
+
+---
+
+## Step 4 — Encryption key
+
+Add to Vercel, all three environments:
+
+```
+Name   ENCRYPTION_KEY
+Value  f1dace0fb793be32efe13f7b45c29d64ce396e7395699b1a0a86a44a0e6f496b
+```
+
+Freshly generated for you, and safe because no encrypted data exists yet. To
+make your own instead: `openssl rand -hex 32`.
+
+**Check:** exactly 64 characters, hex only.
+
+---
+
+## Step 5 — Optional keys
+
+Skip any of these. Each one only disables its own feature.
+
+| Variable | Where | Without it |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | console.anthropic.com → API keys | Trip generation uses a canned list instead of the model |
+| `RESEND_API_KEY` | resend.com → API keys | Invite and receipt emails don't send. Invites still work — the app copies the link to your clipboard |
+| `TICKETMASTER_API_KEY` | developer.ticketmaster.com, free | Discover shows generic events |
+
+Hotel, flight and activity booking need partner approvals you don't have yet.
+Leave those off.
+
+---
+
+## Step 6 — Pull it all back down and verify
+
+On the Mac, in the project folder:
 
 ```
 npx vercel env pull .env.local --environment=production --yes
-```
-
-If it fails with a linking error, run `npx vercel link` first. Any value that
-comes back as `[SENSITIVE]` you must replace by hand.
-
-**0.2** Run the doctor to see exactly which ones are wrong:
-
-```
 npm run doctor
 ```
 
-**0.3** Open `.env.local` in an editor and replace each flagged value. Sources:
+Anything that comes back as `[SENSITIVE]` must be pasted into `.env.local` by
+hand. Vercel will not reveal those over the CLI.
 
-| It says | Where to get the value |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` looks wrong | Supabase → your project → Settings → API → Project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` looks wrong | Same page → `service_role` **secret** key. It is a long JWT. Not the anon key. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` looks wrong | Same page → `anon` `public` key |
-| `STRIPE_SECRET_KEY` looks wrong | Stripe → Developers → API keys → Secret key |
-| `ENCRYPTION_KEY` looks wrong | **Do not generate a new one.** It decrypts passport and known-traveler numbers already in the database. Recover the production value; a new key makes existing encrypted rows unreadable. Only generate one (`openssl rand -hex 32`) if nothing has ever been encrypted. |
-| `CLERK_WEBHOOK_SECRET` looks wrong | Clerk → Webhooks → your endpoint → Signing Secret |
-| `STRIPE_WEBHOOK_SECRET` looks wrong | Stripe → Developers → Webhooks → your endpoint → Signing secret |
-| `ANTHROPIC_API_KEY` came back `[SENSITIVE]` | console.anthropic.com → API keys. You cannot read an existing key; create a new one and update Vercel too. |
-
-### Two things already found wrong
-
-**`NEXT_PUBLIC_SUPABASE_URL` points at `supabase.com`.** That is the dashboard,
-not your project's API host. It must be `https://<project-ref>.supabase.co` —
-copy it from Supabase → Settings → API → Project URL. Check the value in
-**Vercel** as well, because if production has the same mistake, every database
-call on the live site is failing.
-
-**`NEXT_PUBLIC_APP_URL` is `http://localhost:3000`.** Correct for local work.
-In Vercel it must be `https://www.alcanzar.io`, or invite emails will send
-people to their own machine.
-
-After fixing, put each corrected value in **Vercel → Settings → Environment
-Variables** too — and add them to the **Development** environment, not just
-Production, so future pulls are less painful.
-
-**Phase 0 passes when** `npm run doctor` reports no blocking problems in the
-Environment variables section.
+**Check:** `npm run doctor` prints **no blocking problems**.
 
 ---
 
-## Phase 1 — The database
-
-**Checked against your live database on 2026-09-11.** 16 of the 17 tables
-already exist and hold real data: 6 users, 10 groups, 13 memberships, 2 plans.
-No money has ever moved — payments, bookings and contributions are all empty —
-so the Clerk-id migration has nothing to rewrite and can be skipped.
-
-Only two things are actually missing, and **one file fixes both**:
-
-**1.1** Open Supabase → SQL Editor → New query, paste all of
-`sql/catch-up-2026-09-11.sql`, and Run.
-
-It adds seven columns the code reads but the database never had, and creates
-the `group_invites` table. Two of those columns are breaking features in
-production right now:
-
-`users.no_way_jose` is selected by both `/api/groups/[id]/quiz-status` and
-`/api/trips/generate`. Postgres rejects a query naming a column that does not
-exist, so **both endpoints return 400 today** — the quiz-status screen and AI
-trip generation are dead on the live site until this runs.
-
-The query at the bottom of the file prints `all columns present | invites
-table ready` when it worked.
-
-**1.2** Verify:
-
-```
-npm run doctor
-```
-
-**Phase 1 passes when** the Database section shows every table present.
-
-<details>
-<summary>Setting up a fresh database instead? Run these in order.</summary>
-
-Only needed for a brand-new Supabase project. Your existing one already has
-all of this.
-
-| # | File | Creates |
-|---|---|---|
-| 1 | `sql/core-schema.sql` | users, groups, group_members, plans, votes, itinerary_items, payments, audit_logs |
-| 2 | `sql/bookings.sql` | bookings |
-| 3 | `sql/engine-v3.sql` | connected_accounts, contributions, expenses |
-| 4 | `sql/savings-v1.sql` | savings_goals, savings_checkins |
-| 5 | `sql/invites-v1.sql` | group_invites |
-
-Then `sql/catch-up-2026-09-11.sql`, then
-`sql/migrate-clerk-ids-to-user-ids.sql` if the booking tables already hold
-rows keyed by Clerk ids. Every statement is `IF NOT EXISTS`, so none of it
-destroys data.
-
-</details>
-
----
-
-## Phase 2 — Prove it works locally
-
-This is the first time the app runs against real data. Expect to find things.
-
-**2.1** Start it:
+## Step 7 — Test locally
 
 ```
 npm run dev
 ```
 
-**2.2** Open http://localhost:3000 and work through this in order. Each step
-depends on the one before, so **stop at the first failure** and note which
-number — that tells us which layer broke.
+Open **http://localhost:3000** in a browser **on the Mac itself**. On a phone,
+`localhost` means the phone, and nothing will load.
 
-1. **Sign up as a brand new user.** You should land in the app.
-   *Tests:* Clerk, and the just-in-time user creation that covers a webhook
-   that never fired.
+Go in order. Stop at the first failure and note the number.
 
-2. **Create a group.** Refresh the page. It must still be there.
-   *Tests:* the group write path. If it vanishes, the POST failed and the
-   client correctly evicted it rather than showing a ghost.
+1. **Sign in.** You land in the app, not an error.
+2. **Your groups appear.** You have 10. Avatars show initials, not blank circles.
+3. **Create a group.** Refresh. It is still there.
+4. **Create a plan and leave the dates empty.** Refresh. It survives.
+   *This is the bug that explains 10 groups but only 2 plans.*
+5. **Open the plan.** Traveler count matches group size, not zero.
+6. **Open checkout.** Your share is the trip total divided by the number of
+   members, not the whole trip.
+7. **Invite an email with no Reach account.** It appears under "Invited".
 
-3. **Check the group shows your avatar with initials**, not a blank circle.
-   *Tests:* members coming back from the list endpoint.
+Keep the terminal visible. Server errors print there with a full stack trace.
 
-4. **Create a plan and leave the dates empty.** Refresh. It must survive.
-   *Tests:* the bug that silently destroyed any plan without a clean date
-   range. This one is worth doing carefully.
-
-5. **Open the plan.** The traveler count should equal the group size, not zero.
-
-6. **Open checkout.** Your share should be the trip total divided by the number
-   of members. If it shows the whole trip, something regressed.
-
-7. **Invite an email with no Reach account.** It should appear under "Invited".
-   Then sign up in a private window using that address — you should land in
-   the group without clicking anything.
-
-**2.3** While doing this, keep the terminal visible. Any 500 prints there with
-a stack trace. Copy the whole trace, not the summary line.
-
-**Phase 2 passes when** all seven steps work.
+**Check:** all seven work.
 
 ---
 
-## Phase 3 — Ship it
-
-**3.1** Final checks:
+## Step 8 — Deploy a preview and test that
 
 ```
-npm run type-check
-npm run test:unit
-npm run build
+npx vercel --yes
 ```
 
-All three must be clean.
+This prints a preview URL and does **not** touch alcanzar.io. Open it in a
+browser signed into your Vercel account and repeat all seven checks.
 
-**3.2** Push:
+**Check:** all seven work on the preview URL.
+
+---
+
+## Step 9 — Go live
+
+Only after step 8 passes.
 
 ```
 git push origin main
-```
-
-**3.3** Deploy:
-
-```
-rm -rf .next
 npx vercel --prod
 ```
 
-**3.4** Confirm the Stripe webhook exists. Without it, contributions never
-mark as collected and **no booking can ever be approved** — the whole
-collect-then-approve flow silently stalls.
+Run the seven checks once more on https://www.alcanzar.io.
 
-Stripe → Developers → Webhooks → Add endpoint:
+If anything is wrong: **Vercel → Deployments → the previous one → Promote to
+Production** restores the old version in about a minute.
 
-```
-URL     https://www.alcanzar.io/api/webhooks/stripe
-Events  payment_intent.succeeded
-        payment_intent.payment_failed
-        charge.refunded
-```
-
-Copy the signing secret into `STRIPE_WEBHOOK_SECRET` in Vercel.
-
-**3.5** Confirm the Clerk webhook:
-
-Clerk → Webhooks → Add endpoint → `https://www.alcanzar.io/api/webhooks/clerk`,
-events `user.created`, `user.updated`, `user.deleted`. Copy the signing secret
-into `CLERK_WEBHOOK_SECRET` in Vercel.
-
-This one matters more than it used to: the endpoint can schedule account
-deletion, so it now refuses unsigned payloads in production. Without a real
-secret it returns 500 rather than trusting the request.
-
-**3.6** Verify the deployment:
-
-```
-npm run doctor -- --prod
-```
-
-**Phase 3 passes when** the doctor is clean and the seven steps from Phase 2
-work on the live site.
+**Check:** all seven work on the live site.
 
 ---
 
-## Phase 4 — Money, for real
+## Step 10 — Real money
 
-Everything above uses Stripe test mode. Before taking a real payment:
+Everything above is Stripe test mode. Before charging anyone:
 
-1. **Switch to live keys** in Vercel (`sk_live_…`, `pk_live_…`), and create a
-   **separate live-mode webhook** with its own signing secret. Test-mode and
-   live-mode webhooks are different objects; a test secret will reject live
-   events.
-2. **Run one real contribution end to end** with your own card, for a small
-   amount, and confirm the contribution row flips to `succeeded`.
-3. **Refund it** and confirm the row updates.
+1. Switch Stripe to **Live mode**, copy the `sk_live_` / `pk_live_` keys into
+   Vercel.
+2. Create a **second webhook** in live mode — same URL, same events. Live and
+   test webhooks are separate objects with different signing secrets; a test
+   secret rejects live events.
+3. Put the live signing secret into `STRIPE_WEBHOOK_SECRET`.
+4. **Make one real contribution with your own card**, small amount, and
+   confirm the row flips to `succeeded` in Supabase.
+5. Refund it in Stripe and confirm the row updates.
 
-Do not skip step 2. The funding gate is the single point where a silent
-failure stops every booking in the product, and the only way to know it works
-is to watch one succeed.
-
----
-
-## What is still missing
-
-Honest list of what stands between here and a product you can put in front of
-strangers. None of this is written yet.
-
-**Blocking for real use**
-
-- **Nobody is told anything.** There are no push notifications or emails when
-  a plan needs a vote, a payment is due, or a booking is confirmed. The app
-  assumes everyone opens it at the right moment.
-- **No error recovery in the client.** A failed request mostly logs to the
-  console. The person sees nothing, or a toast that disappears.
-- **The concierge queue has no interface.** Restaurant bookings land in the
-  database as `pending` and someone has to confirm them by hand with a PATCH
-  request. That someone is you, via curl.
-- **No admin view.** No way to see all bookings, all groups, or a single
-  user's state without opening Supabase directly.
-
-**Blocking for money at scale**
-
-- **Refunds are not implemented.** If a trip falls through, there is no path
-  to return contributions other than doing it by hand in Stripe.
-- **No reconciliation.** Nothing checks that what Stripe collected matches
-  what the contributions table believes.
-- **The booking providers are unproven.** Four lanes have never made a live
-  call.
-
-**Known rough edges**
-
-- ~1,100 inline style blocks still bypass the design system; four different
-  header paddings survive.
-- `CheckoutScreen` in `components/reach-app.jsx` is ~300 lines of unreachable
-  dead UI. Only `CheckoutScreenV2` is routed.
-- `/api/payments` is not called by the app at all. The live flow is
-  collect-then-approve via `/api/plans/[planId]/funding`.
-- Trip generation runs on Claude Sonnet 4.6. Current and valid; Opus 5 or
-  Sonnet 5 would be a straight upgrade.
-- RLS is enabled with no policies. Every route uses the service-role key and
-  authorizes in `lib/auth.ts`. The policies exist only to stop the browser's
-  anon key reading tables directly.
+Do not skip 4. The funding gate is the one place where a silent failure stops
+every booking in the product, and watching one succeed is the only proof.
 
 ---
 
-## If you get stuck
+## What still will not work after all this
 
-Copy the whole thing, not a summary:
+Honest list. None of it is a bug; none of it is written yet.
 
-- the full output of `npm run doctor`
-- the complete stack trace from the terminal, not the last line
-- which numbered step you were on
+**People are never told anything.** No emails or notifications when a plan
+needs a vote, a payment is due, or a booking is confirmed. The app assumes
+everyone opens it at the right moment. This is the biggest gap between "works"
+and "a group can actually use it".
+
+**Restaurant bookings need you, by hand.** They land as `pending` and someone
+confirms them with a manual API call. There is no admin screen.
+
+**Refunds are manual.** Nothing reconciles what Stripe collected against what
+the app believes it collected.
+
+**Flights, hotels and activities cannot be booked.** Those lanes need partner
+approvals and have never made a live request.
+
+**Errors are mostly invisible.** A failed request usually logs to the console
+and shows the person nothing.
+
+---
+
+## When something breaks
+
+Send me three things:
+
+1. Which numbered step.
+2. The full output of `npm run doctor`.
+3. The complete stack trace — from the terminal, or
+   `npx vercel logs <deployment-url>`.
 
 The step number is the most useful part. It narrows the problem to one layer
 immediately.
