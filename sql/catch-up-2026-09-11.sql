@@ -19,8 +19,12 @@
 -- so booking forms silently fail to prefill.
 --
 -- Safe to run more than once: every statement is IF NOT EXISTS.
-
-BEGIN;
+--
+-- Deliberately NOT wrapped in BEGIN/COMMIT. Inside a transaction a single
+-- failing statement rolls back every other one, and the Supabase SQL editor
+-- surfaces only the one error — which looks identical to "nothing happened".
+-- Standalone statements apply independently, so a partial failure is visible
+-- and the rest still lands.
 
 -- ── users: preference and traveler columns the code expects ──────────────
 
@@ -79,8 +83,6 @@ CREATE INDEX IF NOT EXISTS group_invites_group_idx
   ON public.group_invites (group_id);
 
 ALTER TABLE public.group_invites ENABLE ROW LEVEL SECURITY;
-
-COMMIT;
 
 -- ── Verify ───────────────────────────────────────────────────────────────
 -- Should return one row reading: all columns present | invites table ready
