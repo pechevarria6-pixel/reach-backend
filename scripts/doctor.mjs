@@ -113,10 +113,24 @@ if (!env) {
 }
 
 section('Environment variables');
+const sensitiveCount = Object.values(env).filter(v => v === '[SENSITIVE]').length;
+if (sensitiveCount) {
+  console.log(`${C.dim}  ${sensitiveCount} value(s) came back as [SENSITIVE]: Vercel cannot read Secret-type`);
+  console.log(`  variables back, so \`vercel env pull\` will never recover them.${C.reset}`);
+}
 for (const group of ENV_GROUPS) {
   console.log(`${C.dim}  ${group.title}${C.reset}`);
   for (const [name, valid, hint] of group.vars) {
     const v = env[name];
+    // `vercel env pull` writes this literal for values stored as Secret type,
+    // which Vercel will not read back. Treat it as absent, not as a value.
+    if (v === '[SENSITIVE]') {
+      const msg = `${name} came back as [SENSITIVE]`;
+      const how = 'Vercel stores this as a Secret and will not reveal it.\n' +
+                  `      Copy it from the source instead — see the table in GETTING-LIVE.md — and paste it into .env.local directly.`;
+      group.blocking ? bad(msg, how) : warn(msg, how);
+      continue;
+    }
     if (!v) {
       group.blocking
         ? bad(`${name} is not set`, `${hint}\n      Set it in Vercel → Settings → Environment Variables, then: npx vercel env pull .env.local`)

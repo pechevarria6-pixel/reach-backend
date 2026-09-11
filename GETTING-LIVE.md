@@ -44,26 +44,31 @@ should be treated as unproven until you watch one succeed.
 
 ## Phase 0 — A working local environment
 
-**0.1** Pull the real credentials from Vercel:
+**`vercel env pull` cannot get these for you.** All 19 variables are stored in
+Vercel as **Secret** type, which is write-only by design — the CLI returns the
+literal string `[SENSITIVE]` instead of the value. They also live only in the
+Production and Preview environments, not Development, so a plain pull returns
+nothing at all.
+
+You have to copy each one from where it originally came from. Do it once,
+carefully, and keep the file.
+
+**0.1** Pull anyway, to get the non-secret values and confirm the project link:
 
 ```
-npx vercel env pull .env.local
+npx vercel env pull .env.local --environment=production --yes
 ```
 
-If that fails with a linking error:
+If it fails with a linking error, run `npx vercel link` first. Any value that
+comes back as `[SENSITIVE]` you must replace by hand.
 
-```
-npx vercel link
-npx vercel env pull .env.local
-```
-
-**0.2** Run the doctor:
+**0.2** Run the doctor to see exactly which ones are wrong:
 
 ```
 npm run doctor
 ```
 
-**0.3** Fix whatever it reports, one at a time. The likely ones:
+**0.3** Open `.env.local` in an editor and replace each flagged value. Sources:
 
 | It says | Where to get the value |
 |---|---|
@@ -71,11 +76,26 @@ npm run doctor
 | `SUPABASE_SERVICE_ROLE_KEY` looks wrong | Same page → `service_role` **secret** key. It is a long JWT. Not the anon key. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` looks wrong | Same page → `anon` `public` key |
 | `STRIPE_SECRET_KEY` looks wrong | Stripe → Developers → API keys → Secret key |
-| `ENCRYPTION_KEY` looks wrong | Generate one: `openssl rand -hex 32` |
+| `ENCRYPTION_KEY` looks wrong | **Do not generate a new one.** It decrypts passport and known-traveler numbers already in the database. Recover the production value; a new key makes existing encrypted rows unreadable. Only generate one (`openssl rand -hex 32`) if nothing has ever been encrypted. |
+| `CLERK_WEBHOOK_SECRET` looks wrong | Clerk → Webhooks → your endpoint → Signing Secret |
+| `STRIPE_WEBHOOK_SECRET` looks wrong | Stripe → Developers → Webhooks → your endpoint → Signing secret |
+| `ANTHROPIC_API_KEY` came back `[SENSITIVE]` | console.anthropic.com → API keys. You cannot read an existing key; create a new one and update Vercel too. |
 
-Put each value in **Vercel → Settings → Environment Variables**, not just in
-your local file, or production will break in exactly the way local does not.
-Then pull again: `npx vercel env pull .env.local`
+### Two things already found wrong
+
+**`NEXT_PUBLIC_SUPABASE_URL` points at `supabase.com`.** That is the dashboard,
+not your project's API host. It must be `https://<project-ref>.supabase.co` —
+copy it from Supabase → Settings → API → Project URL. Check the value in
+**Vercel** as well, because if production has the same mistake, every database
+call on the live site is failing.
+
+**`NEXT_PUBLIC_APP_URL` is `http://localhost:3000`.** Correct for local work.
+In Vercel it must be `https://www.alcanzar.io`, or invite emails will send
+people to their own machine.
+
+After fixing, put each corrected value in **Vercel → Settings → Environment
+Variables** too — and add them to the **Development** environment, not just
+Production, so future pulls are less painful.
 
 **Phase 0 passes when** `npm run doctor` reports no blocking problems in the
 Environment variables section.
