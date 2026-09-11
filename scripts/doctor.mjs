@@ -60,6 +60,10 @@ const ENV_GROUPS = [
     vars: [
       ['NEXT_PUBLIC_SUPABASE_URL', v => /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(v),
         'must look like https://<project>.supabase.co'],
+      // Server routes read this at runtime, so it survives a build that could
+      // not see the NEXT_PUBLIC_ value (Vercel hides Sensitive vars from builds).
+      ['SUPABASE_URL', v => /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(v),
+        'same value as NEXT_PUBLIC_SUPABASE_URL, without the prefix — add it in Vercel as a NON-sensitive variable'],
       // Supabase issues two generations of keys. Legacy ones are long JWTs
       // starting "eyJ"; current ones are sb_secret_… / sb_publishable_…
       // Accept both, or a valid new-format key reads as a placeholder.
@@ -151,7 +155,7 @@ for (const group of ENV_GROUPS) {
 
 // ── Supabase reachability and schema ─────────────────────────────────────
 section('Database');
-const url = (env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
+const url = (env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
 const key = env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 const keyLooksReal = /^sb_secret_/.test(key) || key.length > 100;

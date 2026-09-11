@@ -1,18 +1,44 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Browser client — uses anon key, respects RLS
-export function createBrowserClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// ─── Supabase clients ────────────────────────────────────────────────────
+// `NEXT_PUBLIC_*` variables are inlined into the bundle at BUILD time, not
+// read at runtime. Vercel does not expose variables marked Sensitive to the
+// build, so a sensitive NEXT_PUBLIC_ value compiles in as `undefined` and
+// every call then fails with the unhelpful "supabaseUrl is required".
+//
+// Server code therefore prefers plain, server-only variables, which are read
+// at runtime and unaffected by how the build was configured. The public names
+// remain as a fallback so existing setups keep working.
+//
+//   SUPABASE_URL            preferred on the server
+//   SUPABASE_ANON_KEY       preferred on the server
+//   NEXT_PUBLIC_SUPABASE_*  fallback, and the only option in the browser
+
+function required(name: string, value: string | undefined): string {
+  if (value) return value;
+  throw new Error(
+    `${name} is not set. On Vercel, check that it is NOT marked Sensitive — ` +
+    `sensitive variables are hidden from the build, so any NEXT_PUBLIC_ value ` +
+    `compiles in as undefined. Run \`npm run doctor\` for the full picture.`
   );
 }
 
-// Server client — uses service role, bypasses RLS
-// Only use in API routes and server components — never in browser
-export function createServerClient() {
+// Browser client — anon key, respects RLS. Must use the public names, since
+// nothing else reaches the browser.
+export function createBrowserClient() {
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+    required('NEXT_PUBLIC_SUPABASE_URL', process.env.NEXT_PUBLIC_SUPABASE_URL),
+    required('NEXT_PUBLIC_SUPABASE_ANON_KEY', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  );
+}
+
+// Server client — service role, bypasses RLS.
+// Only use in API routes and server components — never in the browser.
+export function createServerClient() {
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  return createClient(
+    required('SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)', url),
+    required('SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY),
+    { auth: { persistSession: false, autoRefreshToken: false } }
   );
 }
