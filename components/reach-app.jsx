@@ -1572,7 +1572,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
 // ─── TRIP PLANNING QUIZ ───────────────────────────────────────────────────────
 // Completely separate from the onboarding quiz.
 // This fuels the AI trip generator with trip-specific preferences.
-function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCount,totalCount,isSolo}){
+function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,completedCount,totalCount,isSolo}){
   const [qStep,setQStep]=useState(0);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
@@ -1708,7 +1708,7 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
             </div>
             <div style={{fontSize:14,color:C.t2}}>
               Departing from {userLocation?.formatted||"your location"}
-              {userLocation?.airport&&" ("+userLocation.airport+")"}
+              {departure?.airport&&" ("+departure.airport+")"}
             </div>
           </div>
           {error&&isDateStep&&(
@@ -1857,7 +1857,7 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
 }
 
 
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,savePlanToServer}){
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,savePlanToServer}){
   const group=groups.find(g=>g.id===groupId);
   const [step,setStep]=useState(0);
   const [startDate,setStartDate]=useState("");
@@ -1920,8 +1920,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           startDate:sd||startDate,
           endDate:ed||endDate,
           budgetPerPerson:parseInt(bud||budget)||null,
-          departureCity:userLocation?.formatted||userLocation?.city||null,
-          departureAirport:userLocation?.airport||null,
+          departureCity:departure?.city||null,
+          departureAirport:departure?.airport||null,
           userLat:userLocation?.lat||null,
           userLng:userLocation?.lng||null,
           tripPrefs:prefs,
@@ -2004,8 +2004,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           startDate,endDate,
           detailTripId:trip.id,
           tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
-          departureCity:userLocation?.formatted||null,
-          departureAirport:userLocation?.airport||null,
+          departureCity:departure?.city||null,
+          departureAirport:departure?.airport||null,
         }),
       });
       if(res.ok){
@@ -2178,6 +2178,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           <div style={{height:1,background:C.border,margin:"0 20px 16px"}}/>
 
           <TripQuiz
+            departure={departure}
             group={group}
             userLocation={userLocation}
             error={error}
@@ -2206,7 +2207,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           <div style={{fontSize:14,color:C.t2,lineHeight:1.8,marginBottom:30,maxWidth:280}}>
             Reading everyone's food preferences,<br/>
             music taste, and activity vibes...<br/>
-            Finding flights from {userLocation?.airport||"your city"},<br/>
+            Finding flights from {departure?.airport||departure?.city||"your city"},<br/>
             hotels, restaurants, and experiences...
           </div>
           <div style={{width:240,height:4,background:C.s3,borderRadius:2,overflow:"hidden",marginBottom:20}}>
@@ -2412,7 +2413,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
 
 // ─── AI TRIP GENERATOR ────────────────────────────────────────────────────────
-function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
+function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departure}){
   const [groupId,setGroupId]=useState(null);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
@@ -2434,8 +2435,8 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
         body:JSON.stringify({
           groupId,startDate,endDate,
           budgetPerPerson:parseInt(budget)||null,
-          departureCity:userLocation?.formatted||userLocation?.city||null,
-          departureAirport:userLocation?.airport||null,
+          departureCity:departure?.city||null,
+          departureAirport:departure?.airport||null,
           userLat:userLocation?.lat||null,
           userLng:userLocation?.lng||null,
         }),
@@ -2657,7 +2658,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
   );
 }
 
-function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer}){
+function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user}){
   // ── Draft persistence: load saved progress on mount ──────
   const DRAFT_KEY="reach_plan_draft";
   // SSR-safe localStorage helpers — only run in browser
@@ -2718,6 +2719,28 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
   // Solo mode is first-class: a group of one gets the same flow with the
   // voting UI absent and enable_voting false.
   const isSoloGroup=(selGroup?.memberIds?.length??1)<=1;
+
+  // "Just me" needs somewhere for the plan to live, because a plan belongs to
+  // a group. Reuse the personal group if there is one, otherwise make it once
+  // and quietly. Solo was previously only inferrable from a group that
+  // happened to have one member — there was no way to ask for it.
+  const personalGroup=groups.find(g=>(g.memberIds||[]).length===1&&(g.memberIds||[])[0]===me);
+  const [makingSolo,setMakingSolo]=useState(false);
+  const chooseSolo=async()=>{
+    if(makingSolo)return;
+    if(personalGroup){setGid(personalGroup.id);return;}
+    setMakingSolo(true);
+    try{
+      const tempId="g_local_"+Date.now();
+      const draft={id:tempId,name:"Just me",emoji:"🧍",memberIds:me?[me]:[],
+        inviteEmails:[],wallet:0,tags:[],lastActivity:"Just created",plans:[]};
+      setGroups(gs=>[...gs,draft]);
+      const realId=saveGroupToServer?await saveGroupToServer(draft):null;
+      if(!realId)throw new Error("Couldn't set up a solo trip — please try again");
+      setGid(realId);
+    }catch(e){toast(e.message);}
+    finally{setMakingSolo(false);}
+  };
 
   // Auto-save draft whenever state changes
   useEffect(()=>{
@@ -2920,8 +2943,25 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             <div className="pt" style={{marginBottom:6}}>Who's joining?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Select a group and what you're planning.</div>
             <input className="inp" value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Plan name (e.g., Summer Beach Trip)" style={{marginBottom:14}}/>
-            <div className="sl" style={{marginBottom:10}}>Select a group</div>
-            {groups.map(g=>(
+            <div className="sl" style={{marginBottom:10}}>Who is this for?</div>
+            <div onClick={chooseSolo}
+              style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,
+                border:`2px solid ${isSoloGroup&&gid?C.accentText:C.border}`,
+                background:isSoloGroup&&gid?C.accentDim:C.s2,marginBottom:8,
+                cursor:makingSolo?"progress":"pointer",opacity:makingSolo?.6:1}}>
+              <span style={{fontSize:22}}>🧍</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:600,color:C.t1}}>
+                  {makingSolo?"Setting up…":"Just me"}
+                </div>
+                <div style={{fontSize:12,color:C.t2}}>A solo trip — no voting, no splitting</div>
+              </div>
+              {isSoloGroup&&gid&&<div style={{color:C.accentText}}><Ic.Check/></div>}
+            </div>
+            {groups.filter(g=>(g.memberIds||[]).length>1).length>0&&(
+              <div className="sl" style={{margin:"14px 0 10px"}}>Or with a group</div>
+            )}
+            {groups.filter(g=>(g.memberIds||[]).length>1).map(g=>(
               <div key={g.id} onClick={()=>setGid(g.id)} style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,border:`2px solid ${gid===g.id?C.accentText:C.border}`,background:gid===g.id?C.accentDim:C.s2,marginBottom:8,cursor:"pointer"}}>
                 <span style={{fontSize:22}}>{g.emoji}</span>
                 <div style={{flex:1}}><div style={{fontSize:14,fontWeight:600,color:C.t1}}>{g.name}</div><div style={{fontSize:12,color:C.t2}}>{g.memberIds.length} members</div></div>
@@ -3373,9 +3413,23 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${plan.budget.toLocaleString()}</div>
               <div style={{fontSize:12,color:C.t2,marginTop:4}}>{plan.participants.length} travelers total</div>
             </div>
-            {[{l:"Flights (est.)",a:"$480–$720",p:28},{l:"Accommodation",a:"$600–$900",p:34},{l:"Activities",a:"$200–$400",p:13},{l:"Food & dining",a:"$300–$500",p:18},{l:"Transport",a:"$80–$150",p:5},{l:"Buffer",a:"$50–$100",p:4}].map((r,i)=>(
+            {/* These figures were fixed strings — "$480–$720" whether the
+                budget was $500 or $10,000 — laid out to look like a quote one
+                screen before checkout. They are a planning split of the
+                budget, derived from it and labelled as such. Real prices come
+                from a provider at booking. */}
+            <div style={{fontSize:12,color:C.t2,marginBottom:12,lineHeight:1.5}}>
+              A rough split of your ${plan.budget.toLocaleString()} to plan against.
+              Not a quote — real prices come from the airline and hotel when you book.
+            </div>
+            {[{l:"Flights",p:28},{l:"Accommodation",p:34},{l:"Food & dining",p:18},{l:"Activities",p:13},{l:"Transport",p:4},{l:"Buffer",p:3}].map((r,i)=>(
               <div key={i} style={{marginBottom:12}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><span style={{fontSize:13,color:C.t1}}>{r.l}</span><span style={{fontSize:13,color:C.t2}}>{r.a}</span></div>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                  <span style={{fontSize:13,color:C.t1}}>{r.l}</span>
+                  <span style={{fontSize:13,color:C.t2}}>
+                    ≈ ${Math.round((plan.budget*r.p)/100).toLocaleString()}
+                  </span>
+                </div>
                 <div className="pb-t"><div className="pb-f" style={{width:`${r.p}%`}}/></div>
               </div>
             ))}
@@ -3825,6 +3879,86 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
     <div style={{padding:"14px 20px",fontSize:13,color:C.t3,lineHeight:1.5}}>{children}</div>
   );
 
+  // ═══ You: name and home airport ═══
+  // Both exist because the app was guessing. The greeting said "Hey there"
+  // when Clerk had no first name, and the departure airport was inferred from
+  // browser geolocation against a fixed list of US cities — wrong or missing
+  // for anyone outside it, or away from home when they planned.
+  if(section==="you"){
+    const home=data?.home;
+    const ident=data?.identity;
+    const firstDraft=docDraft.__first!==undefined?docDraft.__first:(ident?.firstName??"");
+    const airDraft=docDraft.__air!==undefined?docDraft.__air:(home?.airport??"");
+    const cityDraft=docDraft.__city!==undefined?docDraft.__city:(home?.city??"");
+    const airValid=!airDraft||/^[A-Za-z]{3}$/.test(airDraft.trim());
+
+    const saveYou=async()=>{
+      if(busy)return;setBusy("you");
+      try{
+        const body={};
+        if(docDraft.__first!==undefined)body.firstName=firstDraft.trim()||null;
+        if(docDraft.__air!==undefined)body.homeAirport=airDraft.trim()||null;
+        if(docDraft.__city!==undefined)body.homeCity=cityDraft.trim()||null;
+        if(!Object.keys(body).length){setBusy(null);return;}
+        const r=await fetch("/api/profile",{
+          method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),
+        });
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok)throw new Error(d.error||"Couldn't save that");
+        setDocDraft(x=>({...x,__first:undefined,__air:undefined,__city:undefined}));
+        toast("Saved");await load();
+      }catch(e){toast(e.message);}
+      finally{setBusy(null);}
+    };
+
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="You"/>
+        <div style={{padding:"0 20px 18px"}}>
+          <div className="sl" style={{marginBottom:8}}>What should we call you?</div>
+          <input className="inp" value={firstDraft} placeholder="First name"
+            onChange={e=>setDocDraft(x=>({...x,__first:e.target.value}))}/>
+          <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
+            Used on your home screen and wherever your group sees you.
+          </div>
+        </div>
+
+        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
+          <div className="sl" style={{marginBottom:8}}>Home airport</div>
+          <div style={{display:"flex",gap:8}}>
+            <input className="inp" value={airDraft} placeholder="SFO" maxLength={3}
+              style={{width:96,textTransform:"uppercase",fontWeight:600,letterSpacing:".08em"}}
+              onChange={e=>setDocDraft(x=>({...x,__air:e.target.value}))}/>
+            <input className="inp" value={cityDraft} placeholder="San Francisco, CA" style={{flex:1}}
+              onChange={e=>setDocDraft(x=>({...x,__city:e.target.value}))}/>
+          </div>
+          {!airValid&&(
+            <div style={{fontSize:12,color:C.red,marginTop:8}}>
+              An airport code is three letters, like SFO or JFK.
+            </div>
+          )}
+          <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
+            Every flight estimate departs from here. Without it the app guesses from your
+            browser's location, which is wrong whenever you plan a trip from somewhere
+            that isn't home.
+          </div>
+          {home&&home.available===false&&(
+            <div style={{marginTop:10,padding:"10px 12px",background:C.amberDim,border:`1px solid ${C.amber}`,borderRadius:12,fontSize:12,color:C.t1,lineHeight:1.5}}>
+              Saving this needs a database migration that hasn't been run yet:
+              sql/home-airport-2026-09-12.sql
+            </div>
+          )}
+        </div>
+
+        <div style={{padding:"0 20px 30px"}}>
+          <button className="bp" disabled={busy==="you"||!airValid} onClick={saveYou}>
+            {busy==="you"?"Saving…":"Save"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ═══ Travel documents ═══
   if(section==="documents"){
     const docs=[
@@ -4052,7 +4186,12 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
         </div>
       )}
 
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Travel</span></div>
+      <div style={{padding:"0 20px 6px"}}><span className="sl">You</span></div>
+      <Row icon="🙋" title="Name and home airport"
+        sub={[data?.identity?.firstName||null,data?.home?.airport||null].filter(Boolean).join(" · ")||"Not set yet"}
+        right={<Ic.ChevR/>} onClick={()=>setSection("you")}/>
+
+      <div style={{padding:"16px 20px 6px"}}><span className="sl">Travel</span></div>
       <Row icon="🛂" title="Travel documents"
         sub={docCount?`${docCount} saved · encrypted`:"Passport, PreCheck, Global Entry"}
         right={<Ic.ChevR/>} onClick={()=>setSection("documents")}/>
@@ -4149,6 +4288,14 @@ export default function ReachApp({realUser,onSignOut}={}){
 
   // ── Location state ───────────────────────────────────────
   const [userLocation,setUserLocation]=useState(null); // {lat,lng,city,airport}
+
+  // What the person set in Profile wins over the browser's guess. The guess
+  // comes from a fixed table of ~50 US cities and is null for everywhere else,
+  // and it describes where they are right now rather than where they fly from.
+  const departure={
+    airport:user?.homeAirport||userLocation?.airport||null,
+    city:user?.homeCity||userLocation?.formatted||userLocation?.city||null,
+  };
 
   // ── Load real data from Supabase via API ──────────────────
   // The route guard means this component only ever renders for a signed-in
@@ -4547,7 +4694,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   };
 
   const cur=stack[stack.length-1];
-  const cp={onBack:pop,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
+  const cp={onBack:pop,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
 
   const renderSub=()=>{
     if(!cur)return null;
@@ -4557,7 +4704,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     if(screen==="createGroup")return <CreateGroupScreen {...cp} {...props}/>;
     if(screen==="aiTrip")return <AiTripScreen {...cp} {...props}/>;
     if(screen==="groupTrip")return <GroupTripScreen {...cp} {...props}/>;
-    if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props}/>;
+    if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props} user={user}/>;
     if(screen==="editGroup")return <EditGroupScreen {...cp} {...props} onBack={pop}/>;
     if(screen==="checkout")return <CheckoutScreenV2 {...cp} {...props}/>;
     if(screen==="editItinerary")return <EditItineraryScreen {...cp} {...props}/>;
@@ -4592,7 +4739,7 @@ export default function ReachApp({realUser,onSignOut}={}){
               ):(
                 <div className="sc">
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
-                  {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation}/>}
+                  {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push}/>}
                   {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme}/>}
                 </div>

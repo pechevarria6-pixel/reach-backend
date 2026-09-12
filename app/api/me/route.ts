@@ -93,12 +93,19 @@ export async function GET() {
     joinedGroups,
     id: dbUser?.id || clerkId,
     clerkId,
-    name,
     email,
     avatar: avatar_url,
     provider,
-    firstName,
-    lastName,
+    // What the person set in Profile wins over whatever Clerk knows: Clerk has
+    // no first name at all for an Apple private-relay sign-up, which is why
+    // the home screen greeted people with "there".
+    name: dbUser?.name || name,
+    firstName: dbUser?.first_name || firstName,
+    lastName: dbUser?.last_name || lastName,
+    // Departure airport for every flight estimate. Null until they set one,
+    // in which case the client falls back to guessing from geolocation.
+    homeAirport: dbUser?.home_airport || null,
+    homeCity: dbUser?.home_city || null,
     preferences: dbUser ? {
       cuisines: dbUser.cuisines || [],
       musicGenres: dbUser.music_genres || [],

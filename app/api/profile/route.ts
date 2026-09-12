@@ -86,6 +86,18 @@ export async function GET() {
     connected: connected.data || [],
     cards,
     payments: payments.data || [],
+    // Undefined rather than null means the column is not there yet, so the
+    // screen can tell "not set" apart from "migration not run".
+    home: {
+      airport: row.home_airport ?? null,
+      city: row.home_city ?? null,
+      available: 'home_airport' in row,
+    },
+    identity: {
+      name: row.name ?? null,
+      firstName: row.first_name ?? null,
+      lastName: row.last_name ?? null,
+    },
     preferences: {
       seat: row.seat_preference ?? null,
       dietary: row.dietary_needs ?? null,
@@ -118,6 +130,15 @@ const Schema = z.object({
   seat: z.string().trim().max(40).nullable().optional(),
   dietary: z.string().trim().max(200).nullable().optional(),
   climate: z.string().trim().max(40).nullable().optional(),
+  // A three-letter IATA code, upper-cased on the way in so "sfo" and "SFO"
+  // are the same airport.
+  homeAirport: z.string().trim().regex(/^[A-Za-z]{3}$/, 'An airport code is three letters, like SFO')
+    .transform(v => v.toUpperCase()).nullable().optional(),
+  homeCity: z.string().trim().max(80).nullable().optional(),
+  // What the app calls you. Clerk has no first name for anyone who signed up
+  // with Apple private relay, which is why the home screen said "Hey there".
+  firstName: z.string().trim().min(1).max(40).nullable().optional(),
+  lastName: z.string().trim().max(40).nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest) {
@@ -140,9 +161,24 @@ export async function PATCH(req: NextRequest) {
     // never sit in the table in plaintext.
     updates[column] = value === null ? null : encrypt(value);
   }
-  for (const [key, column] of [['seat', 'seat_preference'], ['dietary', 'dietary_needs'], ['climate', 'climate_preference']] as const) {
+  for (const [key, column] of [
+    ['seat', 'seat_preference'], ['dietary', 'dietary_needs'], ['climate', 'climate_preference'],
+    ['homeAirport', 'home_airport'], ['homeCity', 'home_city'],
+    ['firstName', 'first_name'], ['lastName', 'last_name'],
+  ] as const) {
     const value = parsed.data[key];
     if (value !== undefined) updates[column] = value || null;
+  }
+
+  // `name` is what the greeting and every member list read, so keep it in step
+  // with the parts rather than letting them disagree.
+  if (parsed.data.firstName !== undefined || parsed.data.lastName !== undefined) {
+    const { data: current } = await ctx.db
+      .from('users').select('first_name, last_name').eq('id', ctx.user.id).single();
+    const first = parsed.data.firstName !== undefined ? parsed.data.firstName : current?.first_name;
+    const last = parsed.data.lastName !== undefined ? parsed.data.lastName : current?.last_name;
+    const full = [first, last].filter(Boolean).join(' ').trim();
+    if (full) updates.name = full;
   }
 
   if (!Object.keys(updates).length) {
@@ -152,6 +188,14 @@ export async function PATCH(req: NextRequest) {
   const { error } = await ctx.db.from('users').update(updates).eq('id', ctx.user.id);
   if (error) {
     console.error('[profile PATCH]', error);
+    // The home-airport columns arrive in a migration. Say so plainly instead
+    // of "could not save that", which sends someone hunting for a typo.
+    if (/column .* does not exist/i.test(error.message || '')) {
+      return NextResponse.json(
+        { error: 'This needs the home-airport migration: run sql/home-airport-2026-09-12.sql in Supabase.' },
+        { status: 503 },
+      );
+    }
     return NextResponse.json({ error: 'Could not save that' }, { status: 500 });
   }
   return NextResponse.json({ saved: Object.keys(updates).length });
