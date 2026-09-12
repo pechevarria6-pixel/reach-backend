@@ -282,14 +282,6 @@ function toContact(u){
 
 const INIT_GROUPS = [];
 
-const EXPS = [
-  {id:"e1",title:"Northern Lights, Iceland",sub:"7 nights · Adventure",price:"$2,800",emoji:"🌌",bg:`linear-gradient(145deg,#1a1060,${C.accent})`,tags:["Trips"]},
-  {id:"e2",title:"Tulum Food & Culture",sub:"5 nights · Cultural",price:"$1,900",emoji:"🌮",bg:`linear-gradient(145deg,#064E3B,${C.green})`,tags:["Trips"]},
-  {id:"e3",title:"Beyoncé · MSG",sub:"Concert · Aug 19",price:"$340",emoji:"🎤",bg:`linear-gradient(145deg,#78350F,${C.amber})`,tags:["Concerts"]},
-  {id:"e4",title:"Montauk Beach House",sub:"Weekend · Aug 2–4",price:"$420/night",emoji:"🌊",bg:"linear-gradient(145deg,#1E3A5F,#3B82F6)",tags:["Weekends"]},
-  {id:"e5",title:"New Orleans Jazz Fest",sub:"Festival · May 2027",price:"$180/day",emoji:"🎷",bg:"linear-gradient(145deg,#4C1D95,#EC4899)",tags:["Festivals"]},
-  {id:"e6",title:"Nobu Malibu",sub:"Restaurant · Dinner for groups",price:"$160/pp",emoji:"🍣",bg:"linear-gradient(145deg,#1F2937,#6B7280)",tags:["Restaurants"]},
-];
 
 // Icons
 const Ic = {
@@ -343,11 +335,12 @@ function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);retu
 
 // ─── HOME ────────────────────────────────────────────────────────────────────
 function HomeScreen({groups,um,push,toast,loading,user,setTab}){
-  const [nearbyEvents,setNearbyEvents]=useState([
-    {emoji:"🎵",title:"SF Jazz Festival",meta:"Sat Jun 28 · Davies Hall",dist:"0.4 mi"},
-    {emoji:"🍕",title:"SF Street Food Fest",meta:"Sun Jun 29 · Civic Center",dist:"0.9 mi"},
-    {emoji:"🎸",title:"Outside Lands 2026",meta:"Aug 8–10 · Golden Gate Park",dist:"2.1 mi"},
-  ]);
+  // These were three San Francisco events hardcoded as the default, shown to
+  // everyone everywhere until the API answered — and left standing forever if
+  // it never did. An empty list that says so is more honest than a fixture.
+  const [nearbyEvents,setNearbyEvents]=useState([]);
+  const [nearbyState,setNearbyState]=useState("loading"); // loading|ready|denied|none
+  const [nearbyReason,setNearbyReason]=useState(null);
   useEffect(()=>{
     try{
       if(typeof navigator==="undefined"||!navigator.geolocation)return;
@@ -357,10 +350,15 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             const lat=pos.coords.latitude;
             const lng=pos.coords.longitude;
             const res=await fetch("/api/nearby?lat="+lat+"&lng="+lng);
-            if(res.ok){const data=await res.json();if(data.events?.length)setNearbyEvents(data.events);}
+            if(res.ok){
+              const data=await res.json();
+              setNearbyEvents(data.events||[]);
+              setNearbyReason(data.reason||null);
+              setNearbyState(data.events?.length?"ready":"none");
+            }else{setNearbyState("none");}
           }catch(e){}
         },
-        function(err){ /* location denied - use defaults */ },
+        function(err){ setNearbyState("denied"); },
         {timeout:8000,enableHighAccuracy:false,maximumAge:300000}
       );
     }catch(e){}
@@ -471,15 +469,29 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         {user?.location&&<span style={{fontSize:11,color:C.t3}}>📍 {user.location}</span>}
       </div>
       {nearbyEvents.map((n,i)=>(
-        <div key={i} style={{margin:"0 20px 8px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}>
+        <div key={i}
+          onClick={()=>{ if(n.url)window.open(n.url,"_blank","noopener,noreferrer"); }}
+          style={{margin:"0 20px 8px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,cursor:n.url?"pointer":"default"}}>
           <span style={{fontSize:26,flexShrink:0}}>{n.emoji}</span>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:500,color:C.t1}}>{n.title}</div>
             <div style={{fontSize:11,color:C.t2,marginTop:2}}>{n.meta}</div>
           </div>
-          <div style={{fontSize:11,color:C.t3}}>{n.dist}</div>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            {n.price&&<div style={{fontSize:12,color:C.accentText,fontWeight:600}}>{n.price}</div>}
+            {n.dist&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{n.dist}</div>}
+          </div>
         </div>
       ))}
+      {nearbyState!=="ready"&&(
+        <div style={{margin:"0 20px",padding:"14px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+          {nearbyState==="loading"?"Looking for events near you…"
+            :nearbyState==="denied"?"Allow location in your browser and reload to see events near you."
+            :nearbyReason==="no_key"?"Event listings aren't switched on for this deployment yet."
+            :nearbyReason==="provider_error"?"Couldn't reach the ticket provider. Try again shortly."
+            :"Nothing on sale within 90 miles right now."}
+        </div>
+      )}
       <div style={{height:20}}/>
     </div>
   );
@@ -491,7 +503,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
   const [localRecs,setLocalRecs]=useState([]);
   const [loading,setLoading]=useState(false);
   const [loaded,setLoaded]=useState(false);
-  const filters=["All","Nearby","Concerts","Restaurants","Weekends","Trips","Festivals"];
+  const [reason,setReason]=useState(null);
 
   useEffect(()=>{
     if(loaded)return;
@@ -529,6 +541,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
       const res=await fetch(url);
       if(res.ok){
         const data=await res.json();
+        setReason(data.reason||null);
         if(data.events?.length){
           setLocalRecs(data.events);
           // Cache in sessionStorage so reload is instant
@@ -556,25 +569,36 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
     return false;
   };
 
-  // Combine AI local recs with curated experiences
-  const allItems=[
-    ...localRecs.map(e=>({
-      id:"local_"+e.id,
-      title:e.title,
-      sub:e.meta,
-      emoji:e.emoji,
-      price:e.price||"Free",
-      dist:e.dist,
-      tags:["Nearby"],
-      bg:"linear-gradient(135deg,#1a1a2e,#16213e)",
-      isLocal:true,
-    })),
-    ...EXPS,
-  ];
+  // Real inventory only. This used to append six hardcoded experiences —
+  // Northern Lights, Nobu Malibu, a Beyoncé date in 2026 — which were the same
+  // six for everyone, everywhere, and could not be bought. It also dropped the
+  // booking url the API had already returned for every real event.
+  const allItems=localRecs.map(e=>({
+    id:"local_"+e.id,
+    title:e.title,
+    sub:e.meta,
+    emoji:e.emoji,
+    price:e.price||"Free",
+    dist:e.dist,
+    category:e.category||"Event",
+    // The link that actually sells the ticket.
+    url:e.url||null,
+    tags:[e.category||"Event"],
+    bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
+    isLocal:true,
+  }));
 
-  const shown=filter==="All"?allItems
-    :filter==="Nearby"?allItems.filter(e=>e.isLocal)
-    :allItems.filter(e=>e.tags?.includes(filter));
+  // Filters come from what actually came back, so a filter can never be empty.
+  const categories=[...new Set(allItems.map(e=>e.category).filter(Boolean))].sort();
+  const filters=["All",...categories];
+
+  const shown=filter==="All"?allItems:allItems.filter(e=>e.category===filter);
+  const emptyNote=loading?"Finding what's on near you…"
+    :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
+    :reason==="no_location"?"Allow location in your browser to see what's on near you."
+    :reason==="provider_error"?"Couldn't reach the ticket provider. Try again shortly."
+    :allItems.length===0?"Nothing on sale within 90 miles right now."
+    :null;
 
   const city=userLocation?.city||userLocation?.formatted;
 
@@ -645,6 +669,12 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
         <div style={{textAlign:"center",padding:"20px",color:C.t3,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
           <div style={{width:16,height:16,border:"2px solid "+C.accentText,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
           Finding things near you…
+        </div>
+      )}
+
+      {emptyNote&&shown.length===0&&(
+        <div style={{margin:"0 20px",padding:"18px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,fontSize:13,color:C.t2,lineHeight:1.6}}>
+          {emptyNote}
         </div>
       )}
 
@@ -807,11 +837,30 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
 
         <div style={{height:1,background:C.border,margin:"20px 0"}}/>
 
-        {/* Book Now — direct action */}
-        <button className="bp" style={{marginBottom:10,width:"100%",background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`}}
-          onClick={()=>setBooking(true)}>
-          🎯 Book Now
-        </button>
+        {/* A real event carries the link that actually sells the ticket.
+            Ticketmaster's booking API is invite-only, so the purchase and the
+            confirmation happen on their site — the button says so rather than
+            implying Reach takes the payment. The in-app form below is for
+            restaurants, which Reach does handle. */}
+        {exp?.url?(
+          <>
+            <button className="bp" style={{marginBottom:8,width:"100%",background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`}}
+              onClick={()=>{
+                window.open(exp.url,"_blank","noopener,noreferrer");
+                toast("Opening Ticketmaster");
+              }}>
+              🎟️ Get tickets
+            </button>
+            <div style={{fontSize:11.5,color:C.t3,marginBottom:12,lineHeight:1.5,textAlign:"center"}}>
+              Tickets are sold by Ticketmaster. You'll pay and get your confirmation there.
+            </div>
+          </>
+        ):(
+          <button className="bp" style={{marginBottom:10,width:"100%",background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`}}
+            onClick={()=>setBooking(true)}>
+            🎯 Book Now
+          </button>
+        )}
         <button className="bs" style={{marginBottom:10,width:"100%"}}
           onClick={()=>setPlanPicker(true)}>
           ➕ Add to a Group Plan
