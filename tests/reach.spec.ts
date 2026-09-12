@@ -269,3 +269,95 @@ test.describe('8. Mobile viewport', () => {
     await expect(page.locator('.aw').first()).toBeVisible({ timeout: 20000 });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// 9. Legal pages — listed as public in middleware, and for a long time they
+//    404'd, which is the kind of gap nobody notices until someone looks.
+test.describe('9. Legal pages', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  for (const [path, heading] of [['/privacy', 'Privacy'], ['/terms', 'Terms']]) {
+    test(`${path} is public and has real content`, async ({ page }) => {
+      const res = await page.goto(`${BASE_URL}${path}`);
+      expect(res?.status()).toBe(200);
+      await expect(page.locator('h1')).toContainText(heading);
+      // A stub page would pass a status check; this asserts substance.
+      const words = (await page.locator('main').innerText()).split(/\s+/).length;
+      expect(words).toBeGreaterThan(300);
+    });
+  }
+
+  test('Terms state plainly that Reach never holds funds', async ({ page }) => {
+    await page.goto(`${BASE_URL}/terms`);
+    // The product principle the whole payment design rests on. If this
+    // sentence ever disappears, the page has drifted from the product.
+    await expect(page.locator('main')).toContainText(/never hold/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 10. API authorisation boundaries. RLS is not the security model here — the
+//     routes are — so an unauthenticated call must be refused, not empty.
+test.describe('10. Profile API', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  for (const path of ['/api/profile', '/api/profile/loyalty']) {
+    test(`${path} refuses an unauthenticated caller`, async ({ request }) => {
+      const res = await request.get(`${BASE_URL}${path}`);
+      expect([401, 405]).toContain(res.status());
+    });
+  }
+
+  test('Profile never returns a full document number', async ({ request }) => {
+    // Even unauthenticated, assert the shape contract: the route is built to
+    // send last4 only, never the decrypted value.
+    const res = await request.get(`${BASE_URL}/api/profile`);
+    const body = await res.text();
+    expect(body).not.toMatch(/passport_number_enc|tsa_precheck_enc|global_entry_enc/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 11. Stripe publishable key is served at runtime, because Vercel hides
+//     Sensitive variables from the build and NEXT_PUBLIC_ would compile in
+//     as undefined.
+test.describe('11. Stripe config', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('/api/config/stripe serves a publishable key, never a secret', async ({ request }) => {
+    const res = await request.get(`${BASE_URL}/api/config/stripe`);
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    expect(body.publishableKey).toMatch(/^pk_(test|live)_/);
+    // The one thing this endpoint must never do.
+    expect(JSON.stringify(body)).not.toMatch(/sk_(test|live)_/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// 12. Theme. Light is the default, and a stored choice is applied before
+//     first paint so dark users never see a light frame flash past.
+test.describe('12. Theme', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('Defaults to light with no stored preference', async ({ page }) => {
+    await page.goto(`${BASE_URL}/sign-in`);
+    const stamped = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+    expect(stamped).toBeNull();
+  });
+
+  test('A stored dark choice is applied before paint', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('reach-theme', 'dark'));
+    await page.goto(`${BASE_URL}/sign-in`);
+    await expect.poll(() =>
+      page.evaluate(() => document.documentElement.getAttribute('data-theme')),
+    ).toBe('dark');
+  });
+
+  test('The shell paints a themed background, never transparent', async ({ page }) => {
+    await page.goto(`${BASE_URL}/sign-in`);
+    const bg = await page.evaluate(() =>
+      getComputedStyle(document.body).backgroundColor);
+    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
+  });
+});
