@@ -70,8 +70,10 @@ export const TRIPS_JSON_SCHEMA = {
   properties: {
     trips: {
       type: 'array',
-      minItems: 3,
-      maxItems: 3,
+      // No minItems/maxItems: the API rejects any minItems above 1 with
+      // "For 'array' type, 'minItems' values other than 0 or 1 are not
+      // supported". The count is asked for in the prompt and checked in the
+      // route instead.
       items: {
         type: 'object',
         properties: {

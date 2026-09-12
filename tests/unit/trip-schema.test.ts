@@ -45,8 +45,28 @@ test('itinerary JSON Schema and zod schema agree', () => {
 test('price diversity is enforced by the schema, not just the prompt', () => {
   const item = (TRIPS_JSON_SCHEMA as any).properties.trips.items;
   assert.deepEqual(item.properties.tier.enum, ['saver', 'on_budget', 'stretch']);
-  assert.equal((TRIPS_JSON_SCHEMA as any).properties.trips.minItems, 3);
-  assert.equal((TRIPS_JSON_SCHEMA as any).properties.trips.maxItems, 3);
+});
+
+test('the trips array carries no minItems, which the API rejects', () => {
+  // "For 'array' type, 'minItems' values other than 0 or 1 are not supported"
+  // — a 400 on every request, which took trip generation down completely.
+  const trips = (TRIPS_JSON_SCHEMA as any).properties.trips;
+  assert.equal(trips.minItems, undefined);
+  assert.equal(trips.maxItems, undefined);
+});
+
+test('no array anywhere in either schema sets an unsupported minItems', () => {
+  const walk = (node: any, path: string): string[] => {
+    if (!node || typeof node !== 'object') return [];
+    const bad: string[] = [];
+    if (node.type === 'array' && node.minItems != null && node.minItems > 1) {
+      bad.push(`${path}.minItems=${node.minItems}`);
+    }
+    for (const [k, v] of Object.entries(node)) bad.push(...walk(v, `${path}.${k}`));
+    return bad;
+  };
+  assert.deepEqual(walk(TRIPS_JSON_SCHEMA, 'trips'), []);
+  assert.deepEqual(walk(ITINERARY_JSON_SCHEMA, 'itinerary'), []);
 });
 
 // ── parseModelJSON: the guard every model response goes through ───────────

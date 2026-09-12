@@ -14,6 +14,39 @@ import {
 const FAST_MODEL = 'claude-haiku-4-5';
 const QUALITY_MODEL = 'claude-opus-5';
 
+
+// Constrained generation is the right tool, but a schema the API will not
+// accept is a 400 on every single request — which is exactly how this feature
+// went down: `minItems: 3` is rejected outright, and nothing worked until it
+// was removed. A malformed schema should degrade to the unconstrained prompt,
+// not take trip planning with it.
+async function withSchemaFallback(
+  client: Anthropic,
+  model: string,
+  maxTokens: number,
+  prompt: string,
+  schema: Record<string, unknown>,
+  label: string,
+) {
+  const base = {
+    model,
+    max_tokens: maxTokens,
+    messages: [{ role: 'user' as const, content: prompt }],
+  };
+  try {
+    return await client.messages.create({
+      ...base,
+      output_config: { format: { type: 'json_schema' as const, schema } },
+    });
+  } catch (e: any) {
+    // Only a rejected request falls back. A 429 or a 5xx is transient and
+    // belongs to the caller's handler, which knows how to word it.
+    if (e?.status !== 400) throw e;
+    console.error(`[${label}] schema rejected, retrying unconstrained:`, e?.message);
+    return client.messages.create(base);
+  }
+}
+
 // A missing key disables this lane with a clean message rather than a crash.
 function anthropicOrNull() {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -96,15 +129,11 @@ know on a second trip.`;
     }
 
     try {
-      const res = await client.messages.create({
-        model: QUALITY_MODEL,
-        // 8000 truncated a long itinerary mid-object, which is what most of
-        // the old parse failures actually were.
-        max_tokens: 16000,
-        thinking: { type: 'adaptive' },
-        messages: [{ role: 'user', content: prompt }],
-        output_config: { format: { type: 'json_schema', schema: ITINERARY_JSON_SCHEMA } },
-      });
+      const res = await withSchemaFallback(
+        // 16000 because 8000 truncated a long itinerary mid-object, which is
+        // what most of the old parse failures actually were.
+        client, QUALITY_MODEL, 16000, prompt, ITINERARY_JSON_SCHEMA, 'trips itinerary',
+      );
 
       const parsed = parseModelJSON(textOf(res), ItinerarySchema, 'trips itinerary');
       if (!parsed?.itinerary?.length) {
@@ -160,7 +189,20 @@ food_scene and music_scene to two sentences each. tagline is at most ten
 words. emoji is a single emoji for the destination. accommodation.example
 names a specific hotel or neighbourhood.
 
-Be fast and be specific. Real place names, not categories.`;
+Be fast and be specific. Real place names, not categories.
+
+Return JSON only, shaped exactly like this:
+{"trips":[{"id":"trip_1","destination":"City, Country","emoji":"🌍",
+"tagline":"Ten words on why this group","vibe":"Vibe label",
+"why_this_group":"One sentence tied to their preferences",
+"food_scene":"Two sentences","music_scene":"Two sentences",
+"total_per_person":1850,"tier":"saver",
+"costs":{"flights":{"per_person":400,"details":"..."},
+"accommodation":{"per_person":500,"details":"...","example":"Hotel or area"},
+"ground_transport":{"per_person":100,"details":"..."},
+"food_drink":{"per_person":350,"details":"..."},
+"activities":{"per_person":200,"details":"..."},
+"misc":{"per_person":100,"details":"..."}}}]}`;
 
   const client = anthropicOrNull();
   if (!client) {
@@ -172,14 +214,13 @@ Be fast and be specific. Real place names, not categories.`;
   }
 
   try {
-    const response = await client.messages.create({
-      model: FAST_MODEL,
-      max_tokens: 8000,
-      messages: [{ role: 'user', content: prompt }],
-      output_config: { format: { type: 'json_schema', schema: TRIPS_JSON_SCHEMA } },
-    });
+    const response = await withSchemaFallback(
+      client, FAST_MODEL, 8000, prompt, TRIPS_JSON_SCHEMA, 'trips generate',
+    );
 
     const trips = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
+    // The schema cannot pin the array length, so the count is checked here.
+    // Fewer than three is still worth showing — an empty list is not.
     if (!trips?.length) {
       console.error('[trips generate] no trips in response', {
         groupId, nights, effectiveBudget, stop_reason: response.stop_reason,
