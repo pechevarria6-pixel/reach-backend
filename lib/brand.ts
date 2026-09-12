@@ -28,8 +28,19 @@ export const BRAND = {
   t3: '#97845E',
 } as const;
 
-/** Browser theme colour, matching the app surface rather than the surround. */
-export const THEME_COLOR = BRAND.bg;
+/** The surround outside the app frame, one value per theme.
+ *  The HTML shell paints this before React mounts, so it cannot reach the
+ *  app's own CSS variables — these two have to live somewhere the server can
+ *  read. Everything inside the frame themes itself from the token block in
+ *  reach-app.jsx. */
+export const SHELL = { light: '#EDE6D8', dark: '#050406' } as const;
+
+/** The app surface behind the frame, per theme. Used for the browser chrome. */
+export const SURFACE = { light: '#FCFAF5', dark: '#0A0805' } as const;
+
+/** The key the app stores the viewer's theme choice under. Shared so the
+ *  no-flash script in the shell and the toggle in the app cannot drift. */
+export const THEME_KEY = 'reach-theme';
 
 /** Inline button style for HTML emails, where classes are unreliable. */
 export const emailButtonStyle =

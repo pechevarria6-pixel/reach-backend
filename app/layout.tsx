@@ -1,6 +1,6 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import type { Metadata, Viewport } from 'next';
-import { BRAND, THEME_COLOR } from '@/lib/brand';
+import { SHELL, SURFACE, THEME_KEY } from '@/lib/brand';
 
 export const metadata: Metadata = {
   title: 'Reach — Plan experiences together',
@@ -15,7 +15,12 @@ export const viewport: Viewport = {
   // to magnify text could not.
   maximumScale: 5,
   viewportFit: 'cover',
-  themeColor: THEME_COLOR,
+  // The browser chrome follows the system preference. The in-app toggle can
+  // disagree with it, which is acceptable: this only tints the address bar.
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: SURFACE.light },
+    { media: '(prefers-color-scheme: dark)', color: SURFACE.dark },
+  ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,8 +35,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <meta name="apple-mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
           <meta name="apple-mobile-web-app-title" content="Reach" />
+          {/* The shell paints before React mounts, so the surround needs its
+              own copy of the two page colours. Without this the app opens on
+              the light default and then snaps to dark a frame later for
+              anyone who chose dark. */}
+          <style dangerouslySetInnerHTML={{ __html:
+            `:root{--shell-page:${SHELL.light};}` +
+            `:root[data-theme="dark"]{--shell-page:${SHELL.dark};}` }} />
+          {/* Runs before first paint: reads the stored choice and stamps it on
+              <html> so the correct palette is already in place. Wrapped in
+              try/catch because storage throws in private windows. */}
+          <script dangerouslySetInnerHTML={{ __html:
+            `(function(){try{var t=localStorage.getItem('${THEME_KEY}');` +
+            `if(t==='dark'||t==='light')document.documentElement` +
+            `.setAttribute('data-theme',t);}catch(e){}})();` }} />
         </head>
-        <body style={{ margin: 0, background: BRAND.page }}>
+        <body style={{ margin: 0, background: 'var(--shell-page)' }}>
           {children}
         </body>
       </html>

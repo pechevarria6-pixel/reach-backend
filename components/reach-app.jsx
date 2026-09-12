@@ -6,41 +6,116 @@ import { useState, useEffect, useRef } from "react";
 // #C49A38) plus leftovers from an earlier indigo palette, so the same element
 // changed shade depending on which screen drew it.
 //
+// Every name below resolves to a CSS custom property rather than a hex value,
+// so the ~1,000 call sites never need to know which theme is showing. The real
+// values live in PALETTE and are swapped by setting data-theme on <html>,
+// which repaints the whole app without a re-render.
+//
 // Contrast is measured against `bg` for body surfaces and `s2` for cards.
-// Every text pairing below clears 4.5:1.
-const C = {
-  // Backgrounds — warm deep noir. `page` is the surround outside the app
-  // frame; it was a cool #050508 while everything inside was warm, which read
-  // as a colour cast along the edges.
-  page: "#050406",
-  bg: "#0A0805", s1: "#120F09", s2: "#1A1510", s3: "#221C14",
-  border: "#2E2618", borderLight: "#3D3220",
+// Every text pairing below clears 4.5:1 in BOTH themes.
+const TOKENS = [
+  "page", "bg", "s1", "s2", "s3", "border", "borderLight",
+  "accent", "accentDeep", "accentHover", "accentDim", "accentBorder",
+  // `accent` is the gold FILL and stays bright in both themes so buttons keep
+  // their identity. `accentText` is gold used AS TEXT, and has to darken in
+  // the light theme: #D4A843 on white is 2.0:1 and unreadable.
+  "accentText", "onAccent", "onGreen",
+  "green", "greenDim", "amber", "amberDim", "red", "redDim", "blue", "blueDim",
+  "t1", "t2", "t3", "t4",
+  // Surfaces that are translucent or shadowed, and so cannot be a flat token.
+  "navBg", "overlay", "cardShadow", "cardShadowHover", "accentGlow",
+  "accentGlowHover", "focusRing", "frameShadow", "frameGlow",
+];
 
-  // Brand — warm gold. `accentDeep` is the gradient foot on raised buttons.
-  accent: "#D4A843", accentDeep: "#C49A38", accentHover: "#E0BC68",
-  accentDim: "rgba(212,168,67,0.12)", accentBorder: "rgba(212,168,67,0.3)",
+const C = Object.fromEntries(
+  TOKENS.map(t => [t, `var(--c-${t.replace(/[A-Z]/g, m => "-" + m.toLowerCase())})`])
+);
 
-  // Text that sits ON gold or any other saturated fill. White on gold is
-  // 2.2:1 and fails; this ink is 9.0:1.
-  onAccent: "#1A1206",
+const PALETTE = {
+  // ── Light — warm off-white. The default, and the approachable one. ──────
+  light: {
+    page: "#EDE6D8",
+    bg: "#FCFAF5", s1: "#FFFFFF", s2: "#FBF7EF", s3: "#F3ECDD",
+    border: "#E8DFCB", borderLight: "#D8CBAF",
 
-  // Semantic
-  green: "#52C97B", greenDim: "rgba(82,201,123,0.1)",
-  amber: "#F59E0B", amberDim: "rgba(245,158,11,0.1)",
-  red: "#F87171", redDim: "rgba(248,113,113,0.1)",
-  blue: "#60A5FA", blueDim: "rgba(96,165,250,0.1)",
-  gold: "#D4A843", goldDim: "rgba(212,168,67,0.08)",
+    accent: "#D4A843", accentDeep: "#C49A38", accentHover: "#E0BC68",
+    accentDim: "rgba(212,168,67,0.18)", accentBorder: "rgba(160,120,30,0.28)",
+    // 5.6:1 on bg, 6.0:1 on white cards.
+    accentText: "#8A6512",
+    onAccent: "#2A1D06", onGreen: "#FFFFFF",
 
-  // Text — warm creams. t3 was #5C4E32, putting section labels and inactive
-  // nav at 2.2:1. t1, t2 and t3 now clear 4.5:1 on every surface: bg, cards
-  // (s2) and raised cards (s3). t4 is the faintest tier and only clears on bg
-  // (4.5:1) — keep it for de-emphasised text on the base background, and
-  // reach for t3 on any card.
-  t1: "#F5EDD8", t2: "#9A8A6A", t3: "#97845E", t4: "#8A7550",
+    // Semantic colours are darkened for the light theme: the dark-theme values
+    // are tuned to glow on near-black and fail badly as text on white.
+    green: "#1F8A4C", greenDim: "rgba(31,138,76,0.12)",
+    amber: "#96650A", amberDim: "rgba(150,101,10,0.12)",
+    red: "#C0332C", redDim: "rgba(192,51,44,0.10)",
+    blue: "#1E62C4", blueDim: "rgba(30,98,196,0.10)",
+
+    t1: "#241C10", t2: "#6B5C42", t3: "#7A6A4E", t4: "#857457",
+
+    navBg: "rgba(252,250,245,0.92)",
+    overlay: "rgba(45,35,20,0.45)",
+    // Warm shadows, not grey ones. A neutral shadow on a cream ground reads
+    // as dirt.
+    cardShadow: "0 2px 8px rgba(90,70,30,0.07)",
+    cardShadowHover: "0 10px 28px rgba(90,70,30,0.14)",
+    accentGlow: "0 4px 16px rgba(180,135,40,0.28)",
+    accentGlowHover: "0 8px 24px rgba(180,135,40,0.36)",
+    focusRing: "rgba(212,168,67,0.28)",
+    frameShadow: "0 60px 140px rgba(80,62,28,0.28)",
+    frameGlow: "rgba(212,168,67,0.10)",
+  },
+
+  // ── Dark — the original warm deep noir, kept intact. ────────────────────
+  dark: {
+    page: "#050406",
+    bg: "#0A0805", s1: "#120F09", s2: "#1A1510", s3: "#221C14",
+    border: "#2E2618", borderLight: "#3D3220",
+
+    accent: "#D4A843", accentDeep: "#C49A38", accentHover: "#E0BC68",
+    accentDim: "rgba(212,168,67,0.12)", accentBorder: "rgba(212,168,67,0.3)",
+    // On near-black the fill gold is already 8.9:1, so text uses it unchanged.
+    accentText: "#D4A843",
+    onAccent: "#1A1206", onGreen: "#0C2A17",
+
+    green: "#52C97B", greenDim: "rgba(82,201,123,0.1)",
+    amber: "#F59E0B", amberDim: "rgba(245,158,11,0.1)",
+    red: "#F87171", redDim: "rgba(248,113,113,0.1)",
+    blue: "#60A5FA", blueDim: "rgba(96,165,250,0.1)",
+
+    t1: "#F5EDD8", t2: "#9A8A6A", t3: "#97845E", t4: "#8A7550",
+
+    navBg: "rgba(10,8,5,0.95)",
+    overlay: "rgba(0,0,0,0.72)",
+    cardShadow: "0 2px 10px rgba(0,0,0,0.35)",
+    cardShadowHover: "0 8px 30px rgba(0,0,0,0.45)",
+    accentGlow: "0 4px 20px rgba(212,168,67,0.25)",
+    accentGlowHover: "0 6px 24px rgba(212,168,67,0.35)",
+    focusRing: "rgba(212,168,67,0.18)",
+    frameShadow: "0 80px 200px rgba(0,0,0,.95)",
+    frameGlow: "rgba(212,168,67,0.08)",
+  },
 };
+
+const THEMES = Object.keys(PALETTE);
+const DEFAULT_THEME = "light";
+// Must match the key the no-flash script in app/layout.tsx reads.
+const THEME_KEY = "reach-theme";
+
+// kebab-cases the token names to match the var() references built above.
+const paletteVars = theme =>
+  Object.entries(PALETTE[theme])
+    .map(([k, v]) => `--c-${k.replace(/[A-Z]/g, m => "-" + m.toLowerCase())}:${v};`)
+    .join("");
+
+const THEME_CSS = `
+:root{color-scheme:light;${paletteVars("light")}}
+:root[data-theme="dark"]{color-scheme:dark;${paletteVars("dark")}}
+`;
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
+${THEME_CSS}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 body{background:${C.page};display:flex;justify-content:center;min-height:100vh;font-family:'Space Grotesk',sans-serif;color:${C.t1};-webkit-font-smoothing:antialiased;}
 /* Inline styles don't inherit a font, which is why the family string was
@@ -60,7 +135,7 @@ button{min-height:44px;}
   body{padding:20px 0 40px;}
   .aw{width:393px;max-width:393px;height:852px;min-height:0;border-radius:50px;padding-top:0;
     border:1.5px solid ${C.accentBorder};
-    box-shadow:0 80px 200px rgba(0,0,0,.95),0 0 0 1px rgba(255,255,255,.04) inset,0 1px 0 rgba(255,255,255,.08) inset,0 0 80px rgba(212,168,67,0.08);}
+    box-shadow:${C.frameShadow},0 0 80px ${C.frameGlow};}
 }
 .sb{display:flex;justify-content:space-between;align-items:center;padding:14px 28px 0;flex-shrink:0;font-size:12px;font-weight:600;color:${C.t2};letter-spacing:.02em;}
 .sb-fake{display:none;}
@@ -70,9 +145,9 @@ button{min-height:44px;}
 .ma{flex:1;overflow:hidden;position:relative;}
 .sc{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding-bottom:calc(90px + env(safe-area-inset-bottom));}
 .sc::-webkit-scrollbar{display:none;}
-.nb{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;background:${C.bg}F2;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid ${C.accentBorder};padding:10px 0 max(24px,env(safe-area-inset-bottom));z-index:100;}
+.nb{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;background:${C.navBg};backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid ${C.accentBorder};padding:10px 0 max(24px,env(safe-area-inset-bottom));z-index:100;}
 .nb-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:500;color:${C.t3};transition:color .15s;padding:4px 0;}
-.nb-btn.active{color:${C.accent};}
+.nb-btn.active{color:${C.accentText};}
 .nb-btn svg{width:22px;height:22px;transition:transform .15s;}
 .nb-btn.active svg{transform:translateY(-1px);}
 .nb-dot{width:4px;height:4px;border-radius:50%;background:${C.accent};margin:0 auto;opacity:0;transition:opacity .15s;}
@@ -87,17 +162,17 @@ button{min-height:44px;}
 .hd-ov{position:absolute;top:calc(16px + env(safe-area-inset-top));left:16px;width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;z-index:10;}
 .hd-ov:active{transform:scale(.94);}
 .sl{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:${C.t3};}
-.card{background:linear-gradient(145deg,${C.s1},${C.s2});border:1px solid ${C.border};border-radius:22px;overflow:hidden;transition:all .2s;cursor:pointer;}
-.card:hover{border-color:${C.accentBorder};transform:translateY(-2px);box-shadow:0 8px 30px rgba(0,0,0,0.4);}
+.card{background:linear-gradient(145deg,${C.s1},${C.s2});border:1px solid ${C.border};border-radius:22px;overflow:hidden;transition:all .2s;cursor:pointer;box-shadow:${C.cardShadow};}
+.card:hover{border-color:${C.accentBorder};transform:translateY(-2px);box-shadow:${C.cardShadowHover};}
 .card:active{transform:scale(.98);}
 .pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;}
 .pill-g{background:${C.greenDim};color:${C.green};}
 .pill-a{background:${C.amberDim};color:${C.amber};}
 .pill-r{background:${C.redDim};color:${C.red};}
-.pill-p{background:${C.accentDim};color:${C.accent};}
+.pill-p{background:${C.accentDim};color:${C.accentText};}
 .pill-m{background:${C.s3};color:${C.t2};}
-.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:0 4px 20px rgba(212,168,67,0.25);}
-.bp:hover{transform:translateY(-1px);box-shadow:0 6px 24px rgba(212,168,67,0.35);}
+.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:${C.accentGlow};}
+.bp:hover{transform:translateY(-1px);box-shadow:${C.accentGlowHover};}
 .bp:active{transform:scale(.98);}
 .bp:disabled{opacity:.35;cursor:not-allowed;}
 .bs{width:100%;padding:14px 20px;background:${C.s2};color:${C.t1};border:1px solid ${C.border};border-radius:16px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:border-color .15s;}
@@ -109,15 +184,15 @@ button{min-height:44px;}
 .bsm-r{background:${C.redDim};color:${C.red};}
 .bsm-gr{background:${C.greenDim};color:${C.green};}
 .inp{width:100%;padding:14px 16px;background:${C.s2};border:1.5px solid ${C.border};border-radius:16px;color:${C.t1};font-family:'Space Grotesk',sans-serif;font-size:14px;outline:none;transition:all .2s;}
-.inp:focus{border-color:${C.accent};box-shadow:0 0 0 3px rgba(212,168,67,0.1);background:${C.s1};}
+.inp:focus{border-color:${C.accentText};box-shadow:0 0 0 3px ${C.focusRing};background:${C.s1};}
 .inp::placeholder{color:${C.t3};}
-.ov{position:absolute;inset:0;background:rgba(0,0,0,.72);z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
+.ov{position:absolute;inset:0;background:${C.overlay};z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
 .sh{width:100%;max-height:90%;background:${C.s1};border-radius:28px 28px 0 0;border-top:1px solid ${C.border};overflow-y:auto;scrollbar-width:none;animation:su .25s cubic-bezier(.32,.72,0,1);padding-bottom:30px;}
 .sh::-webkit-scrollbar{display:none;}
 .sh-hdl{width:36px;height:4px;border-radius:2px;background:${C.border};margin:12px auto 0;}
 .sh-hdr{padding:20px 20px 16px;border-bottom:1px solid ${C.border};display:flex;align-items:center;justify-content:space-between;}
 .sh-ttl{font-size:17px;font-weight:600;color:${C.t1};}
-.toast{position:absolute;top:70px;left:16px;right:16px;background:${C.green};color:${C.onAccent};border-radius:14px;padding:12px 16px;font-size:13px;font-weight:600;z-index:500;text-align:center;animation:ti .3s ease,to .3s ease 2.2s forwards;}
+.toast{position:absolute;top:70px;left:16px;right:16px;background:${C.green};color:${C.onGreen};border-radius:14px;padding:12px 16px;font-size:13px;font-weight:600;z-index:500;text-align:center;animation:ti .3s ease,to .3s ease 2.2s forwards;}
 .ri{display:flex;align-items:center;gap:12px;padding:13px 20px;cursor:pointer;transition:background .1s;}
 .ri:hover{background:${C.s2};}
 .ri-ic{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
@@ -131,7 +206,7 @@ button{min-height:44px;}
 .cb-row{display:flex;align-items:center;gap:12px;padding:12px 20px;cursor:pointer;transition:background .1s;}
 .cb-row:hover{background:${C.s2};}
 .cb{width:22px;height:22px;border-radius:7px;border:2px solid ${C.border};flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .15s;}
-.cb.ck{background:${C.accent};border-color:${C.accent};color:${C.onAccent};}
+.cb.ck{background:${C.accent};border-color:${C.accentText};color:${C.onAccent};}
 .pb-t{height:3px;background:${C.s3};border-radius:2px;}
 .pb-f{height:100%;border-radius:2px;background:${C.accent};transition:width .3s;}
 .sd{display:flex;gap:6px;}
@@ -140,7 +215,7 @@ button{min-height:44px;}
 .it-item{display:flex;gap:14px;padding:12px 20px;}
 .it-time{font-size:11px;color:${C.t2};width:42px;flex-shrink:0;padding-top:2px;text-align:right;}
 .it-lc{display:flex;flex-direction:column;align-items:center;width:20px;flex-shrink:0;}
-.it-dot{width:10px;height:10px;border-radius:50%;border:2px solid ${C.accent};background:${C.bg};flex-shrink:0;margin-top:3px;}
+.it-dot{width:10px;height:10px;border-radius:50%;border:2px solid ${C.accentText};background:${C.bg};flex-shrink:0;margin-top:3px;}
 .it-dot.fi{background:${C.accent};}
 .it-cn{flex:1;width:2px;background:${C.border};margin:4px 0;min-height:20px;}
 .it-cont{flex:1;}
@@ -179,6 +254,17 @@ function colorFor(id){
   for(let i=0;i<key.length;i++)h=(h*31+key.charCodeAt(i))>>>0;
   return AVATAR_COLORS[h%AVATAR_COLORS.length];
 }
+// The one place that decides what to call somebody. `name` can legitimately
+// be a full name, a bare first name, or — when Clerk knows nothing about the
+// account — an email address, and an address must never reach the screen.
+function firstNameOf(u,fallback="there"){
+  const first=(u?.firstName||"").trim();
+  if(first)return first;
+  const name=(u?.name||"").trim();
+  if(!name||name.includes("@"))return fallback;
+  return name.split(/\s+/)[0];
+}
+
 function toContact(u){
   if(!u||!u.id)return null;
   const name=u.name||u.email?.split("@")[0]||"Member";
@@ -196,9 +282,9 @@ function toContact(u){
 const INIT_GROUPS = [];
 
 const EXPS = [
-  {id:"e1",title:"Northern Lights, Iceland",sub:"7 nights · Adventure",price:"$2,800",emoji:"🌌",bg:"linear-gradient(145deg,#1a1060,${C.accent})",tags:["Trips"]},
-  {id:"e2",title:"Tulum Food & Culture",sub:"5 nights · Cultural",price:"$1,900",emoji:"🌮",bg:"linear-gradient(145deg,#064E3B,${C.green})",tags:["Trips"]},
-  {id:"e3",title:"Beyoncé · MSG",sub:"Concert · Aug 19",price:"$340",emoji:"🎤",bg:"linear-gradient(145deg,#78350F,${C.amber})",tags:["Concerts"]},
+  {id:"e1",title:"Northern Lights, Iceland",sub:"7 nights · Adventure",price:"$2,800",emoji:"🌌",bg:`linear-gradient(145deg,#1a1060,${C.accent})`,tags:["Trips"]},
+  {id:"e2",title:"Tulum Food & Culture",sub:"5 nights · Cultural",price:"$1,900",emoji:"🌮",bg:`linear-gradient(145deg,#064E3B,${C.green})`,tags:["Trips"]},
+  {id:"e3",title:"Beyoncé · MSG",sub:"Concert · Aug 19",price:"$340",emoji:"🎤",bg:`linear-gradient(145deg,#78350F,${C.amber})`,tags:["Concerts"]},
   {id:"e4",title:"Montauk Beach House",sub:"Weekend · Aug 2–4",price:"$420/night",emoji:"🌊",bg:"linear-gradient(145deg,#1E3A5F,#3B82F6)",tags:["Weekends"]},
   {id:"e5",title:"New Orleans Jazz Fest",sub:"Festival · May 2027",price:"$180/day",emoji:"🎷",bg:"linear-gradient(145deg,#4C1D95,#EC4899)",tags:["Festivals"]},
   {id:"e6",title:"Nobu Malibu",sub:"Restaurant · Dinner for groups",price:"$160/pp",emoji:"🍣",bg:"linear-gradient(145deg,#1F2937,#6B7280)",tags:["Restaurants"]},
@@ -290,7 +376,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           {new Date().getHours()<12?"Good morning":new Date().getHours()<17?"Good afternoon":"Good evening"}
         </div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:34,color:C.t1,lineHeight:1.1}}>
-          Hey {user?.firstName||user?.name?.split(" ")[0]||"there"} 👋
+          Hey {firstNameOf(user)} 👋
         </div>
       </div>
 
@@ -318,7 +404,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
                   ))}
                 </div>
               </div>
-              <div style={{fontSize:18,color:C.accent,fontWeight:600}}>→</div>
+              <div style={{fontSize:18,color:C.accentText,fontWeight:600}}>→</div>
             </div>
           );
         }catch{return null;}
@@ -328,7 +414,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         <div style={{margin:"0 20px 18px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:16}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
             <div style={{width:8,height:8,borderRadius:"50%",background:C.accent}}/>
-            <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",color:C.accent}}>{actions.length} actions needed</span>
+            <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",color:C.accentText}}>{actions.length} actions needed</span>
           </div>
           {actions.map((a,i)=>(
             <div key={i} onClick={()=>{if(a.plan&&a.plan.id&&a.plan.group?.id)push("planDetail",{planId:a.plan.id,groupId:a.plan.group.id});}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderTop:i?"1px solid "+C.accentBorder:"none",cursor:"pointer"}}>
@@ -343,12 +429,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       )}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 20px 10px"}}>
         <span className="sl">Upcoming</span>
-        <span style={{fontSize:12,color:C.accent,cursor:"pointer"}} onClick={()=>setTab("groups")}>See all →</span>
+        <span style={{fontSize:12,color:C.accentText,cursor:"pointer"}} onClick={()=>setTab("groups")}>See all →</span>
       </div>
       <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
         {upcoming.map(plan=>(
           <div key={plan.id} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
-            style={{minWidth:200,background:"linear-gradient(145deg,#1a1060,${C.accent})",borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s"}}>
+            style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s"}}>
             <div style={{padding:16}}>
               <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`} style={{marginBottom:10,display:"inline-flex"}}>
                 {plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":"📋 Planning"}
@@ -375,7 +461,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           <span style={{fontSize:24}}>{ins.emoji}</span>
           <div>
             <div style={{fontSize:13,color:C.t1,lineHeight:1.5}}>{ins.text}</div>
-            <div style={{fontSize:12,color:C.accent,marginTop:4,fontWeight:500}}>{ins.cta}</div>
+            <div style={{fontSize:12,color:C.accentText,marginTop:4,fontWeight:500}}>{ins.cta}</div>
           </div>
         </div>
       ))}
@@ -499,7 +585,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
           {city?"Based on your location in "+city:"Curated for you"}
         </div>
         {!userLocation&&(
-          <div style={{fontSize:12,color:C.accent,marginTop:4,cursor:"pointer"}}
+          <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
             onClick={()=>toast("Enable location in your browser for local picks")}>
             📍 Enable location for local recommendations
           </div>
@@ -511,9 +597,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
         {filters.map(f=>(
           <button key={f} onClick={()=>setFilter(f)}
             style={{padding:"6px 14px",borderRadius:20,
-              border:"1px solid "+(filter===f?C.accent:C.border),
+              border:"1px solid "+(filter===f?C.accentText:C.border),
               background:filter===f?C.accentDim:C.s1,
-              color:filter===f?C.accent:C.t2,
+              color:filter===f?C.accentText:C.t2,
               fontSize:12,fontWeight:600,cursor:"pointer",
               whiteSpace:"nowrap",flexShrink:0}}>
             {f==="Nearby"&&userLocation?"📍 "+f:f}
@@ -529,7 +615,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
               📍 Near you in {city}
             </span>
             <button onClick={()=>setFilter("Nearby")}
-              style={{fontSize:12,color:C.accent,background:"none",border:"none",cursor:"pointer"}}>
+              style={{fontSize:12,color:C.accentText,background:"none",border:"none",cursor:"pointer"}}>
               See all →
             </button>
           </div>
@@ -545,7 +631,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
                 <div style={{fontSize:28,marginBottom:6}}>{n.emoji}</div>
                 <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:2,lineHeight:1.3}}>{n.title}</div>
                 <div style={{fontSize:11,color:C.t2,lineHeight:1.4}}>{n.meta}</div>
-                {n.dist&&<div style={{fontSize:11,color:C.accent,marginTop:4}}>📍 {n.dist}</div>}
+                {n.dist&&<div style={{fontSize:11,color:C.accentText,marginTop:4}}>📍 {n.dist}</div>}
                 {n.price&&<div style={{fontSize:12,fontWeight:600,color:C.t1,marginTop:4}}>{n.price}</div>}
               </div>
             ))}
@@ -556,7 +642,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
       {/* Loading state */}
       {loading&&(
         <div style={{textAlign:"center",padding:"20px",color:C.t3,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-          <div style={{width:16,height:16,border:"2px solid "+C.accent,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
+          <div style={{width:16,height:16,border:"2px solid "+C.accentText,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
           Finding things near you…
         </div>
       )}
@@ -681,7 +767,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   return(
     <div className="sc" style={{paddingBottom:0}}>
       {/* Header */}
-      <div style={{height:200,background:exp.bg||"linear-gradient(135deg,#1a1060,${C.accent})",position:"relative",flexShrink:0}}>
+      <div style={{height:200,background:exp.bg||`linear-gradient(135deg,#1a1060,${C.accent})`,position:"relative",flexShrink:0}}>
         <ScreenHeader onBack={onBack} overlay/>
         <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 40%,rgba(0,0,0,.9))",display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:20}}>
           <div style={{fontSize:40,marginBottom:8}}>{exp.emoji||"🎯"}</div>
@@ -721,7 +807,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
         <div style={{height:1,background:C.border,margin:"20px 0"}}/>
 
         {/* Book Now — direct action */}
-        <button className="bp" style={{marginBottom:10,width:"100%",background:"linear-gradient(135deg,${C.accentDeep},"+C.accent+")"}}
+        <button className="bp" style={{marginBottom:10,width:"100%",background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`}}
           onClick={()=>setBooking(true)}>
           🎯 Book Now
         </button>
@@ -784,7 +870,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     <div>
                       <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{exp.title}</div>
                       <div style={{fontSize:12,color:C.t2}}>{exp.sub}</div>
-                      <div style={{fontSize:13,color:C.accent,fontWeight:600,marginTop:2}}>{exp.price} per person</div>
+                      <div style={{fontSize:13,color:C.accentText,fontWeight:600,marginTop:2}}>{exp.price} per person</div>
                     </div>
                   </div>
 
@@ -801,8 +887,8 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                         {["6:00 PM","6:30 PM","7:00 PM","7:30 PM","8:00 PM","8:30 PM","9:00 PM"].map(t=>(
                           <button key={t} onClick={()=>setBookTime(t)}
-                            style={{padding:"8px 14px",borderRadius:20,border:"1px solid "+(bookTime===t?C.accent:C.border),
-                              background:bookTime===t?C.accentDim:C.s2,color:bookTime===t?C.accent:C.t2,
+                            style={{padding:"8px 14px",borderRadius:20,border:"1px solid "+(bookTime===t?C.accentText:C.border),
+                              background:bookTime===t?C.accentDim:C.s2,color:bookTime===t?C.accentText:C.t2,
                               fontSize:13,cursor:"pointer"}}>
                             {t}
                           </button>
@@ -816,8 +902,8 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     <div style={{display:"flex",gap:8}}>
                       {["1","2","3","4","5","6","7","8+"].map(n=>(
                         <button key={n} onClick={()=>setBookGuests(n)}
-                          style={{width:40,height:40,borderRadius:10,border:"1px solid "+(bookGuests===n?C.accent:C.border),
-                            background:bookGuests===n?C.accentDim:C.s2,color:bookGuests===n?C.accent:C.t2,
+                          style={{width:40,height:40,borderRadius:10,border:"1px solid "+(bookGuests===n?C.accentText:C.border),
+                            background:bookGuests===n?C.accentDim:C.s2,color:bookGuests===n?C.accentText:C.t2,
                             fontSize:14,fontWeight:600,cursor:"pointer"}}>
                           {n}
                         </button>
@@ -992,7 +1078,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
         </div>
         <div style={{display:"flex",gap:0,marginTop:16,borderBottom:`1px solid ${C.border}`}}>
           {["plans","members","wallet"].map(t=>(
-            <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"10px 0",background:"none",border:"none",borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,color:tab===t?C.accent:C.t2,fontSize:13,fontWeight:600,cursor:"pointer",textTransform:"capitalize",transition:"all .15s"}}>{t}</button>
+            <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"10px 0",background:"none",border:"none",borderBottom:`2px solid ${tab===t?C.accentText:"transparent"}`,color:tab===t?C.accentText:C.t2,fontSize:13,fontWeight:600,cursor:"pointer",textTransform:"capitalize",transition:"all .15s"}}>{t}</button>
           ))}
         </div>
       </div>
@@ -1033,7 +1119,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                 )}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <AvCluster ids={plan.participants} um={um} max={4}/>
-                  <div style={{fontSize:12,color:C.accent,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>View <span style={{fontSize:16}}>→</span></div>
+                  <div style={{fontSize:12,color:C.accentText,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>View <span style={{fontSize:16}}>→</span></div>
                 </div>
               </div>
             </div>
@@ -1065,7 +1151,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
       {tab==="wallet"&&(
         <div style={{padding:"18px 20px"}}>
           <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
-            <div style={{fontSize:12,color:C.accent,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Group Wallet</div>
+            <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Group Wallet</div>
             <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${group.wallet.toLocaleString()}</div>
             <div style={{fontSize:12,color:C.t2,marginTop:4}}>Shared · {group.memberIds.length} members</div>
           </div>
@@ -1186,7 +1272,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         <div className="sl" style={{marginBottom:10}}>Choose an emoji</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
           {emojis.map(e=>(
-            <button key={e} onClick={()=>setEmoji(e)} style={{width:42,height:42,borderRadius:12,fontSize:22,cursor:"pointer",border:`2px solid ${emoji===e?C.accent:C.border}`,background:emoji===e?C.accentDim:C.s2}}>{e}</button>
+            <button key={e} onClick={()=>setEmoji(e)} style={{width:42,height:42,borderRadius:12,fontSize:22,cursor:"pointer",border:`2px solid ${emoji===e?C.accentText:C.border}`,background:emoji===e?C.accentDim:C.s2}}>{e}</button>
           ))}
         </div>
       </div>
@@ -1316,7 +1402,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
           </div>
           <div className="sl" style={{marginBottom:10}}>Pick an emoji</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:24}}>
-            {emojis.map(e=><button key={e} onClick={()=>setEmoji(e)} style={{width:44,height:44,borderRadius:12,fontSize:24,cursor:"pointer",border:`2px solid ${emoji===e?C.accent:C.border}`,background:emoji===e?C.accentDim:C.s2}}>{e}</button>)}
+            {emojis.map(e=><button key={e} onClick={()=>setEmoji(e)} style={{width:44,height:44,borderRadius:12,fontSize:24,cursor:"pointer",border:`2px solid ${emoji===e?C.accentText:C.border}`,background:emoji===e?C.accentDim:C.s2}}>{e}</button>)}
           </div>
           <button className="bp" disabled={!name.trim()} onClick={()=>setStep(1)}>Continue →</button>
         </div>
@@ -1343,7 +1429,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
             return(
               <div key={u.id} className="cb-row" onClick={()=>setMembers(m=>sel?m.filter(id=>id!==u.id):[...m,u.id])}>
                 <div className={"cb "+(sel?"ck":"")}>{sel&&<Ic.Check/>}</div>
-                <div style={{width:36,height:36,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",color:"white",fontWeight:700,fontSize:14,flexShrink:0,overflow:"hidden"}}>
+                <div style={{width:36,height:36,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",color:C.onAccent,fontWeight:700,fontSize:14,flexShrink:0,overflow:"hidden"}}>
                   {u.avatar_url?<img src={u.avatar_url} style={{width:36,height:36,objectFit:"cover"}} alt=""/>:initials}
                 </div>
                 <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>{u.name||u.email}</div><div style={{fontSize:12,color:C.t2}}>{u.email}</div></div>
@@ -1359,7 +1445,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
           ))}
           {(members.length>0||inviteEmails.length>0)&&(
             <div style={{padding:"0 20px 12px"}}>
-              <div style={{fontSize:12,color:C.accent,fontWeight:500,marginBottom:8}}>
+              <div style={{fontSize:12,color:C.accentText,fontWeight:500,marginBottom:8}}>
                 {members.length} member{members.length!==1?"s":""} selected
                 {inviteEmails.length>0?` · ${inviteEmails.length} to invite`:""}
               </div>
@@ -1543,7 +1629,7 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
           {nights>0&&(
             <div style={{textAlign:"center",padding:"14px",background:C.accentDim,
               border:"1px solid "+C.accentBorder,borderRadius:14,marginBottom:16}}>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.accent}}>
+              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.accentText}}>
                 {nights} night{nights!==1?"s":""}
               </div>
               <div style={{fontSize:13,color:C.t2,marginTop:2}}>
@@ -1605,7 +1691,7 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
                     }}>
                     <div style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
                     <div style={{fontSize:11,fontWeight:600,lineHeight:1.2,
-                      color:isVeto?C.red:selected?C.accent:C.t1}}>{opt.l}</div>
+                      color:isVeto?C.red:selected?C.accentText:C.t1}}>{opt.l}</div>
                   </button>
                 );
               })}
@@ -1625,7 +1711,7 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
                   />
                 </div>
                 {customInputs[quizQ.id]&&(
-                  <div style={{fontSize:12,color:C.accent,marginTop:4,paddingLeft:4}}>
+                  <div style={{fontSize:12,color:C.accentText,marginTop:4,paddingLeft:4}}>
                     ✓ Added: {customInputs[quizQ.id]}
                   </div>
                 )}
@@ -1633,7 +1719,7 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
             )}
 
             {quizQ.multi&&(answers[quizQ.id]||[]).length>0&&(
-              <div style={{textAlign:"center",fontSize:12,color:C.accent,fontWeight:500,padding:"4px 0"}}>
+              <div style={{textAlign:"center",fontSize:12,color:C.accentText,fontWeight:500,padding:"4px 0"}}>
                 {(answers[quizQ.id]||[]).length} selected
               </div>
             )}
@@ -1648,7 +1734,7 @@ function TripQuiz({group,userLocation,error,onGenerate,allComplete,completedCoun
         )}
         {isLast?(
           <button className="bp" style={{flex:2,
-            background:!allComplete?"linear-gradient(135deg,${C.amber},${C.red})":undefined}}
+            background:!allComplete?`linear-gradient(135deg,${C.amber},${C.red})`:undefined}}
             onClick={handleGenerate}>
             {isSolo?"✨ Build my solo trip":allComplete?"✨ Generate trips for "+group.name:"⚠️ Generate anyway ("+completedCount+"/"+totalCount+" ready)"}
           </button>
@@ -1858,7 +1944,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
               <div style={{fontSize:12,fontWeight:600,color:C.t3,textTransform:"uppercase",letterSpacing:".08em"}}>
                 Group readiness
               </div>
-              <div style={{fontSize:12,color:allComplete?C.green:C.accent,fontWeight:600}}>
+              <div style={{fontSize:12,color:allComplete?C.green:C.accentText,fontWeight:600}}>
                 {completedCount}/{totalCount} ready
               </div>
             </div>
@@ -1866,7 +1952,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {/* Progress bar for groups */}
             <div style={{height:5,background:C.s3,borderRadius:3,marginBottom:12,overflow:"hidden"}}>
               <div style={{height:"100%",width:readyPercent+"%",borderRadius:3,
-                background:allComplete?"linear-gradient(90deg,"+C.green+",${C.green})":"linear-gradient(90deg,${C.accentDeep},"+C.accent+")",
+                background:allComplete?`linear-gradient(90deg,${C.green},${C.green})`:`linear-gradient(90deg,${C.accentDeep},${C.accent})`,
                 transition:"width .5s ease"}}/>
             </div>
 
@@ -1928,7 +2014,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   if(navigator.share){navigator.share({title:"Complete your Reach quiz",text:msg});}
                   else{navigator.clipboard?.writeText(msg);toast("Invite link copied! 📋");}
                 }} style={{width:"100%",padding:"11px 16px",
-                  background:"linear-gradient(135deg,${C.accentDeep},"+C.accent+")",
+                  background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
                   color:"white",border:"none",borderRadius:14,
                   fontSize:13,fontWeight:600,cursor:"pointer",
                   
@@ -2028,7 +2114,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             <div style={{fontSize:14,color:C.t2,lineHeight:1.6}}>
               3 options built around {group.name}'s preferences.{" "}
               <span style={{color:C.red}}>❌ Veto</span> anything you won't do.{" "}
-              <span style={{color:C.accent}}>❤️ Vote</span> for your favorite.
+              <span style={{color:C.accentText}}>❤️ Vote</span> for your favorite.
             </div>
           </div>
 
@@ -2037,7 +2123,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             const voteCount=votes[trip.id]||0;
             return(
               <div key={trip.id} style={{margin:"0 20px 20px"}}>
-                <div style={{background:C.s1,border:"2px solid "+(voted?C.accent:C.border),borderRadius:20,overflow:"hidden",transition:"border-color .2s"}}>
+                <div style={{background:C.s1,border:"2px solid "+(voted?C.accentText:C.border),borderRadius:20,overflow:"hidden",transition:"border-color .2s"}}>
 
                   {/* Trip header */}
                   <div style={{padding:"18px 18px 14px",background:voted?C.accentDim:C.s2}}>
@@ -2051,13 +2137,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                           {trip.tagline}
                         </div>
                         {trip.why_this_group&&(
-                          <div style={{fontSize:12,color:C.accent,fontWeight:500}}>
+                          <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>
                             ✨ {trip.why_this_group}
                           </div>
                         )}
                       </div>
                       <div style={{textAlign:"right",marginLeft:12}}>
-                        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:voted?C.accent:C.t1}}>
+                        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:voted?C.accentText:C.t1}}>
                           ${trip.total_per_person?.toLocaleString()}
                         </div>
                         <div style={{fontSize:11,color:C.t3}}>per person</div>
@@ -2093,7 +2179,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     ))}
                     <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border,display:"flex",justifyContent:"space-between"}}>
                       <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Total per person</div>
-                      <div style={{fontSize:16,fontWeight:700,color:voted?C.accent:C.t1}}>${trip.total_per_person?.toLocaleString()}</div>
+                      <div style={{fontSize:16,fontWeight:700,color:voted?C.accentText:C.t1}}>${trip.total_per_person?.toLocaleString()}</div>
                     </div>
                     {group.memberIds?.length>1&&(
                       <div style={{fontSize:12,color:C.t3,textAlign:"right",marginTop:2}}>
@@ -2109,7 +2195,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     </div>
                     {(trip.itinerary||[]).slice(0,2).map((day,j)=>(
                       <div key={j} style={{marginBottom:12,paddingBottom:12,borderBottom:j<1?"1px solid "+C.border:"none"}}>
-                        <div style={{fontSize:12,fontWeight:700,color:C.accent,marginBottom:6}}>
+                        <div style={{fontSize:12,fontWeight:700,color:C.accentText,marginBottom:6}}>
                           Day {day.day} · {day.title}
                         </div>
                         <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>
@@ -2125,7 +2211,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                       </div>
                     ))}
                     {(trip.itinerary||[]).length>2&&(
-                      <div style={{fontSize:12,color:C.accent,fontWeight:500}}>
+                      <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>
                         + {trip.itinerary.length-2} more days in full itinerary after you pick this
                       </div>
                     )}
@@ -2161,9 +2247,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     </button>
                     <button onClick={()=>vote(trip.id)}
                       style={{flex:1,padding:"12px 8px",borderRadius:12,
-                        border:"1px solid "+(voted?C.accent:C.border),
+                        border:"1px solid "+(voted?C.accentText:C.border),
                         background:voted?C.accentDim:"none",
-                        color:voted?C.accent:C.t2,fontSize:13,fontWeight:600,
+                        color:voted?C.accentText:C.t2,fontSize:13,fontWeight:600,
                         cursor:"pointer"}}>
                       {voted?"❤️ Voted":"🤍 Vote"}
                       {voteCount>0&&" ("+voteCount+")"}
@@ -2194,7 +2280,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     <div style={{fontSize:14,color:C.t2,textDecoration:"line-through"}}>{trip.destination}</div>
                   </div>
                   <button onClick={()=>veto(trip.id)}
-                    style={{fontSize:12,color:C.accent,background:"none",border:"none",cursor:"pointer"}}>
+                    style={{fontSize:12,color:C.accentText,background:"none",border:"none",cursor:"pointer"}}>
                     Undo
                   </button>
                 </div>
@@ -2301,7 +2387,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
       {step===0&&(
         <div style={{padding:"20px 20px 30px",overflowY:"auto",flex:1}}>
           <div style={{background:C.accentDim,border:"1px solid "+C.accentBorder,borderRadius:16,padding:16,marginBottom:20}}>
-            <div style={{fontSize:13,fontWeight:600,color:C.accent,marginBottom:4}}>How it works</div>
+            <div style={{fontSize:13,fontWeight:600,color:C.accentText,marginBottom:4}}>How it works</div>
             <div style={{fontSize:13,color:C.t2,lineHeight:1.7}}>
               Reach reads every group member's travel preferences and generates 3 complete trip options — with real costs for flights, hotels, food, and activities. Your group votes. Any absolute veto cuts a destination. The winner gets booked.
             </div>
@@ -2310,7 +2396,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
           <div style={{marginBottom:16}}>
             <div style={{fontSize:12,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Which group?</div>
             {groups.map(g=>(
-              <div key={g.id} onClick={()=>setGroupId(g.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:14,border:"2px solid "+(groupId===g.id?C.accent:C.border),background:groupId===g.id?C.accentDim:C.s2,marginBottom:8,cursor:"pointer"}}>
+              <div key={g.id} onClick={()=>setGroupId(g.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderRadius:14,border:"2px solid "+(groupId===g.id?C.accentText:C.border),background:groupId===g.id?C.accentDim:C.s2,marginBottom:8,cursor:"pointer"}}>
                 <span style={{fontSize:24}}>{g.emoji}</span>
                 <div>
                   <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{g.name}</div>
@@ -2372,7 +2458,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
             const voted=votes[trip.id];
             return(
               <div key={trip.id} style={{margin:"0 20px 20px",opacity:vetoed?.4:1,transition:"opacity .3s"}}>
-                <div style={{background:C.s1,border:"1px solid "+(voted?C.accent:vetoed?C.red:C.border),borderRadius:20,overflow:"hidden"}}>
+                <div style={{background:C.s1,border:"1px solid "+(voted?C.accentText:vetoed?C.red:C.border),borderRadius:20,overflow:"hidden"}}>
 
                   {/* Header */}
                   <div style={{padding:"18px 18px 14px",background:voted?C.accentDim:vetoed?"rgba(239,68,68,.08)":C.s2}}>
@@ -2383,7 +2469,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
                         <div style={{fontSize:13,color:C.t2,marginTop:2}}>{trip.tagline}</div>
                       </div>
                       <div style={{textAlign:"right"}}>
-                        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:voted?C.accent:C.t1}}>${trip.total_per_person.toLocaleString()}</div>
+                        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:voted?C.accentText:C.t1}}>${trip.total_per_person.toLocaleString()}</div>
                         <div style={{fontSize:11,color:C.t3}}>per person</div>
                       </div>
                     </div>
@@ -2417,7 +2503,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>Day-by-day</div>
                     {(trip.itinerary||[]).slice(0,3).map((day,j)=>(
                       <div key={j} style={{marginBottom:10}}>
-                        <div style={{fontSize:12,fontWeight:600,color:C.accent,marginBottom:3}}>Day {day.day} · {day.title}</div>
+                        <div style={{fontSize:12,fontWeight:600,color:C.accentText,marginBottom:3}}>Day {day.day} · {day.title}</div>
                         <div style={{fontSize:12,color:C.t2,lineHeight:1.5}}>
                           ☀️ {day.morning}<br/>
                           🌤️ {day.afternoon}<br/>
@@ -2427,7 +2513,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
                       </div>
                     ))}
                     {(trip.itinerary||[]).length>3&&(
-                      <div style={{fontSize:12,color:C.accent}}>+{trip.itinerary.length-3} more days in full plan</div>
+                      <div style={{fontSize:12,color:C.accentText}}>+{trip.itinerary.length-3} more days in full plan</div>
                     )}
                   </div>
 
@@ -2436,10 +2522,10 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
                     <button onClick={()=>veto(trip.id)} style={{flex:1,padding:"10px",borderRadius:12,border:"1px solid "+(vetoed?C.red:C.border),background:vetoed?"rgba(239,68,68,.12)":"none",color:vetoed?C.red:C.t2,fontSize:13,fontWeight:500,cursor:"pointer"}}>
                       {vetoed?"Unveto ↩️":"❌ Hard veto"}
                     </button>
-                    <button onClick={()=>vote(trip.id)} style={{flex:1,padding:"10px",borderRadius:12,border:"1px solid "+(voted?C.accent:C.border),background:voted?C.accentDim:"none",color:voted?C.accent:C.t2,fontSize:13,fontWeight:500,cursor:"pointer"}}>
+                    <button onClick={()=>vote(trip.id)} style={{flex:1,padding:"10px",borderRadius:12,border:"1px solid "+(voted?C.accentText:C.border),background:voted?C.accentDim:"none",color:voted?C.accentText:C.t2,fontSize:13,fontWeight:500,cursor:"pointer"}}>
                       {voted?"Voted ❤️":"Vote ❤️"}
                     </button>
-                    <button onClick={()=>saveToPlan(trip)} style={{flex:1,padding:"10px",borderRadius:12,background:C.accent,color:"white",border:"none",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                    <button onClick={()=>saveToPlan(trip)} style={{flex:1,padding:"10px",borderRadius:12,background:C.accent,color:C.onAccent,border:"none",fontSize:13,fontWeight:600,cursor:"pointer"}}>
                       Pick this
                     </button>
                   </div>
@@ -2684,7 +2770,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
               <div style={{display:"flex",flexDirection:"column",gap:10,padding:"0 0 20px"}}>
                 <button className="bp" onClick={()=>{setShowExitConfirm(false);toast("Draft saved — pick up where you left off anytime");onBack();}}>Save draft & exit</button>
                 <button className="bs" style={{color:C.red,borderColor:C.red}} onClick={()=>{clearDraft();setShowExitConfirm(false);onBack();}}>Discard and exit</button>
-                <button style={{background:"none",border:"none",color:C.accent,fontSize:14,fontWeight:500,cursor:"pointer",padding:"8px 0"}} onClick={()=>setShowExitConfirm(false)}>Keep planning</button>
+                <button style={{background:"none",border:"none",color:C.accentText,fontSize:14,fontWeight:500,cursor:"pointer",padding:"8px 0"}} onClick={()=>setShowExitConfirm(false)}>Keep planning</button>
               </div>
             </div>
           </div>
@@ -2706,7 +2792,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
         {planType&&(
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0 2px"}}>
             <span style={{fontSize:16}}>{planType==="restaurant"?"🍽️":planType==="concert"?"🎵":planType==="weekend"?"🏡":"✈️"}</span>
-            <span style={{fontSize:12,color:C.accent,fontWeight:600}}>{planType==="restaurant"?"Dinner out":planType==="concert"?"Concert":planType==="weekend"?"Weekend away":"Trip"}</span>
+            <span style={{fontSize:12,color:C.accentText,fontWeight:600}}>{planType==="restaurant"?"Dinner out":planType==="concert"?"Concert":planType==="weekend"?"Weekend away":"Trip"}</span>
             {!isEvent&&nights()>0&&<span style={{fontSize:12,color:C.t3}}>· {getDurationLabel()}</span>}
             {isEvent&&eventDate&&<span style={{fontSize:12,color:C.t3}}>· {eventDate}</span>}
           </div>
@@ -2721,16 +2807,16 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             <input className="inp" value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Plan name (e.g., Summer Beach Trip)" style={{marginBottom:14}}/>
             <div className="sl" style={{marginBottom:10}}>Select a group</div>
             {groups.map(g=>(
-              <div key={g.id} onClick={()=>setGid(g.id)} style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,border:`2px solid ${gid===g.id?C.accent:C.border}`,background:gid===g.id?C.accentDim:C.s2,marginBottom:8,cursor:"pointer"}}>
+              <div key={g.id} onClick={()=>setGid(g.id)} style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,border:`2px solid ${gid===g.id?C.accentText:C.border}`,background:gid===g.id?C.accentDim:C.s2,marginBottom:8,cursor:"pointer"}}>
                 <span style={{fontSize:22}}>{g.emoji}</span>
                 <div style={{flex:1}}><div style={{fontSize:14,fontWeight:600,color:C.t1}}>{g.name}</div><div style={{fontSize:12,color:C.t2}}>{g.memberIds.length} members</div></div>
-                {gid===g.id&&<div style={{color:C.accent}}><Ic.Check/></div>}
+                {gid===g.id&&<div style={{color:C.accentText}}><Ic.Check/></div>}
               </div>
             ))}
             <div className="sl" style={{margin:"14px 0 10px"}}>What are you planning?</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               {[{id:"trip",e:"✈️",l:"Trip"},{id:"restaurant",e:"🍽️",l:"Dinner out"},{id:"concert",e:"🎵",l:"Concert"},{id:"weekend",e:"🏡",l:"Weekend Away"}].map(t=>(
-                <button key={t.id} onClick={()=>setPlanType(t.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${planType===t.id?C.accent:C.border}`,background:planType===t.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
+                <button key={t.id} onClick={()=>setPlanType(t.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${planType===t.id?C.accentText:C.border}`,background:planType===t.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                   <div style={{fontSize:26,marginBottom:6}}>{t.e}</div><div style={{fontSize:13,fontWeight:600,color:C.t1}}>{t.l}</div>
                 </button>
               ))}
@@ -2767,7 +2853,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>
                       {new Date(eventDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
                     </div>
-                    {eventTime&&<div style={{fontSize:13,color:C.accent,marginTop:4}}>{eventTime}</div>}
+                    {eventTime&&<div style={{fontSize:13,color:C.accentText,marginTop:4}}>{eventTime}</div>}
                   </div>
                 )}
               </>
@@ -2832,7 +2918,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Reach will find the best options for your group.</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
                   {CUISINES.map(c=>(
-                    <button key={c.id} onClick={()=>setCuisine(c.id)} style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${cuisine===c.id?C.accent:C.border}`,background:cuisine===c.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
+                    <button key={c.id} onClick={()=>setCuisine(c.id)} style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${cuisine===c.id?C.accentText:C.border}`,background:cuisine===c.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                       <div style={{fontSize:24,marginBottom:4}}>{c.e}</div><div style={{fontSize:12,fontWeight:600,color:C.t1}}>{c.l}</div>
                     </button>
                   ))}
@@ -2840,7 +2926,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div className="sl" style={{marginBottom:8}}>Atmosphere</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {["Casual & fun","Date night vibes","Special occasion","Lively & loud","Quiet & intimate"].map(a=>(
-                    <button key={a} onClick={()=>setVibe(v=>v===a?null:a)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${vibe===a?C.accent:C.border}`,background:vibe===a?C.accentDim:C.s2,color:vibe===a?C.accent:C.t2,fontSize:13,cursor:"pointer"}}>{a}</button>
+                    <button key={a} onClick={()=>setVibe(v=>v===a?null:a)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${vibe===a?C.accentText:C.border}`,background:vibe===a?C.accentDim:C.s2,color:vibe===a?C.accentText:C.t2,fontSize:13,cursor:"pointer"}}>{a}</button>
                   ))}
                 </div>
               </>
@@ -2850,7 +2936,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>This helps us find events your whole group will love.</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
                   {GENRES.map(g=>(
-                    <button key={g.id} onClick={()=>setConcertGenre(g.id)} style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${concertGenre===g.id?C.accent:C.border}`,background:concertGenre===g.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
+                    <button key={g.id} onClick={()=>setConcertGenre(g.id)} style={{padding:"14px 10px",borderRadius:14,border:`2px solid ${concertGenre===g.id?C.accentText:C.border}`,background:concertGenre===g.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                       <div style={{fontSize:24,marginBottom:4}}>{g.e}</div><div style={{fontSize:12,fontWeight:600,color:C.t1}}>{g.l}</div>
                     </button>
                   ))}
@@ -2858,7 +2944,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div className="sl" style={{marginBottom:8}}>Venue type</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {["Arena","Club / Bar","Outdoor festival","Intimate venue","Theater"].map(v=>(
-                    <button key={v} onClick={()=>setDest(d=>d===v?null:v)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${dest===v?C.accent:C.border}`,background:dest===v?C.accentDim:C.s2,color:dest===v?C.accent:C.t2,fontSize:13,cursor:"pointer"}}>{v}</button>
+                    <button key={v} onClick={()=>setDest(d=>d===v?null:v)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${dest===v?C.accentText:C.border}`,background:dest===v?C.accentDim:C.s2,color:dest===v?C.accentText:C.t2,fontSize:13,cursor:"pointer"}}>{v}</button>
                   ))}
                 </div>
               </>
@@ -2869,7 +2955,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div className="sl" style={{marginBottom:10}}>Energy</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
                   {[{id:"chill",e:"🧘",l:"Chill & Relax"},{id:"active",e:"⚡",l:"High Energy"},{id:"culture",e:"🎭",l:"Culture & Arts"},{id:"mix",e:"🎲",l:"Mix It Up"}].map(v=>(
-                    <button key={v.id} onClick={()=>setVibe(v.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${vibe===v.id?C.accent:C.border}`,background:vibe===v.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
+                    <button key={v.id} onClick={()=>setVibe(v.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${vibe===v.id?C.accentText:C.border}`,background:vibe===v.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                       <div style={{fontSize:28,marginBottom:6}}>{v.e}</div><div style={{fontSize:13,fontWeight:600,color:C.t1}}>{v.l}</div>
                     </button>
                   ))}
@@ -2877,7 +2963,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <div className="sl" style={{marginBottom:10}}>Destination style</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   {[{id:"city",e:"🏙️",l:"City"},{id:"beach",e:"🏖️",l:"Beach"},{id:"mountains",e:"🏔️",l:"Mountains"},{id:"nature",e:"🌿",l:"Nature"}].map(d=>(
-                    <button key={d.id} onClick={()=>setDest(d.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${dest===d.id?C.accent:C.border}`,background:dest===d.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
+                    <button key={d.id} onClick={()=>setDest(d.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${dest===d.id?C.accentText:C.border}`,background:dest===d.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                       <div style={{fontSize:28,marginBottom:6}}>{d.e}</div><div style={{fontSize:13,fontWeight:600,color:C.t1}}>{d.l}</div>
                     </button>
                   ))}
@@ -2909,10 +2995,10 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Choose your preferred accommodation type.</div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               {[{id:"hotel",e:"🏨",l:"Hotel",s:"Service & convenience"},{id:"rental",e:"🏡",l:"Vacation rental",s:"Space & flexibility"},{id:"luxury",e:"✨",l:"Luxury resort",s:"Premium all-inclusive"},{id:"boutique",e:"🎪",l:"Boutique / Unique",s:"One-of-a-kind stays"},{id:"hostel",e:"🎒",l:"Budget / Hostel",s:"Save money, meet people"}].map(a=>(
-                <button key={a.id} onClick={()=>setAccom(a.id)} style={{padding:"14px 16px",borderRadius:14,border:`2px solid ${accom===a.id?C.accent:C.border}`,background:accom===a.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:14}}>
+                <button key={a.id} onClick={()=>setAccom(a.id)} style={{padding:"14px 16px",borderRadius:14,border:`2px solid ${accom===a.id?C.accentText:C.border}`,background:accom===a.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:14}}>
                   <span style={{fontSize:26}}>{a.e}</span>
                   <div style={{flex:1}}><div style={{fontSize:14,fontWeight:600,color:C.t1}}>{a.l}</div><div style={{fontSize:12,color:C.t2}}>{a.s}</div></div>
-                  {accom===a.id&&<div style={{color:C.accent}}><Ic.Check/></div>}
+                  {accom===a.id&&<div style={{color:C.accentText}}><Ic.Check/></div>}
                 </button>
               ))}
             </div>
@@ -2944,7 +3030,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
               <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>
                 {isEvent?"Typical cost for this":"AI cost estimate"}
               </div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.accent}}>
+              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.accentText}}>
                 {planType==="restaurant"?`$${Math.round(parseInt(budget||0)*.6).toLocaleString()} – $${parseInt(budget||0).toLocaleString()} pp`
                 :planType==="concert"?`$${Math.round(parseInt(budget||0)*.5).toLocaleString()} – $${parseInt(budget||0).toLocaleString()} pp`
                 :`$${Math.round(parseInt(budget||0)*.7).toLocaleString()} – $${Math.round(parseInt(budget||0)*1.05).toLocaleString()}`}
@@ -2956,14 +3042,14 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 }
               </div>
             </div>
-            <div style={{background:C.s1,border:`2px solid ${C.accent}`,borderRadius:16,padding:"14px 20px",display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+            <div style={{background:C.s1,border:`2px solid ${C.accentText}`,borderRadius:16,padding:"14px 20px",display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t3}}>$</span>
               <input style={{background:"none",border:"none",outline:"none",fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,width:"100%"}} value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} inputMode="numeric" placeholder="2500"/>
               <span style={{fontSize:12,color:C.t3}}>max</span>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:18}}>
               {getBudgetPresets().map(v=>(
-                <button key={v} onClick={()=>setBudget(v)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${budget===v?C.accent:C.border}`,background:budget===v?C.accentDim:C.s2,color:budget===v?C.accent:C.t2,fontSize:12,fontWeight:600,cursor:"pointer"}}>${parseInt(v).toLocaleString()}</button>
+                <button key={v} onClick={()=>setBudget(v)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${budget===v?C.accentText:C.border}`,background:budget===v?C.accentDim:C.s2,color:budget===v?C.accentText:C.t2,fontSize:12,fontWeight:600,cursor:"pointer"}}>${parseInt(v).toLocaleString()}</button>
               ))}
             </div>
             <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14,marginBottom:6}}>
@@ -3049,7 +3135,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   return(
     <div className="sc" style={{paddingBottom:0}}>
-      <div style={{background:"linear-gradient(145deg,#1a1060,${C.accent})",padding:"18px 20px 22px",flexShrink:0}}>
+      <div style={{background:`linear-gradient(145deg,#1a1060,${C.accent})`,padding:"18px 20px 22px",flexShrink:0}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
           <ScreenHeader onBack={onBack} overlay/>
           <button className="bsm" style={{background:"rgba(255,255,255,.15)",color:"white",border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
@@ -3063,7 +3149,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       </div>
       <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,background:C.s1,flexShrink:0}}>
         {tabs.map(t=>(
-          <button key={t} onClick={()=>setAtab(t)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:`2px solid ${atab===t?C.accent:"transparent"}`,color:atab===t?C.accent:C.t2,fontSize:12,fontWeight:600,cursor:"pointer",textTransform:"capitalize"}}>{t}</button>
+          <button key={t} onClick={()=>setAtab(t)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:`2px solid ${atab===t?C.accentText:"transparent"}`,color:atab===t?C.accentText:C.t2,fontSize:12,fontWeight:600,cursor:"pointer",textTransform:"capitalize"}}>{t}</button>
         ))}
       </div>
       <div style={{flex:1,overflowY:"auto",paddingBottom:20}}>
@@ -3146,14 +3232,14 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             {plan.options.map(opt=>{
               const v=plan.votes[opt]||0; const pct=totalV>0?(v/totalV)*100:0; const mine=myVote===opt;
               return(
-                <div key={opt} onClick={()=>castVote(opt)} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accent:C.border}`,borderRadius:16,padding:16,marginBottom:10,cursor:myVote?"default":"pointer",transition:"all .15s"}}>
+                <div key={opt} onClick={()=>castVote(opt)} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accentText:C.border}`,borderRadius:16,padding:16,marginBottom:10,cursor:myVote?"default":"pointer",transition:"all .15s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>{opt}</div>
-                    <div style={{fontSize:13,fontWeight:600,color:mine?C.accent:C.t2}}>{v} vote{v!==1?"s":""}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:mine?C.accentText:C.t2}}>{v} vote{v!==1?"s":""}</div>
                   </div>
                   <div className="pb-t" style={{marginBottom:8}}><div className="pb-f" style={{width:`${pct}%`}}/></div>
-                  {!myVote&&<div style={{fontSize:12,color:C.accent,fontWeight:500}}>Tap to vote →</div>}
-                  {mine&&<div style={{fontSize:12,color:C.accent,fontWeight:500}}>✓ Your vote</div>}
+                  {!myVote&&<div style={{fontSize:12,color:C.accentText,fontWeight:500}}>Tap to vote →</div>}
+                  {mine&&<div style={{fontSize:12,color:C.accentText,fontWeight:500}}>✓ Your vote</div>}
                 </div>
               );
             })}
@@ -3163,7 +3249,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         {atab==="budget"&&(
           <div style={{padding:"16px 20px"}}>
             <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
-              <div style={{fontSize:12,color:C.accent,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Budget per person</div>
+              <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Budget per person</div>
               <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${plan.budget.toLocaleString()}</div>
               <div style={{fontSize:12,color:C.t2,marginTop:4}}>{plan.participants.length} travelers total</div>
             </div>
@@ -3232,7 +3318,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
           <div className="sl" style={{marginBottom:12}}>New item</div>
           <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
             {Object.entries(tIc).map(([type,icon])=>(
-              <button key={type} onClick={()=>setNi(n=>({...n,type}))} style={{padding:"6px 10px",borderRadius:10,border:`1.5px solid ${ni.type===type?C.accent:C.border}`,background:ni.type===type?C.accentDim:C.s3,cursor:"pointer",fontSize:12,color:C.t1}}>{icon} {type}</button>
+              <button key={type} onClick={()=>setNi(n=>({...n,type}))} style={{padding:"6px 10px",borderRadius:10,border:`1.5px solid ${ni.type===type?C.accentText:C.border}`,background:ni.type===type?C.accentDim:C.s3,cursor:"pointer",fontSize:12,color:C.t1}}>{icon} {type}</button>
             ))}
           </div>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
@@ -3373,7 +3459,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
 
   const chip=(label,tone)=>(<span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,letterSpacing:.3,
     background:tone==="green"?"rgba(16,185,129,.15)":tone==="gold"?"rgba(212,175,55,.15)":"rgba(255,255,255,.08)",
-    color:tone==="green"?C.green:tone==="gold"?C.accent:C.t2}}>{label}</span>);
+    color:tone==="green"?C.green:tone==="gold"?C.accentText:C.t2}}>{label}</span>);
 
   const lines=(bookings&&bookings.length?bookings.map(b=>({
     icon:vIcon[b.vertical]||"\u2728", l:(b.detail&&(b.detail.title||b.detail.name))||b.vertical,
@@ -3399,7 +3485,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>You're in!</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in before we book. We'll lock everything in the moment the group is fully funded.</div>
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents+myShareCents)/Math.max(funding.targetCents,1))*100));
-      return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:"linear-gradient(90deg,${C.accent},${C.green})"}}/></div>
+      return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
     <button onClick={()=>toast("Reminder sent to the group \uD83D\uDC4B")} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700}}>Remind them?</button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
@@ -3425,7 +3511,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
       <style>{`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}`}</style>
       {confetti.map(i=>(<span key={i} style={{position:"absolute",left:(i*137)%100+"%",top:-10,width:8,height:12,borderRadius:2,
         background:[C.accent,C.green,C.blue,"#F472B6"][i%4],animation:`rfall ${2.2+(i%5)*.4}s ${(i%7)*.18}s ease-in forwards`,zIndex:5}}/>))}
-      <div style={{background:"linear-gradient(145deg,#064E3B,${C.green})",padding:"48px 28px 36px",textAlign:"center"}}>
+      <div style={{background:`linear-gradient(145deg,#064E3B,${C.green})`,padding:"48px 28px 36px",textAlign:"center"}}>
         <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>\u2713</div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:"white",marginBottom:6}}>You're all booked!</div>
         <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>Powered by Stripe \u00B7 PCI-DSS compliant</div>
@@ -3543,7 +3629,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
   // Step 4: confirmed
   if(step===4)return(
     <div className="sc" style={{paddingBottom:40}}>
-      <div style={{background:"linear-gradient(145deg,#064E3B,${C.green})",padding:"48px 28px 36px",textAlign:"center"}}>
+      <div style={{background:`linear-gradient(145deg,#064E3B,${C.green})`,padding:"48px 28px 36px",textAlign:"center"}}>
         <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>✓</div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:"white",marginBottom:6}}>You're all booked!</div>
         <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>Powered by Stripe · PCI-DSS compliant</div>
@@ -3652,14 +3738,14 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
             {id:"wallet",e:"💰",l:"Use Group Wallet",s:`$${group.wallet} available · $${Math.max(0,perPerson-group.wallet).toLocaleString()} remainder on card`,security:"Instant · No additional auth needed"},
             {id:"split",e:"🔀",l:"Request split from group",s:`Each of ${plan.participants.length} people pays $${perPerson.toLocaleString()} separately`,security:"Reach sends secure payment links via SMS or email"},
           ].map(opt=>(
-            <div key={opt.id} onClick={()=>setSplitMethod(opt.id)} style={{padding:14,borderRadius:16,border:`2px solid ${splitMethod===opt.id?C.accent:C.border}`,background:splitMethod===opt.id?C.accentDim:C.s2,marginBottom:10,cursor:"pointer"}}>
+            <div key={opt.id} onClick={()=>setSplitMethod(opt.id)} style={{padding:14,borderRadius:16,border:`2px solid ${splitMethod===opt.id?C.accentText:C.border}`,background:splitMethod===opt.id?C.accentDim:C.s2,marginBottom:10,cursor:"pointer"}}>
               <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
                 <span style={{fontSize:24}}>{opt.e}</span>
                 <div style={{flex:1}}>
                   <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{opt.l}</div>
                   <div style={{fontSize:12,color:C.t2,marginTop:2}}>{opt.s}</div>
                 </div>
-                {splitMethod===opt.id&&<div style={{color:C.accent}}><Ic.Check/></div>}
+                {splitMethod===opt.id&&<div style={{color:C.accentText}}><Ic.Check/></div>}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:6,paddingTop:8,borderTop:`1px solid ${C.border}`}}>
                 <span style={{fontSize:12}}>🔒</span>
@@ -3696,7 +3782,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
                 <div style={{fontSize:11,color:C.t2}}>Saved card · Exp. 12/27</div>
               </div>
             </div>
-            <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${useSaved?C.accent:C.border}`,background:useSaved?C.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${useSaved?C.accentText:C.border}`,background:useSaved?C.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center"}}>
               {useSaved&&<div style={{width:8,height:8,borderRadius:"50%",background:"white"}}/>}
             </div>
           </div>
@@ -3770,7 +3856,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
             <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:14}}>Authentication code</div>
             <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:16}}>
               {[0,1,2,3,4,5].map(i=>(
-                <div key={i} style={{width:38,height:48,borderRadius:10,border:`2px solid ${mfaCode.length>i?C.accent:C.border}`,background:mfaCode.length>i?C.accentDim:C.s3,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"monospace",fontSize:22,color:C.t1,fontWeight:700}}>
+                <div key={i} style={{width:38,height:48,borderRadius:10,border:`2px solid ${mfaCode.length>i?C.accentText:C.border}`,background:mfaCode.length>i?C.accentDim:C.s3,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"monospace",fontSize:22,color:C.t1,fontWeight:700}}>
                   {mfaCode[i]||""}
                 </div>
               ))}
@@ -3792,7 +3878,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
               {processing?"Verifying…":mfaCode.length===6?"Verify & Book →":"Enter 6 digits"}
             </button>
           </div>
-          <button style={{background:"none",border:"none",color:C.accent,fontSize:13,cursor:"pointer",padding:"8px 0"}} onClick={()=>toast("A new code has been sent")}>Resend code</button>
+          <button style={{background:"none",border:"none",color:C.accentText,fontSize:13,cursor:"pointer",padding:"8px 0"}} onClick={()=>toast("A new code has been sent")}>Resend code</button>
           <div style={{fontSize:11,color:C.t3,marginTop:12,lineHeight:1.5,paddingBottom:20}}>
             Required by PSD2 Strong Customer authentication (SCA) for payments over $500. This protects you from unauthorized charges.
           </div>
@@ -3803,7 +3889,7 @@ function CheckoutScreen({onBack,planId,groupId,groups,updateGroup,toast}){
 }
 
 // ─── PROFILE ──────────────────────────────────────────────────────────────────
-function ProfileScreen({toast,user,onSignOut}){
+function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
   const [section,setSection]=useState(null);
   const [deleteConfirm,setDeleteConfirm]=useState("");
   const [privToggles,setPrivToggles]=useState({personalized:true,analytics:true,marketing:false,thirdParty:false});
@@ -3828,7 +3914,7 @@ function ProfileScreen({toast,user,onSignOut}){
           <div key={i}>
             {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
             <div className="ri" onClick={()=>toast(it.l+" settings")}>
-              <div className="ri-ic" style={{background:it.ok?C.accentDim:C.s3,color:it.ok?C.accent:C.t3}}>{it.e}</div>
+              <div className="ri-ic" style={{background:it.ok?C.accentDim:C.s3,color:it.ok?C.accentText:C.t3}}>{it.e}</div>
               <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s" style={{color:it.ok?C.green:C.t3}}>{it.v}</div></div>
               <Ic.ChevR/>
             </div>
@@ -3858,7 +3944,7 @@ function ProfileScreen({toast,user,onSignOut}){
           <div key={i}>
             {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
             <div className="ri">
-              <div className="ri-ic" style={{background:s.cur?C.accentDim:C.s3,color:s.cur?C.accent:C.t2}}>{s.cur?"📍":"💻"}</div>
+              <div className="ri-ic" style={{background:s.cur?C.accentDim:C.s3,color:s.cur?C.accentText:C.t2}}>{s.cur?"📍":"💻"}</div>
               <div className="ri-inf">
                 <div className="ri-t">{s.device}{s.cur&&<span style={{fontSize:10,background:C.greenDim,color:C.green,padding:"1px 6px",borderRadius:10,marginLeft:6}}>This device</span>}</div>
                 <div className="ri-s">{s.loc} · {s.last}</div>
@@ -3905,8 +3991,8 @@ function ProfileScreen({toast,user,onSignOut}){
           <div key={i}>
             {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
             <div className="ri" onClick={()=>toast(it.action?"Add card via Stripe":it.l+" options")}>
-              <div className="ri-ic" style={{background:it.action?C.s3:C.accentDim,color:it.action?C.t3:C.accent}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t" style={{color:it.action?C.accent:C.t1}}>{it.l}</div><div className="ri-s">{it.v}</div></div>
+              <div className="ri-ic" style={{background:it.action?C.s3:C.accentDim,color:it.action?C.t3:C.accentText}}>{it.e}</div>
+              <div className="ri-inf"><div className="ri-t" style={{color:it.action?C.accentText:C.t1}}>{it.l}</div><div className="ri-s">{it.v}</div></div>
               {!it.action&&<button className="bsm bsm-r" onClick={e=>{e.stopPropagation();toast("Card removed");}}>Remove</button>}
               {it.action&&<Ic.ChevR/>}
             </div>
@@ -3923,7 +4009,7 @@ function ProfileScreen({toast,user,onSignOut}){
           <div key={i}>
             {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
             <div className="ri" onClick={()=>toast("Edit "+it.l)}>
-              <div className="ri-ic" style={{background:C.accentDim,color:C.accent}}>{it.e}</div>
+              <div className="ri-ic" style={{background:C.accentDim,color:C.accentText}}>{it.e}</div>
               <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s">{it.v}</div></div>
               <Ic.ChevR/>
             </div>
@@ -4011,7 +4097,7 @@ function ProfileScreen({toast,user,onSignOut}){
         ))}
       </div>
       <div style={{margin:"0 20px 30px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
-        <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>Reach complies with <strong style={{color:C.t1}}>GDPR</strong> (EU), <strong style={{color:C.t1}}>CCPA</strong> (California), <strong style={{color:C.t1}}>COPPA</strong> (under-13), and <strong style={{color:C.t1}}>PSD2 SCA</strong>. Data requests are processed within 30 days. <span style={{color:C.accent}}>reach.app/privacy</span></div>
+        <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>Reach complies with <strong style={{color:C.t1}}>GDPR</strong> (EU), <strong style={{color:C.t1}}>CCPA</strong> (California), <strong style={{color:C.t1}}>COPPA</strong> (under-13), and <strong style={{color:C.t1}}>PSD2 SCA</strong>. Data requests are processed within 30 days. <span style={{color:C.accentText}}>reach.app/privacy</span></div>
       </div>
     </div>
   );
@@ -4054,24 +4140,51 @@ function ProfileScreen({toast,user,onSignOut}){
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>
           {user?.email||"alex@example.com"}
-          {user?.provider&&user.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.accentDim,color:C.accent,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{user.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
+          {user?.provider&&user.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.accentDim,color:C.accentText,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{user.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
         </div>
         <div style={{display:"flex",gap:0,background:C.s2,borderRadius:16,marginTop:14,border:`1px solid ${C.border}`,overflow:"hidden"}}>
           {[{v:"14",l:"Experiences"},{v:"3",l:"Groups"},{v:"9",l:"Friends"}].map((s,i)=>(
             <div key={i} style={{flex:1,padding:"13px 0",textAlign:"center",borderLeft:i?`1px solid ${C.border}`:"none"}}>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.accent}}>{s.v}</div>
+              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.accentText}}>{s.v}</div>
               <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginTop:2}}>{s.l}</div>
             </div>
           ))}
         </div>
       </div>
       <div style={{display:"flex",gap:10,padding:"0 20px 16px"}}>
-        {[{icon:"🔒",label:"Security",key:"security",color:C.accent},{icon:"🛡️",label:"Privacy",key:"privacy",color:C.green},{icon:"💳",label:"Payment",key:"payment",color:C.amber}].map(it=>(
+        {[{icon:"🔒",label:"Security",key:"security",color:C.accentText},{icon:"🛡️",label:"Privacy",key:"privacy",color:C.green},{icon:"💳",label:"Payment",key:"payment",color:C.amber}].map(it=>(
           <button key={it.key} onClick={()=>setSection(it.key)} style={{flex:1,padding:"12px 8px",borderRadius:14,border:`1px solid ${C.border}`,background:C.s2,cursor:"pointer",textAlign:"center"}}>
             <div style={{fontSize:22,marginBottom:4}}>{it.icon}</div>
             <div style={{fontSize:11,fontWeight:600,color:it.color}}>{it.label}</div>
           </button>
         ))}
+      </div>
+
+      {/* ── Appearance ───────────────────────────────────────────────────
+          A segmented control rather than a switch: "Light / Dark" says what
+          each side does, where a lone toggle labelled "Dark mode" leaves you
+          guessing whether it shows the current state or the action. */}
+      <div style={{padding:"0 20px 6px"}}><span className="sl">Appearance</span></div>
+      <div style={{margin:"0 20px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}>
+        <div style={{display:"flex",gap:8}}>
+          {[{v:"light",icon:"☀️",label:"Light"},{v:"dark",icon:"🌙",label:"Dark"}].map(o=>{
+            const on=theme===o.v;
+            return(
+              <button key={o.v} onClick={()=>chooseTheme&&chooseTheme(o.v)}
+                aria-pressed={on}
+                style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                  padding:"12px 10px",borderRadius:12,cursor:"pointer",
+                  border:`2px solid ${on?C.accentText:C.border}`,
+                  background:on?C.accentDim:C.s2,
+                  color:on?C.accentText:C.t2,fontSize:13,fontWeight:600,transition:"all .15s"}}>
+                <span style={{fontSize:15}}>{o.icon}</span>{o.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{fontSize:11,color:C.t3,marginTop:10,lineHeight:1.5}}>
+          Saved on this device. It applies the moment you choose it.
+        </div>
       </div>
       {[
         {title:"Travel Documents",items:[{e:"🛂",l:"Passport",v:"US · Exp 2029 · AES-256 encrypted"},{e:"🪪",l:"TSA PreCheck",v:"KTN-928374 · Encrypted"},{e:"✈️",l:"Global Entry",v:"Active"}]},
@@ -4086,8 +4199,8 @@ function ProfileScreen({toast,user,onSignOut}){
               <div key={ii}>
                 {ii>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
                 <div className="ri" onClick={()=>toast(item.action?`Add ${item.l}`:item.l+" updated")}>
-                  <div className="ri-ic" style={{background:item.action?C.s3:C.accentDim,color:item.action?C.t3:C.accent}}>{item.e}</div>
-                  <div className="ri-inf"><div className="ri-t" style={{color:item.action?C.accent:C.t1}}>{item.l}</div>{item.v&&<div className="ri-s">{item.v}</div>}</div>
+                  <div className="ri-ic" style={{background:item.action?C.s3:C.accentDim,color:item.action?C.t3:C.accentText}}>{item.e}</div>
+                  <div className="ri-inf"><div className="ri-t" style={{color:item.action?C.accentText:C.t1}}>{item.l}</div>{item.v&&<div className="ri-s">{item.v}</div>}</div>
                   <Ic.ChevR/>
                 </div>
               </div>
@@ -4105,7 +4218,7 @@ function ProfileScreen({toast,user,onSignOut}){
           <div key={i}>
             {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
             <div className="ri" onClick={it.fn}>
-              <div className="ri-ic" style={{background:C.accentDim,color:C.accent}}>{it.e}</div>
+              <div className="ri-ic" style={{background:C.accentDim,color:C.accentText}}>{it.e}</div>
               <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s">{it.s}</div></div>
               <Ic.ChevR/>
             </div>
@@ -4129,6 +4242,27 @@ export default function ReachApp({realUser}={}){
   const [authStage,setAuthStage]=useState(realUser!=null?"app":"splash"); // splash|auth|permissions|biometric|privacy|app
   const [user,setUser]=useState(realUser??null);
   const [tab,setTab]=useState("home");
+
+  // ── Theme ────────────────────────────────────────────────
+  // Light is the default. The shell has already stamped a stored choice onto
+  // <html> before first paint, so what is on screen is correct from the start;
+  // this only catches React's own copy up to it.
+  const [theme,setTheme]=useState(DEFAULT_THEME);
+  useEffect(()=>{
+    try{
+      const saved=localStorage.getItem(THEME_KEY);
+      if(THEMES.includes(saved))setTheme(saved);
+    }catch(e){}
+  },[]);
+  useEffect(()=>{
+    if(typeof document!=="undefined")document.documentElement.setAttribute("data-theme",theme);
+  },[theme]);
+  // Persist only on a deliberate choice, so the default can never overwrite a
+  // stored preference during the first render.
+  const chooseTheme=t=>{
+    setTheme(t);
+    try{localStorage.setItem(THEME_KEY,t);}catch(e){}
+  };
   const [groups,setGroups]=useState([]);
   const [groupsLoading,setGroupsLoading]=useState(true);
   const [toastMsg,setToastMsg]=useState(null);
@@ -4138,7 +4272,7 @@ export default function ReachApp({realUser}={}){
   const [knownUsers,setKnownUsers]=useState({});
   const um={...Object.fromEntries(ALL_CONTACTS.map(u=>[u.id,u])),...knownUsers};
   // Real user lookup helper — returns a placeholder if user not in map
-  const getUser=(id)=>um[id]||{id,name:"Member",handle:"@member",color:C.accent,initials:"??"};
+  const getUser=(id)=>um[id]||{id,name:"Member",handle:"@member",color:C.accentText,initials:"??"};
   const rememberUsers=rows=>{
     const seen={};
     for(const row of rows||[]){
@@ -4452,7 +4586,7 @@ export default function ReachApp({realUser}={}){
       });
       // Find which group/plan this is for notification context
       const plan=groups.flatMap(g=>g.plans.map(p=>({...p,groupName:g.name}))).find(p=>p.id===planId);
-      if(plan)notifyGroupUpdate(plan.groupName,`${user?.firstName||"Someone"} voted for ${option}`);
+      if(plan)notifyGroupUpdate(plan.groupName,`${firstNameOf(user,"Someone")} voted for ${option}`);
     }catch(e){console.log("Vote failed",e);}
   };
 
@@ -4465,7 +4599,7 @@ export default function ReachApp({realUser}={}){
         body:JSON.stringify({items}),
       });
       const plan=groups.flatMap(g=>g.plans.map(p=>({...p,groupName:g.name}))).find(p=>p.id===planId);
-      if(plan)notifyGroupUpdate(plan.groupName,`${user?.firstName||"Someone"} updated the itinerary for ${plan.title}`);
+      if(plan)notifyGroupUpdate(plan.groupName,`${firstNameOf(user,"Someone")} updated the itinerary for ${plan.title}`);
     }catch(e){console.log("Itinerary save failed",e);}
   };
   const showToast=msg=>setToastMsg(msg);
@@ -4564,7 +4698,7 @@ export default function ReachApp({realUser}={}){
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push}/>}
-                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onSignOut={handleSignOut}/>}
+                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme}/>}
                 </div>
               )}
               {!cur&&(
@@ -4615,7 +4749,7 @@ function SplashScreen({onNext}){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%",background:C.bg}}>
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"40px 32px 20px"}}>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.accent,letterSpacing:"-.02em",marginBottom:48}}>reach</div>
+        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.accentText,letterSpacing:"-.02em",marginBottom:48}}>reach</div>
         <div style={{fontSize:72,marginBottom:32,lineHeight:1}}>{slides[slide].emoji}</div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:32,color:C.t1,textAlign:"center",lineHeight:1.15,marginBottom:16,whiteSpace:"pre-line"}}>{slides[slide].title}</div>
         <div style={{fontSize:15,color:C.t2,textAlign:"center",lineHeight:1.6,maxWidth:280}}>{slides[slide].sub}</div>
@@ -4674,7 +4808,7 @@ function AuthScreen({onAuth,mode="signin"}){
       <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:32}}>We sent a magic link to <strong style={{color:C.t1}}>{email}</strong>. Tap it to sign in instantly — no password needed.</div>
       <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:16,width:"100%",marginBottom:24,textAlign:"left"}}>
         <div style={{fontSize:12,color:C.t3,marginBottom:8}}>Didn't receive it? Check your spam folder or</div>
-        <button style={{background:"none",border:"none",color:C.accent,fontSize:14,fontWeight:600,cursor:"pointer",padding:0}} onClick={()=>{setMagicSent(false);setLoading(null);}}>Resend the magic link →</button>
+        <button style={{background:"none",border:"none",color:C.accentText,fontSize:14,fontWeight:600,cursor:"pointer",padding:0}} onClick={()=>{setMagicSent(false);setLoading(null);}}>Resend the magic link →</button>
       </div>
       <button className="bs" onClick={()=>setView("signin")}>← Back to sign in</button>
     </div>
@@ -4683,7 +4817,7 @@ function AuthScreen({onAuth,mode="signin"}){
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%",background:C.bg,overflowY:"auto",scrollbarWidth:"none"}}>
       <div style={{padding:"52px 28px 0",marginBottom:32}}>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.accent,letterSpacing:"-.02em",marginBottom:28}}>reach</div>
+        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.accentText,letterSpacing:"-.02em",marginBottom:28}}>reach</div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:C.t1,lineHeight:1.15}}>
           {view==="signin"?"Welcome back."
           :view==="signup"?"Create your account."
@@ -4750,7 +4884,7 @@ function AuthScreen({onAuth,mode="signin"}){
         {/* Forgot password link */}
         {view==="signin"&&(
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-            <button onClick={()=>setView("magic")} style={{background:"none",border:"none",color:C.accent,fontSize:13,fontWeight:500,cursor:"pointer",padding:0}}>Use a magic link instead</button>
+            <button onClick={()=>setView("magic")} style={{background:"none",border:"none",color:C.accentText,fontSize:13,fontWeight:500,cursor:"pointer",padding:0}}>Use a magic link instead</button>
             <button onClick={()=>setView("forgot")} style={{background:"none",border:"none",color:C.t3,fontSize:13,cursor:"pointer",padding:0}}>Forgot your password?</button>
           </div>
         )}
@@ -4758,13 +4892,13 @@ function AuthScreen({onAuth,mode="signin"}){
         {/* Terms checkbox — required by both App Store & Play Store */}
         {view==="signup"&&(
           <div onClick={()=>setAgreed(!agreed)} style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:20,cursor:"pointer",padding:"12px 14px",background:C.s2,borderRadius:12,border:`1px solid ${agreed?C.accentBorder:C.border}`}}>
-            <div style={{width:20,height:20,borderRadius:6,border:`2px solid ${agreed?C.accent:C.border}`,background:agreed?C.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1,transition:"all .15s"}}>
+            <div style={{width:20,height:20,borderRadius:6,border:`2px solid ${agreed?C.accentText:C.border}`,background:agreed?C.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1,transition:"all .15s"}}>
               {agreed&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}
             </div>
             <div style={{fontSize:12,color:C.t2,lineHeight:1.6}}>
               I agree to Reach's{" "}
-              <span style={{color:C.accent,fontWeight:500}}>Terms of Service</span>{" "}and{" "}
-              <span style={{color:C.accent,fontWeight:500}}>Privacy Policy</span>.
+              <span style={{color:C.accentText,fontWeight:500}}>Terms of Service</span>{" "}and{" "}
+              <span style={{color:C.accentText,fontWeight:500}}>Privacy Policy</span>.
               I confirm that I am 13 years of age or older.
             </div>
           </div>
@@ -4789,9 +4923,9 @@ function AuthScreen({onAuth,mode="signin"}){
 
         {/* Toggle signin/signup */}
         <div style={{textAlign:"center",padding:"8px 0 30px"}}>
-          {view==="signin"&&<span style={{fontSize:13,color:C.t2}}>Don't have an account? <button onClick={()=>setView("signup")} style={{background:"none",border:"none",color:C.accent,fontWeight:600,cursor:"pointer",fontSize:13}}>Sign up for free</button></span>}
-          {view==="signup"&&<span style={{fontSize:13,color:C.t2}}>Already have an account? <button onClick={()=>setView("signin")} style={{background:"none",border:"none",color:C.accent,fontWeight:600,cursor:"pointer",fontSize:13}}>Sign in</button></span>}
-          {(view==="magic"||view==="forgot")&&<button onClick={()=>setView("signin")} style={{background:"none",border:"none",color:C.accent,fontSize:13,fontWeight:500,cursor:"pointer"}}>← Back to sign in</button>}
+          {view==="signin"&&<span style={{fontSize:13,color:C.t2}}>Don't have an account? <button onClick={()=>setView("signup")} style={{background:"none",border:"none",color:C.accentText,fontWeight:600,cursor:"pointer",fontSize:13}}>Sign up for free</button></span>}
+          {view==="signup"&&<span style={{fontSize:13,color:C.t2}}>Already have an account? <button onClick={()=>setView("signin")} style={{background:"none",border:"none",color:C.accentText,fontWeight:600,cursor:"pointer",fontSize:13}}>Sign in</button></span>}
+          {(view==="magic"||view==="forgot")&&<button onClick={()=>setView("signin")} style={{background:"none",border:"none",color:C.accentText,fontSize:13,fontWeight:500,cursor:"pointer"}}>← Back to sign in</button>}
         </div>
       </div>
     </div>
@@ -4856,11 +4990,11 @@ function BiometricScreen({onDone}){
 
   if(choice==="pin")return(
     <div style={{display:"flex",flexDirection:"column",height:"100%",background:C.bg,alignItems:"center",padding:"60px 28px 40px"}}>
-      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.accent,marginBottom:40}}>reach</div>
+      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.accentText,marginBottom:40}}>reach</div>
       <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>{pinStep===0?"Create a 6-digit PIN":"Confirm your PIN"}</div>
       <div style={{fontSize:13,color:C.t2,marginBottom:36}}>{pinStep===0?"This PIN protects your payments and bookings.":"Please enter the same PIN again."}</div>
       <div style={{display:"flex",gap:14,marginBottom:48}}>
-        {[0,1,2,3,4,5].map(i=><div key={i} style={{width:14,height:14,borderRadius:"50%",background:(pinStep===0?pin:confirmPin).length>i?C.accent:C.s3,border:`2px solid ${(pinStep===0?pin:confirmPin).length>i?C.accent:C.border}`,transition:"all .15s"}}/>)}
+        {[0,1,2,3,4,5].map(i=><div key={i} style={{width:14,height:14,borderRadius:"50%",background:(pinStep===0?pin:confirmPin).length>i?C.accent:C.s3,border:`2px solid ${(pinStep===0?pin:confirmPin).length>i?C.accentText:C.border}`,transition:"all .15s"}}/>)}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,width:"100%",maxWidth:260}}>
         {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((d,i)=>(
@@ -4872,7 +5006,7 @@ function BiometricScreen({onDone}){
 
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%",background:C.bg,padding:"52px 28px 40px"}}>
-      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.accent,marginBottom:40}}>reach</div>
+      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.accentText,marginBottom:40}}>reach</div>
       <div style={{flex:1}}>
         <div style={{fontSize:40,marginBottom:20}}>🔐</div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1,marginBottom:10}}>Secure your account</div>
@@ -4884,7 +5018,7 @@ function BiometricScreen({onDone}){
               <div style={{fontSize:15,fontWeight:600,color:C.t1}}>Face ID or Touch ID</div>
               <div style={{fontSize:12,color:C.t2}}>Fastest option — uses your device biometrics</div>
             </div>
-            <div style={{marginLeft:"auto",color:C.accent}}>→</div>
+            <div style={{marginLeft:"auto",color:C.accentText}}>→</div>
           </button>
           <button onClick={()=>setChoice("pin")} style={{display:"flex",alignItems:"center",gap:14,padding:"16px 18px",borderRadius:16,border:`1px solid ${C.border}`,background:C.s2,cursor:"pointer"}}>
             <span style={{fontSize:28}}>🔢</span>
@@ -5084,7 +5218,7 @@ function PrivacyScreen({onDone,user,setUser}){
         <button className="bp" style={{width:"100%",maxWidth:320,marginBottom:10}} onClick={onDone}>
           Start exploring →
         </button>
-        <button style={{background:"none",border:"none",color:C.accent,fontSize:13,cursor:"pointer",
+        <button style={{background:"none",border:"none",color:C.accentText,fontSize:13,cursor:"pointer",
           padding:"8px 0"}}
           onClick={()=>{setQuizDone(false);setQStep(0);}}>
           ✏️ Edit my preferences
@@ -5140,7 +5274,7 @@ function PrivacyScreen({onDone,user,setUser}){
                 }}>
                 <div style={{fontSize:22,marginBottom:4}}>{opt.e}</div>
                 <div style={{fontSize:11,fontWeight:600,
-                  color:isVeto?C.red:selected?C.accent:C.t1,
+                  color:isVeto?C.red:selected?C.accentText:C.t1,
                   lineHeight:1.2}}>{opt.l}</div>
               </button>
             );
@@ -5150,7 +5284,7 @@ function PrivacyScreen({onDone,user,setUser}){
 
       {/* Selected count */}
       {(answers[q.id]||[]).length>0&&(
-        <div style={{textAlign:"center",padding:"6px 0",fontSize:12,color:C.accent,fontWeight:500}}>
+        <div style={{textAlign:"center",padding:"6px 0",fontSize:12,color:C.accentText,fontWeight:500}}>
           {(answers[q.id]||[]).length} selected
         </div>
       )}
