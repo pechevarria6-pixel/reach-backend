@@ -170,7 +170,7 @@ CREATE TABLE IF NOT EXISTS public.loyalty_programs (
   program_name TEXT NOT NULL,
   tier TEXT,
   points INTEGER,
-  number_enc TEXT,
+  member_number_enc TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 

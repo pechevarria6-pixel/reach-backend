@@ -37,7 +37,9 @@ export async function POST(req: NextRequest) {
     program_name: programName,
     tier: tier || null,
     points: points ?? null,
-    number_enc: number ? encrypt(number) : null,
+    // The live table calls this member_number_enc; sql/core-schema.sql
+    // says number_enc. The database is the one that runs.
+    member_number_enc: number ? encrypt(number) : null,
   }).select('id, program_name, tier, points').single();
 
   if (error) {
