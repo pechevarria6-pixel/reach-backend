@@ -173,10 +173,19 @@ if (!url || !keyLooksReal) {
   const missing = [];
   let reachable = true;
 
+  // A table that has not been touched in a while can answer the first probe
+  // with a gateway timeout while it warms up. Retry once before reporting it,
+  // so a warm-up blip does not read as a broken table.
+  const probe = async (path) => {
+    let r = await fetch(`${url}/rest/v1/${path}`, { headers });
+    if (r.status >= 500) r = await fetch(`${url}/rest/v1/${path}`, { headers });
+    return r;
+  };
+
   for (const [file, tables] of Object.entries(TABLES)) {
     for (const t of tables) {
       try {
-        const r = await fetch(`${url}/rest/v1/${t}?select=*&limit=0`, { headers });
+        const r = await probe(`${t}?select=*&limit=0`);
         if (r.status === 200) ok(`table ${t}`);
         else if (r.status === 404) { bad(`table ${t} is missing`); missing.push([file, t]); }
         else if (r.status === 401 || r.status === 403) {
