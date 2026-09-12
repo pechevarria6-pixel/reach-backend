@@ -349,6 +349,26 @@ function itineraryRows(days){
   });
 }
 
+// Returning null from a screen paints nothing — no header, no way back, just
+// an empty app. A group or plan can legitimately be missing for a moment while
+// it saves or refreshes, so every screen that can hit that case shows this
+// instead of a blank.
+function NotLoaded({what="This",onBack}){
+  return(
+    <div className="sc">
+      <ScreenHeader onBack={onBack} label="Back"/>
+      <div style={{padding:"48px 28px",textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:12}}>🧭</div>
+        <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>{what} isn't loaded yet</div>
+        <div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginBottom:20}}>
+          It may still be saving. Go back and open it again.
+        </div>
+        <button className="bs" onClick={onBack}>Back</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── HOME ────────────────────────────────────────────────────────────────────
 function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   // These were three San Francisco events hardcoded as the default, shown to
@@ -1218,7 +1238,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
     refreshGroup(groupId).finally(()=>setRefreshing(false));
   },[groupId]);
 
-  if(!group)return null;
+  if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
   return(
     <div className="sc">
       <div style={{padding:"12px 20px 0"}}>
@@ -1344,7 +1364,8 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
 
 // ─── EDIT GROUP ───────────────────────────────────────────────────────────────
 function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup,leaveGroup,deleteGroup,me}){
-  const group=groups.find(g=>g.id===groupId);if(!group)return null;
+  const group=groups.find(g=>g.id===groupId);
+  if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
   const [name,setName]=useState(group.name);
 
   const members=group.memberIds||[];
@@ -2087,7 +2108,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   const allComplete=isSolo||(completedCount>=totalCount&&totalCount>0);
   const readyPercent=isSolo?100:totalCount>0?Math.round((completedCount/totalCount)*100):0;
 
-  if(!group)return null;
+  if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
 
   const nights=startDate&&endDate?Math.round((new Date(endDate)-new Date(startDate))/86400000):0;
 
@@ -3515,7 +3536,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     fetchPlan();
   },[planId]);
 
-  if(!plan||!group)return null;
+  if(!plan||!group)return <NotLoaded what={group?"This plan":"This group"} onBack={onBack}/>;
+
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const totalV=Object.values(plan.votes||{}).reduce((a,b)=>a+b,0);
 
@@ -3696,7 +3718,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
   const [items,setItems]=useState(plan?.itinerary||[]);
   const [adding,setAdding]=useState(false);
   const [ni,setNi]=useState({time:"",title:"",sub:"",type:"activity",conf:""});
-  if(!plan)return null;
+  if(!plan)return <NotLoaded what="This plan" onBack={onBack}/>;
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const addItem=()=>{if(!ni.title)return;setItems(p=>[...p,{...ni,filled:!!ni.conf}]);setNi({time:"",title:"",sub:"",type:"activity",conf:""});setAdding(false);};
   const rm=idx=>setItems(p=>p.filter((_,i)=>i!==idx));
@@ -4917,12 +4939,24 @@ export default function ReachApp({realUser,onSignOut}={}){
   const showToast=msg=>setToastMsg(msg);
   const push=(screen,props={})=>setStack(s=>[...s,{screen,props}]);
   const pop=()=>setStack(s=>s.slice(0,-1));
+  // Applies the change to whatever state is current, not to whatever `groups`
+  // happened to hold when this closure was made.
+  //
+  // The old version read `groups` from the enclosing render, computed the new
+  // group from that, and wrote it back wholesale — so any two updates in the
+  // same tick lost the first. Selecting a trip did exactly that: it added the
+  // plan, the server swapped in the real id, and then the itinerary update
+  // overwrote the group with a copy that predated both. The plan vanished
+  // from local state and the plan screen rendered nothing at all — a black
+  // screen after "confirmed".
   const updateGroup=(gid,fn,{sync=false}={})=>{
-    const current=groups.find(g=>g.id===gid);
-    if(!current)return;
-    const updated=fn(current);
-    setGroups(gs=>gs.map(g=>g.id===gid?updated:g));
-    if(sync)saveGroupToServer(updated); // only sync when explicitly requested
+    setGroups(gs=>gs.map(g=>g.id===gid?fn(g):g));
+    // The sync path still needs a concrete value to send. `fn` is a pure
+    // updater in every caller, so applying it again here is safe.
+    if(sync){
+      const current=groups.find(g=>g.id===gid);
+      if(current)saveGroupToServer(fn(current));
+    }
   };
 
   // Ends the Clerk session and lets the route guard redirect. Clearing local
