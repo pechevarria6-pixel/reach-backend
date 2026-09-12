@@ -1,17 +1,21 @@
 'use client';
 // @ts-nocheck
-import { useUser } from '@clerk/nextjs';
+import { useUser, useClerk } from '@clerk/nextjs';
 import { BRAND, SURFACE } from '@/lib/brand';
 import ReachAppCoreUntyped from './reach-app.jsx';
 
 // reach-app.jsx is untyped JS, so TS infers no props for it. Declare the one
 // prop the wrapper actually passes.
 const ReachAppCore = ReachAppCoreUntyped as unknown as (
-  props: { realUser: unknown }
+  props: { realUser: unknown; onSignOut: () => void }
 ) => JSX.Element;
 
 export default function ReachAppWrapper() {
   const { user, isLoaded } = useUser();
+  // Signing out has to end the Clerk session, not just clear React state.
+  // It used to do the latter, so the cookie survived and one refresh put the
+  // same account straight back in.
+  const { signOut } = useClerk();
 
   if (!isLoaded) {
     return (
@@ -60,5 +64,5 @@ export default function ReachAppWrapper() {
     clerkId: user.id,
   } : null;
 
-  return <ReachAppCore realUser={realUser} />;
+  return <ReachAppCore realUser={realUser} onSignOut={() => signOut({ redirectUrl: '/sign-in' })} />;
 }
