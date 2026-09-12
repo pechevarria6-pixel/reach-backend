@@ -162,11 +162,14 @@ export function textOf(res: { content: Array<{ type: string; text?: string }> })
 // distinct items" (an array minItems above 1 is rejected) and cannot express
 // "these six numbers sum to that one", so both are enforced here.
 
+// Every field is optional here because that is how zod infers the parsed
+// shape, and because a model response is untrusted input regardless of what
+// the schema asked for. Both functions below guard rather than assume.
 type TripLike = {
-  destination: string;
-  tier: string;
-  total_per_person: number;
-  costs: Record<string, { per_person: number }>;
+  destination?: string;
+  tier?: string;
+  total_per_person?: number;
+  costs?: Record<string, { per_person?: number } | undefined>;
 };
 
 /**
@@ -180,16 +183,17 @@ export function reconcileCosts<T extends TripLike>(trip: T): T {
   if (!lines.length) return trip;
   const sum = lines.reduce((a, [, c]) => a + (c?.per_person ?? 0), 0);
   const total = trip.total_per_person;
-  if (!Number.isFinite(total) || total <= 0 || sum <= 0 || sum === total) return trip;
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0 || sum <= 0 || sum === total) return trip;
 
   const scale = total / sum;
-  const scaled = lines.map(([k, c]) => [k, { ...c, per_person: Math.round(c.per_person * scale) }] as const);
-  const drift = total - scaled.reduce((a, [, c]) => a + c.per_person, 0);
+  const scaled = lines.map(([k, c]) =>
+    [k, { ...(c ?? {}), per_person: Math.round((c?.per_person ?? 0) * scale) }] as const);
+  const drift = total - scaled.reduce((a, [, c]) => a + (c.per_person ?? 0), 0);
   const miscIndex = scaled.findIndex(([k]) => k === 'misc');
   const absorb = miscIndex >= 0 ? miscIndex : scaled.length - 1;
   scaled[absorb] = [scaled[absorb][0], {
     ...scaled[absorb][1],
-    per_person: Math.max(0, scaled[absorb][1].per_person + drift),
+    per_person: Math.max(0, (scaled[absorb][1].per_person ?? 0) + drift),
   }] as const;
 
   return { ...trip, costs: Object.fromEntries(scaled) };
