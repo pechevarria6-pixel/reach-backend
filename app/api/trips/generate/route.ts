@@ -28,23 +28,48 @@ async function withSchemaFallback(
   schema: Record<string, unknown>,
   label: string,
 ) {
-  const base = {
-    model,
-    max_tokens: maxTokens,
-    messages: [{ role: 'user' as const, content: prompt }],
-  };
-  try {
-    return await client.messages.create({
-      ...base,
-      output_config: { format: { type: 'json_schema' as const, schema } },
+  const call = (tokens: number, extra: string, constrained: boolean) =>
+    client.messages.create({
+      model,
+      max_tokens: tokens,
+      messages: [{ role: 'user' as const, content: prompt + extra }],
+      ...(constrained
+        ? { output_config: { format: { type: 'json_schema' as const, schema } } }
+        : {}),
     });
+
+  let res;
+  try {
+    res = await call(maxTokens, '', true);
   } catch (e: any) {
     // Only a rejected request falls back. A 429 or a 5xx is transient and
     // belongs to the caller's handler, which knows how to word it.
     if (e?.status !== 400) throw e;
     console.error(`[${label}] schema rejected, retrying unconstrained:`, e?.message);
-    return client.messages.create(base);
+    res = await call(maxTokens, '', false);
   }
+
+  // A truncated response is valid right up to where the tokens ran out, so it
+  // parses as nothing. Rather than surface that as a failure, ask again with
+  // more room and an explicit instruction to be brief. Once only — if it
+  // overruns twice the prompt is wrong, and the caller reports it.
+  if (res.stop_reason === 'max_tokens') {
+    console.error(`[${label}] truncated at ${maxTokens} tokens, retrying briefer`);
+    const briefer = '\n\nBe significantly briefer than you would normally be. ' +
+      'Every prose field must be one short sentence or less. The complete ' +
+      'response must fit well within the limit.';
+    try {
+      const retry = await call(Math.round(maxTokens * 1.5), briefer, true);
+      if (retry.stop_reason !== 'max_tokens') return retry;
+      console.error(`[${label}] truncated again at ${Math.round(maxTokens * 1.5)} tokens`);
+      return retry;
+    } catch (e: any) {
+      console.error(`[${label}] briefer retry failed:`, e?.message);
+      return res;
+    }
+  }
+
+  return res;
 }
 
 // A missing key disables this lane with a clean message rather than a crash.
@@ -227,11 +252,7 @@ Return JSON only, shaped exactly like this:
       client, FAST_MODEL, 16000, prompt, TRIPS_JSON_SCHEMA, 'trips generate',
     );
 
-    if (response.stop_reason === 'max_tokens') {
-      console.error('[trips generate] truncated at max_tokens', {
-        groupId, nights, chars: textOf(response).length,
-      });
-    }
+
 
     const trips = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
     // The schema cannot pin the array length, so the count is checked here.
@@ -239,9 +260,15 @@ Return JSON only, shaped exactly like this:
     if (!trips?.length) {
       console.error('[trips generate] no trips in response', {
         groupId, nights, effectiveBudget, stop_reason: response.stop_reason,
+        chars: textOf(response).length,
       });
+      // Truncation and a genuinely empty answer need different words: one is
+      // worth retrying as-is, the other is not.
+      const truncated = response.stop_reason === 'max_tokens';
       return NextResponse.json(
-        { error: 'No trips came back — try adjusting your budget or dates.' },
+        { error: truncated
+            ? 'The answer came back too long to finish. Try a shorter trip or fewer nights.'
+            : 'No trips came back. Try adjusting your budget or dates.' },
         { status: 502 },
       );
     }
