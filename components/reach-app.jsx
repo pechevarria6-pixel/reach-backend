@@ -2465,7 +2465,9 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
     const newPlan={
       id:"p"+Date.now(),
       title:trip.destination,
-      status:"voting",
+      // Was hardcoded to "voting", so a solo traveller got a plan asking them
+      // to vote on a destination they had already chosen.
+      status:(selGroup?.memberIds?.length??1)>1?"voting":"planning",
       dates:formatDates(startDate,endDate),
       startDate:startDate||null,
       endDate:endDate||null,
@@ -2713,6 +2715,9 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
   const [loadingRecs,setLoadingRecs]=useState(false);
   const [showExitConfirm,setShowExitConfirm]=useState(false);
   const selGroup=groups.find(g=>g.id===gid);
+  // Solo mode is first-class: a group of one gets the same flow with the
+  // voting UI absent and enable_voting false.
+  const isSoloGroup=(selGroup?.memberIds?.length??1)<=1;
 
   // Auto-save draft whenever state changes
   useEffect(()=>{
@@ -2832,7 +2837,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
     const np={
       id:"p"+Date.now(),
       title:planName||(planType==="restaurant"?"Dinner out":planType==="concert"?"Concert Night":planType==="weekend"?"Weekend Away":selGroup?.name+" Trip"),
-      status:voting?"voting":"planning",
+      status:(voting&&!isSoloGroup)?"voting":"planning",
       dates:dateRange,
       startDate:(isEvent?eventDate:startDate)||null,
       endDate:isEvent?null:(endDate||null),
@@ -2840,7 +2845,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
       type:planType||"trip",
       participants:selGroup?.memberIds||[],
       itinerary:[],
-      votes:voting?Object.fromEntries(vopts.filter(Boolean).map(o=>[o,0])):{},
+      votes:(voting&&!isSoloGroup)?Object.fromEntries(vopts.filter(Boolean).map(o=>[o,0])):{},
       options:voting?vopts.filter(Boolean):[],
     };
     updateGroup(gid,g=>({...g,plans:[...g.plans,np],lastActivity:`Planning: ${np.title}`}));
@@ -3162,17 +3167,22 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
                 <button key={v} onClick={()=>setBudget(v)} style={{flex:1,padding:"8px 4px",borderRadius:10,border:`1px solid ${budget===v?C.accentText:C.border}`,background:budget===v?C.accentDim:C.s2,color:budget===v?C.accentText:C.t2,fontSize:12,fontWeight:600,cursor:"pointer"}}>${parseInt(v).toLocaleString()}</button>
               ))}
             </div>
-            <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14,marginBottom:6}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:voting?12:0}}>
-                <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>Enable destination voting</div><div style={{fontSize:12,color:C.t2,marginTop:2}}>Let the group vote on where to go</div></div>
-                <button onClick={()=>setVoting(!voting)} style={{width:44,height:26,borderRadius:13,background:voting?C.accent:C.s3,border:"none",cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",background:"white",position:"absolute",top:3,left:voting?21:3,transition:"left .2s"}}/>
-                </button>
+            {/* Solo mode is first-class: a group of one gets the same flow with
+                the voting UI absent, never a toggle asking them to vote
+                against themselves. */}
+            {!isSoloGroup&&(
+              <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14,marginBottom:6}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:voting?12:0}}>
+                  <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>Enable destination voting</div><div style={{fontSize:12,color:C.t2,marginTop:2}}>Let the group vote on where to go</div></div>
+                  <button onClick={()=>setVoting(!voting)} aria-pressed={voting} style={{width:44,height:26,borderRadius:13,background:voting?C.accentText:C.s3,border:`1px solid ${voting?C.accentText:C.border}`,cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
+                    <div style={{width:20,height:20,borderRadius:"50%",background:C.s1,position:"absolute",top:2,left:voting?21:2,transition:"left .2s"}}/>
+                  </button>
+                </div>
+                {voting&&vopts.map((opt,i)=>(
+                  <input key={i} className="inp" style={{fontSize:13,marginTop:8}} placeholder={`Option ${i+1} (e.g. Lisbon)`} value={opt} onChange={e=>setVopts(v=>v.map((x,j)=>j===i?e.target.value:x))}/>
+                ))}
               </div>
-              {voting&&vopts.map((opt,i)=>(
-                <input key={i} className="inp" style={{fontSize:13,marginTop:8}} placeholder={`Option ${i+1} (e.g. Lisbon)`} value={opt} onChange={e=>setVopts(v=>v.map((x,j)=>j===i?e.target.value:x))}/>
-              ))}
-            </div>
+            )}
           </div>
         )}
 
