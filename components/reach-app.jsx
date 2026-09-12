@@ -46,12 +46,12 @@ const PALETTE = {
 
     // Semantic colours are darkened for the light theme: the dark-theme values
     // are tuned to glow on near-black and fail badly as text on white.
-    green: "#1F8A4C", greenDim: "rgba(31,138,76,0.12)",
+    green: "#1D8248", greenDim: "rgba(29,130,72,0.12)",
     amber: "#96650A", amberDim: "rgba(150,101,10,0.12)",
     red: "#C0332C", redDim: "rgba(192,51,44,0.10)",
     blue: "#1E62C4", blueDim: "rgba(30,98,196,0.10)",
 
-    t1: "#241C10", t2: "#6B5C42", t3: "#7A6A4E", t4: "#857457",
+    t1: "#241C10", t2: "#6B5C42", t3: "#76674C", t4: "#817154",
 
     navBg: "rgba(252,250,245,0.92)",
     overlay: "rgba(45,35,20,0.45)",
@@ -161,11 +161,11 @@ button{min-height:44px;}
 .hd-back svg{width:18px;height:18px;}
 .hd-ov{position:absolute;top:calc(16px + env(safe-area-inset-top));left:16px;width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;z-index:10;}
 .hd-ov:active{transform:scale(.94);}
-.sl{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:${C.t3};}
-.card{background:linear-gradient(145deg,${C.s1},${C.s2});border:1px solid ${C.border};border-radius:22px;overflow:hidden;transition:all .2s;cursor:pointer;box-shadow:${C.cardShadow};}
+.sl{font-size:12.5px;font-weight:600;letter-spacing:0;text-transform:none;color:${C.t2};}
+.card{background:linear-gradient(145deg,${C.s1},${C.s2});border:1px solid ${C.border};border-radius:24px;overflow:hidden;transition:all .2s;cursor:pointer;box-shadow:${C.cardShadow};}
 .card:hover{border-color:${C.accentBorder};transform:translateY(-2px);box-shadow:${C.cardShadowHover};}
 .card:active{transform:scale(.98);}
-.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:4px 11px;border-radius:20px;font-size:11.5px;font-weight:600;}
 .pill-g{background:${C.greenDim};color:${C.green};}
 .pill-a{background:${C.amberDim};color:${C.amber};}
 .pill-r{background:${C.redDim};color:${C.red};}
@@ -175,7 +175,7 @@ button{min-height:44px;}
 .bp:hover{transform:translateY(-1px);box-shadow:${C.accentGlowHover};}
 .bp:active{transform:scale(.98);}
 .bp:disabled{opacity:.35;cursor:not-allowed;}
-.bs{width:100%;padding:14px 20px;background:${C.s2};color:${C.t1};border:1px solid ${C.border};border-radius:16px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:border-color .15s;}
+.bs{width:100%;padding:15px 20px;background:${C.s2};color:${C.t1};border:1px solid ${C.border};border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:border-color .15s;}
 .bs:hover{border-color:${C.borderLight};}
 .bsm{padding:7px 14px;border-radius:10px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s;}
 .bsm:hover{opacity:.85;}
@@ -183,7 +183,7 @@ button{min-height:44px;}
 .bsm-g{background:${C.s3};color:${C.t2};}
 .bsm-r{background:${C.redDim};color:${C.red};}
 .bsm-gr{background:${C.greenDim};color:${C.green};}
-.inp{width:100%;padding:14px 16px;background:${C.s2};border:1.5px solid ${C.border};border-radius:16px;color:${C.t1};font-family:'Space Grotesk',sans-serif;font-size:14px;outline:none;transition:all .2s;}
+.inp{width:100%;padding:15px 16px;background:${C.s2};border:1.5px solid ${C.border};border-radius:16px;color:${C.t1};font-family:'Space Grotesk',sans-serif;font-size:14px;outline:none;transition:all .2s;}
 .inp:focus{border-color:${C.accentText};box-shadow:0 0 0 3px ${C.focusRing};background:${C.s1};}
 .inp::placeholder{color:${C.t3};}
 .ov{position:absolute;inset:0;background:${C.overlay};z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
@@ -193,7 +193,7 @@ button{min-height:44px;}
 .sh-hdr{padding:20px 20px 16px;border-bottom:1px solid ${C.border};display:flex;align-items:center;justify-content:space-between;}
 .sh-ttl{font-size:17px;font-weight:600;color:${C.t1};}
 .toast{position:absolute;top:70px;left:16px;right:16px;background:${C.green};color:${C.onGreen};border-radius:14px;padding:12px 16px;font-size:13px;font-weight:600;z-index:500;text-align:center;animation:ti .3s ease,to .3s ease 2.2s forwards;}
-.ri{display:flex;align-items:center;gap:12px;padding:13px 20px;cursor:pointer;transition:background .1s;}
+.ri{display:flex;align-items:center;gap:13px;padding:15px 20px;cursor:pointer;transition:background .1s;}
 .ri:hover{background:${C.s2};}
 .ri-ic{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
 .ri-inf{flex:1;}
@@ -372,10 +372,10 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"14px 20px 12px"}}>
-        <div style={{fontSize:12,color:C.t3,marginBottom:3,textTransform:"uppercase",letterSpacing:".1em",fontWeight:500}}>
+        <div style={{fontSize:13.5,color:C.t2,marginBottom:5,fontWeight:500}}>
           {new Date().getHours()<12?"Good morning":new Date().getHours()<17?"Good afternoon":"Good evening"}
         </div>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:34,color:C.t1,lineHeight:1.1}}>
+        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,lineHeight:1.1}}>
           Hey {firstNameOf(user)} 👋
         </div>
       </div>
@@ -1052,10 +1052,24 @@ function GroupsScreen({groups,um,push}){
 }
 
 // ─── GROUP DETAIL ────────────────────────────────────────────────────────────
-function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setGroups,refreshGroup}){
+function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setGroups,refreshGroup,removeGroupMember,leaveGroup,me}){
   const group=groups.find(g=>g.id===groupId);
   const [tab,setTab]=useState("plans");
   const [refreshing,setRefreshing]=useState(false);
+  const [busyId,setBusyId]=useState(null);
+  const isAdmin=group?.role==="admin";
+
+  const doRemove=async(uid,name)=>{
+    if(busyId)return;setBusyId(uid);
+    try{ await removeGroupMember(groupId,uid); toast(`${name} removed`); }
+    catch(e){ toast(e.message); }
+    finally{ setBusyId(null); }
+  };
+  const doLeave=async()=>{
+    if(busyId)return;setBusyId(me);
+    try{ await leaveGroup(groupId); toast(`You left ${group.name}`); }
+    catch(e){ toast(e.message); setBusyId(null); }
+  };
 
   useEffect(()=>{
     if(!groupId||!refreshGroup)return;
@@ -1074,7 +1088,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             <div className="pt">{group.name}</div>
             <div style={{fontSize:13,color:C.t2,marginTop:2}}>{group.memberIds.length} members · ${group.wallet.toLocaleString()} wallet</div>
           </div>
-          <button className="bsm bsm-g" onClick={()=>push("editGroup",{groupId})}>Edit</button>
+          {isAdmin&&<button className="bsm bsm-g" onClick={()=>push("editGroup",{groupId})}>Edit</button>}
         </div>
         <div style={{display:"flex",gap:0,marginTop:16,borderBottom:`1px solid ${C.border}`}}>
           {["plans","members","wallet"].map(t=>(
@@ -1133,7 +1147,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
         <div style={{padding:"14px 0"}}>
           <div style={{padding:"0 20px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span className="sl">{group.memberIds.length} Members</span>
-            <button className="bsm bsm-p" onClick={()=>push("editGroup",{groupId})}>Add Member</button>
+            {isAdmin&&<button className="bsm bsm-p" onClick={()=>push("editGroup",{groupId})}>Add Member</button>}
           </div>
           {group.memberIds.map(uid=>{
             const u=um[uid];if(!u)return null;
@@ -1141,11 +1155,23 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <div key={uid} className="ri">
                 <Av u={u} lg/>
                 <div className="ri-inf"><div className="ri-t">{u.name}</div><div className="ri-s">{u.handle}</div></div>
-                <button className="bsm bsm-r" onClick={()=>{updateGroup(groupId,g=>({...g,memberIds:g.memberIds.filter(id=>id!==uid)}));toast(`${u.name} removed`);}}>Remove</button>
+                {uid===me
+                  ? <button className="bsm bsm-r" disabled={!!busyId} onClick={doLeave}>{busyId===me?"Leaving…":"Leave"}</button>
+                  : isAdmin
+                    ? <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>doRemove(uid,u.name)}>{busyId===uid?"Removing…":"Remove"}</button>
+                    : null}
               </div>
             );
           })}
-          <div style={{padding:"12px 20px"}}><button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Invite Someone</button></div>
+          {isAdmin&&<div style={{padding:"12px 20px"}}><button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Invite Someone</button></div>}
+          {!isAdmin&&(
+            <div style={{padding:"12px 20px"}}>
+              <button className="bs" disabled={!!busyId} onClick={doLeave}
+                style={{color:C.red,borderColor:C.redDim}}>
+                {busyId===me?"Leaving…":`Leave ${group.name}`}
+              </button>
+            </div>
+          )}
         </div>
       )}
       {tab==="wallet"&&(
@@ -1176,7 +1202,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
 }
 
 // ─── EDIT GROUP ───────────────────────────────────────────────────────────────
-function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup}){
+function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup,leaveGroup,deleteGroup,me}){
   const group=groups.find(g=>g.id===groupId);if(!group)return null;
   const [name,setName]=useState(group.name);
   const [emoji,setEmoji]=useState(group.emoji);
@@ -1261,6 +1287,27 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 
   const save=()=>{updateGroup(groupId,g=>({...g,name,emoji}),{sync:true});toast("Group updated");onBack();};
 
+  // ── Leaving and deleting ───────────────────────────────────────────────
+  // Deleting cascades in the database: the group's plans, members and pending
+  // invites all go with it, and nothing restores them. That is why it asks the
+  // name to be typed rather than showing a single confirm button.
+  const [danger,setDanger]=useState(null); // null | "leave" | "delete"
+  const [typed,setTyped]=useState("");
+  const [working,setWorking]=useState(false);
+  const isAdmin=group.role==="admin";
+  const nameMatches=typed.trim().toLowerCase()===group.name.trim().toLowerCase();
+
+  const doLeave=async()=>{
+    if(working)return;setWorking(true);
+    try{ await leaveGroup(groupId); toast(`You left ${group.name}`); }
+    catch(e){ toast(e.message); setWorking(false); }
+  };
+  const doDelete=async()=>{
+    if(working||!nameMatches)return;setWorking(true);
+    try{ await deleteGroup(groupId); toast(`${group.name} deleted`); }
+    catch(e){ toast(e.message); setWorking(false); }
+  };
+
   return(
     <div className="sc">
       <ScreenHeader onBack={onBack} label="Back" title="Edit Group"/>
@@ -1318,7 +1365,9 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
           <div key={uid} className="ri">
             <Av u={u} lg/>
             <div className="ri-inf"><div className="ri-t">{u.name}</div><div className="ri-s">{u.handle}</div></div>
-            <button className="bsm bsm-r" disabled={busy} onClick={()=>removeMember(uid)}>Remove</button>
+            {uid===me
+              ? <span style={{fontSize:11,color:C.t3,fontWeight:600}}>You</span>
+              : <button className="bsm bsm-r" disabled={busy} onClick={()=>removeMember(uid)}>Remove</button>}
           </div>
         );
       })}
@@ -1341,8 +1390,73 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         </>
       )}
 
-      <div style={{padding:"18px 20px 30px"}}>
+      <div style={{padding:"18px 20px 10px"}}>
         <button className="bp" onClick={save}>Save Changes</button>
+      </div>
+
+      <div style={{height:1,background:C.border,margin:"10px 20px 16px"}}/>
+      <div style={{padding:"0 20px 6px"}}><span className="sl" style={{color:C.red}}>Danger zone</span></div>
+
+      <div style={{margin:"0 20px 30px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden"}}>
+        {/* Leaving */}
+        <div style={{padding:16}}>
+          <div style={{fontSize:14,fontWeight:600,color:C.t1,marginBottom:3}}>Leave this group</div>
+          <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:12}}>
+            You stop seeing its plans. Everything else stays, and an admin can add you back.
+          </div>
+          {danger!=="leave"
+            ? <button className="bs" onClick={()=>{setDanger("leave");setTyped("");}}
+                style={{color:C.red,borderColor:C.redDim}}>Leave {group.name}</button>
+            : (
+              <div style={{display:"flex",gap:8}}>
+                <button className="bs" style={{flex:1}} disabled={working} onClick={()=>setDanger(null)}>Cancel</button>
+                <button className="bs" style={{flex:1,color:C.red,borderColor:C.red}} disabled={working} onClick={doLeave}>
+                  {working?"Leaving…":"Yes, leave"}
+                </button>
+              </div>
+            )}
+          {isAdmin&&(
+            <div style={{fontSize:11,color:C.t3,marginTop:8,lineHeight:1.5}}>
+              You are an admin. If you are the only one, promote someone else first — a group cannot be left without one.
+            </div>
+          )}
+        </div>
+
+        {/* Deleting — admins only, and the server enforces that too. */}
+        {isAdmin&&(
+          <>
+            <div style={{height:1,background:C.border}}/>
+            <div style={{padding:16}}>
+              <div style={{fontSize:14,fontWeight:600,color:C.t1,marginBottom:3}}>Delete this group</div>
+              <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:12}}>
+                Deletes the group for everyone, along with its {group.plans?.length||0} plan{(group.plans?.length||0)===1?"":"s"}, its members and any pending invites. This cannot be undone.
+              </div>
+              {danger!=="delete"
+                ? <button className="bs" onClick={()=>{setDanger("delete");setTyped("");}}
+                    style={{color:C.red,borderColor:C.redDim}}>Delete {group.name}</button>
+                : (
+                  <>
+                    <div style={{fontSize:12,color:C.t2,marginBottom:8}}>
+                      Type <strong style={{color:C.t1}}>{group.name}</strong> to confirm.
+                    </div>
+                    <input className="inp" value={typed} onChange={e=>setTyped(e.target.value)}
+                      placeholder={group.name} autoFocus style={{marginBottom:10}}/>
+                    <div style={{display:"flex",gap:8}}>
+                      <button className="bs" style={{flex:1}} disabled={working} onClick={()=>{setDanger(null);setTyped("");}}>Cancel</button>
+                      <button className="bs" style={{flex:1,
+                        color:nameMatches?C.onAccent:C.t3,
+                        background:nameMatches?C.red:C.s2,
+                        borderColor:nameMatches?C.red:C.border,
+                        cursor:nameMatches?"pointer":"not-allowed"}}
+                        disabled={working||!nameMatches} onClick={doDelete}>
+                        {working?"Deleting…":"Delete forever"}
+                      </button>
+                    </div>
+                  </>
+                )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -4412,6 +4526,9 @@ export default function ReachApp({realUser}={}){
           id:g.id,
           name:g.name,
           emoji:g.emoji||"✈️",
+          // "admin" or "member" — decides who is offered Delete and who is
+          // offered Leave.
+          role:g.role||"member",
           memberIds,
           members:(g.group_members||[]).map(m=>m.users||{id:m.user_id}),
           wallet:Math.round((g.wallet_balance_cents||0)/100),
@@ -4463,8 +4580,43 @@ export default function ReachApp({realUser}={}){
       const memberIds=(detail.members||[]).map(m=>m.user_id||m.users?.id).filter(Boolean);
       const plans=(detail.plans||[]).map(p=>convertPlan(p,memberIds));
       rememberUsers((detail.members||[]).map(m=>m.users).filter(Boolean));
-      setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans,memberIds}:g));
+      setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans,memberIds,role:detail.myRole||g.role||"member"}:g));
     }catch(e){console.log("Refresh failed",e);}
+  };
+
+  // ── Group membership actions ─────────────────────────────
+  // Each hits the server first and only touches local state once it succeeds.
+  // The members tab used to filter a member out of local state and never call
+  // the API at all, so whoever you removed reappeared on the next refresh.
+  const removeGroupMember=async(groupId,userId)=>{
+    const r=await fetch(`/api/groups/${groupId}/members`,{
+      method:"DELETE",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({userId}),
+    });
+    const d=await r.json().catch(()=>({}));
+    // The server refuses to strand a group with no admin, and says so.
+    if(!r.ok)throw new Error(d.error||"Couldn't remove them from the group");
+    setGroups(gs=>gs.map(g=>g.id===groupId
+      ?{...g,memberIds:(g.memberIds||[]).filter(id=>id!==userId)}:g));
+  };
+
+  // Leaving is the same call aimed at yourself, but the group then has to
+  // disappear from this device rather than just lose a member.
+  const leaveGroup=async(groupId)=>{
+    if(!user?.id)throw new Error("Still signing you in — try again in a moment");
+    await removeGroupMember(groupId,user.id);
+    setGroups(gs=>gs.filter(g=>g.id!==groupId));
+    setStack([]);setTab("groups");
+  };
+
+  // Admin only, and the database cascades: the group's plans, members and
+  // pending invites go with it. The confirmation for this lives in the UI.
+  const deleteGroup=async(groupId)=>{
+    const r=await fetch(`/api/groups/${groupId}`,{method:"DELETE"});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||"Couldn't delete that group");
+    setGroups(gs=>gs.filter(g=>g.id!==groupId));
+    setStack([]);setTab("groups");
   };
 
   const saveGroupToServer=async(group)=>{
@@ -4617,7 +4769,7 @@ export default function ReachApp({realUser}={}){
   const handleSignOut=()=>{setUser(null);setAuthStage("auth");setStack([]);setTab("home");showToast("Signed out successfully");};
 
   const cur=stack[stack.length-1];
-  const cp={onBack:pop,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,notifyGroupUpdate};
+  const cp={onBack:pop,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
 
   const renderSub=()=>{
     if(!cur)return null;
