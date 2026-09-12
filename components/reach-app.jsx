@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -1205,8 +1206,6 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
 function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup,leaveGroup,deleteGroup,me}){
   const group=groups.find(g=>g.id===groupId);if(!group)return null;
   const [name,setName]=useState(group.name);
-  const [emoji,setEmoji]=useState(group.emoji);
-  const emojis=["🎓","👨‍👩‍👧‍👦","💼","🏖️","🎸","🍕","🏔️","✈️","🎉","🌍"];
 
   const members=group.memberIds||[];
   const [invites,setInvites]=useState([]);
@@ -1285,7 +1284,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
     }catch(e){toast("Couldn't withdraw that invite");}
   };
 
-  const save=()=>{updateGroup(groupId,g=>({...g,name,emoji}),{sync:true});toast("Group updated");onBack();};
+  const save=()=>{updateGroup(groupId,g=>({...g,name,emoji:inferGroupEmoji(name)}),{sync:true});toast("Group updated");onBack();};
 
   // ── Leaving and deleting ───────────────────────────────────────────────
   // Deleting cascades in the database: the group's plans, members and pending
@@ -1312,16 +1311,11 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
     <div className="sc">
       <ScreenHeader onBack={onBack} label="Back" title="Edit Group"/>
       <div style={{padding:"0 20px",display:"flex",gap:12,alignItems:"center",marginBottom:18}}>
-        <div style={{fontSize:44}}>{emoji}</div>
+        <div style={{fontSize:44,minWidth:52,textAlign:"center"}}>{inferGroupEmoji(name)}</div>
         <input className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="Group name" style={{flex:1}}/>
       </div>
-      <div style={{padding:"0 20px 14px"}}>
-        <div className="sl" style={{marginBottom:10}}>Choose an emoji</div>
-        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-          {emojis.map(e=>(
-            <button key={e} onClick={()=>setEmoji(e)} style={{width:42,height:42,borderRadius:12,fontSize:22,cursor:"pointer",border:`2px solid ${emoji===e?C.accentText:C.border}`,background:emoji===e?C.accentDim:C.s2}}>{e}</button>
-          ))}
-        </div>
+      <div style={{padding:"0 20px 14px",fontSize:12,color:C.t3,lineHeight:1.5}}>
+        The icon follows the name.
       </div>
 
       <div style={{height:1,background:C.border,margin:"6px 0 14px"}}/>
@@ -1468,7 +1462,6 @@ function inferGroupEmoji(n){const s=(n||"").toLowerCase();const rules=[[/birthda
 function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
   const [step,setStep]=useState(0);
   const [name,setName]=useState("");
-  const [emoji,setEmoji]=useState("🎉");
   const [members,setMembers]=useState([]);
   const [inviteEmails,setInviteEmails]=useState([]);
   const [searchQuery,setSearchQuery]=useState("");
@@ -1491,10 +1484,9 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
     setInviteEmails(list=>list.includes(e)?list:[...list,e]);
     setSearchQuery("");setSearchResults([]);
   };
-  const emojis=["🎓","👨‍👩‍👧‍👦","💼","🏖️","🎸","🍕","🏔️","✈️","🎉","🌍"];
   const create=()=>{
     const tempId="g_local_"+Date.now();
-    const finalEmoji=(emoji&&emoji!==DEFAULT_GROUP_EMOJI)?emoji:inferGroupEmoji(name);const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:members,inviteEmails,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
+    const finalEmoji=inferGroupEmoji(name);const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:members,inviteEmails,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
     setGroups(gs=>[...gs,newGroup]);
     toast(`${name} created!`);
     // Save to server in background
@@ -1510,13 +1502,14 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
       </div>
       {step===0&&(
         <div style={{padding:"0 20px"}}>
-          <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:18}}>
-            <div style={{fontSize:44}}>{emoji}</div>
+          <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:10}}>
+            {/* The emoji is inferred from the name as you type — one fewer
+                decision, and it updates live so it never feels imposed. */}
+            <div style={{fontSize:44,minWidth:52,textAlign:"center"}}>{inferGroupEmoji(name)}</div>
             <input className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g., Ski Trip Crew" style={{flex:1}} autoFocus/>
           </div>
-          <div className="sl" style={{marginBottom:10}}>Pick an emoji</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:24}}>
-            {emojis.map(e=><button key={e} onClick={()=>setEmoji(e)} style={{width:44,height:44,borderRadius:12,fontSize:24,cursor:"pointer",border:`2px solid ${emoji===e?C.accentText:C.border}`,background:emoji===e?C.accentDim:C.s2}}>{e}</button>)}
+          <div style={{fontSize:12,color:C.t3,marginBottom:24,lineHeight:1.5}}>
+            We pick an icon from the name. Call it a ski trip and you get a ski trip.
           </div>
           <button className="bp" disabled={!name.trim()} onClick={()=>setStep(1)}>Continue →</button>
         </div>
@@ -1986,7 +1979,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       id:"p"+Date.now(),
       title:trip.destination,
       status:"approved",
-      dates:startDate&&endDate?startDate+" – "+endDate:"Dates TBD",
+      dates:formatDates(startDate,endDate),
       startDate:startDate||null,
       endDate:endDate||null,
       budget:trip.total_per_person,
@@ -2473,7 +2466,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation}){
       id:"p"+Date.now(),
       title:trip.destination,
       status:"voting",
-      dates:startDate&&endDate?`${startDate} – ${endDate}`:"Dates TBD",
+      dates:formatDates(startDate,endDate),
       startDate:startDate||null,
       endDate:endDate||null,
       budget:trip.total_per_person,
@@ -2834,8 +2827,8 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
   const finish=()=>{
     if(!gid)return;
     const dateRange=isEvent
-      ?`${eventDate}${eventTime?" at "+eventTime:""}`
-      :`${startDate} – ${endDate}`;
+      ?formatDates(eventDate,null,eventTime)
+      :formatDates(startDate,endDate);
     const np={
       id:"p"+Date.now(),
       title:planName||(planType==="restaurant"?"Dinner out":planType==="concert"?"Concert Night":planType==="weekend"?"Weekend Away":selGroup?.name+" Trip"),
@@ -3273,7 +3266,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         {atab==="overview"&&(
           <div style={{padding:"16px 0"}}>
             <div style={{display:"flex",gap:10,padding:"0 20px 14px"}}>
-              {[{l:"Travelers",v:plan.participants.length,e:"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},{l:"Nights",v:"~"+(plan.dates.includes("–")?7:"?"),e:"🌙"}].map((s,i)=>(
+              {[{l:"Travelers",v:plan.participants.length,e:"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
                 <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
                   <div style={{fontSize:20}}>{s.e}</div>
                   <div style={{fontFamily:"'Instrument Serif',serif",fontSize:18,color:C.t1,marginTop:4}}>{s.v}</div>
@@ -4297,7 +4290,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     title:p.title,
     type:p.type||"trip",
     status:p.status||"planning",
-    dates:p.start_date&&p.end_date?`${p.start_date} – ${p.end_date}`:p.start_date||"Dates TBD",
+    dates:formatDates(p.start_date,p.end_date),
     startDate:p.start_date||null,
     endDate:p.end_date||null,
     budget:Math.round((p.budget_cents||0)/100),
@@ -4399,26 +4392,14 @@ export default function ReachApp({realUser,onSignOut}={}){
     return group.id;
   };
 
-  // Plans carry ISO startDate/endDate; `dates` is only ever a display string.
-  // Fall back to parsing it for plans created before that field existed, and
-  // send null rather than a phrase like "Dates TBD" the database can't store.
-  const toIsoDate=v=>{
-    if(!v||typeof v!=="string")return null;
-    const t=v.trim();
-    if(!t)return null;
-    if(/^\d{4}-\d{2}-\d{2}$/.test(t))return t;
-    const d=new Date(t);
-    if(isNaN(d.getTime()))return null;
-    return d.toISOString().split("T")[0];
-  };
 
   const savePlanToServer=async(groupId,plan)=>{
     try{
-      const isRange=plan.dates?.includes("–");
-      const startDate=toIsoDate(plan.startDate)
-        ??toIsoDate(isRange?plan.dates.split("–")[0]:plan.dates?.split(" at ")[0]);
-      const endDate=toIsoDate(plan.endDate)
-        ??toIsoDate(isRange?plan.dates.split("–")[1]:null);
+      // Structured only. Every screen that creates a plan sets startDate and
+      // endDate, so splitting the display label apart again — which broke the
+      // moment the label became human-readable — is gone.
+      const startDate=toDateOrNull(plan.startDate);
+      const endDate=toDateOrNull(plan.endDate);
 
       const res=await fetch("/api/plans",{
         method:"POST",
