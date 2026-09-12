@@ -3309,9 +3309,12 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
 
   useEffect(()=>{
     if(phase!=="pay"||!clientSecret)return;
-    const pk=process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-    if(!pk){ setMsg("Payments aren't switched on yet for this build."); setPhase("error"); return; }
-    const boot=()=>{
+    // The key comes from the server, not from process.env: a bare
+    // STRIPE_PUBLISHABLE_KEY is never inlined into browser code, and the
+    // NEXT_PUBLIC_ form is blanked at build time when the variable is marked
+    // Sensitive in Vercel. /api/config/stripe reads it at runtime instead.
+    let cancelled=false;
+    const boot=(pk)=>{
       try{
         const stripe=window.Stripe(pk);
         const elements=stripe.elements({clientSecret,appearance:{theme:"night",variables:{colorPrimary:C.accent,borderRadius:"12px"}}});
@@ -3321,8 +3324,24 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
         stripeRef.current=stripe; elementsRef.current=elements;
       }catch(e){ setMsg("Payment form couldn't load \u2014 try again."); setPhase("error"); }
     };
-    if(window.Stripe){boot();}
-    else{ const s=document.createElement("script"); s.src="https://js.stripe.com/v3"; s.onload=boot; s.onerror=()=>{setMsg("Payment form couldn't load \u2014 check your connection.");setPhase("error");}; document.head.appendChild(s); }
+    const withStripeJs=(pk)=>{
+      if(cancelled)return;
+      if(window.Stripe){boot(pk);return;}
+      const s=document.createElement("script"); s.src="https://js.stripe.com/v3";
+      s.onload=()=>{ if(!cancelled)boot(pk); };
+      s.onerror=()=>{ if(cancelled)return; setMsg("Payment form couldn't load \u2014 check your connection."); setPhase("error"); };
+      document.head.appendChild(s);
+    };
+    (async()=>{
+      try{
+        const r=await fetch("/api/config/stripe");
+        const d=await r.json().catch(()=>({}));
+        if(cancelled)return;
+        if(!r.ok||!d.publishableKey){ setMsg("Payments aren't switched on yet."); setPhase("error"); return; }
+        withStripeJs(d.publishableKey);
+      }catch(e){ if(!cancelled){ setMsg("Payment form couldn't load \u2014 check your connection."); setPhase("error"); } }
+    })();
+    return ()=>{ cancelled=true; };
   },[phase,clientSecret]);
 
   const confirmPay=async()=>{

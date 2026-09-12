@@ -80,7 +80,8 @@ const ENV_GROUPS = [
     blocking: true,
     vars: [
       ['STRIPE_SECRET_KEY', v => /^sk_(test|live)_/.test(v), 'Stripe → Developers → API keys'],
-      ['NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', v => /^pk_(test|live)_/.test(v), 'same page, publishable key'],
+      [['STRIPE_PUBLISHABLE_KEY', 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY'],
+        v => /^pk_(test|live)_/.test(v), 'same page, publishable key'],
       ['STRIPE_WEBHOOK_SECRET', v => /^whsec_/.test(v), 'Stripe → Developers → Webhooks → your endpoint → signing secret'],
     ],
   },
@@ -129,11 +130,17 @@ if (sensitiveCount) {
 for (const group of ENV_GROUPS) {
   console.log(`${C.dim}  ${group.title}${C.reset}`);
   for (const [name, valid, hint] of group.vars) {
-    const v = env[name];
+    // A value may legitimately live under more than one name: the plain name
+    // the server reads at runtime, or the older NEXT_PUBLIC_ one. Report the
+    // first that actually carries a value, so a setup that is correct under
+    // either name reads as correct.
+    const names = Array.isArray(name) ? name : [name];
+    const label = names.find(n => env[n] && env[n] !== '[SENSITIVE]') || names[0];
+    const v = env[label];
     // `vercel env pull` writes this literal for values stored as Secret type,
     // which Vercel will not read back. Treat it as absent, not as a value.
     if (v === '[SENSITIVE]') {
-      const msg = `${name} came back as [SENSITIVE]`;
+      const msg = `${label} came back as [SENSITIVE]`;
       const how = 'Vercel stores this as a Secret and will not reveal it.\n' +
                   `      Copy it from the source instead — see the table in GETTING-LIVE.md — and paste it into .env.local directly.`;
       group.blocking ? bad(msg, how) : warn(msg, how);
@@ -141,14 +148,14 @@ for (const group of ENV_GROUPS) {
     }
     if (!v) {
       group.blocking
-        ? bad(`${name} is not set`, `${hint}\n      Set it in Vercel → Settings → Environment Variables, then: npx vercel env pull .env.local`)
-        : warn(`${name} is not set`, hint);
+        ? bad(`${label} is not set`, `${hint}\n      Set it in Vercel → Settings → Environment Variables, then: npx vercel env pull .env.local`)
+        : warn(`${label} is not set`, hint);
     } else if (!valid(v)) {
       group.blocking
-        ? bad(`${name} is set but looks wrong`, hint)
-        : warn(`${name} looks wrong`, hint);
+        ? bad(`${label} is set but looks wrong`, hint)
+        : warn(`${label} looks wrong`, hint);
     } else {
-      ok(name, `${v.slice(0, 6)}…${v.length} chars`);
+      ok(label, `${v.slice(0, 6)}…${v.length} chars`);
     }
   }
 }

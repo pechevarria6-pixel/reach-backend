@@ -80,7 +80,14 @@ Go to **Stripe → Developers → API keys**, in **Test mode** (toggle, top righ
 | Vercel variable | Stripe value |
 |---|---|
 | `STRIPE_SECRET_KEY` | Secret key, starts `sk_test_` |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Publishable key, starts `pk_test_` — Sensitive **off** |
+| `STRIPE_PUBLISHABLE_KEY` | Publishable key, starts `pk_test_`. Sensitive may stay **on** |
+
+Note the name has no `NEXT_PUBLIC_` prefix. The browser now asks the server
+for this key at runtime, via `/api/config/stripe`, instead of having it
+compiled in. That is why Sensitive is safe here, unlike the Supabase
+variables in step 1. If you already have a key stored under the old
+`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` name it still works, but prefer the
+plain name.
 
 **2b.** **Stripe → Developers → Webhooks → Add endpoint**:
 
