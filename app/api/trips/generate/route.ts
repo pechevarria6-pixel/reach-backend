@@ -3,7 +3,7 @@ import { requireGroupMember, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
 import {
   TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA,
-  parseModelJSON, textOf,
+  parseModelJSON, textOf, normalizeTrips,
 } from '@/lib/trip-schema';
 
 // ─── Models ──────────────────────────────────────────────────────────────
@@ -254,7 +254,13 @@ Return JSON only, shaped exactly like this:
 
 
 
-    const trips = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
+    const raw = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
+    // A live run came back with four trips, one destination twice, and every
+    // trip's cost lines summing below its own headline total.
+    const trips = raw ? normalizeTrips(raw) : undefined;
+    if (raw && trips && raw.length !== trips.length) {
+      console.error('[trips generate] trimmed duplicates', { returned: raw.length, kept: trips.length });
+    }
     // The schema cannot pin the array length, so the count is checked here.
     // Fewer than three is still worth showing — an empty list is not.
     if (!trips?.length) {

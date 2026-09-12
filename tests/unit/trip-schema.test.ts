@@ -93,3 +93,62 @@ test('well-formed JSON of the wrong shape returns null', () => {
   assert.equal(parseModelJSON('{"itinerary":[{"day":"one"}]}', ItinerarySchema, 'test'), null);
   assert.equal(parseModelJSON('{"trips":[]}', ItinerarySchema, 'test'), null);
 });
+
+// ── normalizeTrips: what a live generation actually returned ──────────────
+import { normalizeTrips, reconcileCosts } from '../../lib/trip-schema.ts';
+
+const costs = (f: number, a: number, g: number, fd: number, ac: number, m: number) => ({
+  flights: { per_person: f, details: '' },
+  accommodation: { per_person: a, details: '', example: '' },
+  ground_transport: { per_person: g, details: '' },
+  food_drink: { per_person: fd, details: '' },
+  activities: { per_person: ac, details: '' },
+  misc: { per_person: m, details: '' },
+});
+
+test('cost lines are scaled to match the headline total', () => {
+  // The real case: $2,380 headline, parts adding to $1,800.
+  const trip = { destination: 'Algarve', tier: 'saver', total_per_person: 2380,
+                 costs: costs(500, 600, 200, 300, 150, 50) };
+  const out = reconcileCosts(trip);
+  const sum = Object.values(out.costs).reduce((a, c) => a + c.per_person, 0);
+  assert.equal(sum, 2380, 'the breakdown must add up to what the card shows');
+});
+
+test('reconciling never invents a negative line', () => {
+  const trip = { destination: 'X', tier: 'saver', total_per_person: 10,
+                 costs: costs(500, 600, 200, 300, 150, 50) };
+  const out = reconcileCosts(trip);
+  for (const [k, c] of Object.entries(out.costs)) {
+    assert.ok(c.per_person >= 0, `${k} went negative`);
+  }
+});
+
+test('a trip whose parts already sum correctly is left alone', () => {
+  const trip = { destination: 'Y', tier: 'saver', total_per_person: 1800,
+                 costs: costs(500, 600, 200, 300, 150, 50) };
+  assert.deepEqual(reconcileCosts(trip), trip);
+});
+
+test('a repeated destination is dropped, whatever its id', () => {
+  const mk = (destination: string, tier: string) =>
+    ({ destination, tier, total_per_person: 1800, costs: costs(500, 600, 200, 300, 150, 50) });
+  const out = normalizeTrips([mk('Algarve', 'saver'), mk('Corsica', 'on_budget'),
+                              mk('Croatian Coast', 'stretch'), mk('croatian coast', 'stretch')]);
+  assert.equal(out.length, 3);
+  assert.deepEqual(out.map(t => t.destination), ['Algarve', 'Corsica', 'Croatian Coast']);
+});
+
+test('trimming to three keeps one of each tier', () => {
+  const mk = (destination: string, tier: string) =>
+    ({ destination, tier, total_per_person: 1800, costs: costs(500, 600, 200, 300, 150, 50) });
+  const out = normalizeTrips([mk('A', 'saver'), mk('B', 'saver'), mk('C', 'saver'),
+                              mk('D', 'on_budget'), mk('E', 'stretch')]);
+  assert.deepEqual([...out.map(t => t.tier)].sort(), ['on_budget', 'saver', 'stretch']);
+});
+
+test('fewer than three is passed through rather than padded', () => {
+  const mk = (destination: string, tier: string) =>
+    ({ destination, tier, total_per_person: 1800, costs: costs(500, 600, 200, 300, 150, 50) });
+  assert.equal(normalizeTrips([mk('A', 'saver'), mk('B', 'stretch')]).length, 2);
+});

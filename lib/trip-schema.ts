@@ -154,3 +154,74 @@ export function textOf(res: { content: Array<{ type: string; text?: string }> })
   return res.content.filter(b => b.type === 'text').map(b => b.text ?? '').join('');
 }
 
+
+// ─── Making the numbers agree ────────────────────────────────────────────
+// A live generation returned four trips with one destination twice, and every
+// trip's cost lines summed to less than its own headline total — Algarve came
+// back at $2,380 with parts adding to $1,800. The schema cannot express "three
+// distinct items" (an array minItems above 1 is rejected) and cannot express
+// "these six numbers sum to that one", so both are enforced here.
+
+type TripLike = {
+  destination: string;
+  tier: string;
+  total_per_person: number;
+  costs: Record<string, { per_person: number }>;
+};
+
+/**
+ * Scale a trip's cost lines so they sum to its headline total. The total is
+ * the authoritative number — it drives budget comparison and what each person
+ * is asked to pay — so the breakdown is what moves. Rounding drift lands on
+ * `misc`, which is the buffer line and the only one nobody reads as a quote.
+ */
+export function reconcileCosts<T extends TripLike>(trip: T): T {
+  const lines = Object.entries(trip.costs ?? {});
+  if (!lines.length) return trip;
+  const sum = lines.reduce((a, [, c]) => a + (c?.per_person ?? 0), 0);
+  const total = trip.total_per_person;
+  if (!Number.isFinite(total) || total <= 0 || sum <= 0 || sum === total) return trip;
+
+  const scale = total / sum;
+  const scaled = lines.map(([k, c]) => [k, { ...c, per_person: Math.round(c.per_person * scale) }] as const);
+  const drift = total - scaled.reduce((a, [, c]) => a + c.per_person, 0);
+  const miscIndex = scaled.findIndex(([k]) => k === 'misc');
+  const absorb = miscIndex >= 0 ? miscIndex : scaled.length - 1;
+  scaled[absorb] = [scaled[absorb][0], {
+    ...scaled[absorb][1],
+    per_person: Math.max(0, scaled[absorb][1].per_person + drift),
+  }] as const;
+
+  return { ...trip, costs: Object.fromEntries(scaled) };
+}
+
+/**
+ * Three distinct destinations, costs reconciled. Duplicates are dropped on
+ * destination rather than id, because the model repeats the place while
+ * giving it a fresh id.
+ */
+export function normalizeTrips<T extends TripLike>(trips: T[]): T[] {
+  const seen = new Set<string>();
+  const distinct: T[] = [];
+  for (const trip of trips) {
+    const key = (trip.destination ?? '').trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    distinct.push(reconcileCosts(trip));
+  }
+  // Prefer one of each tier when more than three survive, so trimming never
+  // costs the price diversity the tiers exist to guarantee.
+  if (distinct.length > 3) {
+    const byTier: T[] = [];
+    for (const tier of ['saver', 'on_budget', 'stretch']) {
+      const hit = distinct.find(t => t.tier === tier);
+      if (hit) byTier.push(hit);
+    }
+    for (const t of distinct) {
+      if (byTier.length >= 3) break;
+      if (!byTier.includes(t)) byTier.push(t);
+    }
+    return byTier.slice(0, 3);
+  }
+  return distinct;
+}
