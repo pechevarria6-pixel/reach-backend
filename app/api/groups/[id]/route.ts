@@ -23,7 +23,12 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   const [groupRes, membersRes, plansRes] = await Promise.all([
     supabase.from('groups').select('*').eq('id', params.id).single(),
     supabase.from('group_members').select('*, users(id, name, email, avatar_url)').eq('group_id', params.id),
-    supabase.from('plans').select('*').eq('group_id', params.id).order('created_at', { ascending: false }),
+    // Itinerary items come along, aliased to `itinerary` so the client reads
+    // the same shape it gets from /api/plans/[planId]. Without this a group
+    // refresh replaced every plan's itinerary with an empty array, so a
+    // day-by-day plan vanished until the plan screen refetched it.
+    supabase.from('plans').select('*, itinerary:itinerary_items(*)')
+      .eq('group_id', params.id).order('created_at', { ascending: false }),
   ]);
 
   // Plans are group-wide, so everyone in the group is a participant. The

@@ -333,6 +333,22 @@ function Av({u,lg}){return <div className={lg?"av-lg":"av"} style={{background:u
 function AvCluster({ids,um,max=4}){const shown=ids.slice(0,max);const extra=ids.length-max;return <div className="av-cl">{shown.map(id=>{const u=um[id];return u?<div key={id} className="av" style={{background:u.color}}>{u.initials}</div>:null;})}{extra>0&&<div className="av" style={{background:C.s3,color:C.t2}}>+{extra}</div>}</div>;}
 function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);return()=>clearTimeout(t);},[]);return <div className="toast">✓ {msg}</div>;}
 
+// ─── Itinerary rows ───────────────────────────────────────────────────────
+// Turns generated days into the rows the itinerary tab and the API both use.
+// Written once because two screens had their own copy and they disagreed: one
+// read day.tips, which the model never returns — the field is insider_tip — so
+// every second-visit tip was silently dropped.
+function itineraryRows(days){
+  return (days||[]).flatMap(day=>{
+    const cost=Math.round((day.cost_today||0)*100);
+    return [
+      {time:`Day ${day.day} · Morning`,title:day.morning,sub:day.title||"",type:"activity",conf:null,filled:false,cost_cents:cost},
+      {time:`Day ${day.day} · Afternoon`,title:day.afternoon,sub:"",type:"activity",conf:null,filled:false},
+      {time:`Day ${day.day} · Evening`,title:day.evening,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false},
+    ].filter(r=>r.title);
+  });
+}
+
 // ─── HOME ────────────────────────────────────────────────────────────────────
 function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   // These were three San Francisco events hardcoded as the default, shown to
@@ -2023,7 +2039,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
 }
 
 
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,savePlanToServer}){
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,savePlanToServer,saveItineraryToServer}){
   const group=groups.find(g=>g.id===groupId);
   const [step,setStep]=useState(0);
   const [startDate,setStartDate]=useState("");
@@ -2161,6 +2177,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
     // Fetch full itinerary in background
     setBuildingItinerary(trip.id);
+    // Declared out here because the navigation after the catch needs it.
+    let realId=np.id;
     try{
       const res=await fetch("/api/trips/generate",{
         method:"POST",
@@ -2174,19 +2192,31 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           departureAirport:departure?.airport||null,
         }),
       });
+      // The plan's real id has to be in hand before the itinerary can be
+      // attached to it. This used to fire and forget, then write the days into
+      // local state against the temporary "p1234" id the server had already
+      // replaced — so the itinerary belonged to a plan that no longer existed
+      // and was never saved anywhere.
+      realId=await _sp2.catch(()=>null)||np.id;
       if(res.ok){
         const data=await res.json();
-        const itinerary=(data.itinerary||[]).flatMap((day)=>[
-          {time:"Day "+day.day+" AM",title:day.morning,sub:day.title,type:"activity",conf:null,filled:false},
-          {time:"Day "+day.day+" PM",title:day.afternoon,sub:"",type:"activity",conf:null,filled:false},
-          {time:"Day "+day.day+" Eve",title:day.evening,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false},
-        ]);
-        updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===np.id?{...p,itinerary}:p)}));
-        toast("Full itinerary ready for "+trip.destination+" 🗺️");
+        const itinerary=itineraryRows(data.itinerary);
+        if(itinerary.length){
+          updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary}:p)}));
+          if(saveItineraryToServer)await saveItineraryToServer(realId,itinerary);
+          toast(`${data.itinerary.length} days planned for ${trip.destination} 🗺️`);
+        }else{
+          console.error("[groupTrip] itinerary came back empty",{planId:realId});
+          toast("Couldn't build the day-by-day plan — you can add days yourself");
+        }
+      }else{
+        const err=await res.json().catch(()=>({}));
+        console.error("[groupTrip] itinerary request failed",err);
+        toast(err.error||"Couldn't build the day-by-day plan");
       }
-    }catch(e){console.log("Itinerary generation failed",e);}
+    }catch(e){console.error("Itinerary generation failed",e);toast("Couldn't build the day-by-day plan");}
     setBuildingItinerary(null);
-    _sp2.then(_rid=>push("planDetail",{planId:_rid||np.id,groupId})).catch(()=>push("planDetail",{planId:np.id,groupId}));
+    push("planDetail",{planId:realId,groupId});
   };
 
   const activeTrips=(trips||[]).filter(t=>!myVetoes.has(t.id));
@@ -2579,8 +2609,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
 
 // ─── AI TRIP GENERATOR ────────────────────────────────────────────────────────
-function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departure}){
+function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departure,savePlanToServer,saveItineraryToServer}){
   const [groupId,setGroupId]=useState(null);
+  const [buildingItinerary,setBuildingItinerary]=useState(null);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
   const [budget,setBudget]=useState("");
@@ -2627,8 +2658,13 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
   const activeTips=trips?.filter(t=>!vetoes[t.id]);
   const topVoted=activeTips?.sort((a,b)=>(votes[b.id]?1:0)-(votes[a.id]?1:0))[0];
 
+  // This screen saved a plan with an empty itinerary and never asked for one:
+  // trip.itinerary only exists after stage 2, which it never called. It also
+  // referenced _sp3, a variable belonging to another component, so the save
+  // threw before it could navigate. It now does what the quiz path does —
+  // save, get the real id, build the days, attach them.
   const saveToPlan=async(trip)=>{
-    if(!groupId)return;
+    if(!groupId||buildingItinerary)return;
     const newPlan={
       id:"p"+Date.now(),
       title:trip.destination,
@@ -2641,19 +2677,50 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
       budget:trip.total_per_person,
       type:"trip",
       participants:selGroup?.memberIds||[],
-      itinerary:(trip.itinerary||[]).flatMap(day=>([
-        {time:`Day ${day.day} AM`,title:day.morning,sub:day.title,type:"activity",conf:null,filled:false},
-        {time:`Day ${day.day} PM`,title:day.afternoon,sub:"",type:"activity",conf:null,filled:false},
-        {time:`Day ${day.day} Eve`,title:day.evening,sub:day.tips||"",type:"restaurant",conf:null,filled:false},
-      ])),
+      itinerary:[],
       votes:{},
       options:[],
       aiGenerated:true,
       aiData:trip,
     };
     updateGroup(groupId,g=>({...g,plans:[...g.plans,newPlan]}));
-    toast("Trip saved to "+selGroup?.name+"! 🎉");
-    _sp3.then(_rid=>push("planDetail",{planId:_rid||newPlan.id,groupId})).catch(()=>push("planDetail",{planId:newPlan.id,groupId}));
+
+    setBuildingItinerary(trip.id);
+    let realId=newPlan.id;
+    try{
+      realId=(savePlanToServer?await savePlanToServer(groupId,newPlan):null)||newPlan.id;
+      const res=await fetch("/api/trips/generate",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          groupId,startDate,endDate,
+          detailTripId:trip.id,
+          tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
+          departureCity:departure?.city||null,
+          departureAirport:departure?.airport||null,
+        }),
+      });
+      if(res.ok){
+        const data=await res.json();
+        const itinerary=itineraryRows(data.itinerary);
+        if(itinerary.length){
+          updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===newPlan.id)?{...p,itinerary}:p)}));
+          if(saveItineraryToServer)await saveItineraryToServer(realId,itinerary);
+          toast(`${data.itinerary.length} days planned for ${trip.destination} 🗺️`);
+        }else{
+          console.error("[aiTrip] itinerary came back empty",{planId:realId});
+          toast("Saved, but the day-by-day plan is empty — you can add days yourself");
+        }
+      }else{
+        const err=await res.json().catch(()=>({}));
+        console.error("[aiTrip] itinerary request failed",err);
+        toast(err.error||"Saved, but couldn't build the day-by-day plan");
+      }
+    }catch(e){
+      console.error("[aiTrip] save failed",e);
+      toast("Saved locally, but couldn't reach the server");
+    }
+    setBuildingItinerary(null);
+    push("planDetail",{planId:realId,groupId});
   };
 
   const buildingTrip=trips?.find(t=>t.id===buildingItinerary);

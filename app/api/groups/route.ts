@@ -35,7 +35,7 @@ export async function GET() {
       .in('id', groupIds),
     supabase
       .from('plans')
-      .select('*')
+      .select('*, itinerary:itinerary_items(*)')
       .in('group_id', groupIds)
       .order('created_at', { ascending: false }),
   ]);
