@@ -3665,7 +3665,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
 
   if(phase==="pay")return(<div className="sc" style={{paddingBottom:40}}>
     <div style={{padding:"18px 20px 6px",display:"flex",alignItems:"center",gap:10}}>
-      <span onClick={()=>setPhase("review")} style={{cursor:"pointer",color:C.t2,fontSize:20}}>\u2190</span>
+      <span onClick={()=>setPhase("review")} style={{cursor:"pointer",color:C.t2,fontSize:20}}>←</span>
       <span style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>Your share \u00B7 {fmt(myShareCents)}</span>
     </div>
     <div style={{padding:"8px 20px 0"}}>
@@ -3681,7 +3681,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   // phase === review
   return(<div className="sc" style={{paddingBottom:40}}>
     <div style={{padding:"18px 20px 6px",display:"flex",alignItems:"center",gap:10}}>
-      <span onClick={onBack} style={{cursor:"pointer",color:C.t2,fontSize:20}}>\u2190</span>
+      <span onClick={onBack} style={{cursor:"pointer",color:C.t2,fontSize:20}}>←</span>
       <span style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>{plan?.destination||plan?.name||"Your trip"}</span>
     </div>
     <div style={{padding:"6px 20px 0"}}>
