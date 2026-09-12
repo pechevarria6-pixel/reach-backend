@@ -1181,9 +1181,9 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${group.wallet.toLocaleString()}</div>
             <div style={{fontSize:12,color:C.t2,marginTop:4}}>Shared · {group.memberIds.length} members</div>
           </div>
-          <div style={{display:"flex",gap:10,marginBottom:18}}>
-            <button className="bsm bsm-p" style={{flex:1,padding:"12px 0"}} onClick={()=>toast("Funds added")}>Add funds</button>
-            <button className="bsm bsm-g" style={{flex:1,padding:"12px 0"}} onClick={()=>toast("Request sent")}>Request split</button>
+          <div style={{marginBottom:18,padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+            The wallet fills from what members contribute at checkout. Paying into it
+            directly isn't built yet, so there is nothing here that would take your money.
           </div>
           <div className="sl" style={{marginBottom:12}}>Recent transactions</div>
           {[].map((tx,i)=>(
@@ -2124,12 +2124,15 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   </div>
                 </div>
                 <button onClick={()=>{
-                  const msg="Hey! We're planning a trip on Reach and need your preferences to build the perfect options. Take 2 minutes to complete your quiz: https://reach-backend-gamma.vercel.app";
-                  if(navigator.share){navigator.share({title:"Complete your Reach quiz",text:msg});}
-                  else{navigator.clipboard?.writeText(msg);toast("Invite link copied! 📋");}
+                  // Was hardcoded to a preview deployment that no longer
+                  // resolves, so every nudge sent people to a dead link.
+                  const where=typeof window!=="undefined"?window.location.origin:"";
+                  const msg=`Hey! We're planning a trip on Reach and need your preferences to build the perfect options. Take 2 minutes: ${where}`;
+                  if(navigator.share){navigator.share({title:"Complete your Reach quiz",text:msg}).catch(()=>{});}
+                  else{navigator.clipboard?.writeText(msg);toast("Link copied 📋");}
                 }} style={{width:"100%",padding:"11px 16px",
                   background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
-                  color:"white",border:"none",borderRadius:14,
+                  color:C.onAccent,border:"none",borderRadius:14,
                   fontSize:13,fontWeight:600,cursor:"pointer",
                   
                   boxShadow:"0 4px 16px rgba(212,168,67,0.25)"}}>
@@ -3601,7 +3604,14 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents+myShareCents)/Math.max(funding.targetCents,1))*100));
       return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
-    <button onClick={()=>toast("Reminder sent to the group \uD83D\uDC4B")} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700}}>Remind them?</button>
+    <button onClick={()=>{
+      // Reach cannot notify anyone yet. Rather than claim a reminder was
+      // sent, hand the message to the share sheet so it actually goes out.
+      const where=typeof window!=="undefined"?window.location.origin:"";
+      const msg=`We're nearly funded for our Reach trip — just need your share to lock it in: ${where}`;
+      if(navigator.share){navigator.share({title:"Chip in for our trip",text:msg}).catch(()=>{});}
+      else{navigator.clipboard?.writeText(msg);toast("Message copied 📋");}
+    }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,cursor:"pointer"}}>Nudge the group</button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
   </div></div>);
 
@@ -3695,289 +3705,374 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   </div>);
 }
 // ============ END CHECKOUT V2 ============
+// ─── PROFILE ──────────────────────────────────────────────────────────────
+// Every figure on this screen comes from /api/profile. It used to be literals
+// — a passport expiring in 2029, a Visa ending 4242, three signed-in devices,
+// "Face ID: Enabled" — with 19 controls and not one server call behind them.
+//
+// Sections with nothing behind them were removed rather than rebuilt: Reach
+// has no PIN, no Face ID enrolment, no SMS second factor and no spending
+// limits, so showing them as configured was the worst kind of placeholder.
 function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
   const [section,setSection]=useState(null);
+  const [data,setData]=useState(null);
+  const [loadErr,setLoadErr]=useState(false);
+  const [busy,setBusy]=useState(null);
+
+  const load=async()=>{
+    try{
+      const r=await fetch("/api/profile");
+      if(!r.ok)throw new Error();
+      setData(await r.json());setLoadErr(false);
+    }catch(e){setLoadErr(true);}
+  };
+  useEffect(()=>{load();},[]);
+
+  const money=cents=>`$${((cents||0)/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  const day=iso=>iso?new Date(iso).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"";
+
+  // ── Travel documents ───────────────────────────────────────────────────
+  const [docDraft,setDocDraft]=useState({});
+  const saveDoc=async(field,value)=>{
+    if(busy)return;setBusy(field);
+    try{
+      const r=await fetch("/api/profile",{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({[field]:value||null}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't save that");
+      setDocDraft(x=>({...x,[field]:undefined}));
+      toast(value?"Saved":"Removed");
+      await load();
+    }catch(e){toast(e.message);}
+    finally{setBusy(null);}
+  };
+
+  // ── Loyalty programmes ─────────────────────────────────────────────────
+  const [loyName,setLoyName]=useState("");
+  const [loyTier,setLoyTier]=useState("");
+  const [loyNum,setLoyNum]=useState("");
+  const addLoyalty=async()=>{
+    if(busy||!loyName.trim())return;setBusy("loyalty");
+    try{
+      const r=await fetch("/api/profile/loyalty",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({programName:loyName.trim(),tier:loyTier.trim()||undefined,number:loyNum.trim()||undefined}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't add that programme");
+      setLoyName("");setLoyTier("");setLoyNum("");
+      toast("Programme added");await load();
+    }catch(e){toast(e.message);}
+    finally{setBusy(null);}
+  };
+  const removeLoyalty=async id=>{
+    if(busy)return;setBusy(id);
+    try{
+      const r=await fetch("/api/profile/loyalty",{
+        method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({id}),
+      });
+      if(!r.ok)throw new Error("Couldn't remove that programme");
+      toast("Programme removed");await load();
+    }catch(e){toast(e.message);}
+    finally{setBusy(null);}
+  };
+
+  // ── Consent ────────────────────────────────────────────────────────────
+  const setConsent=async(key,column,value)=>{
+    setData(d=>d?{...d,consent:{...d.consent,[key]:value}}:d);
+    try{
+      const r=await fetch("/api/user/data",{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({[column]:value}),
+      });
+      if(!r.ok)throw new Error();
+      toast("Preference saved");
+    }catch(e){
+      setData(d=>d?{...d,consent:{...d.consent,[key]:!value}}:d);
+      toast("Couldn't save that — try again");
+    }
+  };
+
+  // ── Account deletion ───────────────────────────────────────────────────
   const [deleteConfirm,setDeleteConfirm]=useState("");
-  const [privToggles,setPrivToggles]=useState({personalized:true,analytics:true,marketing:false,thirdParty:false});
-  const sessions=[
-    {device:"iPhone 15 Pro",loc:"San Francisco, CA",last:"Active now",cur:true},
-    {device:"MacBook Pro",loc:"San Francisco, CA",last:"2 hours ago",cur:false},
-    {device:"iPad Air",loc:"New York, NY",last:"3 days ago",cur:false},
-  ];
+  const requestDeletion=async()=>{
+    if(busy||deleteConfirm!=="DELETE")return;setBusy("delete");
+    try{
+      const r=await fetch("/api/user/data",{
+        method:"DELETE",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({confirm:"DELETE"}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't schedule that");
+      toast("Deletion scheduled");setDeleteConfirm("");setSection(null);await load();
+    }catch(e){toast(e.message);}
+    finally{setBusy(null);}
+  };
 
-  if(section==="security")return(
-    <div className="sc">
-      <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Security"/>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Sign-in methods</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
-        {[
-          {e:"🍎",l:"Sign in with Apple",v:user?.provider==="apple"?"Active · Primary":"Not connected",ok:user?.provider==="apple"},
-          {e:"🌐",l:"Sign in with Google",v:user?.provider==="google"?"Active · Primary":"Not connected",ok:user?.provider==="google"},
-          {e:"📧",l:"Email & password",v:user?.provider==="email"?"Active":"Backup only",ok:user?.provider==="email"},
-          {e:"🤳",l:"Face ID or Touch ID",v:"Enabled",ok:true},
-          {e:"🔢",l:"6-digit PIN",v:"Set · Changed 14 days ago",ok:true},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri" onClick={()=>toast(it.l+" settings")}>
-              <div className="ri-ic" style={{background:it.ok?C.accentDim:C.s3,color:it.ok?C.accentText:C.t3}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s" style={{color:it.ok?C.green:C.t3}}>{it.v}</div></div>
-              <Ic.ChevR/>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Two-factor authentication</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
-        {[
-          {e:"📱",l:"SMS verification",v:"+1 ···· 4821 · Enabled",ok:true},
-          {e:"🔑",l:"Authenticator app",v:"Not set up",ok:false},
-          {e:"🧾",l:"Backup only codes",v:"10 codes remaining",ok:true},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri" onClick={()=>toast(it.l+" settings")}>
-              <div className="ri-ic" style={{background:it.ok?C.greenDim:C.s3,color:it.ok?C.green:C.t3}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s" style={{color:it.ok?C.green:C.t3}}>{it.v}</div></div>
-              <Ic.ChevR/>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Active sessions</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
-        {sessions.map((s,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri">
-              <div className="ri-ic" style={{background:s.cur?C.accentDim:C.s3,color:s.cur?C.accentText:C.t2}}>{s.cur?"📍":"💻"}</div>
-              <div className="ri-inf">
-                <div className="ri-t">{s.device}{s.cur&&<span style={{fontSize:10,background:C.greenDim,color:C.green,padding:"1px 6px",borderRadius:10,marginLeft:6}}>This device</span>}</div>
-                <div className="ri-s">{s.loc} · {s.last}</div>
+  const Row=({icon,title,sub,right,onClick})=>(
+    <div className="ri" onClick={onClick} style={{cursor:onClick?"pointer":"default"}}>
+      <div className="ri-ic" style={{background:C.accentDim,color:C.accentText}}>{icon}</div>
+      <div className="ri-inf"><div className="ri-t">{title}</div>{sub&&<div className="ri-s">{sub}</div>}</div>
+      {right}
+    </div>
+  );
+  const Empty=({children})=>(
+    <div style={{padding:"14px 20px",fontSize:13,color:C.t3,lineHeight:1.5}}>{children}</div>
+  );
+
+  // ═══ Travel documents ═══
+  if(section==="documents"){
+    const docs=[
+      {key:"passport",icon:"🛂",label:"Passport number"},
+      {key:"tsaPrecheck",icon:"🪪",label:"TSA PreCheck (KTN)"},
+      {key:"globalEntry",icon:"✈️",label:"Global Entry number"},
+    ];
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Travel documents"/>
+        <Empty>
+          Stored encrypted with AES-256. Only the last four characters are ever sent back
+          to this screen, and they are never shared with a group.
+        </Empty>
+        {docs.map(d=>{
+          const cur=data?.documents?.[d.key];
+          const draft=docDraft[d.key];
+          const editing=draft!==undefined;
+          return(
+            <div key={d.key} style={{padding:"12px 20px",borderTop:`1px solid ${C.border}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                <span style={{fontSize:18}}>{d.icon}</span>
+                <span style={{fontSize:14,fontWeight:600,color:C.t1,flex:1}}>{d.label}</span>
+                {cur?.present&&!editing&&(
+                  <span style={{fontSize:12,color:C.t2}}>
+                    {cur.last4?`•••• ${cur.last4}`:"Saved"}
+                  </span>
+                )}
               </div>
-              {!s.cur&&<button className="bsm bsm-r" onClick={()=>toast("Session revoked")}>Revoke</button>}
+              {editing?(
+                <>
+                  <input className="inp" value={draft} autoFocus
+                    onChange={e=>setDocDraft(x=>({...x,[d.key]:e.target.value}))}
+                    placeholder={d.label}/>
+                  <div style={{display:"flex",gap:8,marginTop:8}}>
+                    <button className="bs" style={{flex:1}} disabled={busy===d.key}
+                      onClick={()=>setDocDraft(x=>({...x,[d.key]:undefined}))}>Cancel</button>
+                    <button className="bs" style={{flex:1,color:C.accentText,borderColor:C.accentText}}
+                      disabled={busy===d.key||draft.trim().length<4}
+                      onClick={()=>saveDoc(d.key,draft.trim())}>
+                      {busy===d.key?"Saving…":"Save"}
+                    </button>
+                  </div>
+                </>
+              ):(
+                <div style={{display:"flex",gap:8}}>
+                  <button className="bs" style={{flex:1}}
+                    onClick={()=>setDocDraft(x=>({...x,[d.key]:""}))}>
+                    {cur?.present?"Replace":"Add"}
+                  </button>
+                  {cur?.present&&(
+                    <button className="bs" style={{flex:1,color:C.red,borderColor:C.redDim}}
+                      disabled={busy===d.key} onClick={()=>saveDoc(d.key,null)}>
+                      {busy===d.key?"Removing…":"Remove"}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      <div style={{padding:"0 20px 10px"}}><button className="bs" style={{borderColor:C.red,color:C.red}} onClick={()=>toast("All other sessions have been signed out")}>Sign out of all other devices</button></div>
-      <div style={{margin:"12px 20px 30px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
-        <div style={{fontSize:12,color:C.t2,lineHeight:1.8}}>
-          <strong style={{color:C.t1}}>How your data is protected</strong><br/>
-          🔐 Passwords: Argon2id hashing — never stored in plain text<br/>
-          🔒 Sensitive data: AES-256 encryption at rest<br/>
-          🌐 All traffic: TLS 1.3 minimum<br/>
-          💳 Card data: Stripe PCI-DSS Level 1 vault<br/>
-          📍 Location: approximate only, cleared after each session<br/>
-          🎫 Auth tokens: 15-minute JWT with rotating refresh tokens
+    );
+  }
+
+  // ═══ Loyalty programmes ═══
+  if(section==="loyalty"){
+    const rows=data?.loyalty||[];
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Loyalty programmes"/>
+        {rows.length===0&&<Empty>No programmes yet. Add the ones you actually hold — Reach uses them when it prices a trip.</Empty>}
+        {rows.map(p=>(
+          <Row key={p.id} icon="🎫" title={p.program_name}
+            sub={[p.tier,p.points!=null?`${p.points.toLocaleString()} pts`:null].filter(Boolean).join(" · ")||"No tier recorded"}
+            right={<button className="bsm bsm-r" disabled={busy===p.id} onClick={()=>removeLoyalty(p.id)}>
+              {busy===p.id?"…":"Remove"}</button>}/>
+        ))}
+        <div style={{padding:"16px 20px 30px",borderTop:`1px solid ${C.border}`,marginTop:8}}>
+          <div className="sl" style={{marginBottom:10}}>Add a programme</div>
+          <input className="inp" value={loyName} onChange={e=>setLoyName(e.target.value)}
+            placeholder="Programme, e.g. United MileagePlus" style={{marginBottom:8}}/>
+          <input className="inp" value={loyTier} onChange={e=>setLoyTier(e.target.value)}
+            placeholder="Tier (optional)" style={{marginBottom:8}}/>
+          <input className="inp" value={loyNum} onChange={e=>setLoyNum(e.target.value)}
+            placeholder="Membership number (optional, encrypted)" style={{marginBottom:12}}/>
+          <button className="bp" disabled={busy==="loyalty"||!loyName.trim()} onClick={addLoyalty}>
+            {busy==="loyalty"?"Adding…":"Add programme"}
+          </button>
         </div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  if(section==="payment")return(
-    <div className="sc">
-      <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Payment"/>
-      <div style={{margin:"0 20px 14px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:14,padding:14}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:20}}>🔒</span>
-          <div>
-            <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Powered by Stripe — PCI-DSS Level 1</div>
-            <div style={{fontSize:11,color:C.t2}}>Your full card number is never stored on Reach's servers. Only Stripe tokens are saved.</div>
-          </div>
-        </div>
+  // ═══ Payment ═══
+  if(section==="payment"){
+    const cards=data?.cards||[];
+    const pays=data?.payments||[];
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Payment"/>
+        <div style={{padding:"0 20px 6px"}}><span className="sl">Saved cards</span></div>
+        {cards.length===0
+          ?<Empty>No card saved yet. A card is stored by Stripe the first time you pay into a plan — Reach never sees the number.</Empty>
+          :cards.map(c=>(
+            <Row key={c.id} icon="💳"
+              title={`${c.brand[0].toUpperCase()}${c.brand.slice(1)} ···· ${c.last4}`}
+              sub={c.expMonth?`Expires ${String(c.expMonth).padStart(2,"0")}/${String(c.expYear).slice(-2)} · held by Stripe`:"Held by Stripe"}/>
+          ))}
+        <div style={{padding:"16px 20px 6px"}}><span className="sl">Recent payments</span></div>
+        {pays.length===0
+          ?<Empty>Nothing yet. Payments appear here once you contribute to a plan.</Empty>
+          :pays.map(p=>(
+            <Row key={p.id} icon={p.refund_amount_cents>0?"↩️":"💵"}
+              title={money(p.amount_cents)}
+              sub={`${day(p.created_at)} · ${p.status}${p.refund_amount_cents>0?` · ${money(p.refund_amount_cents)} refunded`:""}`}
+              right={<span className={`pill ${p.status==="succeeded"?"pill-g":p.status==="failed"?"pill-r":"pill-a"}`}>{p.status}</span>}/>
+          ))}
       </div>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Saved cards (tokenized)</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
-        {[
-          {e:"💳",l:"Visa ···4242",v:"Primary · Exp. 12/27 · Added Jun 2024"},
-          {e:"💳",l:"Amex ···9401",v:"Backup only · Exp 06/26 · Added Jan 2024"},
-          {e:"➕",l:"Add a new card",v:"Encrypted via Stripe.js — CVV is never stored",action:true},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri" onClick={()=>toast(it.action?"Add card via Stripe":it.l+" options")}>
-              <div className="ri-ic" style={{background:it.action?C.s3:C.accentDim,color:it.action?C.t3:C.accentText}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t" style={{color:it.action?C.accentText:C.t1}}>{it.l}</div><div className="ri-s">{it.v}</div></div>
-              {!it.action&&<button className="bsm bsm-r" onClick={e=>{e.stopPropagation();toast("Card removed");}}>Remove</button>}
-              {it.action&&<Ic.ChevR/>}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Spending limits & security</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
-        {[
-          {e:"💵",l:"Single transaction limit",v:"$5,000"},
-          {e:"📅",l:"Monthly spend limit",v:"$12,000"},
-          {e:"⚡",l:"MFA required above",v:"$500 — 3D Secure enforced"},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri" onClick={()=>toast("Edit "+it.l)}>
-              <div className="ri-ic" style={{background:C.accentDim,color:C.accentText}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s">{it.v}</div></div>
-              <Ic.ChevR/>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Recent transactions</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 30px",overflow:"hidden"}}>
-        {[
+    );
+  }
 
-          {e:"↩️",l:"Refund: Amsterdam",v:"+$480 · May 28 · re_3Pn…",c:C.green},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri" onClick={()=>toast("Transaction details")}>
-              <div className="ri-ic" style={{background:C.s3,color:C.t2}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s" style={{fontFamily:"monospace",fontSize:11}}>{it.v}</div></div>
-              <Ic.ChevR/>
+  // ═══ Privacy ═══
+  if(section==="privacy"){
+    const c=data?.consent||{};
+    const toggles=[
+      {k:"personalized",col:"consent_personalized",l:"Personalised recommendations",d:"Uses your trips and votes to suggest experiences."},
+      {k:"analytics",col:"consent_analytics",l:"Usage analytics",d:"Anonymous counts of which screens get used."},
+      {k:"marketing",col:"consent_marketing",l:"Product emails",d:"Occasional updates about new features."},
+      {k:"thirdParty",col:"consent_third_party",l:"Share with booking partners",d:"Only what a partner needs to hold a reservation."},
+    ];
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Privacy"/>
+        <div style={{padding:"0 20px 6px"}}><span className="sl">What Reach may do with your data</span></div>
+        {toggles.map(t=>(
+          <div key={t.k} className="ri" style={{cursor:"pointer"}} onClick={()=>setConsent(t.k,t.col,!c[t.k])}>
+            <div className="ri-inf"><div className="ri-t">{t.l}</div><div className="ri-s">{t.d}</div></div>
+            <div style={{width:44,height:26,borderRadius:20,flexShrink:0,position:"relative",transition:"background .15s",
+              background:c[t.k]?C.accentText:C.s3,border:`1px solid ${c[t.k]?C.accentText:C.border}`}}>
+              <div style={{width:20,height:20,borderRadius:"50%",background:C.s1,position:"absolute",top:2,
+                left:c[t.k]?21:2,transition:"left .15s"}}/>
             </div>
           </div>
         ))}
+        <div style={{padding:"16px 20px 6px"}}><span className="sl">Your data rights</span></div>
+        <Row icon="⬇️" title="Download everything Reach holds"
+          sub="A JSON export, as required by GDPR Article 20"
+          right={<span style={{fontSize:12,color:C.accentText,fontWeight:600}}>Export</span>}
+          onClick={()=>{window.location.href="/api/user/data";toast("Preparing your export…");}}/>
+        <Row icon="🗑️" title="Delete your account" sub="Scheduled 30 days out, and reversible until then"
+          right={<Ic.ChevR/>} onClick={()=>setSection("delete")}/>
       </div>
-    </div>
-  );
+    );
+  }
 
-  if(section==="privacy")return(
-    <div className="sc">
-      <div style={{padding:"12px 20px 16px"}}>
-        <ScreenHeader onBack={()=>setSection(null)} label="Profile"/>
-        <div className="pt" style={{fontSize:24}}>Privacy</div>
-        <div style={{fontSize:12,color:C.t2,marginTop:4}}>GDPR · CCPA · App Store 5.1 compliant</div>
-      </div>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Data usage</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
-        {[
-          {k:"personalized",l:"Personalized recommendations",s:"AI learns from your trips to suggest relevant experiences"},
-          {k:"analytics",l:"App analytics",s:"Anonymous performance data — no personal information is shared"},
-          {k:"marketing",l:"Marketing emails",s:"Inspiration and product updates (at most weekly)"},
-          {k:"thirdParty",l:"Share with booking partners",s:"Pre-fills your details when booking flights and hotels"},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 20px"}}>
-              <div style={{flex:1}}><div style={{fontSize:14,fontWeight:500,color:C.t1}}>{it.l}</div><div style={{fontSize:12,color:C.t2,marginTop:2}}>{it.s}</div></div>
-              <button onClick={()=>setPrivToggles(p=>({...p,[it.k]:!p[it.k]}))} style={{width:44,height:26,borderRadius:13,background:privToggles[it.k]?C.accent:C.s3,border:"none",cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
-                <div style={{width:20,height:20,borderRadius:"50%",background:"white",position:"absolute",top:3,left:privToggles[it.k]?21:3,transition:"left .2s"}}/>
-              </button>
+  // ═══ Delete ═══
+  if(section==="delete"){
+    const pending=data?.deletion;
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection("privacy")} label="Privacy" title="Delete account"/>
+        {pending?(
+          <div style={{margin:"10px 20px",background:C.redDim,border:`1px solid ${C.red}`,borderRadius:16,padding:18}}>
+            <div style={{fontSize:14,fontWeight:600,color:C.t1,marginBottom:6}}>Deletion already scheduled</div>
+            <div style={{fontSize:13,color:C.t2,lineHeight:1.5}}>
+              Requested {day(pending.requestedAt)}. Your account and everything in it is removed on {day(pending.scheduledFor)}.
+              Contact support before then to stop it.
             </div>
           </div>
-        ))}
-      </div>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Location data</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
-        {[
-          {e:"📍",l:"Location access",v:"While using the app · City-level approximate only"},
-          {e:"🗂️",l:"Location history",v:"Not stored — cleared after each session"},
-          {e:"🤝",l:"Share location with group",v:"Only during active trips — you control when"},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri" onClick={()=>toast(it.l+" settings")}>
-              <div className="ri-ic" style={{background:C.greenDim,color:C.green}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s">{it.v}</div></div>
-              <Ic.ChevR/>
+        ):(
+          <div style={{padding:"6px 20px 30px"}}>
+            <div style={{fontSize:14,color:C.t2,lineHeight:1.6,marginBottom:16}}>
+              Your groups, plans, votes and saved documents are deleted permanently after 30 days.
+              Payments already taken are kept, because tax law requires it. Your Stripe customer
+              record is removed immediately.
             </div>
-          </div>
-        ))}
-      </div>
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Your data rights</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 14px",overflow:"hidden"}}>
-        {[
-          {e:"📦",l:"Download my data",s:"GDPR Art. 20 — export everything as JSON"},
-          {e:"✏️",l:"Correct my data",s:"GDPR Art. 16 — fix inaccuracies"},
-          {e:"🚫",l:"Opt out of data sale",s:"CCPA — we never sell your data, but you can confirm this here"},
-          {e:"🗑️",l:"Delete my account",s:"GDPR Art. 17 — permanent, 30-day processing",danger:true},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri" onClick={()=>it.danger?setSection("delete"):toast(it.l+" request submitted")}>
-              <div className="ri-ic" style={{background:it.danger?C.redDim:C.s3,color:it.danger?C.red:C.t2}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t" style={{color:it.danger?C.red:C.t1}}>{it.l}</div><div className="ri-s">{it.s}</div></div>
-              <Ic.ChevR/>
+            <div style={{fontSize:13,color:C.t2,marginBottom:8}}>
+              Type <strong style={{color:C.t1}}>DELETE</strong> to confirm.
             </div>
+            <input className="inp" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)}
+              placeholder="DELETE" style={{marginBottom:12}}/>
+            <button className="bs" disabled={busy==="delete"||deleteConfirm!=="DELETE"}
+              style={{color:deleteConfirm==="DELETE"?C.onAccent:C.t3,
+                background:deleteConfirm==="DELETE"?C.red:C.s2,
+                borderColor:deleteConfirm==="DELETE"?C.red:C.border}}
+              onClick={requestDeletion}>
+              {busy==="delete"?"Scheduling…":"Schedule deletion"}
+            </button>
           </div>
-        ))}
+        )}
       </div>
-      <div style={{margin:"0 20px 30px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
-        <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>Reach complies with <strong style={{color:C.t1}}>GDPR</strong> (EU), <strong style={{color:C.t1}}>CCPA</strong> (California), <strong style={{color:C.t1}}>COPPA</strong> (under-13), and <strong style={{color:C.t1}}>PSD2 SCA</strong>. Data requests are processed within 30 days. <span style={{color:C.accentText}}>reach.app/privacy</span></div>
-      </div>
-    </div>
-  );
+    );
+  }
 
-  if(section==="delete")return(
-    <div className="sc">
-      <div style={{padding:"12px 20px 16px"}}>
-        <ScreenHeader onBack={()=>{setSection("privacy");setDeleteConfirm("");}} label="Privacy"/>
-        <div className="pt" style={{fontSize:24,color:C.red}}>Delete account</div>
-      </div>
-      <div style={{padding:"0 20px"}}>
-        <div style={{background:C.redDim,border:`1px solid ${C.red}`,borderRadius:14,padding:14,marginBottom:18}}>
-          <div style={{fontSize:14,fontWeight:600,color:C.red,marginBottom:6}}>⚠️ This cannot be undone</div>
-          <div style={{fontSize:13,color:C.t2,lineHeight:1.7}}>All your data will be permanently deleted within 30 days, per GDPR Article 17 (Right to Erasure). Your card tokens will be removed from Stripe, and any active bookings will be cancelled.</div>
-        </div>
-        <div className="sl" style={{marginBottom:10}}>What gets permanently deleted</div>
-        {["Profile & preferences","All trip plans & itineraries","Group memberships and history","Payment tokens (Stripe handles card deletion)","Location history","Travel documents","Loyalty program data"].map((it,i)=>(
-          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:`1px solid ${C.border}`}}>
-            <span style={{color:C.red,fontSize:14,flexShrink:0}}>✕</span>
-            <span style={{fontSize:13,color:C.t2}}>{it}</span>
-          </div>
-        ))}
-        <div style={{marginTop:20,marginBottom:10}}>
-          <div style={{fontSize:13,color:C.t1,marginBottom:8}}>Type <strong style={{color:C.red}}>DELETE</strong> to confirm</div>
-          <input className="inp" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value.toUpperCase())} placeholder="DELETE" style={{borderColor:deleteConfirm==="DELETE"?C.red:C.border,color:C.red,fontWeight:600,letterSpacing:".12em"}}/>
-        </div>
-        <button className="bp" style={{background:deleteConfirm==="DELETE"?C.red:C.s3,marginBottom:10,transition:"background .2s"}} disabled={deleteConfirm!=="DELETE"} onClick={()=>{toast("Account deletion scheduled · 30-day processing · Confirmation email sent");setSection(null);setDeleteConfirm("");}}>
-          Permanently delete my account
-        </button>
-        <button className="bs" onClick={()=>{setSection("privacy");setDeleteConfirm("");}}>Cancel</button>
-        <div style={{fontSize:11,color:C.t3,textAlign:"center",marginTop:12,paddingBottom:30,lineHeight:1.5}}>Your data will be deleted within 30 days per GDPR Art. 17. You will receive an email confirmation with a deletion receipt.</div>
-      </div>
-    </div>
-  );
-
+  // ═══ Root ═══
+  const stats=data?.stats;
+  const docCount=data?.documents?Object.values(data.documents).filter(d=>d.present).length:0;
+  const connected=(data?.connected||[]).filter(a=>a.status==="connected");
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 18px",textAlign:"center"}}>
-        <div style={{width:80,height:80,borderRadius:"50%",background:`linear-gradient(135deg,${C.accent},#C084FC)`,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Instrument Serif',serif",fontSize:32,color:"white",border:`3px solid ${C.border}`}}>{user?.avatar?<img src={user.avatar} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover"}} alt=""/>:(user?.name||"?")[0]}</div>
+        <div style={{width:80,height:80,borderRadius:"50%",background:`linear-gradient(135deg,${C.accent},${C.accentDeep})`,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Instrument Serif',serif",fontSize:32,color:C.onAccent,border:`3px solid ${C.border}`,overflow:"hidden"}}>
+          {user?.avatar?<img src={user.avatar} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover"}} alt=""/>:(user?.name||"?")[0]}
+        </div>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>
-          {user?.email||"alex@example.com"}
-          {user?.provider&&user.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.accentDim,color:C.accentText,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{user.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
+          {user?.email}
+          {data?.provider&&data.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.accentDim,color:C.accentText,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{data.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
         </div>
         <div style={{display:"flex",gap:0,background:C.s2,borderRadius:16,marginTop:14,border:`1px solid ${C.border}`,overflow:"hidden"}}>
-          {[{v:"14",l:"Experiences"},{v:"3",l:"Groups"},{v:"9",l:"Friends"}].map((s,i)=>(
+          {[{v:stats?.groups,l:"Groups"},{v:stats?.plans,l:"Plans"},{v:stats?.friends,l:"Travel with"}].map((s,i)=>(
             <div key={i} style={{flex:1,padding:"13px 0",textAlign:"center",borderLeft:i?`1px solid ${C.border}`:"none"}}>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.accentText}}>{s.v}</div>
+              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.accentText}}>{s.v??"—"}</div>
               <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginTop:2}}>{s.l}</div>
             </div>
           ))}
         </div>
       </div>
-      <div style={{display:"flex",gap:10,padding:"0 20px 16px"}}>
-        {[{icon:"🔒",label:"Security",key:"security",color:C.accentText},{icon:"🛡️",label:"Privacy",key:"privacy",color:C.green},{icon:"💳",label:"Payment",key:"payment",color:C.amber}].map(it=>(
-          <button key={it.key} onClick={()=>setSection(it.key)} style={{flex:1,padding:"12px 8px",borderRadius:14,border:`1px solid ${C.border}`,background:C.s2,cursor:"pointer",textAlign:"center"}}>
-            <div style={{fontSize:22,marginBottom:4}}>{it.icon}</div>
-            <div style={{fontSize:11,fontWeight:600,color:it.color}}>{it.label}</div>
-          </button>
-        ))}
-      </div>
 
-      {/* ── Appearance ───────────────────────────────────────────────────
-          A segmented control rather than a switch: "Light / Dark" says what
-          each side does, where a lone toggle labelled "Dark mode" leaves you
-          guessing whether it shows the current state or the action. */}
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Appearance</span></div>
+      {loadErr&&(
+        <div style={{margin:"0 20px 14px",background:C.redDim,border:`1px solid ${C.red}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t1}}>
+          Couldn't load your profile.{" "}
+          <button onClick={load} style={{background:"none",border:"none",color:C.accentText,fontWeight:600,cursor:"pointer",padding:0,textDecoration:"underline"}}>Try again</button>
+        </div>
+      )}
+
+      <div style={{padding:"0 20px 6px"}}><span className="sl">Travel</span></div>
+      <Row icon="🛂" title="Travel documents"
+        sub={docCount?`${docCount} saved · encrypted`:"Passport, PreCheck, Global Entry"}
+        right={<Ic.ChevR/>} onClick={()=>setSection("documents")}/>
+      <Row icon="🎫" title="Loyalty programmes"
+        sub={data?.loyalty?.length?`${data.loyalty.length} saved`:"None yet"}
+        right={<Ic.ChevR/>} onClick={()=>setSection("loyalty")}/>
+      {connected.length>0&&(
+        <Row icon="🔗" title="Connected accounts"
+          sub={connected.map(a=>a.label||a.provider).join(", ")}/>
+      )}
+
+      <div style={{padding:"16px 20px 6px"}}><span className="sl">Money</span></div>
+      <Row icon="💳" title="Payment"
+        sub={data?.cards?.length?`${data.cards.length} card${data.cards.length===1?"":"s"} on file`:"No card saved yet"}
+        right={<Ic.ChevR/>} onClick={()=>setSection("payment")}/>
+
+      <div style={{padding:"16px 20px 6px"}}><span className="sl">Appearance</span></div>
       <div style={{margin:"0 20px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}>
         <div style={{display:"flex",gap:8}}>
           {[{v:"light",icon:"☀️",label:"Light"},{v:"dark",icon:"🌙",label:"Dark"}].map(o=>{
             const on=theme===o.v;
             return(
-              <button key={o.v} onClick={()=>chooseTheme&&chooseTheme(o.v)}
-                aria-pressed={on}
+              <button key={o.v} onClick={()=>chooseTheme&&chooseTheme(o.v)} aria-pressed={on}
                 style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,
                   padding:"12px 10px",borderRadius:12,cursor:"pointer",
                   border:`2px solid ${on?C.accentText:C.border}`,
@@ -3992,56 +4087,18 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
           Saved on this device. It applies the moment you choose it.
         </div>
       </div>
-      {[
-        {title:"Travel Documents",items:[{e:"🛂",l:"Passport",v:"US · Exp 2029 · AES-256 encrypted"},{e:"🪪",l:"TSA PreCheck",v:"KTN-928374 · Encrypted"},{e:"✈️",l:"Global Entry",v:"Active"}]},
-        {title:"Loyalty Programs",items:[{e:"🌐",l:"United MileagePlus",v:"1K · 84,200 mi"},{e:"🏨",l:"Marriott Bonvoy",v:"Platinum · 45k pts"},{e:"🚗",l:"Hertz Gold Plus",v:"Five Star"},{e:"➕",l:"Add program",v:"",action:true}]},
-        {title:"Preferences",items:[{e:"🍽️",l:"Dietary needs",v:"No restrictions"},{e:"🪑",l:"Seat preference",v:"Aisle · Economy+"},{e:"♿",l:"Accessibility",v:"None set"},{e:"🌡️",l:"Climate preference",v:"Warm weather"}]},
-        {title:"Notifications",items:[{e:"🔔",l:"Trip updates",v:"Instant"},{e:"💬",l:"Group messages",v:"Instant"},{e:"💰",l:"Payment alerts",v:"Instant — required for security"},{e:"🎯",l:"Recommendations",v:"Weekly digest"}]},
-      ].map((sec,si)=>(
-        <div key={si} style={{marginBottom:8}}>
-          <div style={{padding:"6px 20px 8px"}}><span className="sl">{sec.title}</span></div>
-          <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px",overflow:"hidden"}}>
-            {sec.items.map((item,ii)=>(
-              <div key={ii}>
-                {ii>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-                <div className="ri" onClick={()=>toast(item.action?`Add ${item.l}`:item.l+" updated")}>
-                  <div className="ri-ic" style={{background:item.action?C.s3:C.accentDim,color:item.action?C.t3:C.accentText}}>{item.e}</div>
-                  <div className="ri-inf"><div className="ri-t" style={{color:item.action?C.accentText:C.t1}}>{item.l}</div>{item.v&&<div className="ri-s">{item.v}</div>}</div>
-                  <Ic.ChevR/>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Account & Security</span></div>
-      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,margin:"0 20px 16px",overflow:"hidden"}}>
-        {[
-          {e:"🔒",l:"Security settings",s:"MFA · sessions · biometrics",fn:()=>setSection("security")},
-          {e:"🛡️",l:"Privacy & data rights",s:"GDPR · CCPA · data export · deletion",fn:()=>setSection("privacy")},
-          {e:"💳",l:"Payment methods",s:"Stripe-secured — card numbers are never stored",fn:()=>setSection("payment")},
-        ].map((it,i)=>(
-          <div key={i}>
-            {i>0&&<div style={{height:1,background:C.border,margin:"0 16px"}}/>}
-            <div className="ri" onClick={it.fn}>
-              <div className="ri-ic" style={{background:C.accentDim,color:C.accentText}}>{it.e}</div>
-              <div className="ri-inf"><div className="ri-t">{it.l}</div><div className="ri-s">{it.s}</div></div>
-              <Ic.ChevR/>
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{padding:"0 20px 30px",display:"flex",flexDirection:"column",gap:10}}>
-        <button className="bs" style={{borderColor:C.red,color:C.red}} onClick={()=>{if(onSignOut)onSignOut();else toast("Signed out successfully");}}>Sign out</button>
-        <div style={{display:"flex",justifyContent:"center",gap:16,paddingTop:4}}>
-          {["Privacy Policy","Terms","Licenses","Support"].map(l=><span key={l} style={{fontSize:11,color:C.t3,cursor:"pointer"}} onClick={()=>toast(l+" opening")}>{l}</span>)}
-        </div>
-        <div style={{fontSize:10,color:C.t4,textAlign:"center"}}>Reach v1.0.0 · GDPR · CCPA · PCI-DSS · SOC 2 Type II</div>
+
+      <div style={{padding:"0 20px 6px"}}><span className="sl">Account</span></div>
+      <Row icon="🛡️" title="Privacy and your data"
+        sub={data?.deletion?"Deletion scheduled":"Consent, export, deletion"}
+        right={<Ic.ChevR/>} onClick={()=>setSection("privacy")}/>
+
+      <div style={{padding:"18px 20px 34px"}}>
+        <button className="bs" style={{borderColor:C.red,color:C.red}} onClick={onSignOut}>Sign out</button>
       </div>
     </div>
   );
 }
-
 // ─── APP SHELL ────────────────────────────────────────────────────────────────
 export default function ReachApp({realUser,onSignOut}={}){
   // Auth flow stages: splash → auth → permissions → biometric → privacy → app
