@@ -1707,16 +1707,21 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
               When are you going?
             </div>
             <div style={{fontSize:14,color:C.t2}}>
-              Departing from {userLocation?.formatted||"your location"}
+              Departing from {departure?.city||"your location"}
               {departure?.airport&&" ("+departure.airport+")"}
             </div>
           </div>
-          {error&&isDateStep&&(
-            <div style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.2)",borderRadius:12,padding:12,marginBottom:16,fontSize:13,color:C.red,display:"flex",alignItems:"center",gap:8}}>
+          {/* Shown on whichever step you land back on, not only the date step,
+              and carrying the server's own words. It used to append "check
+              your Anthropic API key in Vercel" to every failure regardless of
+              cause — which was never the cause, and is not something the
+              person reading it can act on. */}
+          {error&&(
+            <div style={{background:C.redDim,border:`1px solid ${C.red}`,borderRadius:12,padding:12,marginBottom:16,fontSize:13,color:C.t1,display:"flex",alignItems:"flex-start",gap:8}}>
               <span>⚠️</span>
               <div>
-                <div style={{fontWeight:600,marginBottom:2}}>Generation failed</div>
-                <div style={{fontSize:12,opacity:.8}}>{error} — check your Anthropic API key in Vercel</div>
+                <div style={{fontWeight:600,marginBottom:2,color:C.red}}>Couldn't build your trips</div>
+                <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5}}>{error}</div>
               </div>
             </div>
           )}

@@ -191,6 +191,12 @@ names a specific hotel or neighbourhood.
 
 Be fast and be specific. Real place names, not categories.
 
+Keep it tight — this has to fit in one response:
+- every "details" is at most 12 words
+- food_scene and music_scene are two short sentences each
+- why_this_group is one sentence
+- tagline is at most ten words
+
 Return JSON only, shaped exactly like this:
 {"trips":[{"id":"trip_1","destination":"City, Country","emoji":"🌍",
 "tagline":"Ten words on why this group","vibe":"Vibe label",
@@ -215,8 +221,17 @@ Return JSON only, shaped exactly like this:
 
   try {
     const response = await withSchemaFallback(
-      client, FAST_MODEL, 8000, prompt, TRIPS_JSON_SCHEMA, 'trips generate',
+      // Three destinations, each with two scene paragraphs and six costed
+      // lines, ran past 8000 and came back truncated mid-object — the schema
+      // was satisfied right up to the point the tokens ran out.
+      client, FAST_MODEL, 16000, prompt, TRIPS_JSON_SCHEMA, 'trips generate',
     );
+
+    if (response.stop_reason === 'max_tokens') {
+      console.error('[trips generate] truncated at max_tokens', {
+        groupId, nights, chars: textOf(response).length,
+      });
+    }
 
     const trips = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
     // The schema cannot pin the array length, so the count is checked here.
