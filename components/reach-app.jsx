@@ -497,6 +497,63 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   );
 }
 
+
+// ─── Waiting for an itinerary ─────────────────────────────────────────────
+// Building a week of real places takes about 25 seconds. The whole wait used
+// to be a button reading "Building… ✨", which gives someone no idea whether
+// it is working, how long is left, or whether to walk away.
+//
+// Every line below describes something the request is genuinely doing, paced
+// against the measured runtime. No invented steps and no fake percentage that
+// sticks at 90.
+function BuildingItinerary({destination,nights,onCancel}){
+  const steps=[
+    {at:0,  t:"Reading what your group likes"},
+    {at:4,  t:`Choosing where to base you in ${destination||"your destination"}`},
+    {at:9,  t:"Picking restaurants that fit everyone's food"},
+    {at:15, t:`Writing ${nights||7} days, morning to evening`},
+    {at:22, t:"Adding the tips you'd only know on a second visit"},
+    {at:30, t:"Almost there — checking the days hang together"},
+  ];
+  const [secs,setSecs]=useState(0);
+  useEffect(()=>{
+    const id=setInterval(()=>setSecs(s=>s+1),1000);
+    return ()=>clearInterval(id);
+  },[]);
+  const current=steps.filter(s=>s.at<=secs).slice(-1)[0]||steps[0];
+  // Eases toward 95% over ~35s and waits there rather than claiming completion.
+  const pct=Math.min(95,Math.round((1-Math.exp(-secs/12))*100));
+  const over=secs>45;
+
+  return(
+    <div style={{position:"absolute",inset:0,background:C.bg,zIndex:300,
+      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 32px"}}>
+      <div style={{fontSize:44,marginBottom:18}}>🗺️</div>
+      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1,textAlign:"center",lineHeight:1.2,marginBottom:8}}>
+        Building your {destination||"trip"}
+      </div>
+      <div style={{fontSize:13.5,color:C.t2,textAlign:"center",marginBottom:26,minHeight:38,lineHeight:1.5}}>
+        {over
+          ? "Taking longer than usual. Still working — give it a few more seconds."
+          : current.t}
+      </div>
+      <div style={{width:"100%",maxWidth:280,height:6,background:C.s3,borderRadius:3,overflow:"hidden",marginBottom:10}}>
+        <div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${C.accentDeep},${C.accent})`,
+          borderRadius:3,transition:"width 1s linear"}}/>
+      </div>
+      <div style={{fontSize:11.5,color:C.t3,marginBottom:28}}>
+        {secs}s · usually about 25
+      </div>
+      {onCancel&&(
+        <button onClick={onCancel}
+          style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",padding:"8px 0"}}>
+          Cancel
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ─── DISCOVER ────────────────────────────────────────────────────────────────
 function DiscoverScreen({push,groups,toast,user,userLocation}){
   const [filter,setFilter]=useState("All");
@@ -2599,8 +2656,19 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
     _sp3.then(_rid=>push("planDetail",{planId:_rid||newPlan.id,groupId})).catch(()=>push("planDetail",{planId:newPlan.id,groupId}));
   };
 
+  const buildingTrip=trips?.find(t=>t.id===buildingItinerary);
+  // Declared here rather than borrowed: the waiting screen names the number of
+  // days it is writing, and an undeclared identifier throws at render.
+  const buildNights=nightsBetween(startDate,endDate)||7;
+
   return(
     <div className="sc">
+      {buildingItinerary&&(
+        <BuildingItinerary
+          destination={buildingTrip?.destination}
+          nights={buildNights}
+          onCancel={()=>setBuildingItinerary(null)}/>
+      )}
       <div style={{padding:"12px 20px 0",display:"flex",alignItems:"center",gap:12}}>
         <ScreenHeader onBack={onBack}/>
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>AI Trip Planner ✨</div>

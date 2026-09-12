@@ -12,7 +12,21 @@ import {
 // writes the itinerary somebody will actually follow, so it takes the
 // capable one. Both were claude-sonnet-4-6, a previous generation.
 const FAST_MODEL = 'claude-haiku-4-5';
-const QUALITY_MODEL = 'claude-opus-5';
+// Opus 5 with adaptive thinking took 114 seconds for a 7-day itinerary, past
+// the platform's function ceiling, so the request was killed and the itinerary
+// never arrived at all. Measured alternatives for the same prompt:
+//   opus-5 + adaptive thinking  114s   6654 tokens
+//   opus-5, effort low           49s   2668 tokens
+//   sonnet-5, effort medium      24s   1760 tokens
+//   sonnet-5, effort low         14s   1134 tokens
+// Medium keeps the detail that makes an itinerary worth following — real venue
+// names, tips you would only know on a second visit — at a fifth of the wait.
+const QUALITY_MODEL = 'claude-sonnet-5';
+const QUALITY_EFFORT = 'medium' as const;
+
+// Explicit rather than inherited, so the ceiling is visible next to the call
+// that has to fit inside it.
+export const maxDuration = 120;
 
 
 // Constrained generation is the right tool, but a schema the API will not
@@ -27,6 +41,7 @@ async function withSchemaFallback(
   prompt: string,
   schema: Record<string, unknown>,
   label: string,
+  effort?: 'low' | 'medium' | 'high',
 ) {
   const call = (tokens: number, extra: string, constrained: boolean) =>
     client.messages.create({
@@ -34,8 +49,8 @@ async function withSchemaFallback(
       max_tokens: tokens,
       messages: [{ role: 'user' as const, content: prompt + extra }],
       ...(constrained
-        ? { output_config: { format: { type: 'json_schema' as const, schema } } }
-        : {}),
+        ? { output_config: { ...(effort ? { effort } : {}), format: { type: 'json_schema' as const, schema } } }
+        : effort ? { output_config: { effort } } : {}),
     });
 
   let res;
@@ -165,6 +180,7 @@ know on a second trip.`;
         // 16000 because 8000 truncated a long itinerary mid-object, which is
         // what most of the old parse failures actually were.
         client, QUALITY_MODEL, 16000, prompt, ITINERARY_JSON_SCHEMA, 'trips itinerary',
+        QUALITY_EFFORT,
       );
 
       const parsed = parseModelJSON(textOf(res), ItinerarySchema, 'trips itinerary');
