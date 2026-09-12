@@ -1,5 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireGroupMember, isFail } from '@/lib/auth';
+import Anthropic from '@anthropic-ai/sdk';
+import {
+  TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA,
+  parseModelJSON, textOf,
+} from '@/lib/trip-schema';
+
+// ─── Models ──────────────────────────────────────────────────────────────
+// Stage 1 only names destinations and estimates costs, and the person is
+// staring at a spinner while it runs, so it takes the fast model. Stage 2
+// writes the itinerary somebody will actually follow, so it takes the
+// capable one. Both were claude-sonnet-4-6, a previous generation.
+const FAST_MODEL = 'claude-haiku-4-5';
+const QUALITY_MODEL = 'claude-opus-5';
+
+// A missing key disables this lane with a clean message rather than a crash.
+function anthropicOrNull() {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  return new Anthropic({ apiKey });
+}
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -60,36 +80,55 @@ Activities: ${activityVibes.slice(0, 4).join(', ') || 'mixed'}
 Dietary: ${dietaryNeeds.join(', ') || 'no restrictions'}
 Accommodation: ${tripAccommodation}
 
-Return ONLY valid JSON array for all ${nights} days:
-[{"day":1,"title":"Day Title","morning":"Specific activity with venue name","afternoon":"Specific activity","evening":"Specific restaurant + bar/venue","cost_today":85,"insider_tip":"Local tip"}]
+Write one entry for each of the ${nights} days.
 
-Be specific — real venue names, real neighborhoods. Make it feel like a local planned it.`;
+Be specific: real venue names, real neighbourhoods. Make it feel like a local
+planned it, not a guidebook. insider_tip is the thing a visitor would only
+know on a second trip.`;
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 8000,
+    const client = anthropicOrNull();
+    if (!client) {
+      console.error('[trips itinerary] ANTHROPIC_API_KEY is not set');
+      return NextResponse.json(
+        { error: 'Itinerary generation is switched off for this deployment.' },
+        { status: 503 },
+      );
+    }
+
+    try {
+      const res = await client.messages.create({
+        model: QUALITY_MODEL,
+        // 8000 truncated a long itinerary mid-object, which is what most of
+        // the old parse failures actually were.
+        max_tokens: 16000,
+        thinking: { type: 'adaptive' },
         messages: [{ role: 'user', content: prompt }],
-      }),
-    });
+        output_config: { format: { type: 'json_schema', schema: ITINERARY_JSON_SCHEMA } },
+      });
 
-    if (!res.ok) return NextResponse.json({ error: 'Failed to generate itinerary' }, { status: 503 });
-    const data = await res.json();
-    const text = (data.content[0]?.text || '[]').replace(/```json|```/g, '').trim();
-    let itinerary;
-  try {
-    itinerary = JSON.parse(text);
-  } catch (e) {
-    console.error('[trips itinerary] JSON parse failed, len', text.length, 'tail:', text.slice(-300));
-    return NextResponse.json({ error: 'AI response parsing failed - please try again' }, { status: 500 });
-  }
-    return NextResponse.json({ itinerary });
+      const parsed = parseModelJSON(textOf(res), ItinerarySchema, 'trips itinerary');
+      if (!parsed?.itinerary?.length) {
+        console.error('[trips itinerary] no itinerary in response', {
+          destination, nights, stop_reason: res.stop_reason,
+        });
+        return NextResponse.json(
+          { error: 'Could not build an itinerary for those dates — please try again.' },
+          { status: 502 },
+        );
+      }
+      return NextResponse.json({ itinerary: parsed.itinerary });
+    } catch (e: any) {
+      console.error('[trips itinerary] generation failed', {
+        destination, nights, status: e?.status, message: e?.message,
+      });
+      const status = e?.status === 429 ? 429 : 502;
+      return NextResponse.json(
+        { error: status === 429
+            ? 'Reach is busy right now — try again in a moment.'
+            : 'Could not build an itinerary — please try again.' },
+        { status },
+      );
+    }
   }
 
   // ── STAGE 1: Fast — just destinations + cost estimates, NO itinerary ───────
@@ -107,91 +146,65 @@ ACTIVITIES: ${activityVibes.slice(0, 4).join(', ') || 'mixed'}
 DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
 ${allVetoes.length > 0 ? 'VETOES (never include): ' + allVetoes.join(', ') : ''}
 
-Return ONLY valid JSON, no other text:
-{"trips":[{
-  "id":"trip_1",
-  "destination":"City, Country",
-  "tagline":"Why perfect for this specific group in 10 words",
-  "emoji":"🌍",
-  "total_per_person":1850,
-  "vibe":"Trip vibe label",
-  "highlight":"The one unmissable thing",
-  "why_this_group":"1 sentence personalized to their food/music/activity prefs",
-  "weather":"Weather for travel dates",
-  "visa":"Visa info for US citizens",
-  "food_scene":"2 sentences on food scene for their tastes",
-  "music_scene":"2 sentences on music/nightlife scene",
-  "costs":{
-    "flights":{"per_person":400,"details":"Round trip ${departureCode}→DEST economy","airlines":"Likely carriers"},
-    "accommodation":{"per_person":500,"details":"${nights} nights, ${tripAccommodation}","example":"Specific hotel/area"},
-    "ground_transport":{"per_person":100,"details":"Airport + local transport"},
-    "food_drink":{"per_person":350,"details":"All meals avg per day","must_eat":["Restaurant 1","Restaurant 2"]},
-    "activities":{"per_person":200,"details":"Top experiences","examples":["Activity 1 $X","Activity 2 $X"]},
-    "misc":{"per_person":100,"details":"Insurance, tips, buffer"}
-  }
-}]}
+Price diversity is required. Return exactly three options, one per tier:
+- "saver": roughly 60-70% of the budget
+- "on_budget": close to the budget
+- "stretch": roughly 110-120% of the budget
 
-3 very different destinations. Costs must sum to total_per_person. Make it fast.`;
+The three must be genuinely different places, not three versions of the same
+idea — vary the region and the type of destination, not just the hotel.
+
+For each, costs must sum to total_per_person. Write why_this_group as one
+sentence tied to their actual food, music and activity preferences. Keep
+food_scene and music_scene to two sentences each. tagline is at most ten
+words. emoji is a single emoji for the destination. accommodation.example
+names a specific hotel or neighbourhood.
+
+Be fast and be specific. Real place names, not categories.`;
+
+  const client = anthropicOrNull();
+  if (!client) {
+    console.error('[trips generate] ANTHROPIC_API_KEY is not set');
+    return NextResponse.json(
+      { error: 'Trip suggestions are switched off for this deployment.' },
+      { status: 503 },
+    );
+  }
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 3000, // Much smaller — no itinerary yet
-        messages: [{ role: 'user', content: prompt }],
-      }),
+    const response = await client.messages.create({
+      model: FAST_MODEL,
+      max_tokens: 8000,
+      messages: [{ role: 'user', content: prompt }],
+      output_config: { format: { type: 'json_schema', schema: TRIPS_JSON_SCHEMA } },
     });
 
-    if (!response.ok) return NextResponse.json({ error: 'AI unavailable' }, { status: 503 });
-
-    const aiData = await response.json();
-    const rawText = (aiData.content[0]?.text || '');
-    
-    // Robust JSON extraction — handle markdown fences and extra text
-    let text = rawText.replace(/```json|```/g, '').trim();
-    
-    // Find the JSON object if there's surrounding text
-    const jsonStart = text.indexOf('{');
-    const jsonEnd = text.lastIndexOf('}');
-    if (jsonStart !== -1 && jsonEnd !== -1) {
-      text = text.slice(jsonStart, jsonEnd + 1);
-    }
-
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch (parseErr) {
-      console.error('Parse failed, raw response:', rawText.slice(0, 500));
-      // Try to extract trips array directly
-      const tripsMatch = rawText.match(/"trips"\s*:\s*\[[\s\S]*\]/);
-      if (tripsMatch) {
-        try {
-          result = { trips: JSON.parse('[' + tripsMatch[0].split('[').slice(1).join('[').split(']').slice(0,-1).join(']') + ']') };
-        } catch {
-          return NextResponse.json({ error: 'AI response parsing failed — please try again' }, { status: 500 });
-        }
-      } else {
-        return NextResponse.json({ error: 'AI response parsing failed — please try again' }, { status: 500 });
-      }
-    }
-
-    if (!result?.trips?.length) {
-      return NextResponse.json({ error: 'No trips generated — try adjusting your budget or dates' }, { status: 500 });
+    const trips = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
+    if (!trips?.length) {
+      console.error('[trips generate] no trips in response', {
+        groupId, nights, effectiveBudget, stop_reason: response.stop_reason,
+      });
+      return NextResponse.json(
+        { error: 'No trips came back — try adjusting your budget or dates.' },
+        { status: 502 },
+      );
     }
 
     return NextResponse.json({
       success: true,
-      trips: result.trips,
+      trips,
       meta: { groupSize, nights, budget: effectiveBudget, departure, departureAirport: departureCode },
     });
-  } catch (e) {
-    console.error('Trip generation error:', e);
-    return NextResponse.json({ error: 'Trip generation failed — please try again' }, { status: 500 });
+  } catch (e: any) {
+    console.error('[trips generate] generation failed', {
+      groupId, nights, effectiveBudget, status: e?.status, message: e?.message,
+    });
+    const status = e?.status === 429 ? 429 : 502;
+    return NextResponse.json(
+      { error: status === 429
+          ? 'Reach is busy right now — try again in a moment.'
+          : 'Trip generation failed — please try again.' },
+      { status },
+    );
   }
 }
