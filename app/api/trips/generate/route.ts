@@ -120,6 +120,13 @@ export async function POST(req: NextRequest) {
   const cuisines = [...new Set(prefs.flatMap((p: any) => p.cuisines || []))];
   const musicGenres = [...new Set(prefs.flatMap((p: any) => p.music_genres || []))];
   const activityVibes = [...new Set(prefs.flatMap((p: any) => p.activity_vibe || []))];
+  // Queried since the first version and never put in the prompt, so answering
+  // these questions changed nothing about what came back.
+  const climates = [...new Set(prefs.map((p: any) => p.climate_preference).filter(Boolean))];
+  const diningVibes = [...new Set(prefs.map((p: any) => p.dining_vibe).filter(Boolean))];
+  const drinkStyles = [...new Set(prefs.map((p: any) => p.drink_style).filter(Boolean))];
+  const nightlife = [...new Set(prefs.map((p: any) => p.nightlife_style).filter(Boolean))];
+  const concertTypes = [...new Set(prefs.flatMap((p: any) => p.concert_types || []))];
   const tripTypes = (tripPrefs.tripType || []).join(', ') || 'any';
   const tripPace = tripPrefs.pace || 'balanced';
   const tripAccommodation = (tripPrefs.accommodation || []).join(', ') || 'hotel';
@@ -197,6 +204,11 @@ STAY: ${tripAccommodation}
 FOOD: ${cuisines.slice(0, 5).join(', ') || 'varied'}
 MUSIC: ${musicGenres.slice(0, 4).join(', ') || 'mixed'}
 ACTIVITIES: ${activityVibes.slice(0, 4).join(', ') || 'mixed'}
+CLIMATE THEY WANT: ${climates.join(', ') || 'any'}
+DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
+DRINKS: ${drinkStyles.join(', ') || 'no preference'}
+NIGHTLIFE: ${nightlife.join(', ') || 'no preference'}
+LIVE MUSIC THEY GO TO: ${concertTypes.slice(0, 4).join(', ') || 'no preference'}
 DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
 ${allVetoes.length > 0 ? 'VETOES (never include): ' + allVetoes.join(', ') : ''}
 
@@ -207,6 +219,10 @@ Price diversity is required. Return exactly three options, one per tier:
 
 The three must be genuinely different places, not three versions of the same
 idea — vary the region and the type of destination, not just the hotel.
+
+Honour the climate they asked for and every veto. A vetoed thing must not
+appear in any option, and a group that asked for warm weather must not be
+sent somewhere cold for the dates given.
 
 For each, costs must sum to total_per_person. Write why_this_group as one
 sentence tied to their actual food, music and activity preferences. Keep

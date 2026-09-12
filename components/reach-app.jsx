@@ -429,7 +429,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         </div>
       )}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 20px 10px"}}>
-        <span className="sl">Upcoming</span>
+        <span className="sl">Upcoming trips</span>
         <span style={{fontSize:12,color:C.accentText,cursor:"pointer"}} onClick={()=>setTab("groups")}>See all →</span>
       </div>
       <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
@@ -451,7 +451,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           <div style={{fontSize:12,color:C.t2,fontWeight:500,textAlign:"center"}}>New plan</div>
         </div>
       </div>
-      <div style={{padding:"0 20px 10px"}}><span className="sl">Relationship insights</span></div>
+      <div style={{padding:"0 20px 10px"}}><span className="sl">Your groups</span></div>
       {(groups.length>0?[
         {emoji:"✈️",text:groups[0].name+" · "+(groups[0].plans?.length||0)+" plan"+(((groups[0].plans?.length||0)!==1)?"s":""),cta:"Open →",action:()=>push("groupDetail",{groupId:groups[0].id})},
         groups.length>1?{emoji:"👥",text:"You're in "+groups.length+" groups.",cta:"See all →",action:()=>setTab("groups")}:{emoji:"➕",text:"Invite friends to plan together.",cta:"Create a group →",action:()=>push("createGroup")},
@@ -1582,6 +1582,9 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   const [customInputs,setCustomInputs]=useState({
     tripType:"",accommodation:"",noWayJose:"",
   });
+  // An exact figure beats a bucket: it is the number the model plans against,
+  // and the tiers are computed from it.
+  const [budgetCustom,setBudgetCustom]=useState("");
   const tog=(k,v)=>setAnswers(a=>({...a,[k]:a[k].includes(v)?a[k].filter(x=>x!==v):[...a[k],v]}));
   const sel=(k,v)=>setAnswers(a=>({...a,[k]:v}));
   const setCustom=(k,v)=>setCustomInputs(c=>({...c,[k]:v}));
@@ -1625,13 +1628,15 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
       title:"Budget per person?",
       sub:"Everything included — flights, hotel, food, activities.",
       isbudget:true,
+      // Exact amounts, not ranges: the label now says what actually gets sent.
+      // "No limit" is gone — it was not a number, so it parsed to nothing.
       options:[
-        {id:"1000",e:"💵",l:"Under $1k"},
-        {id:"2000",e:"💳",l:"$1k – $2k"},
-        {id:"3500",e:"✨",l:"$2k – $3.5k"},
-        {id:"5000",e:"💎",l:"$3.5k – $5k"},
-        {id:"10000",e:"🚀",l:"$5k – $10k"},
-        {id:"unlimited",e:"♾️",l:"No limit"},
+        {id:"1000",e:"💵",l:"$1,000"},
+        {id:"2000",e:"💳",l:"$2,000"},
+        {id:"3500",e:"✨",l:"$3,500"},
+        {id:"5000",e:"💎",l:"$5,000"},
+        {id:"8000",e:"🚀",l:"$8,000"},
+        {id:"15000",e:"👑",l:"$15,000"},
       ]
     },
     {
@@ -1681,7 +1686,14 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
         if(Array.isArray(merged[k]))merged[k]=[...merged[k],"custom:"+v.trim()];
       }
     });
-    const budgetNum=merged.budget==="unlimited"||merged.budget==="10000"?null:parseInt(merged.budget)||null;
+    // This used to send null for both "No limit" AND "$5k–$10k", so the two
+    // highest choices reached the server as no budget at all and it fell back
+    // to the cheapest bucket among the group's stored ranges. Picking a bigger
+    // budget made the trips cheaper.
+    const typed=parseInt(String(budgetCustom).replace(/[^0-9]/g,""));
+    const budgetNum=Number.isFinite(typed)&&typed>0
+      ? typed
+      : (parseInt(merged.budget)||null);
     onGenerate({start:startDate,end:endDate},budgetNum,{...merged,nights});
   };
 
@@ -1808,6 +1820,31 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
                 );
               })}
             </div>
+
+            {quizQ.isbudget&&(
+              <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14,marginBottom:12}}>
+                <div style={{fontSize:12.5,color:C.t2,marginBottom:8}}>Or enter an exact amount per person</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:C.t2}}>$</span>
+                  <input
+                    inputMode="numeric"
+                    value={budgetCustom}
+                    onChange={e=>{
+                      const digits=e.target.value.replace(/[^0-9]/g,"");
+                      setBudgetCustom(digits);
+                      // Typing an amount replaces whichever chip was picked.
+                      if(digits)sel(quizQ.id,digits);
+                    }}
+                    placeholder="3500"
+                    style={{flex:1,background:"none",border:"none",outline:"none",
+                      fontFamily:"'Instrument Serif',serif",fontSize:30,color:C.t1,width:"100%"}}/>
+                </div>
+                <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.5}}>
+                  Everything in: flights, stay, food, activities. We plan three options around it —
+                  one below, one at it, one a stretch.
+                </div>
+              </div>
+            )}
 
             {/* 7th option: custom text input */}
             {quizQ.customPlaceholder&&(
