@@ -16,6 +16,29 @@ const EMOJI: Record<string, string> = {
   Film: '🎬', Miscellaneous: '🎉', Family: '👨‍👩‍👧',
 };
 
+
+// Lowest advertised price across every range the event publishes, or null when
+// it publishes none.
+function priceFrom(e: any): string | null {
+  const mins = (e.priceRanges ?? [])
+    .map((r: any) => r?.min)
+    .filter((n: any) => typeof n === 'number' && Number.isFinite(n) && n >= 0);
+  if (!mins.length) return null;
+  const low = Math.min(...mins);
+  return low === 0 ? 'Free' : `From $${Math.round(low)}`;
+}
+
+// An event is past once its end date, or its start date when there is no end,
+// is before today. Compared by local date so an event tonight still counts.
+function notPast(e: any): boolean {
+  const day = e.dates?.end?.localDate || e.dates?.start?.localDate;
+  if (!day) return true;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const when = new Date(`${day}T23:59:59`);
+  return when.getTime() >= today.getTime();
+}
+
 function empty(reason: Reason, city: string) {
   return NextResponse.json({ events: [], reason, city });
 }
@@ -35,10 +58,14 @@ export async function GET(req: NextRequest) {
   }
   if (!lat || !lng) return empty('no_location', city);
 
+  // Only what has not happened yet. Without startDateTime the Discovery API
+  // happily returns events from the past, sorted to the top by date ascending.
+  const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
   const url =
     `https://app.ticketmaster.com/discovery/v2/events.json` +
     `?apikey=${encodeURIComponent(key)}` +
     `&latlong=${encodeURIComponent(`${lat},${lng}`)}` +
+    `&startDateTime=${encodeURIComponent(now)}` +
     `&radius=90&unit=miles&size=20&sort=date,asc`;
 
   let data: any;
@@ -56,7 +83,9 @@ export async function GET(req: NextRequest) {
 
   const events = (data?._embedded?.events ?? [])
     // No url means nothing to buy, which is the whole point of the card.
-    .filter((e: any) => e?.url && e?.name)
+    // Belt and braces: the API is asked for future events, but a stale cached
+    // page or a timezone edge can still slip one through.
+    .filter((e: any) => e?.url && e?.name && notPast(e))
     .map((e: any) => {
       const venue = e._embedded?.venues?.[0];
       const start = e.dates?.start?.localDate;
@@ -71,9 +100,9 @@ export async function GET(req: NextRequest) {
         title: e.name,
         meta: `${when} · ${venue?.name || 'Venue TBC'}`,
         emoji: EMOJI[segment] || '🎫',
-        price: e.priceRanges?.[0]?.min != null
-          ? `From $${Math.round(e.priceRanges[0].min)}`
-          : null,
+        // Ticketmaster omits priceRanges on plenty of events. That is "we are
+        // not told", not "free" — labelling it free is a lie about money.
+        price: priceFrom(e),
         dist: venue?.distance != null ? `${Math.round(venue.distance)} mi` : null,
         category: segment,
         date: start || null,

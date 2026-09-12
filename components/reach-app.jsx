@@ -578,11 +578,15 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
     title:e.title,
     sub:e.meta,
     emoji:e.emoji,
-    price:e.price||"Free",
+    price:e.price||null,
     dist:e.dist,
     category:e.category||"Event",
     // The link that actually sells the ticket.
     url:e.url||null,
+    // The event's own date and venue. Dropping these is what made the detail
+    // screen ask for a date it had already been given.
+    date:e.date||null,
+    venue:e.venue||null,
     tags:[e.category||"Event"],
     bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
     isLocal:true,
@@ -650,8 +654,10 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
                 borderRadius:16,padding:14,flexShrink:0,cursor:"pointer"}}
                 onClick={()=>push("expDetail",{exp:{
                   id:"local_"+n.id,title:n.title,sub:n.meta,emoji:n.emoji,
-                  price:n.price||"Free",tags:["Nearby"],
-                  bg:"linear-gradient(135deg,#1a1a2e,#16213e)",
+                  price:n.price||null,category:n.category||"Event",tags:["Nearby"],
+                  url:n.url||null,date:n.date||null,venue:n.venue||null,
+                  bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
+                  isLocal:true,
                 },groups})}>
                 <div style={{fontSize:28,marginBottom:6}}>{n.emoji}</div>
                 <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:2,lineHeight:1.3}}>{n.title}</div>
@@ -703,8 +709,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
           <div style={{background:C.s1,padding:"12px 16px",display:"flex",
             justifyContent:"space-between",alignItems:"center"}}>
             <div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>
-                {exp.price}
+              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:exp.price?C.t1:C.t2}}>
+                {exp.price||"Price on Ticketmaster"}
               </div>
               <div style={{fontSize:11,color:C.t2}}>
                 {exp.isLocal?"Near you":"per person, all-in"}
@@ -744,6 +750,9 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
 
   // Detect what type of experience this is
   const isLocal=exp.isLocal||exp.tags?.includes("Nearby");
+  // A real event knows when it happens. Asking for a date, and then storing
+  // today's instead, was the bug: exp.date is the ISO date the API returns.
+  const fixedDate=exp.date||null;
   const isRestaurant=exp.category==="Restaurant"||exp.title?.toLowerCase().includes("restaurant")||exp.title?.toLowerCase().includes("dinner")||exp.title?.toLowerCase().includes("brunch");
   const isConcert=exp.category==="Concert"||exp.category==="Music"||exp.tags?.includes("Concerts");
   const isBar=exp.category==="Bar"||exp.title?.toLowerCase().includes("bar")||exp.title?.toLowerCase().includes("rooftop");
@@ -765,13 +774,13 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   const addToGroup=async(group)=>{
     setSaving(true);
     const today=new Date();
-    const eventDateStr=exp.meta?.split("·")[0]?.trim()||"";
+    const eventDateStr=fixedDate?formatDates(fixedDate):(exp.meta?.split("·")[0]?.trim()||"");
     const np={
       id:"p"+Date.now(),
       title:exp.title,
       status:"planning",
       dates:eventDateStr||(bookDate||today.toISOString().split("T")[0])+(bookTime?" at "+bookTime:""),
-      startDate:bookDate||today.toISOString().split("T")[0],
+      startDate:fixedDate||bookDate||today.toISOString().split("T")[0],
       endDate:null,
       budget:parseInt((exp.price||"0").replace(/[^0-9]/g,""))||0,
       type:getType(),
@@ -920,16 +929,25 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     <div>
                       <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{exp.title}</div>
                       <div style={{fontSize:12,color:C.t2}}>{exp.sub}</div>
-                      <div style={{fontSize:13,color:C.accentText,fontWeight:600,marginTop:2}}>{exp.price} per person</div>
+                      {exp.price&&<div style={{fontSize:13,color:C.accentText,fontWeight:600,marginTop:2}}>{exp.price} per person</div>}
                     </div>
                   </div>
 
-                  <div style={{marginBottom:14}}>
-                    <div style={{fontSize:12,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Date</div>
-                    <input type="date" className="inp" value={bookDate}
-                      min={new Date().toISOString().split("T")[0]}
-                      onChange={e=>setBookDate(e.target.value)} style={{color:C.t1}}/>
-                  </div>
+                  {fixedDate?(
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontSize:12,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>When</div>
+                      <div style={{padding:"14px 16px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,fontSize:14,color:C.t1}}>
+                        {formatDates(fixedDate)}
+                      </div>
+                    </div>
+                  ):(
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontSize:12,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Date</div>
+                      <input type="date" className="inp" value={bookDate}
+                        min={new Date().toISOString().split("T")[0]}
+                        onChange={e=>setBookDate(e.target.value)} style={{color:C.t1}}/>
+                    </div>
+                  )}
 
                   {(isRestaurant||isBar)&&(
                     <div style={{marginBottom:14}}>
@@ -968,7 +986,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                   </div>
 
                   <button className="bp" style={{width:"100%",marginBottom:8}}
-                    disabled={!bookDate||(isRestaurant&&!bookTime)}
+                    disabled={(!fixedDate&&!bookDate)||(isRestaurant&&!bookTime)}
                     onClick={()=>setBookStep(1)}>
                     Continue →
                   </button>
