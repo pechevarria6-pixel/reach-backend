@@ -4279,8 +4279,31 @@ export default function ReachApp({realUser,onSignOut}={}){
           plans,
         };
       }));
+      // Only safe to prune once the real list is in hand — a failed load must
+      // never look like "you have no groups" and wipe a valid draft.
+      purgeStaleDraft(data.map(g=>g.id));
     }catch(e){console.log("API unavailable, using local state",e);}
     finally{setGroupsLoading(false);}
+  };
+
+  // A saved plan draft outlives the session, so it can end up pointing at a
+  // group that never reached the server (a g_local_ id) or one that has since
+  // been deleted. Either way "Resume your draft" becomes a dead end. Drop just
+  // the dead reference and keep every answer already given.
+  const purgeStaleDraft=(validIds)=>{
+    if(typeof window==="undefined")return;
+    try{
+      const raw=window.localStorage.getItem("reach_plan_draft");
+      if(!raw)return;
+      const draft=JSON.parse(raw);
+      const gid=draft?.gid;
+      if(!gid)return;
+      const isTemp=typeof gid==="string"&&gid.startsWith("g_local_");
+      if(isTemp||!validIds.includes(gid)){
+        delete draft.gid;
+        window.localStorage.setItem("reach_plan_draft",JSON.stringify(draft));
+      }
+    }catch(e){}
   };
 
   // Convert API plan format to app format. `fallbackMembers` covers plan rows
@@ -4345,7 +4368,11 @@ export default function ReachApp({realUser,onSignOut}={}){
   const leaveGroup=async(groupId)=>{
     if(!user?.id)throw new Error("Still signing you in — try again in a moment");
     await removeGroupMember(groupId,user.id);
-    setGroups(gs=>gs.filter(g=>g.id!==groupId));
+    setGroups(gs=>{
+      const left=gs.filter(g=>g.id!==groupId);
+      purgeStaleDraft(left.map(g=>g.id));
+      return left;
+    });
     setStack([]);setTab("groups");
   };
 
@@ -4355,7 +4382,11 @@ export default function ReachApp({realUser,onSignOut}={}){
     const r=await fetch(`/api/groups/${groupId}`,{method:"DELETE"});
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.error||"Couldn't delete that group");
-    setGroups(gs=>gs.filter(g=>g.id!==groupId));
+    setGroups(gs=>{
+      const left=gs.filter(g=>g.id!==groupId);
+      purgeStaleDraft(left.map(g=>g.id));
+      return left;
+    });
     setStack([]);setTab("groups");
   };
 
