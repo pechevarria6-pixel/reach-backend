@@ -186,6 +186,19 @@ button{min-height:44px;}
 .bsm-gr{background:${C.greenDim};color:${C.green};}
 .inp{width:100%;padding:15px 16px;background:${C.s2};border:1.5px solid ${C.border};border-radius:16px;color:${C.t1};font-family:'Space Grotesk',sans-serif;font-size:14px;outline:none;transition:all .2s;}
 .inp:focus{border-color:${C.accentText};box-shadow:0 0 0 3px ${C.focusRing};background:${C.s1};}
+/* Keyboard focus was visible on text inputs and nowhere else: not on buttons,
+   cards, nav or the two bare inputs that set outline:none with no replacement.
+   Anyone navigating by keyboard had no idea where they were. :focus-visible
+   keeps it off mouse clicks. */
+:focus-visible{outline:2px solid ${C.accentText};outline-offset:2px;border-radius:6px;}
+button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2px solid ${C.accentText};outline-offset:3px;}
+.inp:focus-visible{outline:none;}
+/* Respect someone who has asked their system for less movement. Spinners,
+   slide-ups and the progress bar all animate by default. */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:.01ms!important;scroll-behavior:auto!important;}
+}
 .inp::placeholder{color:${C.t3};}
 .ov{position:absolute;inset:0;background:${C.overlay};z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
 .sh{width:100%;max-height:90%;background:${C.s1};border-radius:28px 28px 0 0;border-top:1px solid ${C.border};overflow-y:auto;scrollbar-width:none;animation:su .25s cubic-bezier(.32,.72,0,1);padding-bottom:30px;}
@@ -2026,7 +2039,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
                       if(digits)sel(quizQ.id,digits);
                     }}
                     placeholder="3500"
-                    style={{flex:1,background:"none",border:"none",outline:"none",
+                    style={{flex:1,background:"none",border:"none",
                       fontFamily:"'Instrument Serif',serif",fontSize:30,color:C.t1,width:"100%"}}/>
                 </div>
                 <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.5}}>
@@ -3493,7 +3506,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             </div>
             <div style={{background:C.s1,border:`2px solid ${C.accentText}`,borderRadius:16,padding:"14px 20px",display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t3}}>$</span>
-              <input style={{background:"none",border:"none",outline:"none",fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,width:"100%"}} value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} inputMode="numeric" placeholder="2500"/>
+              <input style={{background:"none",border:"none",fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,width:"100%"}} value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} inputMode="numeric" placeholder="2500"/>
               <span style={{fontSize:12,color:C.t3}}>max</span>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:18}}>
@@ -3925,7 +3938,20 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     try{
       const {error,paymentIntent}=await stripeRef.current.confirmPayment({elements:elementsRef.current,redirect:"if_required"});
       if(error)throw new Error(error.message||"Payment didn't go through.");
-      await fetch(`/api/plans/${planId}/funding/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentIntentId:paymentIntent.id})});
+      // Stripe has taken the money by this point. The response to this call
+      // was never checked, so if recording the contribution failed the app
+      // still walked on to "done" — card charged, nothing recorded, and the
+      // person told they were finished. With live keys that is real money
+      // going missing quietly.
+      const cr=await fetch(`/api/plans/${planId}/funding/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentIntentId:paymentIntent.id})});
+      if(!cr.ok){
+        const err=await cr.json().catch(()=>({}));
+        console.error("[checkout] payment taken but not recorded",{planId,paymentIntentId:paymentIntent.id,status:cr.status,err});
+        setBusy(false);
+        setMsg(`Your payment went through, but we couldn't record it against this trip. Nothing is lost — quote reference ${paymentIntent.id} and we'll sort it. Do not pay again.`);
+        setPhase("error");
+        return;
+      }
       setBusy(false);
       await approveAll(false);
     }catch(e){ toast(e.message||"Payment didn't go through."); setBusy(false); }
@@ -3936,14 +3962,31 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     let fresh=[];
     try{ const r=await fetch(`/api/bookings?planId=${planId}`); const j=await r.json(); fresh=(j&&(j.bookings||j))||[]; }catch(e){ fresh=bookings; }
     const waiting=(fresh||[]).filter(b=>b.status==="awaiting_approval");
+    // A failed approval used to be swallowed and the screen still said done,
+    // so somebody could believe a hotel was booked when the request had been
+    // refused. Failures are counted and reported.
+    const failed=[];
     for(const b of waiting){
       try{
         const r=await fetch(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(acceptNewPrice?{acceptNewPrice:true}:{})});
         if(r.status===402){ setPhase("waiting"); return; }
         if(r.status===409){ setPhase("priceUp"); return; }
-      }catch(e){/* keep going; ops can PATCH later */}
+        if(!r.ok){
+          const err=await r.json().catch(()=>({}));
+          console.error("[checkout] approval refused",{bookingId:b.id,status:r.status,err});
+          failed.push(b);
+        }
+      }catch(e){
+        console.error("[checkout] approval failed",{bookingId:b.id},e);
+        failed.push(b);
+      }
     }
     setBookings(fresh);
+    if(failed.length){
+      setMsg(`Your payment is recorded, but ${failed.length} of ${waiting.length} booking${waiting.length===1?"":"s"} couldn't be confirmed. Nothing has been double-charged. We'll follow up — you don't need to do anything.`);
+      setPhase("error");
+      return;
+    }
     setPhase("done");
   };
 
@@ -5109,7 +5152,8 @@ export default function ReachApp({realUser,onSignOut}={}){
               {!cur&&(
                 <nav className="nb">
                   {tabs.map(({id,label,Icon})=>(
-                    <button key={id} className={`nb-btn ${tab===id?"active":""}`} onClick={()=>setTab(id)}>
+                    <button key={id} className={`nb-btn ${tab===id?"active":""}`} onClick={()=>setTab(id)}
+                      aria-label={label} aria-current={tab===id?"page":undefined}>
                       <Icon/><span>{label}</span><div className="nb-dot"/>
                     </button>
                   ))}
