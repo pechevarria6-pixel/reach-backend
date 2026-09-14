@@ -1479,12 +1479,20 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 
   const revokeInvite=async id=>{
     try{
-      await fetch(`/api/groups/${groupId}/invites`,{
+      const r=await fetch(`/api/groups/${groupId}/invites`,{
         method:"DELETE",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({id}),
       });
+      // Said "Invite withdrawn" whatever came back, so a refused withdrawal
+      // left a live invite that the person believed was cancelled.
+      if(!r.ok){
+        const err=await r.json().catch(()=>({}));
+        console.error("[invites] withdraw refused",r.status,err);
+        toast(err.error||"Couldn't withdraw that invite");
+        return;
+      }
       toast("Invite withdrawn");loadInvites();
-    }catch(e){toast("Couldn't withdraw that invite");}
+    }catch(e){console.error("[invites] withdraw failed",e);toast("Couldn't withdraw that invite");}
   };
 
   const save=()=>{updateGroup(groupId,g=>({...g,name,emoji:inferGroupEmoji(name)}),{sync:true});toast("Group updated");onBack();};
@@ -1687,7 +1695,12 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
     setInviteEmails(list=>list.includes(e)?list:[...list,e]);
     setSearchQuery("");setSearchResults([]);
   };
+  // A double-tap before navigation made two groups. Every create path now
+  // refuses re-entry rather than relying on the person tapping once.
+  const [creating,setCreating]=useState(false);
   const create=()=>{
+    if(creating)return;
+    setCreating(true);
     const tempId="g_local_"+Date.now();
     const finalEmoji=inferGroupEmoji(name);const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:members,inviteEmails,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
     setGroups(gs=>[...gs,newGroup]);
@@ -1695,6 +1708,9 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
     // Save to server in background
     if(typeof saveGroupToServer==="function")saveGroupToServer(newGroup);
     onBack();
+    // The screen normally unmounts on onBack, so this rarely runs — but if it
+    // ever does not, a flag that is never cleared leaves the button dead.
+    setTimeout(()=>setCreating(false),1500);
   };
   return(
     <div className="sc">
@@ -1762,7 +1778,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
             </div>
           )}
           <div style={{padding:"18px 20px 30px"}}>
-            <button className="bp" onClick={create}>Create {name||"group"}{members.length>0?" ("+members.length+" member"+(members.length!==1?"s":"")+"":""}{members.length>0?")":""}</button>
+            <button className="bp" disabled={creating} onClick={create}>Create {name||"group"}{members.length>0?" ("+members.length+" member"+(members.length!==1?"s":"")+"":""}{members.length>0?")":""}</button>
           </div>
         </div>
       )}
@@ -2219,6 +2235,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   const [buildingItinerary,setBuildingItinerary]=useState(null);
 
   const selectTrip=async(trip)=>{
+    // Re-entry here cost twice: a duplicate plan and a second itinerary
+    // generation, which is a paid model call.
+    if(buildingItinerary)return;
     // Save plan immediately with placeholder itinerary
     const np={
       id:"p"+Date.now(),
@@ -3159,8 +3178,10 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
     return()=>clearTimeout(timer);
   },[vibe,dest,budget,accom]);
 
+  const [finishing,setFinishing]=useState(false);
   const finish=()=>{
-    if(!gid)return;
+    if(!gid||finishing)return;
+    setFinishing(true);
     const dateRange=isEvent
       ?formatDates(eventDate,null,eventTime)
       :formatDates(startDate,endDate);
@@ -3183,6 +3204,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
     clearDraft();
     const _sp3=(typeof savePlanToServer==="function")?savePlanToServer(gid,np):Promise.resolve(null);
     onBack();
+    setTimeout(()=>setFinishing(false),1500);
   };
 
   // ── Cuisine options for restaurants ─────────────────────────
@@ -3538,7 +3560,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
           {step===0&&<button className="bs" style={{flex:1}} onClick={handleBack}>Cancel</button>}
           {step<STEPS.length-1
             ?<button className="bp" style={{flex:2}} disabled={!canContinue()} onClick={()=>setStep(s=>s+1)}>Continue →</button>
-            :<button className="bp" style={{flex:2}} disabled={!budget} onClick={finish}>
+            :<button className="bp" style={{flex:2}} disabled={!budget||finishing} onClick={finish}>
               {planType==="restaurant"?"Plan dinner 🍽️"
               :planType==="concert"?"Plan this night 🎵"
               :planType==="weekend"?"Plan this weekend 🏡"
@@ -4930,11 +4952,20 @@ export default function ReachApp({realUser,onSignOut}={}){
         showToast("Couldn't create that group — please try again");
         return null;
       }else{
-        await fetch(`/api/groups/${group.id}`,{
+        const res=await fetch(`/api/groups/${group.id}`,{
           method:"PATCH",
           headers:{"Content-Type":"application/json"},
           body:JSON.stringify({name:group.name,emoji:group.emoji}),
         });
+        // The caller says "Group updated" as soon as this returns. A rejected
+        // rename — not an admin, say — looked identical to a successful one,
+        // and the old name came back on the next refresh with no explanation.
+        if(!res.ok){
+          const err=await res.json().catch(()=>({}));
+          console.error("[saveGroupToServer] update rejected",res.status,err);
+          showToast(err.error||"Couldn't save that change");
+          return group.id;
+        }
       }
     }catch(e){console.log("Group save failed, data kept locally",e);}
     return group.id;
