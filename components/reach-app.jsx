@@ -3629,6 +3629,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   const [loadFailed,setLoadFailed]=useState(false);
   const [building,setBuilding]=useState(false);
+  const [nudging,setNudging]=useState(false);
 
   // Every plan made before the itinerary was persisted has no days, and there
   // was no way to get them: the empty state offered only a manual builder. A
@@ -3826,7 +3827,33 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         {atab==="vote"&&plan.options.length>0&&(
           <div style={{padding:"16px 20px"}}>
             <div className="pt" style={{fontSize:22,marginBottom:6}}>Where should we go?</div>
-            <div style={{fontSize:13,color:C.t2,marginBottom:18}}>{totalV} of {plan.participants.length} voted.</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:18,flexWrap:"wrap"}}>
+              <div style={{fontSize:13,color:C.t2}}>{totalV} of {plan.participants.length} voted.</div>
+              {/* A plan could sit needing one vote for a week with no way to
+                  tell anyone. This emails the people who have not voted. */}
+              {totalV<plan.participants.length&&(
+                <button className="bsm bsm-p" disabled={nudging} onClick={async()=>{
+                  if(nudging)return;
+                  if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+                  setNudging(true);
+                  try{
+                    const r=await fetch(`/api/plans/${planId}/notify`,{
+                      method:"POST",headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify({kind:"vote"}),
+                    });
+                    const d=await r.json().catch(()=>({}));
+                    if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
+                    toast(d.notified
+                      ? `Reminded ${d.notified} ${d.notified===1?"person":"people"} 📬`
+                      : (d.message||"Everyone has voted"));
+                  }catch(e){
+                    console.error("[planDetail] vote nudge failed",e);
+                    toast(e.message);
+                  }
+                  setNudging(false);
+                }}>{nudging?"Sending…":"Remind them"}</button>
+              )}
+            </div>
             {plan.options.map(opt=>{
               const v=plan.votes[opt]||0; const pct=totalV>0?(v/totalV)*100:0; const mine=myVote===opt;
               return(
@@ -3960,6 +3987,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   const plan=group?.plans?.find(p=>p.id===planId);
   // phases: loading | review | pay | approving | waiting | priceUp | done | error
   const [phase,setPhase]=useState("loading");
+  const [nudging,setNudging]=useState(false);
   const [funding,setFunding]=useState(null);
   const [bookings,setBookings]=useState([]);
   const [clientSecret,setClientSecret]=useState(null);
@@ -4146,14 +4174,30 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents+myShareCents)/Math.max(funding.targetCents,1))*100));
       return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
-    <button onClick={()=>{
-      // Reach cannot notify anyone yet. Rather than claim a reminder was
-      // sent, hand the message to the share sheet so it actually goes out.
-      const where=typeof window!=="undefined"?window.location.origin:"";
-      const msg=`We're nearly funded for our Reach trip — just need your share to lock it in: ${where}`;
-      if(navigator.share){navigator.share({title:"Chip in for our trip",text:msg}).catch(()=>{});}
-      else{navigator.clipboard?.writeText(msg);toast("Message copied 📋");}
-    }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,cursor:"pointer"}}>Nudge the group</button>
+    <button disabled={nudging} onClick={async()=>{
+      // Reach can email now, so this sends rather than handing the person a
+      // message to forward themselves.
+      if(nudging)return;
+      if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+      setNudging(true);
+      try{
+        const r=await fetch(`/api/plans/${planId}/notify`,{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({kind:"funding"}),
+        });
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
+        toast(d.notified
+          ? `Reminded ${d.notified} ${d.notified===1?"person":"people"} 📬`
+          : (d.message||"Everyone has already paid"));
+      }catch(e){
+        console.error("[checkout] nudge failed",e);
+        toast(e.message);
+      }
+      setNudging(false);
+    }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,cursor:nudging?"progress":"pointer",opacity:nudging?.6:1}}>
+      {nudging?"Sending…":"Remind them"}
+    </button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
   </div></div>);
 

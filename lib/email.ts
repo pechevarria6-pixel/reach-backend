@@ -1,80 +1,165 @@
+// ─── Email ───────────────────────────────────────────────────────────────
+// Every message Reach sends. Three things were wrong with the old version and
+// all three could only be found by looking:
+//
+//   1. A missing RESEND_API_KEY threw inside whatever route was sending, so a
+//      configuration gap surfaced as an unrelated failure — or was swallowed
+//      by a caller's catch and looked like nothing happened.
+//   2. The from address defaulted to a domain Reach does not own.
+//   3. The booking confirmation pasted raw JSON into the customer's email.
+//
+// Sending is always best-effort: it reports what happened and never throws
+// into a request that was doing something more important.
 import { Resend } from 'resend';
 import { emailButtonStyle } from '@/lib/brand';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-const FROM = process.env.EMAIL_FROM || 'noreply@reach.app';
+const FROM = process.env.EMAIL_FROM || 'Reach <hello@alcanzar.io>';
+const SUPPORT = 'hello@alcanzar.io';
 
-export async function sendBookingConfirmation(to: string, planTitle: string, details: object) {
-  return resend.emails.send({
-    from: FROM,
-    to,
-    subject: `Your booking is confirmed — ${planTitle}`,
-    html: `
-      <h1>You're all booked! ✓</h1>
-      <p>Your booking for <strong>${planTitle}</strong> has been confirmed.</p>
-      <pre>${JSON.stringify(details, null, 2)}</pre>
-      <p>Open the Reach app to view your full itinerary.</p>
-    `,
-  });
+// One shape rather than a discriminated union: this project compiles with
+// `strict` off, which disables the literal-type narrowing a union relies on,
+// and turning strict on across 5,000 lines is not a change to make in passing.
+export type SendResult = {
+  sent: boolean;
+  id?: string;
+  reason?: 'no_key' | 'rejected' | 'error';
+  detail?: string;
+};
+
+function escape(v: unknown): string {
+  return String(v ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 }
 
-export async function sendPaymentReceipt(to: string, amount: number, planTitle: string, stripeId: string) {
-  return resend.emails.send({
-    from: FROM,
-    to,
-    subject: `Payment receipt — ${planTitle}`,
-    html: `
-      <h1>Payment confirmed</h1>
-      <p>Amount: <strong>$${(amount / 100).toFixed(2)}</strong></p>
-      <p>For: <strong>${planTitle}</strong></p>
-      <p>Transaction ID: <code>${stripeId}</code></p>
-      <p>This is your official receipt. Keep it for your records.</p>
-    `,
-  });
+const shell = (title: string, body: string) => `
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#241C10;">
+    <div style="font-size:20px;letter-spacing:-.01em;margin-bottom:20px;color:#8A6512;">reach</div>
+    <h1 style="font-size:22px;font-weight:600;line-height:1.25;margin:0 0 14px;">${title}</h1>
+    ${body}
+    <p style="color:#7E6F52;font-size:12.5px;line-height:1.6;margin-top:28px;border-top:1px solid #E5DCCA;padding-top:16px;">
+      Sent by Reach &middot; <a href="https://www.alcanzar.io" style="color:#8A6512;">alcanzar.io</a><br>
+      Questions? Reply to this email or write to ${SUPPORT}.
+    </p>
+  </div>`;
+
+async function send(to: string, subject: string, html: string, label: string): Promise<SendResult> {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) {
+    // Loud but harmless: the request that triggered this carries on.
+    console.error(`[email] ${label} not sent — RESEND_API_KEY is not set`);
+    return { sent: false, reason: 'no_key' };
+  }
+  try {
+    const { data, error } = await new Resend(key).emails.send({ from: FROM, to, subject, html });
+    if (error) {
+      console.error(`[email] ${label} rejected`, error);
+      return { sent: false, reason: 'rejected', detail: error.message };
+    }
+    return { sent: true, id: data?.id };
+  } catch (e: any) {
+    console.error(`[email] ${label} failed`, e?.message ?? e);
+    return { sent: false, reason: 'error', detail: e?.message };
+  }
 }
 
-export async function sendDeletionConfirmation(to: string, deletionDate: string) {
-  return resend.emails.send({
-    from: FROM,
-    to,
-    subject: 'Account deletion scheduled — Reach',
-    html: `
-      <h1>Account deletion request received</h1>
-      <p>Your account and all associated data will be permanently deleted on <strong>${deletionDate}</strong>.</p>
-      <p>This complies with GDPR Article 17 (Right to Erasure).</p>
-      <p>If you did not request this, contact us immediately at privacy@reach.app</p>
-    `,
-  });
+// ── Money ────────────────────────────────────────────────────────────────
+
+export function sendPaymentReceipt(to: string, amountCents: number, planTitle: string, stripeId: string) {
+  const amount = `$${(amountCents / 100).toFixed(2)}`;
+  return send(to, `Receipt for ${planTitle} — ${amount}`, shell('Payment received', `
+    <p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
+      We've received <strong>${amount}</strong> towards <strong>${escape(planTitle)}</strong>.
+    </p>
+    <table style="width:100%;font-size:14px;border-collapse:collapse;">
+      <tr><td style="padding:8px 0;color:#635539;">Amount</td><td style="padding:8px 0;text-align:right;"><strong>${amount}</strong></td></tr>
+      <tr><td style="padding:8px 0;color:#635539;">Trip</td><td style="padding:8px 0;text-align:right;">${escape(planTitle)}</td></tr>
+      <tr><td style="padding:8px 0;color:#635539;">Reference</td><td style="padding:8px 0;text-align:right;font-family:monospace;font-size:12px;">${escape(stripeId)}</td></tr>
+    </table>
+    <p style="font-size:14px;color:#635539;line-height:1.6;margin-top:16px;">
+      Keep this for your records. Your share is held by Stripe and goes to the people being paid — Reach never holds it.
+    </p>`), 'payment receipt');
 }
 
-export async function sendGroupInvite(
+/** Somebody still owes their share, and nothing books until everybody is in. */
+export function sendFundingNeeded(to: string, opts: { planTitle: string; groupName: string; shareCents: number; url: string }) {
+  const share = `$${(opts.shareCents / 100).toFixed(2)}`;
+  return send(to, `Your share for ${opts.planTitle} — ${share}`, shell('Your share is ready to pay', `
+    <p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
+      <strong>${escape(opts.groupName)}</strong> is booking <strong>${escape(opts.planTitle)}</strong>.
+      Your share is <strong>${share}</strong>.
+    </p>
+    <p style="font-size:14px;color:#635539;line-height:1.6;margin:0 0 20px;">
+      Nothing is booked until everyone has paid, so the trip is waiting on this.
+    </p>
+    <a href="${escape(opts.url)}" style="${emailButtonStyle}">Pay your share</a>`), 'funding needed');
+}
+
+// ── Coordination ─────────────────────────────────────────────────────────
+
+/** A plan is open for votes and this person has not voted. */
+export function sendVoteNeeded(to: string, opts: { planTitle: string; groupName: string; options: string[]; url: string }) {
+  const list = opts.options.slice(0, 6).map(o =>
+    `<li style="padding:3px 0;">${escape(o)}</li>`).join('');
+  return send(to, `${opts.groupName} needs your vote`, shell('Where should you go?', `
+    <p style="font-size:15px;line-height:1.6;margin:0 0 14px;">
+      <strong>${escape(opts.groupName)}</strong> is deciding on <strong>${escape(opts.planTitle)}</strong>
+      and is waiting on you.
+    </p>
+    ${list ? `<ul style="font-size:14px;color:#635539;margin:0 0 20px;padding-left:20px;">${list}</ul>` : ''}
+    <a href="${escape(opts.url)}" style="${emailButtonStyle}">Cast your vote</a>`), 'vote needed');
+}
+
+export function sendBookingConfirmation(to: string, opts: {
+  planTitle: string;
+  items: Array<{ label: string; detail?: string | null; confirmation?: string | null }>;
+  url: string;
+}) {
+  // This used to paste JSON.stringify(details) into a <pre> block and send it
+  // to a customer.
+  const rows = opts.items.map(i => `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid #EFE8DA;">
+        <div style="font-weight:600;font-size:14px;">${escape(i.label)}</div>
+        ${i.detail ? `<div style="font-size:13px;color:#635539;margin-top:2px;">${escape(i.detail)}</div>` : ''}
+      </td>
+      <td style="padding:10px 0;border-bottom:1px solid #EFE8DA;text-align:right;font-family:monospace;font-size:12px;color:#635539;white-space:nowrap;">
+        ${i.confirmation ? escape(i.confirmation) : ''}
+      </td>
+    </tr>`).join('');
+
+  return send(to, `Confirmed — ${opts.planTitle}`, shell("You're booked", `
+    <p style="font-size:15px;line-height:1.6;margin:0 0 18px;">
+      Everything for <strong>${escape(opts.planTitle)}</strong> is confirmed. Here is what was booked.
+    </p>
+    <table style="width:100%;border-collapse:collapse;">${rows}</table>
+    <p style="margin-top:22px;"><a href="${escape(opts.url)}" style="${emailButtonStyle}">Open your itinerary</a></p>`),
+  'booking confirmation');
+}
+
+// ── Account ──────────────────────────────────────────────────────────────
+
+export function sendDeletionConfirmation(to: string, deletionDate: string) {
+  return send(to, 'Your Reach account will be deleted', shell('Deletion scheduled', `
+    <p style="font-size:15px;line-height:1.6;margin:0 0 14px;">
+      Your account and everything in it will be permanently deleted on <strong>${escape(deletionDate)}</strong>.
+    </p>
+    <p style="font-size:14px;color:#635539;line-height:1.6;">
+      Records of payments already taken are kept where tax law requires it. Everything else goes.
+      If you did not ask for this, write to ${SUPPORT} straight away and we will stop it.
+    </p>`), 'deletion confirmation');
+}
+
+export function sendGroupInvite(
   to: string,
-  opts: { groupName: string; groupEmoji?: string | null; inviterName?: string | null; acceptUrl: string }
+  opts: { groupName: string; groupEmoji?: string | null; inviterName?: string | null; acceptUrl: string },
 ) {
-  const who = opts.inviterName ? `${opts.inviterName} invited you` : 'You have been invited';
-  return resend.emails.send({
-    from: FROM,
-    to,
-    subject: `${who} to ${opts.groupName} on Reach`,
-    html: `
-      <h1>${opts.groupEmoji || '\u2708\uFE0F'} ${opts.groupName}</h1>
-      <p>${who} to plan trips together on Reach.</p>
-      <a href="${opts.acceptUrl}" style="${emailButtonStyle}">Join ${opts.groupName}</a>
-      <p style="color:#666;font-size:13px;">Signing in with this email address joins you automatically — the link is just a shortcut. The invite expires in 30 days.</p>
-    `,
-  });
-}
-
-export async function sendMagicLink(to: string, link: string) {
-  return resend.emails.send({
-    from: FROM,
-    to,
-    subject: 'Your sign-in link — Reach',
-    html: `
-      <h1>Sign in to Reach</h1>
-      <p>Tap the button below to sign in instantly. This link expires in 10 minutes.</p>
-      <a href="${link}" style="${emailButtonStyle}">Sign in to Reach</a>
-      <p>If you didn't request this, you can safely ignore this email.</p>
-    `,
-  });
+  const who = opts.inviterName ? `${escape(opts.inviterName)} invited you` : 'You have been invited';
+  return send(to, `${opts.inviterName ?? 'Someone'} invited you to ${opts.groupName} on Reach`,
+    shell(`${opts.groupEmoji || '✈️'} ${escape(opts.groupName)}`, `
+      <p style="font-size:15px;line-height:1.6;margin:0 0 20px;">${who} to plan trips together on Reach.</p>
+      <a href="${escape(opts.acceptUrl)}" style="${emailButtonStyle}">Join ${escape(opts.groupName)}</a>
+      <p style="color:#7E6F52;font-size:13px;line-height:1.6;margin-top:18px;">
+        Signing in with this address joins you automatically — the link is just a shortcut.
+        The invitation expires in 30 days.
+      </p>`), 'group invite');
 }

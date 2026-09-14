@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { BookingItemRequest, BookingProvider, Vertical } from '@/lib/booking/types';
+import { sendBookingConfirmation } from '@/lib/email';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
 import { kiwiFlights, viatorActivities, ticketmasterEvents, conciergeRestaurants } from '@/lib/booking/providers/rest';
 
@@ -112,7 +113,35 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .eq('id', params.id)
       .select()
       .single();
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    if (updErr) {
+      console.error('[approve] booking update failed', updErr);
+      return NextResponse.json({ error: updErr.message }, { status: 500 });
+    }
+
+    // Nothing told anyone their booking had happened. The template for this
+    // has existed since the first version and was never called from anywhere.
+    if (result.status === 'confirmed') {
+      const [{ data: person }, { data: plan }] = await Promise.all([
+        db.from('users').select('email').eq('id', ctx.user.id).maybeSingle(),
+        db.from('plans').select('title').eq('id', booking.plan_id).maybeSingle(),
+      ]);
+      if (person?.email) {
+        const base = process.env.NEXT_PUBLIC_APP_URL || 'https://www.alcanzar.io';
+        // Best-effort: a mail failure must not turn a successful booking into
+        // an error the caller has to interpret.
+        const mail = await sendBookingConfirmation(person.email, {
+          planTitle: plan?.title || 'your trip',
+          items: [{
+            label: updated.vertical ? `${updated.vertical[0].toUpperCase()}${updated.vertical.slice(1)}` : 'Booking',
+            detail: result.detail || updated.detail || null,
+            confirmation: result.providerRef || updated.provider_ref || null,
+          }],
+          url: `${base.replace(/\/$/, '')}/home`,
+        });
+        if (!mail.sent) console.error('[approve] confirmation email not sent', mail);
+      }
+    }
+
     return NextResponse.json({ booking: updated, result });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Execution failed';
