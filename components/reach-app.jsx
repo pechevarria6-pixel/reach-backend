@@ -3620,7 +3620,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
 }
 
 // ─── PLAN DETAIL ──────────────────────────────────────────────────────────────
-function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup}){
+function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
   const [atab,setAtab]=useState("overview");
@@ -3628,6 +3628,40 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [loading,setLoading]=useState(false);
 
   const [loadFailed,setLoadFailed]=useState(false);
+  const [building,setBuilding]=useState(false);
+
+  // Every plan made before the itinerary was persisted has no days, and there
+  // was no way to get them: the empty state offered only a manual builder. A
+  // trip the model already chose can have its day-by-day plan generated on
+  // demand, which is also the repair path for those older plans.
+  const buildItinerary=async()=>{
+    if(building)return;
+    if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+    setBuilding(true);
+    try{
+      const res=await fetch("/api/trips/generate",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          groupId,
+          startDate:plan.startDate||null,
+          endDate:plan.endDate||null,
+          detailTripId:planId,
+          tripData:{destination:plan.title,vibe:plan.vibe||null,costs:null},
+        }),
+      });
+      const d=await res.json().catch(()=>({}));
+      if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan");
+      const rows=itineraryRows(d.itinerary);
+      if(!rows.length)throw new Error("Nothing came back — try again");
+      updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows}:x)}));
+      const saved=await saveItineraryToServer(planId,rows);
+      toast(saved===false?"Built, but couldn't save — try again":`${d.itinerary.length} days planned 🗺️`);
+    }catch(e){
+      console.error("[planDetail] build itinerary failed",e);
+      toast(e.message);
+    }
+    setBuilding(false);
+  };
 
   // Fetch latest plan data on mount
   useEffect(()=>{
@@ -3754,12 +3788,19 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>
                   {loadFailed?"Couldn't load this plan":"No itinerary yet"}
                 </div>
-                <div style={{fontSize:13,color:C.t2,marginBottom:20}}>
+                <div style={{fontSize:13,color:C.t2,marginBottom:20,lineHeight:1.55}}>
                   {loadFailed
                     ?"Your days may already be saved. Check your connection and reopen this plan."
-                    :"Add flights, hotels, activities, restaurants, and more."}
+                    :`Build a day-by-day plan for ${plan.title}, or add flights, hotels and reservations yourself.`}
                 </div>
-                {!loadFailed&&<button className="bp" onClick={()=>push("editItinerary",{planId,groupId})}>Build Itinerary</button>}
+                {!loadFailed&&(
+                  <>
+                    <button className="bp" disabled={building} onClick={buildItinerary} style={{marginBottom:10}}>
+                      {building?"Building your days…":"✨ Build the day-by-day plan"}
+                    </button>
+                    <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Add items myself</button>
+                  </>
+                )}
               </div>
             ):(
               <>
