@@ -1414,6 +1414,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   const [q,setQ]=useState("");
   const [results,setResults]=useState([]);
   const [searching,setSearching]=useState(false);
+  const [searchFailed,setSearchFailed]=useState(false);
   const [busy,setBusy]=useState(false);
 
   const isEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v||"").trim());
@@ -1433,8 +1434,16 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
     setSearching(true);
     try{
       const r=await fetch("/api/users/search?q="+encodeURIComponent(v));
-      if(r.ok){const d=await r.json();setResults((d.users||[]).filter(u=>!members.includes(u.id)));}
-    }catch(e){setResults([]);}
+      if(!r.ok)throw new Error(`search returned ${r.status}`);
+      const d=await r.json();
+      setResults((d.users||[]).filter(u=>!members.includes(u.id)));
+      setSearchFailed(false);
+    }catch(e){
+      // An empty list read as "they are not on Reach", so people invited by
+      // email somebody who already had an account.
+      console.error("[editGroup] user search failed",e);
+      setResults([]);setSearchFailed(true);
+    }
     finally{setSearching(false);}
   };
 
@@ -1544,8 +1553,10 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
           </button>
         )}
         {!searching&&results.length===0&&q.length>=2&&!isEmail(q)&&(
-          <div style={{fontSize:12,color:C.t2,marginTop:8}}>
-            Nobody found. Type their full email address to invite them.
+          <div style={{fontSize:12,color:searchFailed?C.red:C.t2,marginTop:8,lineHeight:1.5}}>
+            {searchFailed
+              ? "Couldn't search just now. Check your connection — they may well have an account."
+              : "Nobody found. Type their full email address to invite them."}
           </div>
         )}
       </div>
@@ -1677,6 +1688,8 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
   const [inviteEmails,setInviteEmails]=useState([]);
   const [searchQuery,setSearchQuery]=useState("");
   const [searchResults,setSearchResults]=useState([]);
+  // Distinguishes "nobody by that name" from "the search itself failed".
+  const [searchFailed,setSearchFailed]=useState(false);
   const [searching,setSearching]=useState(false);
   const isEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v||"").trim());
   const searchUsers=async(q)=>{
@@ -1685,8 +1698,13 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
     setSearching(true);
     try{
       const res=await fetch("/api/users/search?q="+encodeURIComponent(q));
-      if(res.ok){const d=await res.json();setSearchResults(d.users||[]);}
-    }catch(e){}
+      if(!res.ok)throw new Error(`search returned ${res.status}`);
+      const d=await res.json();
+      setSearchResults(d.users||[]);setSearchFailed(false);
+    }catch(e){
+      console.error("[createGroup] user search failed",e);
+      setSearchResults([]);setSearchFailed(true);
+    }
     finally{setSearching(false);}
   };
   const addInviteEmail=()=>{
@@ -1743,7 +1761,11 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
               <button className="bsm bsm-p" onClick={addInviteEmail}>Invite {searchQuery.trim()}</button>
             )}
             {(searchQuery||"").length>=2&&searchResults.length===0&&!searching&&!isEmail(searchQuery)&&(
-              <div style={{fontSize:12,color:C.t3,padding:"8px 0"}}>Nobody found. Type their full email address to invite them.</div>
+              <div style={{fontSize:12,color:searchFailed?C.red:C.t3,padding:"8px 0",lineHeight:1.5}}>
+                {searchFailed
+                  ? "Couldn't search just now. Check your connection — they may well have an account."
+                  : "Nobody found. Type their full email address to invite them."}
+              </div>
             )}
             {(searchQuery||"").length<2&&(
               <div style={{fontSize:12,color:C.t3,padding:"4px 0"}}>Type a name or email address to find people.</div>
@@ -3543,7 +3565,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
               <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14,marginBottom:6}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:voting?12:0}}>
                   <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>Enable destination voting</div><div style={{fontSize:12,color:C.t2,marginTop:2}}>Let the group vote on where to go</div></div>
-                  <button onClick={()=>setVoting(!voting)} aria-pressed={voting} style={{width:44,height:26,borderRadius:13,background:voting?C.accentText:C.s3,border:`1px solid ${voting?C.accentText:C.border}`,cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
+                  <button onClick={()=>setVoting(v=>!v)} aria-pressed={voting} style={{width:44,height:26,borderRadius:13,background:voting?C.accentText:C.s3,border:`1px solid ${voting?C.accentText:C.border}`,cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
                     <div style={{width:20,height:20,borderRadius:"50%",background:C.s1,position:"absolute",top:2,left:voting?21:2,transition:"left .2s"}}/>
                   </button>
                 </div>
