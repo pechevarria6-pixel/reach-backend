@@ -369,6 +369,12 @@ function NotLoaded({what="This",onBack}){
   );
 }
 
+// A client-made id that the server has never seen. Hitting an API with one of
+// these is always a 404, so the callers that can hold one check first.
+function isTempId(id){
+  return typeof id==="string"&&(/^g_local_/.test(id)||/^p\d{10,}$/.test(id));
+}
+
 // ─── HOME ────────────────────────────────────────────────────────────────────
 function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   // These were three San Francisco events hardcoded as the default, shown to
@@ -3519,7 +3525,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   // Fetch latest plan data on mount
   useEffect(()=>{
-    if(!planId||!groupId)return;
+    // A temp id means the plan has not reached the server yet; asking for it
+    // is a guaranteed 404 that silently does nothing.
+    if(!planId||!groupId||isTempId(planId))return;
     const fetchPlan=async()=>{
       try{
         const r=await fetch(`/api/plans/${planId}`);
@@ -4759,6 +4767,7 @@ export default function ReachApp({realUser,onSignOut}={}){
 
   // Refresh a single group's data from server
   const refreshGroup=async(groupId)=>{
+    if(isTempId(groupId))return;
     try{
       const r=await fetch(`/api/groups/${groupId}`);
       if(!r.ok)return;

@@ -10,7 +10,10 @@
     "type-check": "tsc --noEmit",
     "test:unit": "node --test --experimental-strip-types 'tests/unit/**/*.test.ts'",
     "test:e2e": "playwright test",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "check:scopes": "node scripts/check-scopes.mjs",
+    "verify": "npm run check:scopes && npm run check:queries && npm run type-check && npm run test:unit && npm run build",
+    "check:queries": "node scripts/check-queries.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
