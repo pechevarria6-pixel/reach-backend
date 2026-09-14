@@ -37,13 +37,20 @@ export default function OnboardingPage() {
   const isLast = step === steps.length - 1;
 
   const handleNext = async () => {
-    if (isLast) {
-      setSaving(true);
-      // Mark onboarding complete in Clerk metadata
+    if (!isLast) { setStep(s => s + 1); return; }
+    if (saving) return;
+    setSaving(true);
+    try {
+      // Marking onboarding complete is a convenience, not a gate. If Clerk
+      // refuses it, going to the app anyway is far better than stranding
+      // somebody on the last step of a welcome flow with a dead button —
+      // which is what happened, because nothing cleared `saving` on a throw.
       await user?.update({ unsafeMetadata: { onboardingComplete: true } });
+    } catch (e) {
+      console.error('[onboarding] could not mark complete', e);
+    } finally {
+      setSaving(false);
       router.push('/home');
-    } else {
-      setStep(s => s + 1);
     }
   };
 

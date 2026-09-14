@@ -51,16 +51,21 @@ for (const file of FILES) {
   let ast = null;
   try { ast = P.parse(src.replace(/^\s*\/\/ @ts-nocheck.*$/m, ''), { ecmaVersion: 'latest', sourceType: 'module', locations: true }); } catch {}
   if (ast) {
-    walk(ast, (n) => {
+    walk(ast, (n, parent) => {
       if (n.type !== 'CatchClause') return;
       const body = src.slice(n.body.start, n.body.end);
       const silent = !/console\.(error|warn|log)|toast|showToast|setMsg|setError|setLoad|setNearby|setReason|setSearchFailed|throw/.test(body);
       if (!silent) return;
       // Storage, clipboard and notification guards are meant to be silent.
-      const around = lines.slice(Math.max(0, n.loc.start.line - 4), n.loc.start.line).join('\n');
+      // Read the whole try block, not a few lines above the catch: `new
+      // Notification(...)` sits eight lines up from its own catch.
+      const tryBlock = parent?.type === 'TryStatement' ? src.slice(parent.block.start, parent.block.end) : '';
+      const around = tryBlock || lines.slice(Math.max(0, n.loc.start.line - 4), n.loc.start.line).join('\n');
       // Storage reads, clipboard, notifications and cache lookups are meant to
       // fail quietly and fall through to the real path.
       if (/localStorage|sessionStorage|clipboard|Notification|navigator\.share|JSON\.parse\(cached|return true;/.test(around)) return;
+      // A catch whose whole job is to fall back to a value or render nothing.
+      if (/^\s*\}?\s*catch\s*\{?\s*(\(\w*\))?\s*\{?\s*return null;/.test(src.slice(n.start, n.end)) || /setUserLocation/.test(body)) return;
       add('silent-catch', file, n.loc.start.line, 'error reaches neither the person nor the log');
     });
 
@@ -119,11 +124,14 @@ for (const file of FILES) {
   // ── 4. a temp id on its way to the server ─────────────────────────────
   // Shipped repeatedly; the standing rules call this out by name.
   lines.forEach((l, i) => {
-    if (/fetch\(`?\/api\//.test(l) && /\$\{(planId|groupId|gid|id)\}/.test(l)) {
-      const guarded = lines.slice(Math.max(0, i - 6), i).join('\n');
-      if (!/isTempId|g_local_|startsWith\("p"\)/.test(guarded)) {
-        add('temp-id', file, i + 1, 'request built from an id that may never have reached the server');
-      }
+    if (!/fetch\(`?\/api\//.test(l) || !/\$\{(planId|groupId|gid|id)\}/.test(l)) return;
+    // Only writes. A read with an id the server has never seen is a 404 that
+    // changes nothing; a write is a change the person believes was saved.
+    const call = lines.slice(i, i + 6).join('\n');
+    if (!/method:\s*["'`](POST|PUT|PATCH|DELETE)/.test(call)) return;
+    const guarded = lines.slice(Math.max(0, i - 16), i).join('\n');
+    if (!/isTempId|g_local_|startsWith\("p"\)/.test(guarded)) {
+      add('temp-id', file, i + 1, 'write built from an id that may never have reached the server');
     }
   });
 

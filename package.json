@@ -12,7 +12,7 @@
     "test:e2e": "playwright test",
     "doctor": "node scripts/doctor.mjs",
     "check:scopes": "node scripts/check-scopes.mjs",
-    "verify": "npm run check:scopes && npm run check:responses && npm run check:queries && npm run type-check && npm run test:unit && npm run build",
+    "verify": "npm run bug-sweep && npm run check:scopes && npm run check:responses && npm run check:queries && npm run type-check && npm run test:unit && npm run build",
     "check:queries": "node scripts/check-queries.mjs",
     "check:responses": "node scripts/check-responses.mjs",
     "bug-sweep": "node scripts/bug-sweep.mjs"

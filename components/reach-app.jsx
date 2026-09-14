@@ -397,8 +397,14 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   const [nearbyState,setNearbyState]=useState("loading"); // loading|ready|denied|none
   const [nearbyReason,setNearbyReason]=useState(null);
   useEffect(()=>{
+    // Every exit from here has to move the state off "loading". A swallowed
+    // throw left the strip reading "Looking for events near you…" forever,
+    // which is indistinguishable from a hung app.
     try{
-      if(typeof navigator==="undefined"||!navigator.geolocation)return;
+      if(typeof navigator==="undefined"||!navigator.geolocation){
+        setNearbyState("denied");
+        return;
+      }
       navigator.geolocation.getCurrentPosition(
         async function(pos){
           try{
@@ -410,13 +416,24 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
               setNearbyEvents(data.events||[]);
               setNearbyReason(data.reason||null);
               setNearbyState(data.events?.length?"ready":"none");
-            }else{setNearbyState("none");}
-          }catch(e){}
+            }else{
+              console.error("[home] nearby returned",res.status);
+              setNearbyReason("provider_error");
+              setNearbyState("none");
+            }
+          }catch(e){
+            console.error("[home] nearby failed",e);
+            setNearbyReason("provider_error");
+            setNearbyState("none");
+          }
         },
         function(err){ setNearbyState("denied"); },
         {timeout:8000,enableHighAccuracy:false,maximumAge:300000}
       );
-    }catch(e){}
+    }catch(e){
+      console.error("[home] geolocation unavailable",e);
+      setNearbyState("denied");
+    }
   },[]);
   const allPlans=groups.flatMap(g=>g.plans.map(p=>({...p,group:g})));
   const upcoming=allPlans.filter(p=>p.status==="booked"||p.status==="voting"||p.status==="approved");
@@ -1450,7 +1467,9 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   // Membership changes hit the server immediately. They used to be collected
   // in local state and dropped on Save, which only ever sent name and emoji.
   const addMember=async payload=>{
-    if(busy)return;setBusy(true);
+    if(busy)return;
+    if(isTempId(groupId)){toast("This group is still saving — try again in a moment");return;}
+    setBusy(true);
     try{
       const r=await fetch(`/api/groups/${groupId}/members`,{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -1472,7 +1491,9 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   };
 
   const removeMember=async uid=>{
-    if(busy)return;setBusy(true);
+    if(busy)return;
+    if(isTempId(groupId)){toast("This group is still saving — try again in a moment");return;}
+    setBusy(true);
     try{
       const r=await fetch(`/api/groups/${groupId}/members`,{
         method:"DELETE",headers:{"Content-Type":"application/json"},
@@ -1487,6 +1508,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   };
 
   const revokeInvite=async id=>{
+    if(isTempId(groupId)){toast("This group is still saving — try again in a moment");return;}
     try{
       const r=await fetch(`/api/groups/${groupId}/invites`,{
         method:"DELETE",headers:{"Content-Type":"application/json"},
@@ -2175,8 +2197,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       if(res.ok){
         const data=await res.json();
         setMemberStatus(data.members||{});
-      }
-    }catch(e){}
+      }else console.error("[groupTrip] quiz-status returned",res.status);
+    }catch(e){console.error("[groupTrip] quiz-status failed",e);}
     setLoadingStatus(false);
   };
 
@@ -3195,7 +3217,9 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
           body:JSON.stringify({vibe,destStyle:dest,accommodation:accom,dealbreakers:bks,budget:parseInt(budget),nights:nights(),travelers:selGroup?.memberIds?.length||2}),
         });
         if(res.ok){const {recommendations}=await res.json();setAiRecs(recommendations||[]);}
-      }catch(e){}finally{setLoadingRecs(false);}
+        else console.error("[createPlan] recommendations returned",res.status);
+      }catch(e){console.error("[createPlan] recommendations failed",e);}
+      finally{setLoadingRecs(false);}
     },800);
     return()=>clearTimeout(timer);
   },[vibe,dest,budget,accom]);
@@ -3930,7 +3954,11 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   useEffect(()=>{ load(); },[]);
 
   const startPayment=async()=>{
-    if(busy)return; setBusy(true);
+    if(busy)return;
+    // Paying against a plan the server has never seen would take money with
+    // nothing to attach it to.
+    if(isTempId(planId)){ toast("This trip is still saving — try again in a moment"); return; }
+    setBusy(true);
     try{
       const r=await fetch(`/api/plans/${planId}/funding`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});
       const d=await r.json().catch(()=>({}));
@@ -3978,7 +4006,11 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   },[phase,clientSecret]);
 
   const confirmPay=async()=>{
-    if(busy||!stripeRef.current)return; setBusy(true);
+    if(busy||!stripeRef.current)return;
+    // Guarded again here rather than relying on startPayment: this is the call
+    // that follows the money leaving someone's account.
+    if(isTempId(planId)){ toast("This trip is still saving — try again in a moment"); return; }
+    setBusy(true);
     try{
       const {error,paymentIntent}=await stripeRef.current.confirmPayment({elements:elementsRef.current,redirect:"if_required"});
       if(error)throw new Error(error.message||"Payment didn't go through.");
@@ -4004,7 +4036,16 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   const approveAll=async(acceptNewPrice)=>{
     setPhase("approving");
     let fresh=[];
-    try{ const r=await fetch(`/api/bookings?planId=${planId}`); const j=await r.json(); fresh=(j&&(j.bookings||j))||[]; }catch(e){ fresh=bookings; }
+    try{
+      const r=await fetch(`/api/bookings?planId=${planId}`);
+      const j=await r.json();
+      fresh=(j&&(j.bookings||j))||[];
+    }catch(e){
+      // Falling back to what is already on screen is right; doing it silently
+      // meant an approval run against a stale list left no trace at all.
+      console.error("[checkout] could not refresh bookings, using cached",e);
+      fresh=bookings;
+    }
     const waiting=(fresh||[]).filter(b=>b.status==="awaiting_approval");
     // A failed approval used to be swallowed and the screen still said done,
     // so somebody could believe a hotel was booked when the request had been
@@ -4913,6 +4954,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   // The members tab used to filter a member out of local state and never call
   // the API at all, so whoever you removed reappeared on the next refresh.
   const removeGroupMember=async(groupId,userId)=>{
+    if(isTempId(groupId))throw new Error("That group is still saving — try again in a moment");
     const r=await fetch(`/api/groups/${groupId}/members`,{
       method:"DELETE",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({userId}),
@@ -4940,6 +4982,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   // Admin only, and the database cascades: the group's plans, members and
   // pending invites go with it. The confirmation for this lives in the UI.
   const deleteGroup=async(groupId)=>{
+    if(isTempId(groupId))throw new Error("That group is still saving — try again in a moment");
     const r=await fetch(`/api/groups/${groupId}`,{method:"DELETE"});
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.error||"Couldn't delete that group");
@@ -5038,6 +5081,7 @@ export default function ReachApp({realUser,onSignOut}={}){
 
   // Update a plan's status on the server
   const updatePlanOnServer=async(planId,updates)=>{
+    if(isTempId(planId)){console.error("[plan] update skipped, plan not saved yet",planId);return false;}
     try{
       const res=await fetch(`/api/plans/${planId}`,{
         method:"PATCH",
@@ -5071,6 +5115,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   // product where nothing books until the group is in, a phantom vote is worse
   // than a failed one.
   const castVoteOnServer=async(planId,option)=>{
+    if(isTempId(planId)){showToast("Give that a second — the plan is still saving");return false;}
     try{
       const res=await fetch(`/api/plans/${planId}/vote`,{
         method:"POST",
@@ -5095,6 +5140,7 @@ export default function ReachApp({realUser,onSignOut}={}){
 
   // Save itinerary items to server
   const saveItineraryToServer=async(planId,items)=>{
+    if(isTempId(planId)){console.error("[itinerary] save skipped, plan not saved yet",planId);return false;}
     try{
       const res=await fetch(`/api/plans/${planId}/itinerary`,{
         method:"PUT",
