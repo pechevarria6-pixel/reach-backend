@@ -356,8 +356,12 @@ test.describe('12. Theme', () => {
 
   test('The shell paints a themed background, never transparent', async ({ page }) => {
     await page.goto(`${BASE_URL}/sign-in`);
-    const bg = await page.evaluate(() =>
-      getComputedStyle(document.body).backgroundColor);
-    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
+    // The shell's background comes from a CSS variable defined in an inline
+    // style tag. Reading it the instant navigation resolves races the
+    // stylesheet, so poll rather than sampling once.
+    await expect.poll(
+      () => page.evaluate(() => getComputedStyle(document.body).backgroundColor),
+      { timeout: 10000 },
+    ).not.toBe('rgba(0, 0, 0, 0)');
   });
 });
