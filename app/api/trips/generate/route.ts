@@ -118,6 +118,9 @@ export async function POST(req: NextRequest) {
 
   const prefs = (members || []).map((m: any) => m.users).filter(Boolean);
   const groupSize = prefs.length || 2;
+  // Travelling alone is a different trip, not a smaller one. The prompt used
+  // to say "GROUP: 1 people" and then plan for a committee.
+  const solo = groupSize <= 1;
   const nights = startDate && endDate
     ? Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000)
     : 5;
@@ -153,13 +156,17 @@ export async function POST(req: NextRequest) {
     const { destination, vibe, costs } = body.tripData || {};
     const prompt = `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
 
-Group: ${groupSize} people, ${tripPace} pace
+${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
 Music/nightlife: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
 Activities: ${activityVibes.slice(0, 4).join(', ') || 'mixed'}
 Dietary: ${dietaryNeeds.join(', ') || 'no restrictions'}
 Accommodation: ${tripAccommodation}
 
+${solo ? `On their own, so every slot works for one: counter or bar seating,
+neighbourhoods that are comfortable solo, some days to meet people and some to
+talk to nobody. Nothing that needs a second person. Never mention sharing.
+` : ''}
 Write one entry for each of the ${nights} days.
 
 Be specific: real venue names, real neighbourhoods. Make it feel like a local
@@ -225,7 +232,9 @@ better than a confident wrong answer.`;
   // ── STAGE 1: Fast — just destinations + cost estimates, NO itinerary ───────
   const prompt = `You are Reach's AI travel planner. Generate exactly 3 destination options. BE FAST — no itinerary needed yet, just destination overviews and cost estimates.
 
-GROUP: ${groupSize} people, ${nights} nights, $${effectiveBudget}/person budget
+${solo
+  ? `TRAVELLING: alone, ${nights} nights, $${effectiveBudget} budget`
+  : `GROUP: ${groupSize} people, ${nights} nights, $${effectiveBudget}/person budget`}
 DEPARTING: ${departure} (${departureCode})
 DATES: ${startDate || 'flexible'} to ${endDate || 'flexible'}
 TRIP TYPE: ${tripTypes}
@@ -264,6 +273,14 @@ food_scene and music_scene to two sentences each. tagline is at most ten
 words. emoji is a single emoji for the destination. accommodation.example
 names a specific hotel or neighbourhood.
 
+${solo ? `
+Travelling alone, so plan for one — not for a smaller group. Somewhere safe to
+arrive at after dark. A single room, guesthouse or good hostel, never a flat
+priced to be split; note a single supplement if there is one. Places where
+eating alone is normal — counters, bars, markets. Never "great for sharing",
+never splitting, voting or what the group wants. Keep all of this inside the
+word limits below.
+` : ''}
 Be fast and be specific. Real place names, not categories.
 
 Keep it tight — this has to fit in one response:

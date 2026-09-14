@@ -1712,7 +1712,13 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 // ─── CREATE GROUP ─────────────────────────────────────────────────────────────
 const DEFAULT_GROUP_EMOJI="🎉";
 function inferGroupEmoji(n){const s=(n||"").toLowerCase();const rules=[[/birthday|bday/,"🎂"],[/ski|snow|tahoe|aspen/,"🎿"],[/beach|cabo|cancun|island|bahamas|miami|playa|lake/,"🏝️"],[/concert|show|festival|music|tour/,"🎸"],[/dinner|food|restaurant|brunch|taco|pizza|omakase/,"🍕"],[/camp|hike|hiking|trail|mountain|yosemite|zion/,"🏕️"],[/vegas|party|bachelor|bachelorette/,"🎉"],[/golf/,"⛳"],[/wedding/,"💍"],[/road ?trip|drive/,"🚗"],[/europe|paris|tokyo|london|flight|abroad|trip|travel/,"✈️"]];for(const r of rules){if(r[0].test(s))return r[1];}return DEFAULT_GROUP_EMOJI;}
-function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
+function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me}){
+  // Solo is a choice made here, before anything else, because everything
+  // downstream changes: no inviting, no voting, and recommendations written
+  // for one person rather than a committee. It used to be inferred from a
+  // group that happened to have one member, which is why a solo trip still
+  // got asked to put itself to a vote.
+  const [mode,setMode]=useState(null);   // null | "solo" | "group"
   const [step,setStep]=useState(0);
   const [name,setName]=useState("");
   const [members,setMembers]=useState([]);
@@ -1751,9 +1757,14 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
     if(creating)return;
     setCreating(true);
     const tempId="g_local_"+Date.now();
-    const finalEmoji=inferGroupEmoji(name);const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:members,inviteEmails,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
+    // A solo group is you and nobody else, and carries no pending invites —
+    // everything downstream keys off a member count of one.
+    const finalMembers=mode==="solo"?(me?[me]:[]):members;
+    const finalInvites=mode==="solo"?[]:inviteEmails;
+    const finalEmoji=mode==="solo"?"🧍":inferGroupEmoji(name);
+    const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:finalMembers,inviteEmails:finalInvites,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
     setGroups(gs=>[...gs,newGroup]);
-    toast(`${name} created!`);
+    toast(mode==="solo"?`${name} — just you 🧍`:`${name} created!`);
     // Save to server in background
     if(typeof saveGroupToServer==="function")saveGroupToServer(newGroup);
     onBack();
@@ -1765,10 +1776,64 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
     <div className="sc">
       <div style={{padding:"12px 20px 18px"}}>
         <ScreenHeader onBack={onBack} label="Cancel"/>
-        <div className="pt">{step===0?"Name your group":"Add Members"}</div>
-        <div className="sd" style={{marginTop:14}}>{[0,1].map(i=><div key={i} className={`sd-d ${i<=step?"active":""}`}/>)}</div>
+        <div className="pt">
+          {!mode?"Who's going?":mode==="solo"?"Name your trip":step===0?"Name your group":"Add people"}
+        </div>
+        {mode&&mode!=="solo"&&(
+          <div className="sd" style={{marginTop:14}}>{[0,1].map(i=><div key={i} className={`sd-d ${i<=step?"active":""}`}/>)}</div>
+        )}
       </div>
-      {step===0&&(
+
+      {!mode&&(
+        <div style={{padding:"0 20px"}}>
+          <div style={{fontSize:13.5,color:C.t2,marginBottom:18,lineHeight:1.6}}>
+            This changes everything after it, so it is worth getting right.
+          </div>
+          <button onClick={()=>{setMode("solo");setName("");}}
+            style={{width:"100%",textAlign:"left",display:"flex",gap:14,alignItems:"flex-start",
+              padding:16,borderRadius:16,border:`2px solid ${C.border}`,background:C.s2,
+              cursor:"pointer",marginBottom:10}}>
+            <span style={{fontSize:28,lineHeight:1}}>🧍</span>
+            <span>
+              <span style={{display:"block",fontSize:15,fontWeight:600,color:C.t1,marginBottom:3}}>Just me</span>
+              <span style={{display:"block",fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+                Solo travel. Nobody to invite, nothing to vote on, and every suggestion
+                written for one person travelling alone.
+              </span>
+            </span>
+          </button>
+          <button onClick={()=>setMode("group")}
+            style={{width:"100%",textAlign:"left",display:"flex",gap:14,alignItems:"flex-start",
+              padding:16,borderRadius:16,border:`2px solid ${C.border}`,background:C.s2,
+              cursor:"pointer"}}>
+            <span style={{fontSize:28,lineHeight:1}}>👥</span>
+            <span>
+              <span style={{display:"block",fontSize:15,fontWeight:600,color:C.t1,marginBottom:3}}>With other people</span>
+              <span style={{display:"block",fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+                Family, friends, whoever. Everyone gets a say and the costs split themselves.
+              </span>
+            </span>
+          </button>
+        </div>
+      )}
+
+      {mode==="solo"&&(
+        <div style={{padding:"0 20px"}}>
+          <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:44,minWidth:52,textAlign:"center"}}>{inferGroupEmoji(name)}</div>
+            <input className="inp" value={name} onChange={e=>setName(e.target.value)}
+              placeholder="e.g., Japan on my own" style={{flex:1}} autoFocus/>
+          </div>
+          <div style={{fontSize:12,color:C.t3,marginBottom:24,lineHeight:1.55}}>
+            Give it a name so you can find it later. We pick the icon from what you type.
+          </div>
+          <button className="bp" disabled={!name.trim()||creating} onClick={create}>
+            {creating?"Setting it up…":"Start planning →"}
+          </button>
+        </div>
+      )}
+
+      {mode==="group"&&step===0&&(
         <div style={{padding:"0 20px"}}>
           <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:10}}>
             {/* The emoji is inferred from the name as you type — one fewer
@@ -1782,7 +1847,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer}){
           <button className="bp" disabled={!name.trim()} onClick={()=>setStep(1)}>Continue →</button>
         </div>
       )}
-      {step===1&&(
+      {mode==="group"&&step===1&&(
         <div>
           <div style={{padding:"0 20px 12px",fontSize:13,color:C.t2}}>Invite people to {name||"your group"}</div>
           <div style={{padding:"0 20px 12px"}}>
@@ -3706,6 +3771,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   },[planId]);
 
   if(!plan||!group)return <NotLoaded what={group?"This plan":"This group"} onBack={onBack}/>;
+  // Travelling alone means there is nobody to ask. Every voting affordance is
+  // absent rather than disabled — a greyed-out "put this to the group" is
+  // still a reminder that the app thinks you are a committee.
+  const soloTrip=(group.memberIds||[]).length<=1;
 
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const totalV=Object.values(plan.votes||{}).reduce((a,b)=>a+b,0);
@@ -3726,7 +3795,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     if(updatePlanOnServer)await updatePlanOnServer(planId,{status:newStatus});
     setLoading(false);
   };
-  const tabs=["overview","itinerary",plan.options.length>0?"vote":null,"budget"].filter(Boolean);
+  const tabs=["overview","itinerary",(!soloTrip&&plan.options.length>0)?"vote":null,"budget"].filter(Boolean);
 
   return(
     <div className="sc" style={{paddingBottom:0}}>
@@ -3782,7 +3851,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               </div>
             )}
             <div style={{padding:"0 20px"}}>
-              {plan.status==="planning"&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"voting"}:p)}));setAtab("vote");toast("Sent to the group for a vote!");}}>Send to group for a vote</button>}
+              {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"voting"}:p)}));setAtab("vote");toast("Sent round for a vote");}}>Send to the group for a vote</button>}
+              {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updatePlanOnServer&&updatePlanOnServer(planId,{status:"approved"});updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"approved"}:p)}));toast("Locked in — let's book it");}}>Lock this in</button>}
               {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"approved"}:p)}));toast("Approved — let's book it");}}>Approve and proceed to booking</button>}
               {plan.status==="approved"&&<button className="bp" style={{marginBottom:10,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>Book Everything →</button>}
               {plan.status==="booked"&&<button className="bp" style={{marginBottom:10}} onClick={()=>setAtab("itinerary")}>View Itinerary</button>}
