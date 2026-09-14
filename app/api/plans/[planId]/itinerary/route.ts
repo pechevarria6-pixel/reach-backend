@@ -6,6 +6,8 @@ const ItemSchema = z.object({
   type: z.enum(['flight','hotel','activity','restaurant','transport']),
   title: z.string().min(1),
   subtitle: z.string().optional(),
+  booking_mode: z.enum(['reach','ahead','walk_in']).nullish(),
+  payment_note: z.string().max(120).nullish(),
   scheduled_time: z.string().optional(),
   confirmation_number: z.string().optional(),
   is_confirmed: z.boolean().optional(),
@@ -67,8 +69,7 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
   await supabase.from('itinerary_items').delete().eq('plan_id', params.planId);
 
   if (items && items.length > 0) {
-    await supabase.from('itinerary_items').insert(
-      items.map((item: any, idx: number) => ({
+    const rows = items.map((item: any, idx: number) => ({
         plan_id: params.planId,
         type: item.type,
         title: item.title,
@@ -77,9 +78,33 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
         confirmation_number: item.conf || item.confirmation_number || null,
         is_confirmed: !!(item.conf || item.confirmation_number),
         cost_cents: item.cost_cents || 0,
+        // How you get in and what they take. Reach books what it can; for
+        // everything else the traveller needs these before they arrive.
+        booking_mode: item.booking_mode || null,
+        payment_note: item.payment_note || null,
         sort_order: idx,
-      }))
-    );
+    }));
+
+    const { error } = await supabase.from('itinerary_items').insert(rows);
+    if (error) {
+      // booking_mode and payment_note arrive in a migration. Until it is run,
+      // save the days without them rather than losing the whole itinerary —
+      // the practical details are worth having, the days are worth more.
+      if (/column .* does not exist/i.test(error.message || '')) {
+        console.error('[itinerary] practical columns missing, saving without them —'
+          + ' run sql/itinerary-practicals-2026-09-14.sql');
+        const { error: retry } = await supabase.from('itinerary_items').insert(
+          rows.map(({ booking_mode, payment_note, ...rest }: any) => rest),
+        );
+        if (retry) {
+          console.error('[itinerary] save failed', retry);
+          return NextResponse.json({ error: 'Could not save those days' }, { status: 500 });
+        }
+      } else {
+        console.error('[itinerary] save failed', error);
+        return NextResponse.json({ error: 'Could not save those days' }, { status: 500 });
+      }
+    }
   }
 
   const { data: newItems } = await supabase.from('itinerary_items')

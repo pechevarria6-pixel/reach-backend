@@ -164,7 +164,21 @@ Write one entry for each of the ${nights} days.
 
 Be specific: real venue names, real neighbourhoods. Make it feel like a local
 planned it, not a guidebook. insider_tip is the thing a visitor would only
-know on a second trip.`;
+know on a second trip.
+
+Every slot needs its practical details, because the point of this is that
+nobody arrives somewhere and finds out the hard way:
+- "booking": "reach" if it is a hotel, flight, tour or restaurant that can be
+  reserved through a booking system; "ahead" if it needs reserving but only
+  direct — a tasting menu, a permit, a timed entry; "walk_in" if you just turn
+  up.
+- "payment": what they actually take, in a few words. Be concrete and honest:
+  "Cash only", "Cards, no Amex", "Contactless everywhere", "Cash for the boat,
+  cards at the restaurant", "Free". If a place is known for being cash only,
+  say so — that is the single most useful thing on the whole line.
+
+Do not guess a card policy you are unsure of. "Cards usually accepted" is
+better than a confident wrong answer.`;
 
     const client = anthropicOrNull();
     if (!client) {

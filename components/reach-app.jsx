@@ -354,10 +354,17 @@ function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);retu
 function itineraryRows(days){
   return (days||[]).flatMap(day=>{
     const cost=Math.round((day.cost_today||0)*100);
+    // A slot is an object now: what it is, how you get in, and what they take.
+    // Older generations sent a bare string, so read both.
+    const slot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null}:(v||{});
+    const m=slot(day.morning), a=slot(day.afternoon), e=slot(day.evening);
     return [
-      {time:`Day ${day.day} · Morning`,title:day.morning,sub:day.title||"",type:"activity",conf:null,filled:false,cost_cents:cost},
-      {time:`Day ${day.day} · Afternoon`,title:day.afternoon,sub:"",type:"activity",conf:null,filled:false},
-      {time:`Day ${day.day} · Evening`,title:day.evening,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false},
+      {time:`Day ${day.day} · Morning`,title:m.plan,sub:day.title||"",type:"activity",conf:null,filled:false,
+        cost_cents:cost,booking_mode:m.booking||null,payment_note:m.payment||null},
+      {time:`Day ${day.day} · Afternoon`,title:a.plan,sub:"",type:"activity",conf:null,filled:false,
+        booking_mode:a.booking||null,payment_note:a.payment||null},
+      {time:`Day ${day.day} · Evening`,title:e.plan,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false,
+        booking_mode:e.booking||null,payment_note:e.payment||null},
     ].filter(r=>r.title);
   });
 }
@@ -3683,7 +3690,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         if(data.votes)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:data.votes,myVote:data.myVote}:p)}));
         if(data.myVote)setMyVote(data.myVote);
         // Update itinerary
-        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:data.itinerary.map(item=>({time:item.scheduled_time||"",title:item.title,sub:item.subtitle||"",type:item.type,conf:item.confirmation_number||null,filled:item.is_confirmed}))}:p)}));
+        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:data.itinerary.map(item=>({time:item.scheduled_time||"",title:item.title,sub:item.subtitle||"",type:item.type,conf:item.confirmation_number||null,filled:item.is_confirmed,booking_mode:item.booking_mode||null,payment_note:item.payment_note||null}))}:p)}));
         setLoadFailed(false);
       }catch(e){
         // Swallowing this made the itinerary tab say "No itinerary yet" when
@@ -3815,6 +3822,32 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     <div className="it-cont">
                       <div style={{display:"flex",alignItems:"center",gap:6}}><span>{tIc[item.type]||"📌"}</span><div className="it-tt">{item.title}</div></div>
                       <div className="it-sb">{item.sub}</div>
+                      {/* Reach books what it can. For the rest, the practical
+                          details belong here rather than at the door. */}
+                      {(item.booking_mode||item.payment_note)&&(
+                        <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
+                          {item.booking_mode==="reach"&&(
+                            <span className="pill pill-p">Reach can book this</span>
+                          )}
+                          {item.booking_mode==="ahead"&&(
+                            <span className="pill pill-a">Reserve ahead</span>
+                          )}
+                          {item.booking_mode==="walk_in"&&(
+                            <span className="pill pill-m">Just turn up</span>
+                          )}
+                        </div>
+                      )}
+                      {/* A real payment note runs to a sentence — "cards at the
+                          restaurant, cash only for drinks and cover" — so it is
+                          a line, not a pill. Cash-only gets the warm colour
+                          because it is the one that ruins an evening. */}
+                      {item.payment_note&&(
+                        <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,
+                          color:/cash only/i.test(item.payment_note)?C.amber:C.t2}}>
+                          <span style={{flexShrink:0}}>{/cash only/i.test(item.payment_note)?"💵":"💳"}</span>
+                          <span>{item.payment_note}</span>
+                        </div>
+                      )}
                       {item.conf&&<div className="it-cf">✓ Confirmed · {item.conf}</div>}
                     </div>
                   </div>
@@ -5011,6 +5044,11 @@ export default function ReachApp({realUser,onSignOut}={}){
       type:item.type,
       conf:item.confirmation_number||null,
       filled:item.is_confirmed,
+      // Dropping these here would show the practicals right after generating
+      // and lose them on the next load, which is the exact shape of the bug
+      // that lost whole itineraries.
+      booking_mode:item.booking_mode||null,
+      payment_note:item.payment_note||null,
     })),
     votes:p.votes||{},
     options:p.vote_options||[],

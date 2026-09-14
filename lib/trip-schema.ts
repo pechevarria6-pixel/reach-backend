@@ -41,12 +41,27 @@ export const TripSchema = z.object({
 
 export const TripsSchema = z.object({ trips: z.array(TripSchema) });
 
+// Each slot carries how you get in and what they take, not just what it is.
+// Reach books whatever it can; for everything else the traveller has to be
+// told the practical details up front, or a good suggestion still ends with
+// somebody at a door that only takes cash.
+export const SlotSchema = z.object({
+  plan: z.string(),
+  // reach  — Reach can book this for you
+  // ahead  — needs reserving in advance, but not through Reach
+  // walk_in— just turn up
+  booking: z.enum(['reach', 'ahead', 'walk_in']),
+  // Free text because the real world is not an enum: "Cash only",
+  // "Cards, no Amex", "Contactless everywhere", "Cash for the boat".
+  payment: z.string(),
+});
+
 export const ItineraryDaySchema = z.object({
   day: z.number(),
   title: z.string(),
-  morning: z.string(),
-  afternoon: z.string(),
-  evening: z.string(),
+  morning: SlotSchema,
+  afternoon: SlotSchema,
+  evening: SlotSchema,
   cost_today: z.number(),
   insider_tip: z.string(),
 });
@@ -111,6 +126,17 @@ export const TRIPS_JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+export const slot = {
+  type: 'object',
+  properties: {
+    plan: str,
+    booking: { type: 'string', enum: ['reach', 'ahead', 'walk_in'] },
+    payment: str,
+  },
+  required: ['plan', 'booking', 'payment'],
+  additionalProperties: false,
+} as const;
+
 export const ITINERARY_JSON_SCHEMA = {
   type: 'object',
   properties: {
@@ -119,8 +145,8 @@ export const ITINERARY_JSON_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          day: num, title: str, morning: str, afternoon: str,
-          evening: str, cost_today: num, insider_tip: str,
+          day: num, title: str, morning: slot, afternoon: slot,
+          evening: slot, cost_today: num, insider_tip: str,
         },
         required: ['day', 'title', 'morning', 'afternoon', 'evening', 'cost_today', 'insider_tip'],
         additionalProperties: false,

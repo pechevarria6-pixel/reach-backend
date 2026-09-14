@@ -70,9 +70,15 @@ test('no array anywhere in either schema sets an unsupported minItems', () => {
 });
 
 // ── parseModelJSON: the guard every model response goes through ───────────
+const slot = (plan: string, booking = 'walk_in', payment = 'Cards accepted') =>
+  ({ plan, booking, payment });
+
 const validDay = {
-  day: 1, title: 'Arrival', morning: 'Walk the old town', afternoon: 'Museum',
-  evening: 'Dinner at Casa Luis', cost_today: 85, insider_tip: 'Go before noon',
+  day: 1, title: 'Arrival',
+  morning: slot('Walk the old town'),
+  afternoon: slot('Museum', 'ahead', 'Cards only, book a timed entry'),
+  evening: slot('Dinner at Casa Luis', 'reach', 'Cash only'),
+  cost_today: 85, insider_tip: 'Go before noon',
 };
 
 test('valid output parses and validates', () => {
@@ -85,6 +91,26 @@ test('malformed JSON returns null rather than throwing', () => {
   assert.equal(parseModelJSON('{"itinerary": [', ItinerarySchema, 'test'), null);
   assert.equal(parseModelJSON('', ItinerarySchema, 'test'), null);
   assert.equal(parseModelJSON('Here is your trip!', ItinerarySchema, 'test'), null);
+});
+
+test('every slot carries how you get in and what they take', () => {
+  // Reach books what it can; for everything else the traveller has to be told
+  // before they arrive, not at the door.
+  const out = parseModelJSON(JSON.stringify({ itinerary: [validDay] }), ItinerarySchema, 'test');
+  const day = out!.itinerary[0];
+  assert.equal(day.evening.booking, 'reach');
+  assert.equal(day.evening.payment, 'Cash only');
+  assert.equal(day.afternoon.booking, 'ahead');
+});
+
+test('a slot missing its payment note is rejected, not quietly dropped', () => {
+  const bad = { ...validDay, morning: { plan: 'Walk', booking: 'walk_in' } };
+  assert.equal(parseModelJSON(JSON.stringify({ itinerary: [bad] }), ItinerarySchema, 'test'), null);
+});
+
+test('booking mode is constrained to the three real cases', () => {
+  const bad = { ...validDay, morning: slot('Walk', 'maybe') };
+  assert.equal(parseModelJSON(JSON.stringify({ itinerary: [bad] }), ItinerarySchema, 'test'), null);
 });
 
 test('well-formed JSON of the wrong shape returns null', () => {
