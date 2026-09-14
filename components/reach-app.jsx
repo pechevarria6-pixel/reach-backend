@@ -1181,13 +1181,35 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
 }
 
 // ─── GROUPS LIST ─────────────────────────────────────────────────────────────
-function GroupsScreen({groups,um,push}){
+function GroupsScreen({groups,um,push,loading}){
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
         <div><div className="pt">Groups</div><div style={{fontSize:13,color:C.t2,marginTop:2}}>Your planning circles</div></div>
         <button className="bsm bsm-p" onClick={()=>push("createGroup")}>+ New</button>
       </div>
+      {/* With no groups this screen rendered a heading and nothing else — a
+          blank page on the tab a new person opens first. */}
+      {loading&&groups.length===0&&(
+        <div style={{padding:"20px",display:"flex",alignItems:"center",gap:10,color:C.t2,fontSize:13}}>
+          <div style={{width:16,height:16,border:`2px solid ${C.accentText}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
+          Loading your groups…
+        </div>
+      )}
+      {!loading&&groups.length===0&&(
+        <div style={{margin:"0 20px",padding:"32px 24px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:20,textAlign:"center"}}>
+          <div style={{fontSize:40,marginBottom:12}}>👋</div>
+          <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>No groups yet</div>
+          <div style={{fontSize:13,color:C.t2,lineHeight:1.6,marginBottom:20}}>
+            A group is the people you travel with. Make one, invite them, and Reach
+            plans around what everybody actually wants.
+          </div>
+          <button className="bp" onClick={()=>push("createGroup")}>Create your first group</button>
+          <div style={{fontSize:12,color:C.t3,marginTop:14,lineHeight:1.5}}>
+            Travelling alone? Make one anyway — you can plan a solo trip from it.
+          </div>
+        </div>
+      )}
       {groups.map(g=>{
         const active=g.plans.filter(p=>p.status!=="completed");
         return(
@@ -1387,7 +1409,8 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
     try{
       const r=await fetch(`/api/groups/${groupId}/invites`);
       if(r.ok){const d=await r.json();setInvites(d.invites||[]);}
-    }catch(e){}
+      else console.error("[editGroup] invites returned",r.status);
+    }catch(e){console.error("[editGroup] invites failed",e);}
   };
   useEffect(()=>{loadInvites();},[groupId]);
 
@@ -3523,6 +3546,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [myVote,setMyVote]=useState(null);
   const [loading,setLoading]=useState(false);
 
+  const [loadFailed,setLoadFailed]=useState(false);
+
   // Fetch latest plan data on mount
   useEffect(()=>{
     // A temp id means the plan has not reached the server yet; asking for it
@@ -3531,7 +3556,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     const fetchPlan=async()=>{
       try{
         const r=await fetch(`/api/plans/${planId}`);
-        if(!r.ok)return;
+        if(!r.ok){
+          console.error("[planDetail] plan fetch returned",r.status);
+          setLoadFailed(true);
+          return;
+        }
         const data=await r.json();
         if(data.participants?.length)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,participants:data.participants}:p)}));
         // Update vote tally from server
@@ -3539,7 +3568,14 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         if(data.myVote)setMyVote(data.myVote);
         // Update itinerary
         if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:data.itinerary.map(item=>({time:item.scheduled_time||"",title:item.title,sub:item.subtitle||"",type:item.type,conf:item.confirmation_number||null,filled:item.is_confirmed}))}:p)}));
-      }catch(e){}
+        setLoadFailed(false);
+      }catch(e){
+        // Swallowing this made the itinerary tab say "No itinerary yet" when
+        // the truth was "we could not ask" — the same screen for a plan with
+        // no days and a plan whose days failed to load.
+        console.error("[planDetail] could not load plan",e);
+        setLoadFailed(true);
+      }
     };
     fetchPlan();
   },[planId]);
@@ -3633,10 +3669,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           <div style={{padding:"12px 0"}}>
             {plan.itinerary.length===0?(
               <div style={{padding:"40px 20px",textAlign:"center"}}>
-                <div style={{fontSize:40,marginBottom:12}}>📋</div>
-                <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>No itinerary yet</div>
-                <div style={{fontSize:13,color:C.t2,marginBottom:20}}>Add flights, hotels, activities, restaurants, and more.</div>
-                <button className="bp" onClick={()=>push("editItinerary",{planId,groupId})}>Build Itinerary</button>
+                <div style={{fontSize:40,marginBottom:12}}>{loadFailed?"⚠️":"📋"}</div>
+                <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>
+                  {loadFailed?"Couldn't load this plan":"No itinerary yet"}
+                </div>
+                <div style={{fontSize:13,color:C.t2,marginBottom:20}}>
+                  {loadFailed
+                    ?"Your days may already be saved. Check your connection and reopen this plan."
+                    :"Add flights, hotels, activities, restaurants, and more."}
+                </div>
+                {!loadFailed&&<button className="bp" onClick={()=>push("editItinerary",{planId,groupId})}>Build Itinerary</button>}
               </div>
             ):(
               <>
@@ -4901,12 +4943,20 @@ export default function ReachApp({realUser,onSignOut}={}){
   // Update a plan's status on the server
   const updatePlanOnServer=async(planId,updates)=>{
     try{
-      await fetch(`/api/plans/${planId}`,{
+      const res=await fetch(`/api/plans/${planId}`,{
         method:"PATCH",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify(updates),
       });
-      // Notify on status changes
+      // A status change is the thing the whole group is waiting on — approving
+      // a plan, marking it booked. Announcing one the server rejected tells
+      // everybody something that is not true.
+      if(!res.ok){
+        const err=await res.json().catch(()=>({}));
+        console.error("[plan] update rejected",res.status,err);
+        showToast(err.error||"That change didn't save — try again");
+        return false;
+      }
       const plan=groups.flatMap(g=>g.plans.map(p=>({...p,groupName:g.name}))).find(p=>p.id===planId);
       if(plan&&updates.status){
         const msgs={
@@ -4920,30 +4970,55 @@ export default function ReachApp({realUser,onSignOut}={}){
   };
 
   // Cast a vote on the server
+  // The response was never checked, so a rejected vote looked exactly like a
+  // counted one: the tally moved on screen and the server had no record. In a
+  // product where nothing books until the group is in, a phantom vote is worse
+  // than a failed one.
   const castVoteOnServer=async(planId,option)=>{
     try{
-      await fetch(`/api/plans/${planId}/vote`,{
+      const res=await fetch(`/api/plans/${planId}/vote`,{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({option}),
       });
-      // Find which group/plan this is for notification context
+      if(!res.ok){
+        const err=await res.json().catch(()=>({}));
+        console.error("[vote] rejected",res.status,err);
+        showToast(err.error||"Your vote didn't save — try again");
+        return false;
+      }
       const plan=groups.flatMap(g=>g.plans.map(p=>({...p,groupName:g.name}))).find(p=>p.id===planId);
       if(plan)notifyGroupUpdate(plan.groupName,`${firstNameOf(user,"Someone")} voted for ${option}`);
-    }catch(e){console.log("Vote failed",e);}
+      return true;
+    }catch(e){
+      console.error("[vote] failed",e);
+      showToast("Your vote didn't save — check your connection");
+      return false;
+    }
   };
 
   // Save itinerary items to server
   const saveItineraryToServer=async(planId,items)=>{
     try{
-      await fetch(`/api/plans/${planId}/itinerary`,{
+      const res=await fetch(`/api/plans/${planId}/itinerary`,{
         method:"PUT",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({items}),
       });
+      if(!res.ok){
+        const err=await res.json().catch(()=>({}));
+        console.error("[itinerary] save rejected",res.status,err);
+        showToast("Couldn't save those days — they're only on this device");
+        return false;
+      }
       const plan=groups.flatMap(g=>g.plans.map(p=>({...p,groupName:g.name}))).find(p=>p.id===planId);
       if(plan)notifyGroupUpdate(plan.groupName,`${firstNameOf(user,"Someone")} updated the itinerary for ${plan.title}`);
-    }catch(e){console.log("Itinerary save failed",e);}
+      return true;
+    }catch(e){
+      console.error("[itinerary] save failed",e);
+      showToast("Couldn't save those days — check your connection");
+      return false;
+    }
   };
   const showToast=msg=>setToastMsg(msg);
   const push=(screen,props={})=>setStack(s=>[...s,{screen,props}]);
@@ -5027,7 +5102,7 @@ export default function ReachApp({realUser,onSignOut}={}){
                 <div className="sc">
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure}/>}
-                  {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push}/>}
+                  {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading}/>}
                   {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme}/>}
                 </div>
               )}
