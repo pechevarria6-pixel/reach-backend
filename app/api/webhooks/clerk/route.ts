@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     // this endpoint can schedule account deletion, so an unverified body would
     // let anyone delete any account by knowing its Clerk id.
     if (process.env.NODE_ENV === 'production') {
+      console.error('[webhooks/clerk] refusing an unsigned payload in production — CLERK_WEBHOOK_SECRET is not set');
       return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
     }
     try { event = JSON.parse(body); } catch {

@@ -64,6 +64,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     cadence,
     per_period_cents: perPeriodCents,
   }, { onConflict: 'plan_id,user_id' }).select().single();
+  console.error('[plans/planId/savings] failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({
@@ -86,6 +87,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   const { data, error } = await ctx.db.from('savings_checkins')
     .insert({ goal_id: goal.id, amount_cents: amountCents, note: body.note || null })
     .select().single();
+  console.error('[plans/planId/savings] failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ checkin: data });
 }

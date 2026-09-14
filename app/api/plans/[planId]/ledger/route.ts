@@ -39,6 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     amount_cents: Math.round(amountCents),
     split_between: splitBetween,
   }).select().single();
+  console.error('[plans/planId/ledger] failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ expense: data });
 }

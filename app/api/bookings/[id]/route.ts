@@ -36,6 +36,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     .eq('id', params.id)
     .select()
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('[bookings PATCH] update failed', { id: params.id, error });
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   return NextResponse.json({ booking: data });
 }

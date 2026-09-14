@@ -4,16 +4,16 @@ import { toDateOrNull } from '@/lib/dates';
 import { z } from 'zod';
 
 const UpdatePlanSchema = z.object({
-  title: z.string().min(1).max(200).optional(),
-  status: z.enum(['planning','voting','approved','booked','completed','cancelled']).optional(),
-  start_date: z.string().optional(),
-  end_date: z.string().optional(),
-  budget_cents: z.number().min(0).optional(),
-  accommodation: z.string().optional(),
-  vibe: z.string().optional(),
-  destination_style: z.string().optional(),
-  dealbreakers: z.array(z.string()).optional(),
-  vote_options: z.array(z.string()).optional(),
+  title: z.string().min(1).max(200).nullish(),
+  status: z.enum(['planning','voting','approved','booked','completed','cancelled']).nullish(),
+  start_date: z.string().nullish(),
+  end_date: z.string().nullish(),
+  budget_cents: z.number().min(0).nullish(),
+  accommodation: z.string().nullish(),
+  vibe: z.string().nullish(),
+  destination_style: z.string().nullish(),
+  dealbreakers: z.array(z.string()).nullish(),
+  vote_options: z.array(z.string()).nullish(),
 });
 
 // GET /api/plans/[id] — get a single plan with itinerary and votes

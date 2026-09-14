@@ -145,6 +145,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ booking: updated, result });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Execution failed';
+    // A booking that fails at the provider is the single most expensive thing
+    // to debug after the fact, and it left no trace at all.
+    console.error('[approve] provider execution failed', { bookingId: params.id, msg });
     await db.from('bookings').update({
       status: 'failed', error: msg,
       approved_by: ctx.user.id, approved_at: new Date().toISOString(),

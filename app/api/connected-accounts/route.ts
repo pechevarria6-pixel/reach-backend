@@ -16,6 +16,7 @@ export async function GET() {
   if (isFail(ctx)) return ctx.error;
   const { data, error } = await ctx.db
     .from('connected_accounts').select('*').eq('user_id', ctx.user.id);
+  if (error) console.error('[connected-accounts] query failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ accounts: data, known: KNOWN_PROVIDERS });
 }
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest) {
       { onConflict: 'user_id,provider' }
     )
     .select().single();
+  console.error('[connected-accounts] failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ account: data });
 }
@@ -45,6 +47,7 @@ export async function DELETE(req: NextRequest) {
     .from('connected_accounts')
     .update({ status: 'disconnected' })
     .eq('user_id', ctx.user.id).eq('provider', body.provider);
+  console.error('[connected-accounts] failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

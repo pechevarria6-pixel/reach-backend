@@ -145,6 +145,35 @@ for (const file of FILES) {
     }
   });
 
+
+  // ── 7. an API failure that leaves no trace ─────────────────────────────
+  // The standing rule: every 4xx/5xx branch logs with context. A route that
+  // returns 500 silently is a support ticket with no evidence behind it.
+  if (/^app\/api\//.test(file)) {
+    lines.forEach((l, i) => {
+      // 5xx only. A 4xx carries its own explanation in the response — the
+      // caller is told what was wrong with the request — while a 5xx is a
+      // fault whose only possible evidence is what the route wrote down.
+      const m = /status:\s*(5\d\d)/.exec(l);
+      if (!m) return;
+      // Wide enough to reach a log that sits above a multi-line response body.
+      const around = lines.slice(Math.max(0, i - 16), i + 2).join('\n');
+      if (!/console\.(error|warn)/.test(around)) {
+        add('unlogged-failure', file, i + 1, `returns ${m[1]} with nothing logged`);
+      }
+    });
+  }
+
+  // ── 8. a schema that rejects null ──────────────────────────────────────
+  // The standing rule: fields the client may send as null are .nullish(), not
+  // .optional(). The client sends null for "cleared", and .optional() rejects
+  // it with a validation error that reads like a bug in the form.
+  lines.forEach((l, i) => {
+    if (!/z\.\w+\(\)[^;]*\.optional\(\)/.test(l)) return;
+    if (/nullish|nullable/.test(l)) return;
+    add('optional-not-nullish', file, i + 1, 'optional() rejects an explicit null the client may send');
+  });
+
   // ── 6. a loading flag with no path back to false ───────────────────────
   // A stuck spinner is indistinguishable from a hung app.
   const flags = [...src.matchAll(/const \[(\w*[Ll]oading\w*|busy|saving|searching|creating|finishing),\s*(set\w+)\]/g)];
@@ -165,6 +194,8 @@ const RULES = {
   'temp-id':       'Client-made ids sent to the server',
   'fixture-data':  'Invented content presented as real',
   'stuck-flag':    'Loading flags that never clear',
+  'unlogged-failure':    'Server faults that leave no trace',
+  'optional-not-nullish':'Schemas that reject a null the client sends',
 };
 
 if (!QUIET) {

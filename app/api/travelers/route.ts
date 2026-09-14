@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
 
   const { data: members, error } = await ctx.db
     .from('group_members').select('user_id, users(*)').eq('group_id', groupId);
+  console.error('[travelers] failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const travelers = (members || []).map((m: any) => {

@@ -69,6 +69,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   if (isFail(ctx)) return ctx.error;
 
   if (!process.env.STRIPE_SECRET_KEY) {
+    console.error('[funding] STRIPE_SECRET_KEY is not set — checkout cannot run');
     return NextResponse.json({ error: 'STRIPE_SECRET_KEY not set' }, { status: 500 });
   }
 
@@ -111,6 +112,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   });
   const pi = await stripeRes.json();
   if (!stripeRes.ok) {
+    // Stripe refusing to create the payment intent is the moment checkout
+    // dies, and it needs the reason recorded, not just relayed.
+    console.error('[funding] Stripe refused the payment intent', {
+      planId: params.planId, status: stripeRes.status, error: pi?.error,
+    });
     return NextResponse.json({ error: pi?.error?.message || 'Stripe error' }, { status: 502 });
   }
 
@@ -122,6 +128,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     stripe_payment_intent: pi.id,
     status: 'pending',
   }).select().single();
+  console.error('[plans/planId/funding] failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ contribution: data, clientSecret: pi.client_secret, amountCents });

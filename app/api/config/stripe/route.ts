@@ -25,6 +25,9 @@ export function GET() {
     '';
 
   if (!/^pk_(test|live)_/.test(key)) {
+    // Checkout is dead without this, and the only visible symptom is a payment
+    // form that never appears.
+    console.error('[config/stripe] no usable publishable key is set');
     return NextResponse.json(
       {
         error:

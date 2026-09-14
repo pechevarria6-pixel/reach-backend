@@ -5,14 +5,14 @@ import { z } from 'zod';
 const ItemSchema = z.object({
   type: z.enum(['flight','hotel','activity','restaurant','transport']),
   title: z.string().min(1),
-  subtitle: z.string().optional(),
+  subtitle: z.string().nullish(),
   booking_mode: z.enum(['reach','ahead','walk_in']).nullish(),
   payment_note: z.string().max(120).nullish(),
-  scheduled_time: z.string().optional(),
-  confirmation_number: z.string().optional(),
-  is_confirmed: z.boolean().optional(),
-  cost_cents: z.number().optional(),
-  sort_order: z.number().optional(),
+  scheduled_time: z.string().nullish(),
+  confirmation_number: z.string().nullish(),
+  is_confirmed: z.boolean().nullish(),
+  cost_cents: z.number().nullish(),
+  sort_order: z.number().nullish(),
 });
 
 // POST /api/plans/[id]/itinerary — add item

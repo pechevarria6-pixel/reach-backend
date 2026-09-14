@@ -5,10 +5,10 @@ import { z } from 'zod';
 
 const CreateGroupSchema = z.object({
   name: z.string().min(1).max(100),
-  emoji: z.string().max(80).optional(),
-  memberIds: z.array(z.string().uuid()).optional(),
+  emoji: z.string().max(80).nullish(),
+  memberIds: z.array(z.string().uuid()).nullish(),
   // Addresses that may not have an account yet; each becomes an invite.
-  inviteEmails: z.array(z.string().email()).max(50).optional(),
+  inviteEmails: z.array(z.string().email()).max(50).nullish(),
 });
 
 // GET /api/groups — get all groups for the current user

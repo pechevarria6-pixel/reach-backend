@@ -12,11 +12,11 @@ import { z } from 'zod';
 
 const AddSchema = z.object({
   programName: z.string().trim().min(2).max(80),
-  tier: z.string().trim().max(40).optional(),
-  points: z.number().int().min(0).max(100_000_000).optional(),
+  tier: z.string().trim().max(40).nullish(),
+  points: z.number().int().min(0).max(100_000_000).nullish(),
   // The membership number is PII and follows the same rule as a passport:
   // encrypted at rest, never returned.
-  number: z.string().trim().min(2).max(60).optional(),
+  number: z.string().trim().min(2).max(60).nullish(),
 });
 
 export async function POST(req: NextRequest) {

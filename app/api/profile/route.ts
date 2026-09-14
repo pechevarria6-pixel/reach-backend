@@ -124,21 +124,21 @@ const DOC_FIELDS = {
 
 // A document is either a non-empty string to store, or null to clear it.
 const Schema = z.object({
-  passport: z.string().trim().min(4).max(60).nullable().optional(),
-  tsaPrecheck: z.string().trim().min(4).max(60).nullable().optional(),
-  globalEntry: z.string().trim().min(4).max(60).nullable().optional(),
-  seat: z.string().trim().max(40).nullable().optional(),
-  dietary: z.string().trim().max(200).nullable().optional(),
-  climate: z.string().trim().max(40).nullable().optional(),
+  passport: z.string().trim().min(4).max(60).nullable().nullish(),
+  tsaPrecheck: z.string().trim().min(4).max(60).nullable().nullish(),
+  globalEntry: z.string().trim().min(4).max(60).nullable().nullish(),
+  seat: z.string().trim().max(40).nullable().nullish(),
+  dietary: z.string().trim().max(200).nullable().nullish(),
+  climate: z.string().trim().max(40).nullable().nullish(),
   // A three-letter IATA code, upper-cased on the way in so "sfo" and "SFO"
   // are the same airport.
   homeAirport: z.string().trim().regex(/^[A-Za-z]{3}$/, 'An airport code is three letters, like SFO')
     .transform(v => v.toUpperCase()).nullable().optional(),
-  homeCity: z.string().trim().max(80).nullable().optional(),
+  homeCity: z.string().trim().max(80).nullable().nullish(),
   // What the app calls you. Clerk has no first name for anyone who signed up
   // with Apple private relay, which is why the home screen said "Hey there".
-  firstName: z.string().trim().min(1).max(40).nullable().optional(),
-  lastName: z.string().trim().max(40).nullable().optional(),
+  firstName: z.string().trim().min(1).max(40).nullable().nullish(),
+  lastName: z.string().trim().max(40).nullable().nullish(),
 });
 
 export async function PATCH(req: NextRequest) {

@@ -44,6 +44,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   q = id ? q.eq('id', id) : q.eq('email', email);
 
   const { error } = await q;
+  console.error('[groups/id/invites] failed', error);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ success: true });
 }

@@ -98,6 +98,9 @@ export async function GET(req: NextRequest) {
   if (isFail(ctx)) return ctx.error;
   const { data, error } = await ctx.db
     .from('bookings').select('*').eq('plan_id', planId).order('created_at', { ascending: true });
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('[bookings GET] query failed', { planId, error });
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   return NextResponse.json({ bookings: data });
 }
