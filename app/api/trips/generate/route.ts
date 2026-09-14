@@ -228,10 +228,14 @@ LIVE MUSIC THEY GO TO: ${concertTypes.slice(0, 4).join(', ') || 'no preference'}
 DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
 ${allVetoes.length > 0 ? 'VETOES (never include): ' + allVetoes.join(', ') : ''}
 
-Price diversity is required. Return exactly three options, one per tier:
-- "saver": roughly 60-70% of the budget
-- "on_budget": close to the budget
-- "stretch": roughly 110-120% of the budget
+Price diversity is required. Return exactly three options, one per tier, and
+hit these totals — specific numbers, not a range, because percentages of a
+budget came back clustered at 70%, 89% and 95%, which is not a choice:
+- "saver":     total_per_person about $${Math.round(effectiveBudget * 0.65)}
+- "on_budget": total_per_person about $${effectiveBudget}
+- "stretch":   total_per_person about $${Math.round(effectiveBudget * 1.15)}
+
+Each total must land within 10% of the figure above for its tier.
 
 The three must be genuinely different places, not three versions of the same
 idea — vary the region and the type of destination, not just the hotel.
