@@ -533,7 +533,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         {emoji:"✈️",text:groups[0].name+" · "+(groups[0].plans?.length||0)+" plan"+(((groups[0].plans?.length||0)!==1)?"s":""),cta:"Open →",action:()=>push("groupDetail",{groupId:groups[0].id})},
         groups.length>1?{emoji:"👥",text:"You're in "+groups.length+" groups.",cta:"See all →",action:()=>setTab("groups")}:{emoji:"➕",text:"Invite friends to plan together.",cta:"Create a group →",action:()=>push("createGroup")},
       ]:[
-        {emoji:"👋",text:"Welcome! Create your first group to start planning.",cta:"Get started →",action:()=>push("createGroup")},
+        {emoji:"👋",text:"Welcome! Start a group to start planning.",cta:"Get started →",action:()=>push("createGroup")},
       ]).filter(Boolean).map((ins,i)=>(
         <div key={i} onClick={ins.action} style={{margin:"0 20px 10px",background:C.s1,border:"1px solid "+C.border,borderRadius:16,padding:14,display:"flex",gap:12,cursor:"pointer"}}>
           <span style={{fontSize:24}}>{ins.emoji}</span>
@@ -568,7 +568,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             :nearbyState==="denied"?"Allow location in your browser and reload to see events near you."
             :nearbyReason==="no_key"?"Event listings aren't switched on for this deployment yet."
             :nearbyReason==="provider_error"?"Couldn't reach the ticket provider. Try again shortly."
-            :"Nothing on sale within 90 miles right now."}
+            :"Nothing on sale near you this week. Try again in a few days."}
         </div>
       )}
       <div style={{height:20}}/>
@@ -586,13 +586,15 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
 // against the measured runtime. No invented steps and no fake percentage that
 // sticks at 90.
 function BuildingItinerary({destination,nights,onCancel}){
+  // Still describes exactly what the request is doing — the warmth is in the
+  // wording, not in inventing steps that are not happening.
   const steps=[
-    {at:0,  t:"Reading what your group likes"},
-    {at:4,  t:`Choosing where to base you in ${destination||"your destination"}`},
-    {at:9,  t:"Picking restaurants that fit everyone's food"},
-    {at:15, t:`Writing ${nights||7} days, morning to evening`},
-    {at:22, t:"Adding the tips you'd only know on a second visit"},
-    {at:30, t:"Almost there — checking the days hang together"},
+    {at:0,  t:"Reading the room — what everyone said they wanted"},
+    {at:4,  t:`Working out where to put you in ${destination||"your destination"}`},
+    {at:9,  t:"Finding dinners that suit the fussiest one of you"},
+    {at:15, t:`Writing all ${nights||7} days, breakfast to last orders`},
+    {at:22, t:"Adding the bits you'd only know the second time round"},
+    {at:30, t:"Nearly there — making sure the days actually hang together"},
   ];
   const [secs,setSecs]=useState(0);
   useEffect(()=>{
@@ -613,7 +615,7 @@ function BuildingItinerary({destination,nights,onCancel}){
       </div>
       <div style={{fontSize:13.5,color:C.t2,textAlign:"center",marginBottom:26,minHeight:38,lineHeight:1.5}}>
         {over
-          ? "Taking longer than usual. Still working — give it a few more seconds."
+          ? "Taking its time. Still going — a few more seconds."
           : current.t}
       </div>
       <div style={{width:"100%",maxWidth:280,height:6,background:C.s3,borderRadius:3,overflow:"hidden",marginBottom:10}}>
@@ -737,7 +739,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
     :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
     :reason==="no_location"?"Allow location in your browser to see what's on near you."
     :reason==="provider_error"?"Couldn't reach the ticket provider. Try again shortly."
-    :allItems.length===0?"Nothing on sale within 90 miles right now."
+    :allItems.length===0?"Nothing on sale near you this week. Try again in a few days."
     :null;
 
   const city=userLocation?.city||userLocation?.formatted;
@@ -992,7 +994,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             <button className="bp" style={{marginBottom:8,width:"100%",background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`}}
               onClick={()=>{
                 window.open(exp.url,"_blank","noopener,noreferrer");
-                toast("Opening Ticketmaster");
+                toast("Handing you over to Ticketmaster");
               }}>
               🎟️ Get tickets
             </button>
@@ -1238,12 +1240,12 @@ function GroupsScreen({groups,um,push,loading}){
           <div style={{fontSize:40,marginBottom:12}}>👋</div>
           <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>No groups yet</div>
           <div style={{fontSize:13,color:C.t2,lineHeight:1.6,marginBottom:20}}>
-            A group is the people you travel with. Make one, invite them, and Reach
-            plans around what everybody actually wants.
+            A group is whoever you travel with — family, the usual suspects, or just you.
+            Reach plans around what everybody actually wants, not the loudest voice.
           </div>
-          <button className="bp" onClick={()=>push("createGroup")}>Create your first group</button>
+          <button className="bp" onClick={()=>push("createGroup")}>Start a group</button>
           <div style={{fontSize:12,color:C.t3,marginTop:14,lineHeight:1.5}}>
-            Travelling alone? Make one anyway — you can plan a solo trip from it.
+            Going solo? Make one anyway. Nobody has to vote against you.
           </div>
         </div>
       )}
@@ -1327,8 +1329,8 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           {group.plans.length===0&&(
             <div style={{padding:"40px 20px",textAlign:"center"}}>
               <div style={{fontSize:40,marginBottom:12}}>🗺️</div>
-              <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>No plans yet</div>
-              <div style={{fontSize:13,color:C.t2,marginBottom:20}}>Start planning your first experience together</div>
+              <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>Nothing planned yet</div>
+              <div style={{fontSize:13,color:C.t2,marginBottom:20}}>Pick somewhere together. We will work out the days, the costs and who owes what.</div>
               <button className="bp" onClick={()=>push("groupTrip",{groupId})}>✨ Plan a Trip Together</button>
               <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",marginTop:10,padding:"8px 0"}} onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
             </div>
@@ -1486,10 +1488,10 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       if(!r.ok)throw new Error(d.error||"Couldn't add them");
       if(d.invited){
         toast(d.emailed?`Invite sent to ${d.email}`:`Invite ready for ${d.email}`);
-        if(!d.emailed&&d.acceptUrl){try{await navigator.clipboard?.writeText(d.acceptUrl);toast("Invite link copied");}catch(e){}}
+        if(!d.emailed&&d.acceptUrl){try{await navigator.clipboard?.writeText(d.acceptUrl);toast("Link copied — go on, paste it somewhere");}catch(e){}}
         loadInvites();
       }else{
-        toast("Added to the group");
+        toast("They're in 🎉");
         if(refreshGroup)refreshGroup(groupId);
       }
       setQ("");setResults([]);
@@ -1529,11 +1531,11 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         toast(err.error||"Couldn't withdraw that invite");
         return;
       }
-      toast("Invite withdrawn");loadInvites();
+      toast("Invite pulled back");loadInvites();
     }catch(e){console.error("[invites] withdraw failed",e);toast("Couldn't withdraw that invite");}
   };
 
-  const save=()=>{updateGroup(groupId,g=>({...g,name,emoji:inferGroupEmoji(name)}),{sync:true});toast("Group updated");onBack();};
+  const save=()=>{updateGroup(groupId,g=>({...g,name,emoji:inferGroupEmoji(name)}),{sync:true});toast("Saved — looking good");onBack();};
 
   // ── Leaving and deleting ───────────────────────────────────────────────
   // Deleting cascades in the database: the group's plans, members and pending
@@ -1865,8 +1867,8 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   const questions=[
     {
       id:"tripType",icon:"🌍",
-      title:"What kind of trip?",
-      sub:"Pick all that apply.",
+      title:"What sort of trip are we doing?",
+      sub:"Pick as many as you like — nobody has to choose just one.",
       multi:true,
       customPlaceholder:"Something else? Describe it…",
       options:[
@@ -1880,8 +1882,8 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     },
     {
       id:"accommodation",icon:"🏨",
-      title:"Where do you want to stay?",
-      sub:"Pick all that work.",
+      title:"Where are you sleeping?",
+      sub:"Anything that works. We will not book you into a hostel if you say no.",
       multi:true,
       customPlaceholder:"Something specific in mind?",
       options:[
@@ -1895,8 +1897,8 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     },
     {
       id:"budget",icon:"💰",
-      title:"Budget per person?",
-      sub:"Everything included — flights, hotel, food, activities.",
+      title:"What is this costing each of you?",
+      sub:"Everything in — flights, beds, dinners, the lot. One honest number.",
       isbudget:true,
       // Exact amounts, not ranges: the label now says what actually gets sent.
       // "No limit" is gone — it was not a number, so it parsed to nothing.
@@ -1911,7 +1913,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     },
     {
       id:"pace",icon:"⏱️",
-      title:"What's the vibe?",
+      title:"What kind of days are these?",
       options:[
         {id:"relaxed",e:"😌",l:"Relaxed"},
         {id:"balanced",e:"⚖️",l:"Balanced"},
@@ -1924,7 +1926,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     {
       id:"noWayJose",icon:"🚫",
       title:"No Way José",
-      sub:"Hard vetoes for this trip. Never appears in results.",
+      sub:"Absolute nos. We will never suggest these, however good they look.",
       noWay:true,
       multi:true,
       optional:true,
@@ -2451,7 +2453,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   const where=typeof window!=="undefined"?window.location.origin:"";
                   const msg=`Hey! We're planning a trip on Reach and need your preferences to build the perfect options. Take 2 minutes: ${where}`;
                   if(navigator.share){navigator.share({title:"Complete your Reach quiz",text:msg}).catch(()=>{});}
-                  else{navigator.clipboard?.writeText(msg);toast("Link copied 📋");}
+                  else{navigator.clipboard?.writeText(msg);toast("Copied — paste away");}
                 }} style={{width:"100%",padding:"11px 16px",
                   background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
                   color:C.onAccent,border:"none",borderRadius:14,
@@ -2924,7 +2926,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
       {step===1&&(
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40}}>
           <div style={{fontSize:48,marginBottom:20}}>✨</div>
-          <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:12,textAlign:"center"}}>Building your trips...</div>
+          <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:12,textAlign:"center"}}>Finding you three good options…</div>
           <div style={{fontSize:14,color:C.t2,textAlign:"center",lineHeight:1.7,marginBottom:24}}>
             Reading everyone's preferences,<br/>finding flights, hotels, and activities,<br/>building full itineraries with real costs...
           </div>
@@ -3562,7 +3564,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
         {step===5&&(
           <div>
             <div className="pt" style={{marginBottom:6}}>What's the budget?</div>
-            <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Maximum spend per person, everything included.</div>
+            <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Per person, everything in. We plan three options around it.</div>
             <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:16,marginBottom:14}}>
               <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>
                 {isEvent?"Typical cost for this":"AI cost estimate"}
@@ -3595,7 +3597,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
             {!isSoloGroup&&(
               <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14,marginBottom:6}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:voting?12:0}}>
-                  <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>Enable destination voting</div><div style={{fontSize:12,color:C.t2,marginTop:2}}>Let the group vote on where to go</div></div>
+                  <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>Enable destination voting</div><div style={{fontSize:12,color:C.t2,marginTop:2}}>Let everyone have a say on where you end up</div></div>
                   <button onClick={()=>setVoting(v=>!v)} aria-pressed={voting} style={{width:44,height:26,borderRadius:13,background:voting?C.accentText:C.s3,border:`1px solid ${voting?C.accentText:C.border}`,cursor:"pointer",position:"relative",transition:"background .2s",flexShrink:0}}>
                     <div style={{width:20,height:20,borderRadius:"50%",background:C.s1,position:"absolute",top:2,left:voting?21:2,transition:"left .2s"}}/>
                   </button>
@@ -3781,7 +3783,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             )}
             <div style={{padding:"0 20px"}}>
               {plan.status==="planning"&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"voting"}:p)}));setAtab("vote");toast("Sent to the group for a vote!");}}>Send to group for a vote</button>}
-              {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"approved"}:p)}));toast("Plan approved!");}}>Approve and proceed to booking</button>}
+              {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"approved"}:p)}));toast("Approved — let's book it");}}>Approve and proceed to booking</button>}
               {plan.status==="approved"&&<button className="bp" style={{marginBottom:10,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>Book Everything →</button>}
               {plan.status==="booked"&&<button className="bp" style={{marginBottom:10}} onClick={()=>setAtab("itinerary")}>View Itinerary</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
@@ -3799,14 +3801,14 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 <div style={{fontSize:13,color:C.t2,marginBottom:20,lineHeight:1.55}}>
                   {loadFailed
                     ?"Your days may already be saved. Check your connection and reopen this plan."
-                    :`Build a day-by-day plan for ${plan.title}, or add flights, hotels and reservations yourself.`}
+                    :`We can write the whole ${plan.title} plan, morning to night. Or build it yourself if you would rather.`}
                 </div>
                 {!loadFailed&&(
                   <>
                     <button className="bp" disabled={building} onClick={buildItinerary} style={{marginBottom:10}}>
-                      {building?"Building your days…":"✨ Build the day-by-day plan"}
+                      {building?"Building your days…":"✨ Plan my days for me"}
                     </button>
-                    <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Add items myself</button>
+                    <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>I'll do it myself</button>
                   </>
                 )}
               </div>
@@ -3884,7 +3886,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     toast(e.message);
                   }
                   setNudging(false);
-                }}>{nudging?"Sending…":"Remind them"}</button>
+                }}>{nudging?"Sending…":"Give them a nudge"}</button>
               )}
             </div>
             {plan.options.map(opt=>{
@@ -3956,7 +3958,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
   const rm=idx=>setItems(p=>p.filter((_,i)=>i!==idx));
   const save=async()=>{
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:items}:p)}));
-    toast("Itinerary saved");
+    toast("Your days are saved");
     if(saveItineraryToServer)await saveItineraryToServer(planId,items);
     onBack();
   };
@@ -4191,7 +4193,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     {icon:"\uD83C\uDFAF",l:"Activities & tours",d:"",a:Math.round(myShareCents*.26*participants)}
   ]);
 
-  if(phase==="loading")return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>Getting your trip ready\u2026</div></div>);
+  if(phase==="loading")return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>Pulling your trip together…</div></div>);
 
   if(phase==="error")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:34,marginBottom:12}}>\uD83D\uDE48</div>
@@ -4229,7 +4231,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
       }
       setNudging(false);
     }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,cursor:nudging?"progress":"pointer",opacity:nudging?.6:1}}>
-      {nudging?"Sending…":"Remind them"}
+      {nudging?"Sending…":"Give them a nudge"}
     </button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
   </div></div>);
@@ -4244,7 +4246,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
 
   if(phase==="approving")return(<div className="sc"><div style={{padding:"80px 24px",textAlign:"center"}}>
     <div style={{fontSize:40,marginBottom:14}}>\u2728</div>
-    <div style={{color:C.t1,fontWeight:600}}>Locking in your bookings\u2026</div>
+    <div style={{color:C.t1,fontWeight:600}}>Locking it all in…</div>
     <div style={{color:C.t2,fontSize:13,marginTop:6}}>This takes a few seconds</div>
   </div></div>);
 
@@ -4382,7 +4384,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"Couldn't add that programme");
       setLoyName("");setLoyTier("");setLoyNum("");
-      toast("Programme added");await load();
+      toast("Added — we'll use it when we price things");await load();
     }catch(e){toast(e.message);}
     finally{setBusy(null);}
   };
@@ -4393,7 +4395,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
         method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({id}),
       });
       if(!r.ok)throw new Error("Couldn't remove that programme");
-      toast("Programme removed");await load();
+      toast("Gone");await load();
     }catch(e){toast(e.message);}
     finally{setBusy(null);}
   };
@@ -4407,7 +4409,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
         body:JSON.stringify({[column]:value}),
       });
       if(!r.ok)throw new Error();
-      toast("Preference saved");
+      toast("Noted");
     }catch(e){
       setData(d=>d?{...d,consent:{...d.consent,[key]:!value}}:d);
       toast("Couldn't save that — try again");
@@ -4670,7 +4672,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
         <Row icon="⬇️" title="Download everything Reach holds"
           sub="A JSON export, as required by GDPR Article 20"
           right={<span style={{fontSize:12,color:C.accentText,fontWeight:600}}>Export</span>}
-          onClick={()=>{window.location.href="/api/user/data";toast("Preparing your export…");}}/>
+          onClick={()=>{window.location.href="/api/user/data";toast("Bundling everything up…");}}/>
         <Row icon="🗑️" title="Delete your account" sub="Scheduled 30 days out, and reversible until then"
           right={<Ic.ChevR/>} onClick={()=>setSection("delete")}/>
       </div>
