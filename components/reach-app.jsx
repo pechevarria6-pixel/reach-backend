@@ -1644,7 +1644,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
 }
 
 // ─── EDIT GROUP ───────────────────────────────────────────────────────────────
-function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup,leaveGroup,deleteGroup,me}){
+function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup,leaveGroup,deleteGroup,saveGroupToServer,me}){
   const group=groups.find(g=>g.id===groupId);
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
   const [name,setName]=useState(group.name);
@@ -1749,7 +1749,20 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
     }catch(e){console.error("[invites] withdraw failed",e);toast("Couldn't withdraw that invite");}
   };
 
-  const save=()=>{updateGroup(groupId,g=>({...g,name,emoji:inferGroupEmoji(name)}),{sync:true});toast("Saved — looking good");onBack();};
+  const [savingName,setSavingName]=useState(false);
+  const save=async()=>{
+    if(savingName)return;
+    setSavingName(true);
+    const renamed={...group,name,emoji:inferGroupEmoji(name)};
+    updateGroup(groupId,()=>renamed);
+    // updateGroup's sync branch fires and forgets, so "Saved — looking good"
+    // appeared whether or not the rename reached the server, sometimes right
+    // before the failure did. Wait for the answer before giving one.
+    const saved=saveGroupToServer?await saveGroupToServer(renamed):true;
+    setSavingName(false);
+    if(saved)toast("Saved — looking good");
+    onBack();
+  };
 
   // ── Leaving and deleting ───────────────────────────────────────────────
   // Deleting cascades in the database: the group's plans, members and pending
@@ -5634,10 +5647,17 @@ export default function ReachApp({realUser,onSignOut}={}){
           const err=await res.json().catch(()=>({}));
           console.error("[saveGroupToServer] update rejected",res.status,err);
           showToast(err.error||"Couldn't save that change");
-          return group.id;
+          // Null, not the id. Callers could not tell a rejected rename from a
+          // saved one, because both came back with the same truthy value — so
+          // the screen said "Saved — looking good" over the failure it had
+          // just shown. Whoever needs the real id is on the create branch.
+          return null;
         }
       }
-    }catch(e){console.log("Group save failed, data kept locally",e);}
+    }catch(e){
+      console.error("[saveGroupToServer] failed, data kept locally",e);
+      return null;
+    }
     return group.id;
   };
 
