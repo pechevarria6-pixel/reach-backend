@@ -4915,7 +4915,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
 // ─── CHECKOUT ─────────────────────────────────────────────────────────────────
 
 // ============ CHECKOUT V2 — real propose -> fund -> approve ============
-function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
+function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans?.find(p=>p.id===planId);
   // phases: loading | review | pay | approving | waiting | priceUp | done | error
@@ -4954,6 +4954,41 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     }catch(e){ setMsg("Couldn't load your trip \u2014 check your connection and try again."); setPhase("error"); }
   };
   useEffect(()=>{ load(); },[]);
+
+  // Back from Klarna, Affirm or Cash App Pay, which take the payer to their own
+  // site and send them back here with what happened. Stripe's word in the
+  // address is not trusted: the server asks Stripe before recording anything,
+  // exactly as it does for a card.
+  const handledReturn=useRef(false);
+  useEffect(()=>{
+    if(!returnedIntent||handledReturn.current||phase!=="review")return;
+    handledReturn.current=true;
+    if(redirectStatus==="failed"){
+      toast("That payment didn't go through. Nothing was taken — you can try again.");
+      return;
+    }
+    (async()=>{
+      setBusy(true);
+      try{
+        const cr=await fetch(`/api/plans/${planId}/funding/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentIntentId:returnedIntent})});
+        if(cr.ok){ setBusy(false); await approveAll(false); return; }
+        const err=await cr.json().catch(()=>({}));
+        console.error("[checkout] returned payment not recorded",{planId,paymentIntentId:returnedIntent,redirectStatus,status:cr.status,err});
+        setBusy(false);
+        // Pay-later providers can take a while to settle. Stripe's webhook marks
+        // the contribution paid when they do, so the honest message is to wait.
+        setMsg(cr.status===409&&redirectStatus!=="succeeded"
+          ?`Your payment is still being processed. We'll mark it paid as soon as it clears — do not pay again. Reference ${returnedIntent}.`
+          :`Your payment went through, but we couldn't record it against this trip. Nothing is lost — quote reference ${returnedIntent} and we'll sort it. Do not pay again.`);
+        setPhase("error");
+      }catch(e){
+        console.error("[checkout] could not check returned payment",{planId,paymentIntentId:returnedIntent},e);
+        setBusy(false);
+        setMsg(`We couldn't check that payment just now. Do not pay again — quote reference ${returnedIntent} and we'll sort it.`);
+        setPhase("error");
+      }
+    })();
+  },[phase,returnedIntent]);
 
   const startPayment=async()=>{
     if(busy)return;
@@ -5014,7 +5049,12 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     if(isTempId(planId)){ toast("This trip is still saving — try again in a moment"); return; }
     setBusy(true);
     try{
-      const {error,paymentIntent}=await stripeRef.current.confirmPayment({elements:elementsRef.current,redirect:"if_required"});
+      // Cards finish here without leaving the page. Klarna, Affirm and Cash App
+      // Pay are switched on in Stripe and cannot: they send the payer to their
+      // own site and back, and without a return_url Stripe refuses to start
+      // them, so choosing one failed on the pay button.
+      const back=`${window.location.origin}/home?paid=${encodeURIComponent(planId)}&group=${encodeURIComponent(groupId||"")}`;
+      const {error,paymentIntent}=await stripeRef.current.confirmPayment({elements:elementsRef.current,redirect:"if_required",confirmParams:{return_url:back}});
       if(error)throw new Error(error.message||"Payment didn't go through.");
       // Stripe has taken the money by this point. The response to this call
       // was never checked, so if recording the contribution failed the app
@@ -5086,9 +5126,10 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     d:b.provider==="concierge"?"We'll handle this one for you":(b.mode==="redirect"?"Opens in partner site":""),
     a:b.price_cents, st:b.status
   })):[
-    {icon:"\u2708\uFE0F",l:"Round-trip flights",d:plural(participants,"traveller"),a:Math.round(myShareCents*.34*participants)},
-    {icon:"\uD83C\uDFE8",l:"Accommodation",d:"",a:Math.round(myShareCents*.4*participants)},
-    {icon:"\uD83C\uDFAF",l:"Activities & tours",d:"",a:Math.round(myShareCents*.26*participants)}
+    // Nothing is priced yet, so there is nothing to itemise. This used to list
+    // flights, accommodation and activities at 34, 40 and 26 per cent of the
+    // budget — invented figures on the screen where somebody decides to pay.
+    {icon:"\uD83D\uDCB0",l:"Trip budget",d:"Nothing is priced yet. Bookings appear here as they're quoted.",a:null}
   ]);
 
   if(phase==="loading")return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>Pulling your trip together…</div></div>);
@@ -5174,7 +5215,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
             <span style={{fontSize:20}}>{it.icon}</span>
             <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
               {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}</div>
-            {chip(it.st==="confirmed"?"Booked \u2713":it.st==="pending"?"We're on it":"Booked \u2713",it.st==="pending"?"gold":"green")}
+            {it.st?chip(it.st==="confirmed"?"Booked \u2713":it.st==="pending"?"We're on it":"Booked \u2713",it.st==="pending"?"gold":"green"):null}
           </div>))}
         </div>
         <button onClick={onBack} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15}}>See my itinerary</button>
@@ -5789,6 +5830,20 @@ export default function ReachApp({realUser,onSignOut}={}){
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         push("taste");
+      }
+      // Back from a payment provider's own page. Stripe appends payment_intent
+      // and redirect_status to the address checkout gave it. Reopen that
+      // checkout to record it, and clear the address first so a refresh or a
+      // pasted link cannot replay it.
+      if(params.get("paid")&&params.get("payment_intent")){
+        const planId=params.get("paid");
+        const groupId=params.get("group")||null;
+        const returnedIntent=params.get("payment_intent");
+        const redirectStatus=params.get("redirect_status");
+        for(const k of ["paid","group","payment_intent","payment_intent_client_secret","redirect_status"])params.delete(k);
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        push("checkout",{planId,groupId,returnedIntent,redirectStatus});
       }
     }
   },[]);

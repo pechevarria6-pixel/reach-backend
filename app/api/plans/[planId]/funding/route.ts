@@ -148,8 +148,19 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     stripe_payment_intent: pi.id,
     status: 'pending',
   }).select().single();
-  console.error('[plans/planId/funding] failed', error);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // Stripe now holds a PaymentIntent with no contribution behind it. The
+    // webhook finds contributions by that intent id, so a payment made against
+    // it would never be recorded. This logged "failed" on every success before,
+    // which buried the one time it mattered.
+    console.error('[funding] could not record the contribution', {
+      planId: params.planId, paymentIntent: pi.id, error: error.message,
+    });
+    return NextResponse.json(
+      { error: 'Could not start that payment. Nothing has been charged — try again.' },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({ contribution: data, clientSecret: pi.client_secret, amountCents });
 }
