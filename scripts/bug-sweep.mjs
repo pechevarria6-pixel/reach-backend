@@ -187,6 +187,22 @@ for (const file of FILES) {
   }
 }
 
+// ── Screens nobody can open ───────────────────────────────────────────────
+// AiTripScreen sat in the router for months, pushed from nowhere, duplicating
+// the real trip planner with fewer inputs. Three hundred lines where a fix
+// could land in the copy nobody sees — and one did, before anyone noticed.
+{
+  const file = 'components/reach-app.jsx';
+  const src = readFileSync(file, 'utf8');
+  const registered = new Set([...src.matchAll(/screen==="([A-Za-z]+)"/g)].map(m => m[1]));
+  for (const screen of registered) {
+    const reachable = new RegExp(`(push|replace)\\("${screen}"`).test(src);
+    if (reachable) continue;
+    const line = src.slice(0, src.indexOf(`screen==="${screen}"`)).split('\n').length;
+    add('orphan-screen', file, line, `"${screen}" is routed but nothing opens it`);
+  }
+}
+
 const RULES = {
   'silent-catch':  'Failures nobody can see or debug',
   'stale-state':   'State written from a captured snapshot',
@@ -196,6 +212,7 @@ const RULES = {
   'stuck-flag':    'Loading flags that never clear',
   'unlogged-failure':    'Server faults that leave no trace',
   'optional-not-nullish':'Schemas that reject a null the client sends',
+  'orphan-screen':       'Screens in the router that nothing opens',
 };
 
 if (!QUIET) {
