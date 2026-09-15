@@ -68,9 +68,21 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
 
-  if (!process.env.STRIPE_SECRET_KEY) {
-    console.error('[funding] STRIPE_SECRET_KEY is not set — checkout cannot run');
-    return NextResponse.json({ error: 'STRIPE_SECRET_KEY not set' }, { status: 500 });
+  // A secret key starts sk_. What was configured here was mk_1U4lD…, which is
+  // the *identifier* of a key rather than the key, so Stripe answered with its
+  // own message and the app relayed it verbatim onto a payment screen. Catch
+  // the shape first and say something a person can act on.
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  if (!stripeKey || !/^(sk|rk)_/.test(stripeKey)) {
+    console.error('[funding] STRIPE_SECRET_KEY is missing or is not a secret key', {
+      present: !!stripeKey,
+      prefix: stripeKey ? stripeKey.slice(0, 3) : null,
+      hint: 'Stripe → Developers → API keys → reveal the secret key (sk_…), not its ID',
+    });
+    return NextResponse.json(
+      { error: 'Payments are not configured correctly yet. Nothing has been charged.' },
+      { status: 503 },
+    );
   }
 
   const body = await req.json().catch(() => ({}));
@@ -117,7 +129,15 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     console.error('[funding] Stripe refused the payment intent', {
       planId: params.planId, status: stripeRes.status, error: pi?.error,
     });
-    return NextResponse.json({ error: pi?.error?.message || 'Stripe error' }, { status: 502 });
+    // Stripe's message is written for whoever configured the account, not for
+    // the person trying to pay. It goes to the log; they get something useful.
+    const configProblem = /api key|authentication/i.test(pi?.error?.message || '');
+    return NextResponse.json(
+      { error: configProblem
+          ? 'Payments are not configured correctly yet. Nothing has been charged.'
+          : 'Could not start that payment. Nothing has been charged — try again.' },
+      { status: configProblem ? 503 : 502 },
+    );
   }
 
   const { data, error } = await ctx.db.from('contributions').insert({

@@ -79,7 +79,9 @@ const ENV_GROUPS = [
     title: 'Money — funding, checkout and receipts fail without these',
     blocking: true,
     vars: [
-      ['STRIPE_SECRET_KEY', v => /^sk_(test|live)_/.test(v), 'Stripe → Developers → API keys'],
+      ['STRIPE_SECRET_KEY', v => /^(sk|rk)_(test|live)_/.test(v),
+        'Stripe → Developers → API keys → reveal the SECRET key (sk_…).\n      '
+        + 'A value starting mk_ is the key\'s identifier, not the key, and Stripe rejects it.'],
       [['STRIPE_PUBLISHABLE_KEY', 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY'],
         v => /^pk_(test|live)_/.test(v), 'same page, publishable key'],
       ['STRIPE_WEBHOOK_SECRET', v => /^whsec_/.test(v), 'Stripe → Developers → Webhooks → your endpoint → signing secret'],

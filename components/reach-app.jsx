@@ -364,6 +364,10 @@ function fixedCostRows(trip){
   ].filter(Boolean);
 }
 
+// "1 people" and "1 travelers" both reached a screen somebody was about to
+// pay on. One helper, used everywhere a count meets a noun.
+function plural(n,one,many){return `${n} ${n===1?one:(many||one+"s")}`;}
+
 // ─── Itinerary rows ───────────────────────────────────────────────────────
 // Turns generated days into the rows the itinerary tab and the API both use.
 // Written once because two screens had their own copy and they disagreed: one
@@ -1168,7 +1172,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     {[
                       {l:"📅 Date",v:bookDate?new Date(bookDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"}):"—"},
                       bookTime?{l:"🕐 Time",v:bookTime}:null,
-                      {l:"👥 Party",v:bookGuests+(bookGuests==="8+"?" people":" people")},
+                      {l:"👥 Party",v:bookGuests==="8+"?"8+ people":plural(parseInt(bookGuests)||2,"person","people")},
                       {l:"💰 Total est.",v:exp.price&&bookGuests?((parseInt(exp.price.replace(/[^0-9]/g,""))||0)*(parseInt(bookGuests)||2))>0?"$"+((parseInt(exp.price.replace(/[^0-9]/g,""))||0)*(parseInt(bookGuests)||2))+" est.":"—":"—"},
                       bookNotes?{l:"📝 Notes",v:bookNotes}:null,
                     ].filter(Boolean).map((row,i)=>(
@@ -1201,7 +1205,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                 <div style={{fontSize:60,marginBottom:16}}>🎉</div>
                 <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1,marginBottom:8}}>Booking request sent!</div>
                 <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:24}}>
-                  Your request for {exp.title} on {bookDate} for {bookGuests} people has been sent. You'll get a confirmation notification within 24 hours.
+                  Your request for {exp.title} on {bookDate} for {bookGuests==="8+"?"8+ people":plural(parseInt(bookGuests)||2,"person","people")} has been sent. You'll get a confirmation notification within 24 hours.
                 </div>
                 <div style={{background:C.s2,border:"1px solid "+C.border,borderRadius:14,padding:14,marginBottom:20,textAlign:"left"}}>
                   <div style={{fontSize:12,color:C.t3,marginBottom:8,textTransform:"uppercase",letterSpacing:".08em"}}>What happens next</div>
@@ -2117,7 +2121,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
               </div>
               <div style={{fontSize:13,color:C.t2,marginTop:2}}>
                 {nights<=2?"Quick getaway":nights<=4?"Weekend trip":nights<=7?"Week adventure":"Extended trip"}
-                {" · "}{group.memberIds?.length||2} people
+                {" · "}{plural(group.memberIds?.length||2,"person","people")}
               </div>
             </div>
           )}
@@ -3739,7 +3743,7 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
               <div style={{fontSize:12,color:C.t2,marginTop:4}}>
                 {isEvent
                   ?`${selGroup?.memberIds?.length||2} people · ${planType==="restaurant"?"dinner & drinks":"tickets & transport"}`
-                  :`${selGroup?.memberIds?.length||2} travelers · ${nights()>0?nights()+" nights · ":""}${getBudgetLabel()}`
+                  :`${plural(selGroup?.memberIds?.length||2,"traveller")} · ${nights()>0?plural(nights(),"night")+" · ":""}${getBudgetLabel()}`
                 }
               </div>
             </div>
@@ -4101,7 +4105,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
               <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Budget per person</div>
               <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${plan.budget.toLocaleString()}</div>
-              <div style={{fontSize:12,color:C.t2,marginTop:4}}>{plan.participants.length} travelers total</div>
+              <div style={{fontSize:12,color:C.t2,marginTop:4}}>{plural(plan.participants.length,"traveller")} total</div>
             </div>
             {/* Itemised from the plan itself. This was a percentage split of
                 the budget — flights 28%, accommodation 34% — which told you
@@ -4441,7 +4445,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     d:b.provider==="concierge"?"We'll handle this one for you":(b.mode==="redirect"?"Opens in partner site":""),
     a:b.price_cents, st:b.status
   })):[
-    {icon:"\u2708\uFE0F",l:"Round-trip flights",d:`${participants} travelers`,a:Math.round(myShareCents*.34*participants)},
+    {icon:"\u2708\uFE0F",l:"Round-trip flights",d:plural(participants,"traveller"),a:Math.round(myShareCents*.34*participants)},
     {icon:"\uD83C\uDFE8",l:"Accommodation",d:"",a:Math.round(myShareCents*.4*participants)},
     {icon:"\uD83C\uDFAF",l:"Activities & tours",d:"",a:Math.round(myShareCents*.26*participants)}
   ]);
@@ -4568,7 +4572,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
         </div>))}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
-        <span style={{fontSize:14,color:C.t2}}>Your share ({participants} people)</span>
+        <span style={{fontSize:14,color:C.t2}}>Your share of {plural(participants,"person","people")}</span>
         <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1}}>{fmt(myShareCents)}</span>
       </div>
       <button disabled={busy} onClick={startPayment}
