@@ -4869,14 +4869,14 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
   if(phase==="error")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:34,marginBottom:12}}>\uD83D\uDE48</div>
     <div style={{color:C.t1,fontWeight:600,marginBottom:8}}>{msg}</div>
-    <button onClick={()=>{setPhase("loading");load();}} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700}}>Try again</button>
+    <button onClick={()=>{setPhase("loading");load();}} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700}}>Try again</button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Go back</div>
   </div></div>);
 
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:40,marginBottom:12}}>\uD83E\uDD1D</div>
     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>You're in!</div>
-    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in before we book. We'll lock everything in the moment the group is fully funded.</div>
+    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in. The moment the last share lands we'll email everyone, and one of you gives the word to book.</div>
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents+myShareCents)/Math.max(funding.targetCents,1))*100));
       return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
@@ -4911,7 +4911,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
     <div style={{fontSize:40,marginBottom:12}}>\uD83D\uDCC8</div>
     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>Price went up a little</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>One of your bookings costs a bit more than when we quoted it. Still book it?</div>
-    <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
+    <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
     <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Let me think</div>
   </div></div>);
 
@@ -4950,7 +4950,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
             {chip(it.st==="confirmed"?"Booked \u2713":it.st==="pending"?"We're on it":"Booked \u2713",it.st==="pending"?"gold":"green")}
           </div>))}
         </div>
-        <button onClick={onBack} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,fontSize:15}}>See my itinerary</button>
+        <button onClick={onBack} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15}}>See my itinerary</button>
       </div>
     </div>);
   }
@@ -4964,7 +4964,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
       <div ref={payRef} style={{minHeight:220,background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}/>
       {!payReady&&<div style={{textAlign:"center",color:C.t2,fontSize:13,marginTop:10}}>Loading secure payment\u2026</div>}
       <button disabled={!payReady||busy} onClick={confirmPay}
-        style={{width:"100%",marginTop:16,padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,fontSize:15,opacity:(!payReady||busy)?.6:1}}>
+        style={{width:"100%",marginTop:16,padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15,opacity:(!payReady||busy)?.6:1}}>
         {busy?"Paying\u2026":`Pay ${fmt(myShareCents)}`}</button>
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>\uD83D\uDD12 Secured by Stripe \u00B7 you only pay your share</div>
     </div>
@@ -4990,7 +4990,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
         <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1}}>{fmt(myShareCents)}</span>
       </div>
       <button disabled={busy} onClick={startPayment}
-        style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,fontSize:16,opacity:busy?.6:1}}>
+        style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16,opacity:busy?.6:1}}>
         {busy?"One sec\u2026":"Looks good"}</button>
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>
         {participants<=1

@@ -94,6 +94,25 @@ export function sendFundingNeeded(to: string, opts: { planTitle: string; groupNa
     <a href="${escape(opts.url)}" style="${emailButtonStyle}">Pay your share</a>`), 'funding needed');
 }
 
+/**
+ * Everyone has paid. The checkout screen told the last person to pay that
+ * "we'll lock everything in the moment the group is fully funded" — and
+ * nothing watched for that moment, so the trip sat fully funded and silent
+ * until somebody happened to open the app. This is that moment arriving.
+ */
+export function sendFullyFunded(to: string, opts: { planTitle: string; groupName: string; totalCents: number; url: string }) {
+  const total = `$${(opts.totalCents / 100).toFixed(2)}`;
+  return send(to, `${opts.planTitle} is fully funded`, shell("That's everyone", `
+    <p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
+      Every one of <strong>${escape(opts.groupName)}</strong> has paid their share of
+      <strong>${escape(opts.planTitle)}</strong>. ${total} collected.
+    </p>
+    <p style="font-size:14px;color:#635539;line-height:1.6;margin:0 0 20px;">
+      Nothing is booked yet — one of you gives the word and Reach books the lot.
+    </p>
+    <a href="${escape(opts.url)}" style="${emailButtonStyle}">Book it</a>`), 'fully funded');
+}
+
 // ── Coordination ─────────────────────────────────────────────────────────
 
 /** A plan is open for votes and this person has not voted. */
