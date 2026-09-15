@@ -198,3 +198,86 @@ test('the map server is given as long as we will wait', () => {
   assert.match(overpassQuery(['cooking'], '1,2,3,4'), /\[timeout:25\]/);
   assert.match(overpassQuery(['cooking'], '1,2,3,4', 30, 8), /\[timeout:8\]/);
 });
+
+// ── Taste: every answer, and something for somebody with none ────────────
+import { tasteFrom, kindFor } from '../../lib/discovery/taste.ts';
+import { matchesSelector } from '../../lib/discovery/osm.ts';
+
+test('somebody who skipped the quiz still gets a bit of everything', () => {
+  const t = tasteFrom(null);
+  assert.equal(t.interests.length, 0);
+  assert.ok(t.browse.length >= 5);
+  assert.equal(new Set(t.browse).size, t.browse.length);
+});
+
+test('every answer counts, not just the activities question', () => {
+  const t = tasteFrom({
+    cuisines: ['Japanese'], drink_style: 'Cocktails',
+    nightlife_style: 'A proper pub', music_genres: ['Jazz & soul'],
+  });
+  for (const k of ['japanese restaurants', 'cocktail bars', 'pubs', 'live music', 'jazz']) {
+    assert.ok(t.interests.includes(k), k);
+  }
+});
+
+test('what they picked first stays first', () => {
+  const t = tasteFrom({ favorite_activities: ['Pottery & crafts', 'Cooking'], cuisines: ['Thai'] });
+  assert.deepEqual(t.interests.slice(0, 2), ['pottery & crafts', 'cooking']);
+});
+
+test('not drinking means no bars, breweries or wine, chosen or suggested', () => {
+  const t = tasteFrom({
+    drink_style: 'Not drinking', nightlife_style: 'A proper pub',
+    favorite_activities: ['Breweries', 'Pottery & crafts'],
+  });
+  for (const k of [...t.interests, ...t.browse]) assert.ok(!kindFor(k).alcohol, k);
+  assert.ok(t.interests.includes('pottery & crafts'));
+});
+
+test('a hard no on clubs rules out the nightclub, not the gig', () => {
+  const t = tasteFrom({ nightlife_style: 'Dancing', music_genres: ['Rock & indie'], no_way_jose: ['Clubs'] });
+  assert.ok(!t.interests.includes('nightclubs'));
+  assert.ok(t.interests.includes('live music'));
+});
+
+test('plenty of answers still leaves room for something new', () => {
+  const t = tasteFrom({
+    favorite_activities: ['Cooking', 'Comedy', 'Sport', 'Wellness', 'Dancing', 'Photography', 'Outdoors'],
+  });
+  assert.ok(t.browse.length >= 2);
+  assert.ok(t.browse.every(b => !t.interests.includes(b)));
+});
+
+test('every new chip is a kind the sources know, not a name search', () => {
+  for (const chip of ['Markets & food halls', 'Museums & history', 'Wine tasting',
+    'Breweries', 'Trivia & board games', 'Gardens & parks']) {
+    assert.ok(!kindFor(chip).osm.some(s => s.startsWith('name~')), chip);
+    assert.ok(!kindFor(chip).yelp.endsWith(' class'), chip);
+  }
+});
+
+test('a cuisine is looked for as restaurants that serve it, however it is listed', () => {
+  const [sel] = kindFor('Japanese restaurants').osm;
+  // OSM keeps cuisines as lists.
+  assert.ok(matchesSelector(sel, { amenity: 'restaurant', cuisine: 'sushi;japanese' }));
+  assert.ok(!matchesSelector(sel, { amenity: 'restaurant', cuisine: 'italian' }));
+  assert.ok(!matchesSelector(sel, { amenity: 'cafe', cuisine: 'japanese' }));
+});
+
+test('restaurants and bars are not read for classes; studios and typed interests are', () => {
+  assert.equal(kindFor('pubs').harvest, false);
+  assert.equal(kindFor('thai restaurants').harvest, false);
+  assert.equal(kindFor('Pottery & crafts').harvest, true);
+  assert.equal(kindFor('letterpress').harvest, true);
+});
+
+test('each kind of place gets its own cap, so restaurants cannot crowd out a studio', () => {
+  const q = overpassQuery(['Pottery & crafts', 'Italian restaurants'], '1,2,3,4', 15);
+  assert.equal((q.match(/out center 15;/g) || []).length, 2);
+});
+
+test('a typed cuisine cannot break out of the query either', () => {
+  const [sel] = kindFor('korean"); out; restaurants').osm;
+  assert.ok(!sel.includes('\n'));
+  assert.equal((sel.match(/"/g) || []).length, 2);
+});

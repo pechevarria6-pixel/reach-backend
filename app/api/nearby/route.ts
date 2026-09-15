@@ -16,15 +16,16 @@ import { ticketmaster } from '@/lib/discovery/ticketmaster';
 import { yelpEvents, yelpPlaces } from '@/lib/discovery/yelp';
 import { cachedVenues, cachedEvents, noteArea } from '@/lib/discovery/cache';
 import { rank } from '@/lib/discovery/rank';
+import { tasteFrom } from '@/lib/discovery/taste';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
 
 export const maxDuration = 30;
 
 type Reason = 'ok' | 'no_key' | 'no_location' | 'none_nearby' | 'provider_error';
 
-function empty(reason: Reason, city: string, sources: SourceResult[] = []) {
+function empty(reason: Reason, city: string, sources: SourceResult[] = [], personal?: boolean) {
   return NextResponse.json({
-    events: [], reason, city,
+    events: [], reason, city, personal,
     sources: sources.map(s => ({ source: s.source, status: s.status, found: s.findings.length })),
   });
 }
@@ -38,18 +39,25 @@ export async function GET(req: NextRequest) {
   const city = req.nextUrl.searchParams.get('city') || '';
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return empty('no_location', city);
 
-  // What they told the quiz. Typed answers count the same as chips — the
-  // point of letting somebody write "letterpress" is searching for it.
+  // What they told the quiz — all of it. This used to read the activities
+  // question alone, so somebody who said they eat Japanese, drink cocktails
+  // and end the night in a proper pub got nothing that knew them. Typed
+  // answers count the same as chips.
   const { data: me } = await ctx.db
     .from('users')
-    .select('favorite_activities, no_way_jose')
+    .select('favorite_activities, cuisines, music_genres, nightlife_style, drink_style, no_way_jose')
     .eq('id', ctx.user.id).single();
 
+  const taste = tasteFrom(me);
   const seeker: Seeker = {
     lat, lng, city,
-    interests: (me?.favorite_activities ?? []).filter(Boolean).slice(0, 6),
+    interests: taste.interests,
+    // A bit of everything alongside, so a new person's first screen is their
+    // city rather than a prompt to fill in a form.
+    browse: taste.browse,
     avoid: (me?.no_way_jose ?? []).filter(Boolean),
   };
+  const personal = seeker.interests.length > 0;
 
   // All three at once. Sequentially this would be three round trips deep
   // inside a request somebody is waiting on with an empty screen.
@@ -75,8 +83,8 @@ export async function GET(req: NextRequest) {
 
   // Say we were asked about here, so the sweep knows where to go next. Reach
   // cannot sweep the world and does not have to: people say where they are
-  // by opening this screen.
-  if (seeker.interests.length) await noteArea(ctx.db, seeker);
+  // by opening this screen — including people who have not done the quiz.
+  await noteArea(ctx.db, seeker);
 
   const events = rank(results.flatMap(r => r.findings), seeker.interests);
   const sources = results.map(r => ({ source: r.source, status: r.status, found: r.findings.length }));
@@ -88,15 +96,15 @@ export async function GET(req: NextRequest) {
     const configured = results.filter(r => r.status !== 'no_key');
     if (!configured.length) {
       console.error('[nearby] no discovery source is configured');
-      return empty('no_key', city, results);
+      return empty('no_key', city, results, personal);
     }
     if (configured.every(r => r.status === 'error')) {
       console.error('[nearby] every configured source failed',
         results.map(r => `${r.source}:${r.status}${r.detail ? `(${r.detail})` : ''}`).join(' '));
-      return empty('provider_error', city, results);
+      return empty('provider_error', city, results, personal);
     }
-    return empty('none_nearby', city, results);
+    return empty('none_nearby', city, results, personal);
   }
 
-  return NextResponse.json({ events, reason: 'ok', city, sources });
+  return NextResponse.json({ events, reason: 'ok', city, sources, personal });
 }

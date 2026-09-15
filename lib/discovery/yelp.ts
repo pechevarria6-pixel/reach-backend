@@ -11,6 +11,7 @@
 // things is better than showing none because a third was misconfigured.
 import type { Finding, SourceResult, Seeker } from './types.ts';
 import { notRuledOut } from './rules.ts';
+import { kindFor, searchTermFor } from './taste.ts';
 
 const BASE = 'https://api.yelp.com/v3';
 const MILES = 1609.34;
@@ -89,26 +90,9 @@ export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {
 // type their own — "sourdough", "sea swimming", "letterpress" — and a fixed
 // map of category aliases would throw away exactly the answers that make a
 // suggestion feel like it was meant for one person.
-const CLASS_WORDS: Record<string, string> = {
-  'cooking': 'cooking class',
-  'pottery & crafts': 'pottery class',
-  'art & galleries': 'art class',
-  'photography': 'photography workshop',
-  'dancing': 'dance class',
-  'wellness': 'yoga studio',
-  'books & talks': 'bookshop events',
-  'comedy': 'comedy club',
-  'live music': 'live music venue',
-  'film & theatre': 'independent cinema',
-  'sport': 'climbing gym',
-  'outdoors': 'guided walks',
-};
-
-/** "pottery" becomes "pottery class"; anything typed is searched as written. */
-export function searchTermFor(interest: string): string {
-  const key = interest.trim().toLowerCase();
-  return CLASS_WORDS[key] || (key.includes('class') || key.includes('workshop') ? key : `${key} class`);
-}
+// The words to search for live alongside every other source's, in taste.ts,
+// so the map and Yelp cannot disagree about what "pottery" means.
+export { searchTermFor };
 
 async function placesFor(interest: string, seeker: Seeker, headers: Record<string, string>): Promise<Finding[]> {
   const term = searchTermFor(interest);
@@ -131,7 +115,7 @@ async function placesFor(interest: string, seeker: Seeker, headers: Record<strin
         (b.categories ?? []).map((c: any) => c.title).slice(0, 2).join(' · '),
         b.location?.city || seeker.city,
       ].filter(Boolean).join(' · '),
-      emoji: '🎨',
+      emoji: kindFor(interest).emoji,
       price: money(b.price),
       dist: milesFrom(b.distance),
       // The interest is the category, so the filter chips on Discover read
@@ -143,7 +127,9 @@ async function placesFor(interest: string, seeker: Seeker, headers: Record<strin
       date: null,
       venue: b.location?.address1 || null,
       source: 'yelp-places',
-      because: interest,
+      // Only when it is theirs. A spare search spent on everyday things did
+      // not find this because of anything they told us.
+      because: seeker.interests.includes(interest) ? interest : null,
     }))
     .filter((f: Finding) => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid));
 }
@@ -151,12 +137,12 @@ async function placesFor(interest: string, seeker: Seeker, headers: Record<strin
 export async function yelpPlaces(seeker: Seeker): Promise<SourceResult> {
   const headers = auth();
   if (!headers) return { source: 'yelp-places', status: 'no_key', findings: [] };
-  // Nothing to look for. Not an error — they have not done the quiz yet.
-  if (!seeker.interests.length) return { source: 'yelp-places', status: 'ok', findings: [] };
-
   // Three at once. Every interest would be a dozen round trips inside one
   // request, and the three they picked first are the three they care about.
-  const wanted = seeker.interests.slice(0, 3);
+  // Somebody with fewer than three answers, or none, gets everyday things in
+  // the spare searches rather than an empty lane.
+  const wanted = [...seeker.interests, ...(seeker.browse ?? [])].slice(0, 3);
+  if (!wanted.length) return { source: 'yelp-places', status: 'ok', findings: [] };
   const settled = await Promise.allSettled(wanted.map(i => placesFor(i, seeker, headers)));
 
   const findings = settled.flatMap(r => r.status === 'fulfilled' ? r.value : []);

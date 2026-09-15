@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { harvestVenue } from '@/lib/discovery/harvest';
+import { kindFor } from '@/lib/discovery/taste';
 
 export const maxDuration = 300;
 
@@ -50,7 +51,11 @@ export async function GET(req: NextRequest) {
   const { data: venues, error } = await db
     .from('discovery_venues')
     .select('id, name, website, interest, last_harvested_at, harvest_status')
-    .or(`last_harvested_at.is.null,last_harvested_at.lt.${due}`)
+    // Never read, or read long enough ago — and never a venue the sweep
+    // marked as not worth reading. A skipped venue is never stamped as
+    // harvested, so without this it would sit at the front of the queue
+    // every night and starve the studios behind it.
+    .or(`and(last_harvested_at.is.null,harvest_status.is.null),and(last_harvested_at.lt.${due},harvest_status.neq.skip)`)
     .order('last_harvested_at', { ascending: true, nullsFirst: true })
     .limit(perRun * 3);
 
@@ -63,6 +68,7 @@ export async function GET(req: NextRequest) {
   // A site read last week and found unreadable does not need reading again
   // this week. Honouring its own back-off is what keeps us welcome.
   const ready = venues.filter(v => {
+    if (!kindFor(v.interest).harvest) return false;
     if (!v.last_harvested_at) return true;
     const wait = RETRY_DAYS[v.harvest_status ?? 'unreachable'] ?? FRESH_DAYS;
     return Date.now() - new Date(v.last_harvested_at).getTime() > wait * 86400_000;

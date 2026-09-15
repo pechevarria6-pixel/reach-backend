@@ -52,6 +52,11 @@ export interface Seeker {
   city: string;
   /** What they told the quiz they are into, most telling first. */
   interests: string[];
+  /**
+   * Everyday things looked for as well, so somebody with few answers or none
+   * still sees their city. Never presented as found because of them.
+   */
+  browse?: string[];
   /** Absolute nos. Anything matching these never reaches the screen. */
   avoid: string[];
 }

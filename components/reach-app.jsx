@@ -653,11 +653,11 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       ))}
       {nearbyState!=="ready"&&(
         <div style={{margin:"0 20px",padding:"14px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
-          {nearbyState==="loading"?"Looking for events near you…"
+          {nearbyState==="loading"?"Looking for things to do near you…"
             :nearbyState==="denied"?"Allow location in your browser and reload to see events near you."
             :nearbyReason==="no_key"?"Event listings aren't switched on for this deployment yet."
-            :nearbyReason==="provider_error"?"Couldn't reach the ticket provider. Try again shortly."
-            :"Nothing on sale near you this week. Try again in a few days."}
+            :nearbyReason==="provider_error"?"Couldn't reach the listings just now. Try again shortly."
+            :"Nothing close by just yet. Reach looks again every night."}
         </div>
       )}
       <div style={{height:20}}/>
@@ -733,6 +733,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
   const [loaded,setLoaded]=useState(false);
   const [reason,setReason]=useState(null);
   const [sources,setSources]=useState([]);
+  // Whether anything here was found because of what they told us. When not,
+  // the screen is a bit of everything and says so, once, quietly.
+  const [personal,setPersonal]=useState(true);
 
   useEffect(()=>{
     if(loaded)return;
@@ -774,6 +777,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
         // Which providers answered. A screen that cannot tell a quiet week
         // from a dead key tells everybody their city is boring.
         setSources(data.sources||[]);
+        setPersonal(data.personal!==false);
         if(data.events?.length){
           setLocalRecs(data.events);
           // Cache in sessionStorage so reload is instant
@@ -843,8 +847,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
   const emptyNote=loading?"Finding what's on near you…"
     :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
     :reason==="no_location"?"Allow location in your browser to see what's on near you."
-    :reason==="provider_error"?"Couldn't reach the ticket provider. Try again shortly."
-    :allItems.length===0?"Nothing on sale near you this week. Try again in a few days."
+    :reason==="provider_error"?"Couldn't reach the listings just now. Try again shortly."
+    :allItems.length===0?"Nothing close by just yet. Reach looks again every night."
     :null;
 
   const city=userLocation?.city||userLocation?.formatted;
@@ -860,6 +864,13 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
           <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
             onClick={()=>toast("Enable location in your browser for local picks")}>
             📍 Enable location for local recommendations
+          </div>
+        )}
+        {/* An invitation, not a gate. Everything below works without it. */}
+        {loaded&&!personal&&(
+          <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
+            onClick={()=>push("taste")}>
+            A bit of everything near you. Tell us what you're into and it gets personal →
           </div>
         )}
       </div>
@@ -2202,6 +2213,12 @@ const TASTE_QUESTIONS=[
       {id:"wellness",e:"🧘",l:"Wellness"},
       {id:"books",e:"📚",l:"Books & talks"},
       {id:"photography",e:"📷",l:"Photography"},
+      {id:"markets",e:"🧺",l:"Markets & food halls"},
+      {id:"museums",e:"🏛️",l:"Museums & history"},
+      {id:"wine",e:"🍷",l:"Wine tasting"},
+      {id:"breweries",e:"🍺",l:"Breweries"},
+      {id:"games",e:"🎲",l:"Trivia & board games"},
+      {id:"gardens",e:"🌳",l:"Gardens & parks"},
     ],
   },
   {

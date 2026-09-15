@@ -11,8 +11,9 @@
 // the same secret, which is how you warm a city before a launch.
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { openStreetMap, osmRef } from '@/lib/discovery/osm';
-import type { Seeker } from '@/lib/discovery/types';
+import { openStreetMap, osmRef, tagsFor } from '@/lib/discovery/osm';
+import { kindFor } from '@/lib/discovery/taste';
+import type { Finding } from '@/lib/discovery/types';
 
 // Overpass is slow and this loops over areas. Give it room, but not so much
 // that a stuck sweep holds a function open for a quarter of an hour.
@@ -21,11 +22,16 @@ export const maxDuration = 300;
 // How long a swept area stays fresh. The map changes slowly; a studio that
 // opened this morning can wait until tomorrow.
 const FRESH_HOURS = 24;
-// Areas per run. Each is several Overpass calls, and a run that tries to do
-// every city at once finishes none of them.
-// Each is several Overpass calls against a service that hangs when busy, and
-// a run that tries every city at once finishes none of them.
+// Areas per run. Each is several Overpass calls against a service that hangs
+// when busy, and a run that tries every city at once finishes none of them.
 const PER_RUN = 8;
+// Kinds of place per Overpass request. An area with a dozen interests asked
+// in one breath is the query that gets refused; four at a time is not.
+const PER_QUERY = 4;
+const MAX_KINDS = 24;
+// Stop starting new work with a minute in hand, so the run reports what it
+// did rather than being killed mid-write at the five minute limit.
+const DEADLINE_MS = 240_000;
 
 function authorised(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -44,6 +50,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
   }
 
+  const started = Date.now();
+  const outOfTime = () => Date.now() - started > DEADLINE_MS;
   const db = createServerClient();
   const staleBefore = new Date(Date.now() - FRESH_HOURS * 3600_000).toISOString();
 
@@ -66,63 +74,88 @@ export async function GET(req: NextRequest) {
   const report: Array<Record<string, unknown>> = [];
 
   for (const area of areas) {
-    const seeker: Seeker = {
-      lat: Number(area.lat), lng: Number(area.lng), city: area.city || '',
-      interests: (area.interests || []).slice(0, 6),
-      // The sweep stores everything it finds. Hard nos belong to a person,
-      // not to a city, and are applied when Discover reads the cache.
-      avoid: [],
-    };
+    const name = area.city || `${area.lat},${area.lng}`;
+    if (outOfTime()) { report.push({ area: name, status: 'next_run' }); continue; }
 
-    // A generous budget: nobody is waiting on this, and a mirror that needs
-    // twenty seconds is still better than an empty city.
-    const found = await openStreetMap(seeker, 25000);
+    // Only kinds the map can answer, each once, whatever capitalisation an
+    // older row stored them under.
+    const kinds = [...new Set<string>((area.interests || []).map((i: string) => kindFor(i).key))]
+      .filter(k => tagsFor(k).length)
+      .slice(0, MAX_KINDS);
 
-    if (found.status !== 'ok') {
-      await db.from('discovery_areas').update({
-        sweep_status: found.status, sweep_detail: found.detail ?? null,
-        // Deliberately not stamping last_swept_at: a failed sweep must come
-        // round again quickly rather than counting as a day's work done.
-      }).eq('id', area.id);
-      report.push({ area: area.city || `${area.lat},${area.lng}`, status: found.status, found: 0 });
-      continue;
+    const findings: Finding[] = [];
+    let failed = 0;
+    let detail: string | undefined;
+    for (let i = 0; i < kinds.length; i += PER_QUERY) {
+      if (outOfTime()) { failed++; detail = 'ran out of time'; break; }
+      // A generous budget: nobody is waiting on this, and a mirror that needs
+      // twenty seconds is still better than an empty city.
+      const found = await openStreetMap({
+        lat: Number(area.lat), lng: Number(area.lng), city: area.city || '',
+        interests: kinds.slice(i, i + PER_QUERY),
+        // The sweep stores everything it finds. Hard nos belong to a person,
+        // not to a city, and are applied when Discover reads the cache.
+        avoid: [],
+      }, 25000);
+      if (found.status !== 'ok') { failed++; detail = found.detail; continue; }
+      findings.push(...found.findings);
     }
 
-    const rows = found.findings.map(f => {
+    const now = new Date().toISOString();
+    const rows = new Map<string, Record<string, unknown> & { interest: string }>();
+    for (const f of findings) {
       // The id carries what the map called it. This used to be read with a
       // pattern expecting a suffix no id has ever had, so every venue parsed
       // as id 0 and was thrown away, and every city swept "ok" with nothing.
       const ref = osmRef(f.id);
       // Without its own point a venue sits at the centre of the area, which
       // makes every distance on the screen the same and wrong.
-      if (!ref || f.lat == null || f.lng == null) return null;
-      return {
+      if (!ref || f.lat == null || f.lng == null) continue;
+      const interest = kindFor(f.because || 'unknown').key;
+      // One row per place per kind. Postgres refuses an upsert that names the
+      // same row twice, and a whole area's write would go with it.
+      rows.set(`${ref.type}/${ref.id}/${interest}`, {
         osm_type: ref.type,
         osm_id: ref.id,
         name: f.title,
-        lat: f.lat ?? Number(area.lat), lng: f.lng ?? Number(area.lng),
+        lat: f.lat, lng: f.lng,
         city: area.city || null,
         website: f.url,
-        interest: f.because || 'unknown',
+        interest,
         kind: f.meta.split(' · ')[0] || null,
         street: f.venue,
-        last_seen_at: new Date().toISOString(),
-      };
-    }).filter((r): r is NonNullable<typeof r> => !!r);
+        last_seen_at: now,
+      });
+    }
 
-    if (rows.length) {
+    // Restaurants, pubs and bars are marked so the harvest never spends its
+    // nightly budget reading a menu. Written apart from the rest so a venue
+    // worth reading keeps whatever the harvest last recorded about it.
+    const all = [...rows.values()];
+    const toRead = all.filter(r => kindFor(r.interest).harvest);
+    const notToRead = all.filter(r => !kindFor(r.interest).harvest).map(r => ({ ...r, harvest_status: 'skip' }));
+    for (const batch of [toRead, notToRead]) {
+      if (!batch.length) continue;
       const { error: wrote } = await db
         .from('discovery_venues')
-        .upsert(rows, { onConflict: 'osm_type,osm_id,interest' });
+        .upsert(batch, { onConflict: 'osm_type,osm_id,interest' });
       if (wrote) console.error('[discovery/sweep] could not write venues', wrote.message);
     }
 
-    await db.from('discovery_areas').update({
-      last_swept_at: new Date().toISOString(),
-      sweep_status: 'ok', sweep_detail: null,
-    }).eq('id', area.id);
+    if (failed) {
+      await db.from('discovery_areas').update({
+        sweep_status: all.length ? 'partial' : 'error', sweep_detail: detail ?? null,
+        // Deliberately not stamping last_swept_at: a failed sweep must come
+        // round again quickly rather than counting as a day's work done.
+      }).eq('id', area.id);
+      report.push({ area: name, status: all.length ? 'partial' : 'error', kinds: kinds.length, found: all.length });
+      continue;
+    }
 
-    report.push({ area: area.city || `${area.lat},${area.lng}`, status: 'ok', found: rows.length });
+    await db.from('discovery_areas').update({
+      last_swept_at: now, sweep_status: 'ok', sweep_detail: null,
+    }).eq('id', area.id);
+    report.push({ area: name, status: 'ok', kinds: kinds.length, found: all.length });
   }
 
   console.log('[discovery/sweep]', JSON.stringify(report));
