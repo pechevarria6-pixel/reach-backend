@@ -1611,16 +1611,13 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             The wallet fills from what members contribute at checkout. Paying into it
             directly isn't built yet, so there is nothing here that would take your money.
           </div>
+          {/* This mapped over a literal empty array, so the heading was
+              permanent and what sat under it never was. A heading over
+              nothing reads as a section that failed to load. */}
           <div className="sl" style={{marginBottom:12}}>Recent transactions</div>
-          {[].map((tx,i)=>(
-            <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 0",borderBottom:`1px solid ${C.border}`}}>
-              <div>
-                <div style={{fontSize:14,color:C.t1}}>{tx.l}</div>
-                <div style={{fontSize:11,color:C.t3,marginTop:2}}>{tx.d}</div>
-              </div>
-              <div style={{fontSize:15,fontWeight:600,color:tx.c}}>{tx.a}</div>
-            </div>
-          ))}
+          <div style={{padding:"18px 0",textAlign:"center",fontSize:13,color:C.t3,lineHeight:1.6}}>
+            Nothing yet. Shares paid at checkout show up here.
+          </div>
         </div>
       )}
     </div>
