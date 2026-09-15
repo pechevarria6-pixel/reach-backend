@@ -755,8 +755,14 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
           // Cache in sessionStorage so reload is instant
           try{sessionStorage.setItem("reach_nearby",JSON.stringify({events:data.events,city:data.city,ts:Date.now()}));}catch(e){}
         }
+      }else{
+        console.error("[discover] nearby returned",res.status);
+        setReason("provider_error");
       }
-    }catch(e){}
+    }catch(e){
+      console.error("[discover] nearby failed",e);
+      setReason("provider_error");
+    }
     setLoaded(true);
     setLoading(false);
   };
@@ -888,7 +894,19 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
 
       {emptyNote&&shown.length===0&&(
         <div style={{margin:"0 20px",padding:"18px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,fontSize:13,color:C.t2,lineHeight:1.6}}>
-          {emptyNote}
+          <div>{emptyNote}</div>
+          {!loading&&(
+            <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
+              {reason!=="no_key"&&(
+                <button className="bsm" onClick={()=>{setLoaded(false);setLocalRecs([]);loadLocalRecs();}}>
+                  Look again
+                </button>
+              )}
+              <button className="bsm bsm-p" onClick={()=>push("createPlan",{})}>
+                Plan something instead →
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -932,9 +950,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
         </div>
       ))}
 
-      {shown.length===0&&!loading&&(
+      {shown.length===0&&!loading&&!emptyNote&&(
         <div style={{textAlign:"center",padding:"40px 20px",color:C.t3,fontSize:14}}>
-          {filter==="Nearby"?"No local events found. Try enabling location access.":"Nothing here yet."}
+          Nothing under {filter}. Try another one.
         </div>
       )}
 
