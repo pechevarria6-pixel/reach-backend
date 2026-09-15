@@ -36,7 +36,30 @@ export async function POST(req: NextRequest) {
   const type = typeof body.planType === 'string' && EXPERIENCE_BRIEF[body.planType]
     ? body.planType : 'trip';
 
+  // What this person is actually into. These columns have existed since the
+  // first schema and only trip generation ever read them, so a suggestion for
+  // a Thursday evening knew nothing about you beyond the form you were on.
+  // Reach is a night out as much as a fortnight away; this is the difference
+  // between "six restaurants" and "six restaurants for someone who cooks".
+  const { data: me } = await ctx.db
+    .from('users')
+    .select('favorite_activities, cuisines, music_genres, dining_vibe, drink_style, nightlife_style, dietary_needs, no_way_jose, budget_range')
+    .eq('id', ctx.user.id).single();
+
+  const list = (v: unknown) => Array.isArray(v) ? v.filter(Boolean).slice(0, 8).join(', ') : '';
+  const about = me ? [
+    list(me.favorite_activities) && `Into: ${list(me.favorite_activities)}`,
+    list(me.cuisines) && `Eats: ${list(me.cuisines)}`,
+    list(me.music_genres) && `Listens to: ${list(me.music_genres)}`,
+    me.dining_vibe && `Prefers dining: ${me.dining_vibe}`,
+    me.drink_style && `Drinks: ${me.drink_style}`,
+    me.nightlife_style && `A good night out: ${me.nightlife_style}`,
+    me.dietary_needs && `Cannot eat: ${me.dietary_needs}`,
+    list(me.no_way_jose) && `Never suggest: ${list(me.no_way_jose)}`,
+  ].filter(Boolean).join('\n') : '';
+
   const prompt = `${EXPERIENCE_BRIEF[type](body)}
+${about ? `\nWho this is for:\n${about}\nLean into these. If something here rules a suggestion out, it is out.\n` : ''}
 
 For every suggestion:
 - "cost" is what one person actually spends, in whole dollars. Free is 0.

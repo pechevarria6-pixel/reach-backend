@@ -109,6 +109,11 @@ export async function GET() {
     preferences: dbUser ? {
       cuisines: dbUser.cuisines || [],
       musicGenres: dbUser.music_genres || [],
+      // What somebody is actually into — pottery, cooking, climbing. The
+      // quiz writes these two and could not prefill them without reading
+      // them back, so editing your answers started from blank every time.
+      favoriteActivities: dbUser.favorite_activities || [],
+      noWayJose: dbUser.no_way_jose || [],
       diningVibe: dbUser.dining_vibe,
       drinkStyle: dbUser.drink_style,
       nightlifeStyle: dbUser.nightlife_style,

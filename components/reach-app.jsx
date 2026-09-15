@@ -588,6 +588,26 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         </div>
       </div>
       )}
+      {/* Answering this makes every other screen better, so it sits above
+          the ways in rather than buried in a settings list. It goes away the
+          moment it is answered. */}
+      {user&&user.quizComplete===false&&(
+        <div onClick={()=>push("taste")}
+          style={{margin:"0 20px 14px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,
+            borderRadius:18,padding:16,display:"flex",gap:12,cursor:"pointer",alignItems:"center"}}>
+          <span style={{fontSize:28}}>✨</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:600,color:C.t1,marginBottom:3}}>
+              Tell us what you're into
+            </div>
+            <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55}}>
+              Pottery, cooking, live music, whatever it is. Two minutes, and every
+              suggestion after it is aimed at you rather than at everybody.
+            </div>
+            <div style={{fontSize:12,color:C.accentText,marginTop:6,fontWeight:600}}>Start →</div>
+          </div>
+        </div>
+      )}
       <div style={{padding:"0 20px 10px"}}>
         <span className="sl">{groups.length>0?"Jump back in":"Three ways to start"}</span>
       </div>
@@ -2148,6 +2168,366 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
 
 // ─── CREATE PLAN FLOW ─────────────────────────────────────────────────────────
 
+// ─── YOUR TASTE ───────────────────────────────────────────────────────────
+// The preference quiz. Every one of these columns already existed, the API
+// already accepted them, trip generation already read them and the group
+// screen already reported who had finished — and nothing anywhere in the app
+// ever asked. So every group read "0 of N ready" forever, and the button
+// offering to remind your crew to complete their quiz sent them to an app
+// with nowhere to do it.
+//
+// It leads with what you are into rather than where you want to fly, because
+// Reach is as much a Thursday evening as a fortnight away. "Pottery" and
+// "cooking" are the answers that make a recommendation feel like it knows
+// you, and no fixed list of six chips can hold what people are into — so
+// every question that deserves one takes your own words too.
+const TASTE_QUESTIONS=[
+  {
+    id:"favoriteActivities",icon:"✨",multi:true,
+    title:"What are you into?",
+    sub:"However you'd finish \"I've always fancied…\". Pick as many as you like.",
+    customPlaceholder:"Something else you love? Type it",
+    options:[
+      {id:"cooking",e:"🍳",l:"Cooking"},
+      {id:"pottery",e:"🏺",l:"Pottery & crafts"},
+      {id:"livemusic",e:"🎸",l:"Live music"},
+      {id:"art",e:"🎨",l:"Art & galleries"},
+      {id:"outdoors",e:"🥾",l:"Outdoors"},
+      {id:"sport",e:"⚽",l:"Sport"},
+      {id:"comedy",e:"🎤",l:"Comedy"},
+      {id:"film",e:"🎬",l:"Film & theatre"},
+      {id:"dancing",e:"💃",l:"Dancing"},
+      {id:"wellness",e:"🧘",l:"Wellness"},
+      {id:"books",e:"📚",l:"Books & talks"},
+      {id:"photography",e:"📷",l:"Photography"},
+    ],
+  },
+  {
+    id:"cuisines",icon:"🍽️",multi:true,
+    title:"What do you like to eat?",
+    sub:"We'll aim dinner at this, wherever you are.",
+    customPlaceholder:"A cuisine we've missed?",
+    options:[
+      {id:"italian",e:"🍝",l:"Italian"},
+      {id:"japanese",e:"🍣",l:"Japanese"},
+      {id:"mexican",e:"🌮",l:"Mexican"},
+      {id:"indian",e:"🍛",l:"Indian"},
+      {id:"thai",e:"🍜",l:"Thai"},
+      {id:"seafood",e:"🦞",l:"Seafood"},
+      {id:"steak",e:"🥩",l:"Steak"},
+      {id:"vegetarian",e:"🥗",l:"Veggie"},
+      {id:"bbq",e:"🔥",l:"Barbecue"},
+    ],
+  },
+  {
+    id:"musicGenres",icon:"🎧",multi:true,optional:true,
+    title:"What's on when you're getting ready?",
+    sub:"Shapes the gigs and the bars we put in front of you.",
+    customPlaceholder:"Anything else on heavy rotation?",
+    options:[
+      {id:"pop",e:"🎤",l:"Pop & R&B"},
+      {id:"rock",e:"🎸",l:"Rock & indie"},
+      {id:"hiphop",e:"🎧",l:"Hip-hop"},
+      {id:"edm",e:"🎛️",l:"Dance"},
+      {id:"jazz",e:"🎷",l:"Jazz & soul"},
+      {id:"country",e:"🤠",l:"Country"},
+      {id:"latin",e:"💃",l:"Latin"},
+      {id:"classical",e:"🎻",l:"Classical"},
+      {id:"metal",e:"🤘",l:"Metal"},
+    ],
+  },
+  {
+    id:"nightlifeStyle",icon:"🌙",
+    title:"How does a good night out end?",
+    sub:"There's no wrong answer and home by ten is a real one.",
+    options:[
+      {id:"dinner",e:"🍷",l:"A long dinner"},
+      {id:"pub",e:"🍺",l:"A proper pub"},
+      {id:"livemusic",e:"🎶",l:"Something live"},
+      {id:"dancing",e:"🕺",l:"Dancing"},
+      {id:"lowkey",e:"🛋️",l:"Home by ten"},
+      {id:"whatever",e:"🎲",l:"Wherever it goes"},
+    ],
+  },
+  {
+    id:"diningVibe",icon:"🪑",
+    title:"Where would you rather sit?",
+    options:[
+      {id:"hole",e:"🥟",l:"A tiny place locals queue for"},
+      {id:"buzzy",e:"🥂",l:"Somewhere buzzy"},
+      {id:"tasting",e:"👨‍🍳",l:"A proper tasting menu"},
+      {id:"outside",e:"🌤️",l:"Outside, always"},
+      {id:"quiet",e:"🕯️",l:"Quiet enough to talk"},
+      {id:"any",e:"🤷",l:"Wherever's good"},
+    ],
+  },
+  {
+    id:"drinkStyle",icon:"🥂",
+    title:"And to drink?",
+    options:[
+      {id:"cocktails",e:"🍸",l:"Cocktails"},
+      {id:"wine",e:"🍷",l:"Wine"},
+      {id:"beer",e:"🍺",l:"Beer"},
+      {id:"none",e:"🚫",l:"Not drinking"},
+      {id:"coffee",e:"☕",l:"Coffee, honestly"},
+      {id:"any",e:"🎲",l:"Whatever's good"},
+    ],
+  },
+  {
+    id:"budgetRange",icon:"💷",
+    title:"A normal night out costs you about…",
+    sub:"Per person, all in. Nothing is held to this — it just stops us suggesting silly things.",
+    options:[
+      {id:"under50",e:"🪙",l:"Under $50"},
+      {id:"50to100",e:"💵",l:"$50 – $100"},
+      {id:"100to200",e:"💳",l:"$100 – $200"},
+      {id:"200to400",e:"✨",l:"$200 – $400"},
+      {id:"over400",e:"💎",l:"$400+"},
+      {id:"varies",e:"🎲",l:"Depends entirely"},
+    ],
+  },
+  {
+    id:"dietary",icon:"🌱",free:true,optional:true,
+    title:"Anything you can't eat?",
+    sub:"Allergies, intolerances, what you don't touch. We'll never suggest around it.",
+    placeholder:"Coeliac, no shellfish, vegetarian…",
+  },
+  {
+    id:"noWayJose",icon:"🚫",multi:true,optional:true,noWay:true,
+    title:"No Way José",
+    sub:"Absolute nos. We will never suggest these, however good they look.",
+    customPlaceholder:"Anything else that's a hard no?",
+    options:[
+      {id:"crowds",e:"👥",l:"Big crowds"},
+      {id:"loud",e:"🔊",l:"Loud rooms"},
+      {id:"earlyMornings",e:"⏰",l:"Early mornings"},
+      {id:"heights",e:"🧗",l:"Heights"},
+      {id:"clubs",e:"🪩",l:"Clubs"},
+      {id:"spicy",e:"🌶️",l:"Very spicy food"},
+      {id:"coldWeather",e:"🥶",l:"Cold weather"},
+      {id:"camping",e:"⛺",l:"Camping"},
+      {id:"karaoke",e:"🎤",l:"Karaoke"},
+    ],
+  },
+];
+
+// The API takes snake_case columns; the quiz and /api/me speak camelCase.
+const TASTE_COLUMN={
+  favoriteActivities:"favorite_activities", cuisines:"cuisines",
+  musicGenres:"music_genres", nightlifeStyle:"nightlife_style",
+  diningVibe:"dining_vibe", drinkStyle:"drink_style",
+  budgetRange:"budget_range", dietary:"dietary_needs", noWayJose:"no_way_jose",
+};
+
+function TasteQuizScreen({onBack,toast,onSaved}){
+  const [step,setStep]=useState(0);
+  const [answers,setAnswers]=useState({
+    favoriteActivities:[],cuisines:[],musicGenres:[],noWayJose:[],
+    nightlifeStyle:null,diningVibe:null,drinkStyle:null,budgetRange:null,dietary:"",
+  });
+  const [custom,setCustom]=useState({});
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [done,setDone]=useState(false);
+
+  // Editing your answers has to start from your answers. Anything already
+  // stored is loaded, so this is a thing you revise rather than redo.
+  useEffect(()=>{
+    let alive=true;
+    (async()=>{
+      try{
+        const r=await fetch("/api/me");
+        if(r.ok){
+          const me=await r.json();
+          const p=me.preferences||{};
+          if(alive)setAnswers(a=>({
+            ...a,
+            favoriteActivities:p.favoriteActivities||[],
+            cuisines:p.cuisines||[],
+            musicGenres:p.musicGenres||[],
+            noWayJose:p.noWayJose||[],
+            nightlifeStyle:p.nightlifeStyle||null,
+            diningVibe:p.diningVibe||null,
+            drinkStyle:p.drinkStyle||null,
+            budgetRange:p.budgetRange||null,
+            dietary:p.dietary||"",
+          }));
+        }else console.error("[taste] could not load your answers",r.status);
+      }catch(e){console.error("[taste] could not load your answers",e);}
+      if(alive)setLoading(false);
+    })();
+    return()=>{alive=false;};
+  },[]);
+
+  const q=TASTE_QUESTIONS[step];
+  const total=TASTE_QUESTIONS.length;
+  const isLast=step===total-1;
+  const tog=(k,v)=>setAnswers(a=>({...a,[k]:(a[k]||[]).includes(v)?a[k].filter(x=>x!==v):[...(a[k]||[]),v]}));
+  const sel=(k,v)=>setAnswers(a=>({...a,[k]:a[k]===v?null:v}));
+  const canNext=q.optional||q.free
+    ?true
+    :(q.multi?(answers[q.id]||[]).length>0:!!answers[q.id]);
+
+  const save=async()=>{
+    if(saving)return;
+    setSaving(true);
+    // Typed answers are real answers. A list of six chips cannot hold
+    // "sourdough" or "sea swimming", and dropping what somebody typed is
+    // dropping the part that makes a recommendation feel like theirs.
+    const merged={...answers};
+    for(const [k,v] of Object.entries(custom)){
+      const t=(v||"").trim();
+      if(t&&Array.isArray(merged[k]))merged[k]=[...merged[k],t];
+    }
+    const payload={};
+    for(const [k,column] of Object.entries(TASTE_COLUMN)){
+      const value=merged[k];
+      if(Array.isArray(value))payload[column]=value;
+      else if(value)payload[column]=value;
+    }
+    // Everything we just learned about what somebody wants to do also
+    // describes the kind of activity they want on a trip, and trip
+    // generation reads that column rather than this one.
+    payload.activity_vibe=merged.favoriteActivities||[];
+    try{
+      const r=await fetch("/api/user/data",{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload),
+      });
+      if(!r.ok){
+        const err=await r.json().catch(()=>({}));
+        console.error("[taste] save rejected",r.status,err);
+        toast(err.error||"Couldn't save that — try again");
+        setSaving(false);
+        return;
+      }
+      setSaving(false);
+      setDone(true);
+      if(onSaved)onSaved();
+    }catch(e){
+      console.error("[taste] save failed",e);
+      toast("Couldn't save that — check your connection");
+      setSaving(false);
+    }
+  };
+
+  if(loading)return(
+    <div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2,fontSize:14}}>
+      Getting your answers…
+    </div></div>
+  );
+
+  if(done){
+    const picked=(answers.favoriteActivities||[]).length+((custom.favoriteActivities||"").trim()?1:0);
+    return(
+      <div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
+        <div style={{fontSize:48,marginBottom:14}}>🎉</div>
+        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1,marginBottom:10}}>
+          Now we know you
+        </div>
+        <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:26}}>
+          {picked>0
+            ?`${plural(picked,"thing")} you're into, plus how you eat, drink and spend an evening. Every suggestion from here reads all of it.`
+            :"Every suggestion from here reads your answers — yours and everyone you're planning with."}
+        </div>
+        <button className="bp" style={{width:"100%",marginBottom:10}} onClick={onBack}>
+          Show me something to do →
+        </button>
+        <button className="bs" style={{width:"100%"}} onClick={()=>{setDone(false);setStep(0);}}>
+          Change an answer
+        </button>
+      </div></div>
+    );
+  }
+
+  return(
+    <div className="sc" style={{display:"flex",flexDirection:"column",height:"100%"}}>
+      <div style={{padding:"12px 20px 10px"}}>
+        <ScreenHeader onBack={onBack} label="Back"/>
+        <div style={{display:"flex",gap:3,margin:"12px 0 8px"}}>
+          {TASTE_QUESTIONS.map((_,i)=>(
+            <div key={i} style={{flex:1,height:3,borderRadius:2,
+              background:i<=step?C.accent:C.s3,transition:"background .3s"}}/>
+          ))}
+        </div>
+        <div style={{fontSize:11,color:C.t3}}>
+          {step+1} of {total}{q.optional?" · skip if you like":""}
+        </div>
+      </div>
+
+      <div style={{padding:"8px 20px 14px",textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:8}}>{q.icon}</div>
+        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,
+          color:q.noWay?C.red:C.t1,lineHeight:1.2,marginBottom:4}}>{q.title}</div>
+        {q.sub&&<div style={{fontSize:13,color:C.t2,lineHeight:1.5}}>{q.sub}</div>}
+      </div>
+
+      <div style={{flex:1,overflowY:"auto",scrollbarWidth:"none",padding:"0 20px 8px"}}>
+        {q.free?(
+          <input className="inp" value={answers[q.id]||""}
+            onChange={e=>setAnswers(a=>({...a,[q.id]:e.target.value}))}
+            placeholder={q.placeholder}/>
+        ):(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
+            {q.options.map(opt=>{
+              const selected=q.multi?(answers[q.id]||[]).includes(opt.id):answers[q.id]===opt.id;
+              const isVeto=q.noWay&&selected;
+              return(
+                <button key={opt.id}
+                  onClick={()=>q.multi?tog(q.id,opt.id):sel(q.id,opt.id)}
+                  style={{padding:"14px 8px",borderRadius:14,
+                    border:"2px solid "+(isVeto?"rgba(239,68,68,.6)":selected?C.accent:C.border),
+                    background:isVeto?"rgba(239,68,68,.1)":selected?C.accentDim:C.s2,
+                    cursor:"pointer",textAlign:"center",transition:"all .15s"}}>
+                  <div style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
+                  <div style={{fontSize:11,fontWeight:600,lineHeight:1.2,
+                    color:isVeto?C.red:selected?C.accentText:C.t1}}>{opt.l}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {q.customPlaceholder&&(
+          <div style={{marginBottom:8}}>
+            <div style={{position:"relative"}}>
+              <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:18}}>✏️</span>
+              <input className="inp" style={{paddingLeft:44,fontSize:13}}
+                value={custom[q.id]||""}
+                onChange={e=>setCustom(c=>({...c,[q.id]:e.target.value}))}
+                placeholder={q.customPlaceholder}/>
+            </div>
+            {custom[q.id]&&(
+              <div style={{fontSize:12,color:C.accentText,marginTop:4,paddingLeft:4}}>
+                ✓ Added: {custom[q.id]}
+              </div>
+            )}
+          </div>
+        )}
+
+        {q.multi&&(answers[q.id]||[]).length>0&&(
+          <div style={{textAlign:"center",fontSize:12,color:C.accentText,fontWeight:500,padding:"4px 0"}}>
+            {(answers[q.id]||[]).length} selected
+          </div>
+        )}
+      </div>
+
+      <div style={{padding:"12px 20px 44px",display:"flex",gap:10}}>
+        {step>0&&<button className="bs" style={{flex:1}} onClick={()=>setStep(s=>s-1)}>← Back</button>}
+        {isLast?(
+          <button className="bp" style={{flex:2}} disabled={saving} onClick={save}>
+            {saving?"Saving…":"Save my answers"}
+          </button>
+        ):(
+          <button className="bp" style={{flex:2}} disabled={!canNext} onClick={()=>setStep(s=>s+1)}>
+            {canNext?"Continue →":"Pick at least one"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── What the plan already told us ────────────────────────────────────────
 // Creating a plan asks for dates, a vibe, a destination style, where you are
 // sleeping, your hard nos and a budget. The quiz then asked for the same six
@@ -2882,7 +3262,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                       Waiting on {totalCount-completedCount} {totalCount-completedCount===1?"member":"members"}
                     </div>
                     <div style={{fontSize:13,color:C.t2,lineHeight:1.6}}>
-                      Reach builds better trips when everyone shares their preferences. Remind your crew to complete their quiz.
+                      Reach builds better trips when everyone shares what they're into. Nudge whoever hasn't yet.
                     </div>
                   </div>
                 </div>
@@ -2897,9 +3277,15 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
                   color:C.onAccent,border:"none",borderRadius:14,
                   fontSize:13,fontWeight:600,cursor:"pointer",
-                  
                   boxShadow:"0 4px 16px rgba(212,168,67,0.25)"}}>
-                  📲 Invite them to complete quiz
+                  📲 Nudge them
+                </button>
+                {/* The person reading this is often one of the people being
+                    waited on, and the panel used to offer them everything
+                    except the way to sort it. */}
+                <button className="bs" style={{width:"100%",marginTop:8}}
+                  onClick={()=>push("taste")}>
+                  Haven't done yours? Two minutes →
                 </button>
               </div>
             )}
@@ -4826,7 +5212,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
 // Sections with nothing behind them were removed rather than rebuilt: Reach
 // has no PIN, no Face ID enrolment, no SMS second factor and no spending
 // limits, so showing them as configured was the worst kind of placeholder.
-function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
+function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
   const [section,setSection]=useState(null);
   const [data,setData]=useState(null);
   const [loadErr,setLoadErr]=useState(false);
@@ -5246,6 +5632,14 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme}){
       <Row icon="🙋" title="Name and home airport"
         sub={[data?.identity?.firstName||null,data?.home?.airport||null].filter(Boolean).join(" · ")||"Not set yet"}
         right={<Ic.ChevR/>} onClick={()=>setSection("you")}/>
+      {/* The answers behind every suggestion. Somewhere to revise them, not
+          just a one-off at sign-up — what you are into in March is not what
+          you were into in November. */}
+      <Row icon="✨" title="Your taste"
+        sub={user?.quizComplete
+          ?"What you're into, how you eat, what you'd never do"
+          :"Not answered yet — this is what makes suggestions yours"}
+        right={<Ic.ChevR/>} onClick={()=>push&&push("taste")}/>
 
       <div style={{padding:"16px 20px 6px"}}><span className="sl">Travel</span></div>
       <Row icon="🛂" title="Travel documents"
@@ -5834,6 +6228,10 @@ export default function ReachApp({realUser,onSignOut}={}){
     const {screen,props}=cur;
     if(screen==="groupDetail")return <GroupDetailScreen {...cp} {...props}/>;
     if(screen==="planDetail")return <PlanDetailScreen {...cp} {...props}/>;
+    // Re-reading /api/me is what makes quizComplete true, which is what
+    // takes the prompt off the home screen. Without it the card stays up
+    // telling somebody to do the thing they have just done.
+    if(screen==="taste")return <TasteQuizScreen {...cp} {...props} onSaved={syncUser}/>;
     if(screen==="createGroup")return <CreateGroupScreen {...cp} {...props}/>;
     if(screen==="groupTrip")return <GroupTripScreen {...cp} {...props}/>;
     if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props} user={user}/>;
@@ -5873,7 +6271,7 @@ export default function ReachApp({realUser,onSignOut}={}){
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading}/>}
-                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme}/>}
+                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push}/>}
                 </div>
               )}
               {!cur&&(
