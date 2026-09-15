@@ -560,10 +560,13 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           ))}
         </div>
       )}
+      {(upcoming.length>0||groups.length>0)&&(
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 20px 10px"}}>
         <span className="sl">Upcoming trips</span>
         <span style={{fontSize:12,color:C.accentText,cursor:"pointer"}} onClick={()=>setTab("groups")}>See all →</span>
       </div>
+      )}
+      {(upcoming.length>0||groups.length>0)&&(
       <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
         {upcoming.map(plan=>(
           <div key={plan.id} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
@@ -583,12 +586,22 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           <div style={{fontSize:12,color:C.t2,fontWeight:500,textAlign:"center"}}>New plan</div>
         </div>
       </div>
-      <div style={{padding:"0 20px 10px"}}><span className="sl">Jump back in</span></div>
+      )}
+      <div style={{padding:"0 20px 10px"}}>
+        <span className="sl">{groups.length>0?"Jump back in":"Three ways to start"}</span>
+      </div>
       {(groups.length>0?[
         {emoji:"✈️",text:groups[0].name+" · "+(groups[0].plans?.length||0)+" plan"+(((groups[0].plans?.length||0)!==1)?"s":""),cta:"Open →",action:()=>push("groupDetail",{groupId:groups[0].id})},
         groups.length>1?{emoji:"🧭",text:plural(groups.length,"trip")+" on the go.",cta:"See all →",action:()=>setTab("groups")}:{emoji:"➕",text:"Plan another — on your own or with people.",cta:"Start one →",action:()=>push("createGroup")},
       ]:[
-        {emoji:"👋",text:"Nothing planned yet. Going solo or taking people?",cta:"Start a trip →",action:()=>push("createGroup")},
+        // A first visit used to offer exactly one thing, and it was the most
+        // committing thing in the app: name a group, pick people, start a
+        // plan. Nobody's first move should cost that much. These are ordered
+        // by what they ask of you — look at something real, book one evening,
+        // then plan the whole thing.
+        {emoji:"🧭",text:"Have a look at what's on near you tonight. Costs nothing to browse.",cta:"Open Discover →",action:()=>setTab("discover")},
+        {emoji:"🍽️",text:"Just booking one dinner or one gig? That counts as a plan.",cta:"Sort one evening →",action:()=>push("createPlan",{})},
+        {emoji:"✈️",text:"Or do the whole thing — solo, or with everyone.",cta:"Plan a trip →",action:()=>push("createGroup")},
       ]).filter(Boolean).map((ins,i)=>(
         <div key={i} onClick={ins.action} style={{margin:"0 20px 10px",background:C.s1,border:"1px solid "+C.border,borderRadius:16,padding:14,display:"flex",gap:12,cursor:"pointer"}}>
           <span style={{fontSize:24}}>{ins.emoji}</span>
