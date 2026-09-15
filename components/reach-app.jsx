@@ -4131,6 +4131,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // absent rather than disabled — a greyed-out "put this to the group" is
   // still a reminder that the app thinks you are a committee.
   const soloTrip=(group.memberIds||[]).length<=1;
+  // What Reach itself will put on a card, as opposed to what the traveller
+  // pays at the door. Only the first belongs on a "book everything" button.
+  const reachItems=(plan?.itinerary||[]).filter(i=>i.booking_mode==="reach");
+  const reachBookable=reachItems.length;
+  const reachTotal=Math.round(reachItems.reduce((a,i)=>a+(i.cost_cents||0),0)/100);
 
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const totalV=Object.values(plan.votes||{}).reduce((a,b)=>a+b,0);
@@ -4232,7 +4237,21 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"voting"}:p)}));setAtab("vote");toast("Sent round for a vote");}}>Send to the group for a vote</button>}
               {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updatePlanOnServer&&updatePlanOnServer(planId,{status:"approved"});updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"approved"}:p)}));toast("Locked in — let's book it");}}>Lock this in</button>}
               {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"approved"}:p)}));toast("Approved — let's book it");}}>Approve and proceed to booking</button>}
-              {plan.status==="approved"&&<button className="bp" style={{marginBottom:10,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>Book Everything →</button>}
+              {plan.status==="approved"&&(
+                <>
+                  <button className="bp" style={{marginBottom:6,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>
+                    Book everything{reachTotal>0?` · $${reachTotal.toLocaleString()} each`:""} →
+                  </button>
+                  {/* The biggest commitment in the app used to be a button
+                      with no number on it. People do not press those. Say
+                      what it covers and that nothing moves until they say so. */}
+                  <div style={{fontSize:11.5,color:C.t3,textAlign:"center",marginBottom:10,lineHeight:1.5}}>
+                    {reachBookable>0
+                      ?`${plural(reachBookable,"booking","bookings")} Reach handles. You'll see every one before anything is charged.`
+                      :"You'll see everything before anything is charged."}
+                  </div>
+                </>
+              )}
               {plan.status==="booked"&&<button className="bp" style={{marginBottom:10}} onClick={()=>setAtab("itinerary")}>View Itinerary</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
             </div>
