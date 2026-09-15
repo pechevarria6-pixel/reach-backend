@@ -12,11 +12,12 @@
     "test:e2e": "playwright test",
     "doctor": "node scripts/doctor.mjs",
     "check:scopes": "node scripts/check-scopes.mjs",
-    "verify": "npm run bug-sweep && npm run check:scopes && npm run check:responses && npm run check:queries && npm run check:promises && npm run type-check && npm run test:unit && npm run build",
+    "verify": "npm run bug-sweep && npm run check:scopes && npm run check:responses && npm run check:queries && npm run check:promises && npm run check:contrast && npm run type-check && npm run test:unit && npm run build",
     "check:queries": "node scripts/check-queries.mjs",
     "check:responses": "node scripts/check-responses.mjs",
     "bug-sweep": "node scripts/bug-sweep.mjs",
-    "check:promises": "node scripts/check-promises.mjs"
+    "check:promises": "node scripts/check-promises.mjs",
+    "check:contrast": "node scripts/check-contrast.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
