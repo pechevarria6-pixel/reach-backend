@@ -36,8 +36,43 @@ export default function OnboardingPage() {
   const current = steps[step];
   const isLast = step === steps.length - 1;
 
+  // The button said "Allow" and allowed nothing — it advanced the step and
+  // that was all. So location was never requested and Discover went on saying
+  // "allow location in your browser", and notification permission was never
+  // asked for, which meant every notification Reach tried to send was dropped
+  // by the check at the top of sendNotification. Onboarding was selling two
+  // features and switching neither of them on.
+  //
+  // A refusal is a perfectly good answer: whatever the person chooses, the
+  // flow carries on. Nothing here may block.
+  const requestFor = async (permission: string) => {
+    try {
+      if (permission === 'location' && typeof navigator !== 'undefined' && navigator.geolocation) {
+        await new Promise<void>(resolve => {
+          let settled = false;
+          const done = () => { if (!settled) { settled = true; resolve(); } };
+          navigator.geolocation.getCurrentPosition(done, done, { timeout: 10000, maximumAge: 600000 });
+          // A prompt the person simply ignores must not strand them here.
+          setTimeout(done, 12000);
+        });
+      }
+      if (permission === 'notifications' && typeof Notification !== 'undefined'
+          && Notification.permission === 'default') {
+        await Notification.requestPermission();
+      }
+    } catch (e) {
+      console.error('[onboarding] permission request failed', permission, e);
+    }
+  };
+
   const handleNext = async () => {
-    if (!isLast) { setStep(s => s + 1); return; }
+    if (!isLast) {
+      setSaving(true);
+      await requestFor(current.permission);
+      setSaving(false);
+      setStep(s => s + 1);
+      return;
+    }
     if (saving) return;
     setSaving(true);
     try {
@@ -75,7 +110,7 @@ export default function OnboardingPage() {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <button onClick={handleNext} disabled={saving} style={{ width: '100%', minHeight: 52, padding: '15px 20px', background: `linear-gradient(135deg, ${BRAND.accentDeep}, ${BRAND.accent})`, color: BRAND.onAccent, border: 'none', borderRadius: 16, fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-            {saving ? 'Setting up your account…' : isLast ? 'Get started →' : 'Allow →'}
+            {saving ? (isLast ? 'Setting up your account…' : 'Waiting on you…') : isLast ? 'Get started →' : 'Allow →'}
           </button>
           {!isLast && (
             <button onClick={() => setStep(s => s + 1)} style={{ width: '100%', minHeight: 48, padding: '14px 20px', background: BRAND.s2, color: BRAND.t2, border: `1px solid ${BRAND.border}`, borderRadius: 16, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>
