@@ -2311,6 +2311,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         if(data.trips&&data.trips.length>0){
           setTrips(data.trips);
           setStep(2);
+          // People are voting on where to spend a week and a lot of money.
+          // Showing three destination names and asking them to choose is not
+          // enough information to choose with, so every option arrives with
+          // its days already written. Three calls in parallel cost the same
+          // wall-clock as one, and picking a winner is then instant rather
+          // than another half-minute of waiting.
+          enrichWithItineraries(data.trips,sd||startDate,ed||endDate);
         }else{
           setError("No trips returned — try different dates or budget");
           setStep(0);
@@ -2352,6 +2359,39 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
   const [buildingItinerary,setBuildingItinerary]=useState(null);
 
+  // Writes the day-by-day plan for every option, in parallel, and attaches it
+  // to the trip it belongs to.
+  const [enriching,setEnriching]=useState(0);
+  const enrichWithItineraries=async(list,sd,ed)=>{
+    setEnriching(list.length);
+    const results=await Promise.all(list.map(async trip=>{
+      try{
+        const r=await fetch("/api/trips/generate",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            groupId,startDate:sd||null,endDate:ed||null,
+            detailTripId:trip.id,
+            tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
+            departureCity:departure?.city||null,
+            departureAirport:departure?.airport||null,
+          }),
+        });
+        if(!r.ok){
+          const err=await r.json().catch(()=>({}));
+          console.error("[groupTrip] itinerary failed for",trip.destination,err);
+          return null;
+        }
+        const d=await r.json();
+        return d.itinerary||null;
+      }catch(e){
+        console.error("[groupTrip] itinerary failed for",trip.destination,e);
+        return null;
+      }
+    }));
+    setTrips(prev=>(prev||[]).map((t,i)=>results[i]?{...t,itinerary:results[i]}:t));
+    setEnriching(0);
+  };
+
   const selectTrip=async(trip)=>{
     // Re-entry here cost twice: a duplicate plan and a second itinerary
     // generation, which is a paid model call.
@@ -2380,6 +2420,17 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     // Declared out here because the navigation after the catch needs it.
     let realId=np.id;
     try{
+      // Already written while they were deciding, so picking a winner is
+      // instant rather than another half-minute of waiting.
+      if(trip.itinerary?.length){
+        realId=await _sp2.catch(()=>null)||np.id;
+        const rows=itineraryRows(trip.itinerary);
+        updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows}:p)}));
+        if(saveItineraryToServer)await saveItineraryToServer(realId,rows);
+        setBuildingItinerary(null);
+        push("planDetail",{planId:realId,groupId});
+        return;
+      }
       const res=await fetch("/api/trips/generate",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
@@ -2619,10 +2670,18 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         <div style={{flex:1,overflowY:"auto",scrollbarWidth:"none"}}>
           <div style={{padding:"0 20px 12px"}}>
             <div style={{fontSize:14,color:C.t2,lineHeight:1.6}}>
-              3 options built around {group.name}'s preferences.{" "}
-              <span style={{color:C.red}}>❌ Veto</span> anything you won't do.{" "}
-              <span style={{color:C.accentText}}>❤️ Vote</span> for your favorite.
+              Three trips built around what {group.name} actually said.{" "}
+              <span style={{color:C.red}}>Veto</span> anything you won't do,{" "}
+              <span style={{color:C.accentText}}>vote</span> for the one you want.
             </div>
+            {/* The days are being written while people read. Say so, rather
+                than letting three cards quietly grow a section. */}
+            {enriching>0&&(
+              <div style={{display:"flex",alignItems:"center",gap:9,marginTop:10,fontSize:12.5,color:C.t2}}>
+                <div style={{width:14,height:14,border:`2px solid ${C.accentText}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
+                Writing the days for all three, so you can see what you're voting on…
+              </div>
+            )}
           </div>
 
           {activeTrips.map((trip,i)=>{
@@ -2700,26 +2759,42 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
                       Day-by-day
                     </div>
-                    {(trip.itinerary||[]).slice(0,2).map((day,j)=>(
+                    {/* A slot is {plan, booking, payment} now. Rendering it
+                        straight would print [object Object]. */}
+                    {(trip.itinerary||[]).length===0&&(
+                      <div style={{fontSize:12,color:C.t3,lineHeight:1.6}}>
+                        {enriching>0?"Writing these days now…":"No day plan for this one — you can build it after you pick it."}
+                      </div>
+                    )}
+                    {(trip.itinerary||[]).slice(0,2).map((day,j)=>{
+                      const txt=v=>typeof v==="string"?v:(v?.plan||"");
+                      const pay=v=>typeof v==="string"?null:(v?.payment||null);
+                      const cashOnly=[day.morning,day.afternoon,day.evening]
+                        .map(pay).filter(Boolean).find(x=>/cash only/i.test(x));
+                      return(
                       <div key={j} style={{marginBottom:12,paddingBottom:12,borderBottom:j<1?"1px solid "+C.border:"none"}}>
                         <div style={{fontSize:12,fontWeight:700,color:C.accentText,marginBottom:6}}>
                           Day {day.day} · {day.title}
                         </div>
                         <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>
-                          ☀️ {day.morning}<br/>
-                          🌤️ {day.afternoon}<br/>
-                          🌙 {day.evening}
+                          ☀️ {txt(day.morning)}<br/>
+                          🌤️ {txt(day.afternoon)}<br/>
+                          🌙 {txt(day.evening)}
                         </div>
+                        {cashOnly&&(
+                          <div style={{fontSize:11,color:C.amber,marginTop:5}}>💵 {cashOnly}</div>
+                        )}
                         {day.insider_tip&&(
                           <div style={{fontSize:11,color:C.t3,marginTop:4,fontStyle:"italic",background:C.s2,padding:"6px 10px",borderRadius:8}}>
                             💡 {day.insider_tip}
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                     {(trip.itinerary||[]).length>2&&(
                       <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>
-                        + {trip.itinerary.length-2} more days in full itinerary after you pick this
+                        + {trip.itinerary.length-2} more days, all yours the moment you pick this
                       </div>
                     )}
                   </div>

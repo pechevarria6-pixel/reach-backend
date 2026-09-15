@@ -90,7 +90,13 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
       // booking_mode and payment_note arrive in a migration. Until it is run,
       // save the days without them rather than losing the whole itinerary —
       // the practical details are worth having, the days are worth more.
-      if (/column .* does not exist/i.test(error.message || '')) {
+      // PostgREST reports a missing column as PGRST204 with "Could not find
+      // the 'x' column of 'y' in the schema cache" — not "column does not
+      // exist". Matching only the latter meant the fallback never fired and
+      // every itinerary save failed outright until the migration was run.
+      const missingColumn = error.code === 'PGRST204'
+        || /column .* does not exist|could not find the .* column/i.test(error.message || '');
+      if (missingColumn) {
         console.error('[itinerary] practical columns missing, saving without them —'
           + ' run sql/itinerary-practicals-2026-09-14.sql');
         const { error: retry } = await supabase.from('itinerary_items').insert(
