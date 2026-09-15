@@ -2078,7 +2078,12 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
             <input className="inp" value={searchQuery||""} onChange={e=>searchUsers(e.target.value)} placeholder="Search by name or email..." style={{marginBottom:8}}/>
             {searching&&<div style={{fontSize:12,color:C.t3,padding:"4px 0"}}>Searching...</div>}
             {(searchQuery||"").length>=2&&searchResults.length===0&&!searching&&isEmail(searchQuery)&&(
-              <button className="bsm bsm-p" onClick={addInviteEmail}>Invite {searchQuery.trim()}</button>
+              <>
+                <button className="bsm bsm-p" onClick={addInviteEmail}>Add {searchQuery.trim()}</button>
+                <div style={{fontSize:11.5,color:C.t3,padding:"6px 0 0",lineHeight:1.5}}>
+                  They get their invitation when you create the group.
+                </div>
+              </>
             )}
             {(searchQuery||"").length>=2&&searchResults.length===0&&!searching&&!isEmail(searchQuery)&&(
               <div style={{fontSize:12,color:searchFailed?C.red:C.t3,padding:"8px 0",lineHeight:1.5}}>
