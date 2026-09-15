@@ -1975,22 +1975,74 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
 
 // ─── CREATE PLAN FLOW ─────────────────────────────────────────────────────────
 
+// ─── What the plan already told us ────────────────────────────────────────
+// Creating a plan asks for dates, a vibe, a destination style, where you are
+// sleeping, your hard nos and a budget. The quiz then asked for the same six
+// things in different words. Being asked to repeat yourself reads as the app
+// not listening, and it is the longest stretch of the flow with nothing to
+// show for it — so the quiz now starts from these and only asks what is left.
+//
+// The two screens use different vocabularies for the same answers, so the
+// translation lives here rather than in either of them.
+const DEST_TO_TRIP_TYPE={city:"city",beach:"beach",mountains:"nature",nature:"nature"};
+const VIBE_TO_PACE={chill:"relaxed",active:"packed",culture:"balanced",mix:"balanced"};
+const STAY_TO_STAY={hotel:"hotel",rental:"airbnb",luxury:"resort",boutique:"boutique",hostel:"hostel"};
+const DEALBREAKER_TO_NOWAY={
+  "cold weather":"coldWeather","extreme heat":"coldWeather","crowds":"crowded",
+  "long flights":"longFlights","hiking":"hiking","early starts":"earlyMornings",
+  "camping":"camping",
+};
+
+function knownFromPlan(plan){
+  // Only a trip's own answers carry into a trip quiz. A dinner booked last
+  // week has a budget and a date too, and seeding those here would quietly
+  // plan a fortnight in Lisbon against a $150 restaurant budget.
+  if(!plan||(plan.type&&plan.type!=="trip"&&plan.type!=="weekend"))return null;
+  const known={};
+  const type=DEST_TO_TRIP_TYPE[plan.destStyle];
+  if(type)known.tripType=[type];
+  const stay=STAY_TO_STAY[plan.accommodation];
+  if(stay)known.accommodation=[stay];
+  const pace=VIBE_TO_PACE[plan.vibe];
+  if(pace)known.pace=pace;
+  // Anything we cannot map is still a real answer — it goes through as free
+  // text rather than being quietly dropped, because "no camping" matters
+  // whether or not it happens to be one of our six chips.
+  const nos=(plan.dealbreakers||[]).map(d=>
+    DEALBREAKER_TO_NOWAY[String(d).toLowerCase().trim()]||("custom:"+d));
+  if(nos.length)known.noWayJose=nos;
+  if(plan.budget>0)known.budget=String(plan.budget);
+  if(plan.startDate)known.startDate=plan.startDate;
+  if(plan.endDate)known.endDate=plan.endDate;
+  return Object.keys(known).length?known:null;
+}
+
+// Plain-English recap of what carried over, for the card that shows it.
+const KNOWN_LABELS={
+  tripType:"the kind of trip",accommodation:"where you're sleeping",
+  pace:"the pace",noWayJose:"your hard nos",budget:"your budget",
+};
+
 // ─── TRIP PLANNING QUIZ ───────────────────────────────────────────────────────
 // Completely separate from the onboarding quiz.
 // This fuels the AI trip generator with trip-specific preferences.
-function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,completedCount,totalCount,isSolo}){
+function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known}){
   const [qStep,setQStep]=useState(0);
-  const [startDate,setStartDate]=useState("");
-  const [endDate,setEndDate]=useState("");
+  const [startDate,setStartDate]=useState(known?.startDate||"");
+  const [endDate,setEndDate]=useState(known?.endDate||"");
   const [answers,setAnswers]=useState({
-    tripType:[],accommodation:[],budget:null,pace:null,noWayJose:[],
+    tripType:known?.tripType||[],accommodation:known?.accommodation||[],
+    budget:null,pace:known?.pace||null,noWayJose:known?.noWayJose||[],
   });
+  // Default to trusting what was already said. Anyone who wants the full set
+  // of questions back gets one tap to have them — the recap card offers it.
+  const [reask,setReask]=useState(false);
   const [customInputs,setCustomInputs]=useState({
     tripType:"",accommodation:"",noWayJose:"",
   });
   // An exact figure beats a bucket: it is the number the model plans against,
   // and the tiers are computed from it.
-  const [budgetCustom,setBudgetCustom]=useState("");
+  const [budgetCustom,setBudgetCustom]=useState(known?.budget||"");
   const tog=(k,v)=>setAnswers(a=>({...a,[k]:a[k].includes(v)?a[k].filter(x=>x!==v):[...a[k],v]}));
   const sel=(k,v)=>setAnswers(a=>({...a,[k]:v}));
   const setCustom=(k,v)=>setCustomInputs(c=>({...c,[k]:v}));
@@ -2076,9 +2128,19 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     },
   ];
 
+  // A question you have already answered is not asked again. The answer is
+  // still in `answers`, so the model receives exactly what it would have.
+  const isCarried=(q)=>{
+    if(reask)return false;
+    const v=known?known[q.id]:null;
+    return Array.isArray(v)?v.length>0:!!v;
+  };
+  const carried=questions.filter(isCarried);
+  const asked=questions.filter(q=>!isCarried(q));
+
   const isDateStep=qStep===0;
-  const quizQ=questions[qStep-1];
-  const totalSteps=questions.length+1;
+  const quizQ=asked[qStep-1];
+  const totalSteps=asked.length+1;
   const isLast=qStep===totalSteps-1;
   const canNext=isDateStep
     ?(startDate&&endDate&&nights>0)
@@ -2166,6 +2228,22 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
                 {nights<=2?"Quick getaway":nights<=4?"Weekend trip":nights<=7?"Week adventure":"Extended trip"}
                 {" · "}{plural(group.memberIds?.length||2,"person","people")}
               </div>
+            </div>
+          )}
+          {carried.length>0&&(
+            <div style={{background:C.accentDim,border:"1px solid "+C.accentBorder,
+              borderRadius:14,padding:14,marginBottom:12}}>
+              <div style={{fontSize:12,fontWeight:600,color:C.t1,marginBottom:4}}>
+                👌 Already got {carried.map(q=>KNOWN_LABELS[q.id]||q.id).join(", ")}
+              </div>
+              <div style={{fontSize:12,color:C.t2,lineHeight:1.6,marginBottom:8}}>
+                From when you set this up. {asked.length===1?"One more question":asked.length+" quick questions"} and we're off.
+              </div>
+              <button onClick={()=>setReask(true)}
+                style={{background:"none",border:"none",padding:0,cursor:"pointer",
+                  fontSize:12,fontWeight:600,color:C.accentText,textDecoration:"underline"}}>
+                Changed your mind? Ask me everything
+              </button>
             </div>
           )}
           <div style={{background:C.s2,border:"1px solid "+C.border,borderRadius:14,padding:14}}>
@@ -2307,6 +2385,9 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
 
 function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,savePlanToServer,saveItineraryToServer}){
   const group=groups.find(g=>g.id===groupId);
+  // The newest plan on this group is the one whose answers are still live —
+  // it is what the person filled in a moment ago on the way here.
+  const latestPlan=(group?.plans||[])[(group?.plans||[]).length-1]||null;
   const [step,setStep]=useState(0);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
@@ -2702,6 +2783,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             completedCount={completedCount}
             totalCount={totalCount}
             isSolo={isSolo}
+            known={knownFromPlan(latestPlan)}
             onGenerate={(dates,tripBudget,prefs)=>{
               setStartDate(dates.start);
               setEndDate(dates.end);
@@ -3458,6 +3540,12 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
       endDate:isEvent?null:(endDate||null),
       budget:parseInt(budget)||0,
       type:planType||"trip",
+      // Carried, not discarded: the quiz reads these and skips what it
+      // already knows instead of asking twice.
+      vibe:vibe||null,
+      destStyle:dest||null,
+      accommodation:accom||null,
+      dealbreakers:bks||[],
       participants:selGroup?.memberIds||[],
       itinerary:[],
       votes:(voting&&!isSoloGroup)?Object.fromEntries(vopts.filter(Boolean).map(o=>[o,0])):{},
