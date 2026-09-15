@@ -481,9 +481,25 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   },[]);
   const allPlans=groups.flatMap(g=>g.plans.map(p=>({...p,group:g})));
   const upcoming=allPlans.filter(p=>p.status==="booked"||p.status==="voting"||p.status==="approved");
+  // Everything waiting on somebody, not only votes. Ordered by how close the
+  // trip is to finished rather than by age: the one nearly done pulls hardest,
+  // and a list sorted by urgency means the top item is always the right one.
+  // The wording is what is waiting rather than what is missing — "waiting on
+  // you" is a thing to rescue, "you haven't paid" is an accusation.
+  const solo=g=>(g?.memberIds||[]).length<=1;
   const actions=[
-    ...allPlans.filter(p=>p.status==="voting").map(p=>({type:"vote",text:`Vote: ${p.options.join(" vs ")}`,sub:p.group.name,plan:p})),
-  ];
+    ...allPlans.filter(p=>p.status==="approved").map(p=>({
+      type:"book",rank:0,text:`${p.title} is ready to book`,sub:"Everyone's in — this is the last step",plan:p,cta:"Book →"})),
+    ...allPlans.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
+      type:"vote",rank:1,text:`${p.group.name} is deciding on ${p.title}`,
+      sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →"})),
+    ...allPlans.filter(p=>p.status==="planning"&&(p.itinerary?.length||0)>0&&!solo(p.group)).map(p=>({
+      type:"pay",rank:2,text:`${p.title} is waiting on everyone's share`,
+      sub:`$${p.budget?.toLocaleString?.()||p.budget} each`,plan:p,cta:"Pay →"})),
+    ...allPlans.filter(p=>p.status==="planning"&&(p.itinerary?.length||0)===0).map(p=>({
+      type:"plan",rank:3,text:`${p.title} has no days yet`,
+      sub:"We can write the whole thing in about 20 seconds",plan:p,cta:"Plan →"})),
+  ].sort((a,b)=>a.rank-b.rank).slice(0,4);
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"14px 20px 12px"}}>
@@ -529,7 +545,9 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         <div style={{margin:"0 20px 18px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:16}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
             <div style={{width:8,height:8,borderRadius:"50%",background:C.accent}}/>
-            <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",color:C.accentText}}>{actions.length} actions needed</span>
+            <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",color:C.accentText}}>
+              {actions.length===1?"Waiting on you":`${actions.length} things waiting on you`}
+            </span>
           </div>
           {actions.map((a,i)=>(
             <div key={i} onClick={()=>{if(a.plan&&a.plan.id&&a.plan.group?.id)push("planDetail",{planId:a.plan.id,groupId:a.plan.group.id});}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderTop:i?"1px solid "+C.accentBorder:"none",cursor:"pointer"}}>
@@ -537,7 +555,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
                 <div style={{fontSize:13,color:C.t1,fontWeight:500}}>{a.text}</div>
                 <div style={{fontSize:11,color:C.t2,marginTop:2}}>{a.sub}</div>
               </div>
-              <button className="bsm bsm-p" onClick={e=>{e.stopPropagation();a.plan&&push("planDetail",{planId:a.plan.id,groupId:a.plan.group?.id});}}>{a.type==="vote"?"Vote →":a.type==="pay"?"Pay →":"RSVP →"}</button>
+              <button className="bsm bsm-p" onClick={e=>{e.stopPropagation();a.plan&&push("planDetail",{planId:a.plan.id,groupId:a.plan.group?.id});}}>{a.cta}</button>
             </div>
           ))}
         </div>
@@ -3808,6 +3826,70 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
   );
 }
 
+// ─── Where this trip is up to ─────────────────────────────────────────────
+// A plan moves through the same four stages every time, and until now nothing
+// said which one you were in or what to do next. Three things follow from
+// showing it:
+//
+//   People finish what they can see the end of — a visible remaining step
+//   pulls harder than an invisible one.
+//   "Waiting on two people" reads as something to rescue; "two people haven't
+//   paid" reads as an accusation. Same fact, different verb.
+//   One obvious next action beats four buttons of equal weight, because
+//   choosing between equals is work.
+function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
+  const days=plan.itinerary?.length||0;
+  const heads=(group.memberIds||[]).length||1;
+  const needVote=!soloTrip&&plan.options?.length>0;
+
+  const stages=[
+    {k:"planned", l:"Planned",  done:days>0},
+    ...(needVote?[{k:"voted", l:"Agreed", done:votesIn>=heads}]:[]),
+    {k:"funded",  l:soloTrip?"Paid":"Funded", done:plan.status==="approved"||plan.status==="booked"},
+    {k:"booked",  l:"Booked",   done:plan.status==="booked"},
+  ];
+  const next=stages.find(s=>!s.done);
+  const doneCount=stages.filter(s=>s.done).length;
+
+  // The one thing to do now, said as a thing to do rather than a status.
+  const action={
+    planned:{label:"✨ Plan the days",  hint:`${plan.title} has no day-by-day plan yet.`},
+    voted:  {label:"Give them a nudge", hint:`${votesIn} of ${heads} have voted. The trip is waiting on the rest.`},
+    funded: {label:soloTrip?"Pay and book it":"Collect everyone's share",
+             hint:soloTrip?"Pay when you're ready and we'll book it.":`Nothing books until all ${heads} are in.`},
+    booked: {label:"Book everything",   hint:"Funded and agreed. This is the last step."},
+  }[next?.k];
+
+  return(
+    <div style={{margin:"0 20px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:18,overflow:"hidden"}}>
+      <div style={{display:"flex",gap:6,padding:"14px 16px 0"}}>
+        {stages.map((s,i)=>(
+          <div key={s.k} style={{flex:1}}>
+            <div style={{height:4,borderRadius:2,background:s.done?C.accentText:C.s3,transition:"background .3s"}}/>
+            <div style={{fontSize:10.5,marginTop:6,color:s.done?C.accentText:C.t3,
+              fontWeight:s.done?600:500,letterSpacing:".02em"}}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+      {next?(
+        <div style={{padding:"12px 16px 16px"}}>
+          <div style={{fontSize:13,color:C.t2,lineHeight:1.55,marginBottom:10}}>{action.hint}</div>
+          <button className="bp" disabled={busy} onClick={()=>onAction(next.k)} style={{width:"100%"}}>
+            {busy?"Working…":action.label}
+          </button>
+        </div>
+      ):(
+        <div style={{padding:"12px 16px 16px",display:"flex",alignItems:"center",gap:9}}>
+          <span style={{fontSize:20}}>🎉</span>
+          <div style={{fontSize:13,color:C.t1,lineHeight:1.5}}>
+            All done — {doneCount} of {doneCount} steps. Go and enjoy it.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── PLAN DETAIL ──────────────────────────────────────────────────────────────
 function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer}){
   const group=groups.find(g=>g.id===groupId);
@@ -3935,6 +4017,28 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       <div style={{flex:1,overflowY:"auto",paddingBottom:20}}>
         {atab==="overview"&&(
           <div style={{padding:"16px 0"}}>
+            <TripProgress
+              plan={plan} group={group} soloTrip={soloTrip} votesIn={totalV}
+              busy={building||nudging}
+              onAction={async(stage)=>{
+                if(stage==="planned"){setAtab("itinerary");await buildItinerary();return;}
+                if(stage==="voted"){
+                  if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+                  setNudging(true);
+                  try{
+                    const r=await fetch(`/api/plans/${planId}/notify`,{
+                      method:"POST",headers:{"Content-Type":"application/json"},
+                      body:JSON.stringify({kind:"vote"}),
+                    });
+                    const d=await r.json().catch(()=>({}));
+                    if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
+                    toast(d.notified?`Reminded ${d.notified} ${d.notified===1?"person":"people"} 📬`:(d.message||"Everyone has voted"));
+                  }catch(e){console.error("[progress] vote nudge failed",e);toast(e.message);}
+                  setNudging(false);return;
+                }
+                if(stage==="funded"){push("checkout",{planId,groupId});return;}
+                if(stage==="booked"){push("checkout",{planId,groupId});return;}
+              }}/>
             <div style={{display:"flex",gap:10,padding:"0 20px 14px"}}>
               {[{l:soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
                 <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
