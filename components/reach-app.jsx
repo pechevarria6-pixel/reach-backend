@@ -346,6 +346,24 @@ function Av({u,lg}){return <div className={lg?"av-lg":"av"} style={{background:u
 function AvCluster({ids,um,max=4}){const shown=ids.slice(0,max);const extra=ids.length-max;return <div className="av-cl">{shown.map(id=>{const u=um[id];return u?<div key={id} className="av" style={{background:u.color}}>{u.initials}</div>:null;})}{extra>0&&<div className="av" style={{background:C.s3,color:C.t2}}>+{extra}</div>}</div>;}
 function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);return()=>clearTimeout(t);},[]);return <div className="toast">✓ {msg}</div>;}
 
+// The big fixed costs are events too: a flight is a thing that happens on a
+// day and has a price. Making them itinerary items means the budget screen
+// reads from one place, and they survive a reload — trip.costs lives only in
+// memory, because the plans table has no column for it.
+function fixedCostRows(trip){
+  const c=trip?.costs||{};
+  const row=(label,detail,cents,type)=>cents>0?{
+    time:"Before you go",title:label,sub:detail||"",type,conf:null,filled:false,
+    cost_cents:Math.round(cents*100),booking_mode:"reach",
+    payment_note:"Paid through Reach when the group funds the trip",
+  }:null;
+  return [
+    row("Flights",c.flights?.details,c.flights?.per_person,"flight"),
+    row("Accommodation",c.accommodation?.example||c.accommodation?.details,c.accommodation?.per_person,"hotel"),
+    row("Airport transfers",c.ground_transport?.details,c.ground_transport?.per_person,"transport"),
+  ].filter(Boolean);
+}
+
 // ─── Itinerary rows ───────────────────────────────────────────────────────
 // Turns generated days into the rows the itinerary tab and the API both use.
 // Written once because two screens had their own copy and they disagreed: one
@@ -356,15 +374,19 @@ function itineraryRows(days){
     const cost=Math.round((day.cost_today||0)*100);
     // A slot is an object now: what it is, how you get in, and what they take.
     // Older generations sent a bare string, so read both.
-    const slot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null}:(v||{});
+    const slot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null,cost:null}:(v||{});
     const m=slot(day.morning), a=slot(day.afternoon), e=slot(day.evening);
+    // Each event carries its own cost so the budget screen can itemise rather
+    // than split a total by fixed percentages. Falls back to the day's figure
+    // spread across its slots for anything generated before per-event costs.
+    const each=(sl)=>sl.cost!=null?Math.round(sl.cost*100):Math.round(cost/3);
     return [
       {time:`Day ${day.day} · Morning`,title:m.plan,sub:day.title||"",type:"activity",conf:null,filled:false,
-        cost_cents:cost,booking_mode:m.booking||null,payment_note:m.payment||null},
+        cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null},
       {time:`Day ${day.day} · Afternoon`,title:a.plan,sub:"",type:"activity",conf:null,filled:false,
-        booking_mode:a.booking||null,payment_note:a.payment||null},
+        cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null},
       {time:`Day ${day.day} · Evening`,title:e.plan,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false,
-        booking_mode:e.booking||null,payment_note:e.payment||null},
+        cost_cents:each(e),booking_mode:e.booking||null,payment_note:e.payment||null},
     ].filter(r=>r.title);
   });
 }
@@ -2424,7 +2446,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       // instant rather than another half-minute of waiting.
       if(trip.itinerary?.length){
         realId=await _sp2.catch(()=>null)||np.id;
-        const rows=itineraryRows(trip.itinerary);
+        const rows=[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows}:p)}));
         if(saveItineraryToServer)await saveItineraryToServer(realId,rows);
         setBuildingItinerary(null);
@@ -2451,7 +2473,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       realId=await _sp2.catch(()=>null)||np.id;
       if(res.ok){
         const data=await res.json();
-        const itinerary=itineraryRows(data.itinerary);
+        const itinerary=[...fixedCostRows(trip),...itineraryRows(data.itinerary)];
         if(itinerary.length){
           updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary}:p)}));
           if(saveItineraryToServer)await saveItineraryToServer(realId,itinerary);
@@ -2976,7 +2998,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
       });
       if(res.ok){
         const data=await res.json();
-        const itinerary=itineraryRows(data.itinerary);
+        const itinerary=[...fixedCostRows(trip),...itineraryRows(data.itinerary)];
         if(itinerary.length){
           updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===newPlan.id)?{...p,itinerary}:p)}));
           if(saveItineraryToServer)await saveItineraryToServer(realId,itinerary);
@@ -3832,7 +3854,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         if(data.votes)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:data.votes,myVote:data.myVote}:p)}));
         if(data.myVote)setMyVote(data.myVote);
         // Update itinerary
-        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:data.itinerary.map(item=>({time:item.scheduled_time||"",title:item.title,sub:item.subtitle||"",type:item.type,conf:item.confirmation_number||null,filled:item.is_confirmed,booking_mode:item.booking_mode||null,payment_note:item.payment_note||null}))}:p)}));
+        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:data.itinerary.map(item=>({time:item.scheduled_time||"",title:item.title,sub:item.subtitle||"",type:item.type,conf:item.confirmation_number||null,filled:item.is_confirmed,cost_cents:item.cost_cents||0,booking_mode:item.booking_mode||null,payment_note:item.payment_note||null}))}:p)}));
         setLoadFailed(false);
       }catch(e){
         // Swallowing this made the itinerary tab say "No itinerary yet" when
@@ -4058,31 +4080,94 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${plan.budget.toLocaleString()}</div>
               <div style={{fontSize:12,color:C.t2,marginTop:4}}>{plan.participants.length} travelers total</div>
             </div>
-            {/* These figures were fixed strings — "$480–$720" whether the
-                budget was $500 or $10,000 — laid out to look like a quote one
-                screen before checkout. They are a planning split of the
-                budget, derived from it and labelled as such. Real prices come
-                from a provider at booking. */}
-            <div style={{fontSize:12,color:C.t2,marginBottom:12,lineHeight:1.5}}>
-              A rough split of your ${plan.budget.toLocaleString()} to plan against.
-              Not a quote — real prices come from the airline and hotel when you book.
-            </div>
-            {[{l:"Flights",p:28},{l:"Accommodation",p:34},{l:"Food & dining",p:18},{l:"Activities",p:13},{l:"Transport",p:4},{l:"Buffer",p:3}].map((r,i)=>(
-              <div key={i} style={{marginBottom:12}}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                  <span style={{fontSize:13,color:C.t1}}>{r.l}</span>
-                  <span style={{fontSize:13,color:C.t2}}>
-                    ≈ ${Math.round((plan.budget*r.p)/100).toLocaleString()}
-                  </span>
+            {/* Itemised from the plan itself. This was a percentage split of
+                the budget — flights 28%, accommodation 34% — which told you
+                nothing about the trip you are actually taking. Fixed costs are
+                the ones Reach books and commits to; variable costs are what
+                you spend on the day, and are estimates by nature. Keeping them
+                apart is the honest way to show a number somebody will budget
+                against. */}
+            {(()=>{
+              const items=plan.itinerary||[];
+              const money=c=>`$${Math.round((c||0)/100).toLocaleString()}`;
+              // Flights and beds are itinerary items like anything else, so
+              // this reads from one place and survives a reload.
+              const fixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0)
+                .map(i=>({l:i.title,d:i.sub||i.time,c:i.cost_cents}));
+              // Everything you pay for yourself, as it happens.
+              const variable=items.filter(i=>i.booking_mode!=="reach"&&i.cost_cents>0)
+                .map(i=>({l:i.title,d:i.time,c:i.cost_cents,pay:i.payment_note}));
+              const sum=a=>a.reduce((t,x)=>t+(x.c||0),0);
+              const fixedTotal=sum(fixed), varTotal=sum(variable);
+              const heads=plan.participants.length||1;
+
+              if(!fixed.length&&!variable.length)return(
+                <div style={{fontSize:13,color:C.t2,lineHeight:1.6,padding:"4px 0 8px"}}>
+                  Costs appear here once this trip has a day-by-day plan. Build it on the
+                  Itinerary tab and every event gets priced.
                 </div>
-                <div className="pb-t"><div className="pb-f" style={{width:`${r.p}%`}}/></div>
-              </div>
-            ))}
-            <div style={{height:1,background:C.border,margin:"14px 0"}}/>
-            <div style={{display:"flex",justifyContent:"space-between"}}>
-              <span style={{fontSize:14,color:C.t1,fontWeight:600}}>Total estimate</span>
-              <span style={{fontSize:14,color:C.green,fontWeight:600}}>${(plan.budget*.8).toFixed(0)} – ${plan.budget.toLocaleString()}</span>
-            </div>
+              );
+
+              const Section=({title,note,rows,total,tone})=>(
+                <div style={{marginBottom:18}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+                    <span style={{fontSize:13.5,fontWeight:600,color:C.t1}}>{title}</span>
+                    <span style={{fontSize:14,fontWeight:700,color:tone}}>{money(total)}</span>
+                  </div>
+                  <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:10}}>{note}</div>
+                  {rows.map((r,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",gap:12,
+                      padding:"7px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:13,color:C.t1,lineHeight:1.35}}>{r.l}</div>
+                        {r.d&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{r.d}</div>}
+                        {r.pay&&/cash only/i.test(r.pay)&&(
+                          <div style={{fontSize:11,color:C.amber,marginTop:2}}>💵 {r.pay}</div>
+                        )}
+                      </div>
+                      <div style={{fontSize:13,color:C.t2,flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{money(r.c)}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+
+              return(
+                <>
+                  {fixed.length>0&&(
+                    <Section title="Reach books these" tone={C.accentText}
+                      note="Committed once the group funds the trip. You pay this through Reach and it is done."
+                      rows={fixed} total={fixedTotal}/>
+                  )}
+                  {variable.length>0&&(
+                    <Section title="You pay on the day" tone={C.t1}
+                      note="Estimates for what you spend as you go. Nobody collects this up front."
+                      rows={variable} total={varTotal}/>
+                  )}
+                  <div style={{height:1,background:C.border,margin:"4px 0 14px"}}/>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:14,color:C.t1,fontWeight:600}}>Per person, all in</span>
+                    <span style={{fontSize:16,color:C.t1,fontWeight:700}}>{money(fixedTotal+varTotal)}</span>
+                  </div>
+                  {heads>1&&(
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:C.t3}}>
+                      <span>{heads} of you</span>
+                      <span>{money((fixedTotal+varTotal)*heads)} altogether</span>
+                    </div>
+                  )}
+                  {plan.budget>0&&(
+                    <div style={{marginTop:12,padding:"10px 12px",borderRadius:12,
+                      background:(fixedTotal+varTotal)/100>plan.budget?C.amberDim:C.greenDim,
+                      border:`1px solid ${(fixedTotal+varTotal)/100>plan.budget?C.amber:C.green}`,
+                      fontSize:12.5,lineHeight:1.5,
+                      color:C.t1}}>
+                      {(fixedTotal+varTotal)/100>plan.budget
+                        ? `About ${money((fixedTotal+varTotal)-plan.budget*100)} over the $${plan.budget.toLocaleString()} you set.`
+                        : `About ${money(plan.budget*100-(fixedTotal+varTotal))} under the $${plan.budget.toLocaleString()} you set.`}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -5191,6 +5276,7 @@ export default function ReachApp({realUser,onSignOut}={}){
       type:item.type,
       conf:item.confirmation_number||null,
       filled:item.is_confirmed,
+      cost_cents:item.cost_cents||0,
       // Dropping these here would show the practicals right after generating
       // and lose them on the next load, which is the exact shape of the bug
       // that lost whole itineraries.

@@ -167,6 +167,12 @@ ${solo ? `On their own, so every slot works for one: counter or bar seating,
 neighbourhoods that are comfortable solo, some days to meet people and some to
 talk to nobody. Nothing that needs a second person. Never mention sharing.
 ` : ''}
+Every slot also needs "cost": what that one thing costs per person, in whole
+dollars. A free walk is 0. A museum is its ticket price. Dinner is what one
+person actually spends there, drinks included. These are the numbers somebody
+budgets against, so be realistic rather than optimistic — and make each day's
+three costs add up to roughly that day's cost_today.
+
 Write one entry for each of the ${nights} days.
 
 Be specific: real venue names, real neighbourhoods. Make it feel like a local

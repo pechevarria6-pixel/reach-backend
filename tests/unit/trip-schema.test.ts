@@ -70,8 +70,9 @@ test('no array anywhere in either schema sets an unsupported minItems', () => {
 });
 
 // ── parseModelJSON: the guard every model response goes through ───────────
-const slot = (plan: string, booking = 'walk_in', payment = 'Cards accepted') =>
-  ({ plan, booking, payment });
+// Every event carries its own cost now, so the budget screen can itemise.
+const slot = (plan: string, booking = 'walk_in', payment = 'Cards accepted', cost = 20) =>
+  ({ plan, cost, booking, payment });
 
 const validDay = {
   day: 1, title: 'Arrival',
@@ -103,8 +104,19 @@ test('every slot carries how you get in and what they take', () => {
   assert.equal(day.afternoon.booking, 'ahead');
 });
 
+test('a slot without a cost is rejected — the budget screen itemises every event', () => {
+  const bad = { ...validDay, evening: { plan: 'Dinner', booking: 'reach', payment: 'Cash only' } };
+  assert.equal(parseModelJSON(JSON.stringify({ itinerary: [bad] }), ItinerarySchema, 'test'), null);
+});
+
+test('a free event costs zero, which is not the same as unknown', () => {
+  const free = { ...validDay, morning: slot('Walk the old town', 'walk_in', 'Free', 0) };
+  const out = parseModelJSON(JSON.stringify({ itinerary: [free] }), ItinerarySchema, 'test');
+  assert.equal(out?.itinerary[0].morning.cost, 0);
+});
+
 test('a slot missing its payment note is rejected, not quietly dropped', () => {
-  const bad = { ...validDay, morning: { plan: 'Walk', booking: 'walk_in' } };
+  const bad = { ...validDay, morning: { plan: 'Walk', cost: 0, booking: 'walk_in' } };
   assert.equal(parseModelJSON(JSON.stringify({ itinerary: [bad] }), ItinerarySchema, 'test'), null);
 });
 

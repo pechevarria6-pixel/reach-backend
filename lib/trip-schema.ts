@@ -47,6 +47,10 @@ export const TripsSchema = z.object({ trips: z.array(TripSchema) });
 // somebody at a door that only takes cash.
 export const SlotSchema = z.object({
   plan: z.string(),
+  // What this one thing costs per person. The budget screen itemises every
+  // event rather than showing a percentage split of the total, so each slot
+  // has to carry its own number. 0 means genuinely free, not unknown.
+  cost: z.number(),
   // reach  — Reach can book this for you
   // ahead  — needs reserving in advance, but not through Reach
   // walk_in— just turn up
@@ -130,10 +134,11 @@ export const slot = {
   type: 'object',
   properties: {
     plan: str,
+    cost: num,
     booking: { type: 'string', enum: ['reach', 'ahead', 'walk_in'] },
     payment: str,
   },
-  required: ['plan', 'booking', 'payment'],
+  required: ['plan', 'cost', 'booking', 'payment'],
   additionalProperties: false,
 } as const;
 
