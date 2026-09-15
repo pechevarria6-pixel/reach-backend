@@ -5761,6 +5761,19 @@ export default function ReachApp({realUser,onSignOut}={}){
     syncUser();
     loadGroups();
     getLocation();
+    // Signing up hands over here with ?start=taste, so the quiz is part of
+    // creating an account rather than something to find later. The parameter
+    // is cleared straight away: a refresh should not reopen it, and neither
+    // should a link somebody pastes to a friend.
+    if(typeof window!=="undefined"){
+      const params=new URLSearchParams(window.location.search);
+      if(params.get("start")==="taste"){
+        params.delete("start");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        push("taste");
+      }
+    }
   },[]);
 
   const syncUser=async()=>{
