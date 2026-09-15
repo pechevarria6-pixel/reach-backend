@@ -648,8 +648,9 @@ function BuildingItinerary({destination,nights,onCancel}){
     {at:4,  t:`Working out where to put you in ${destination||"your destination"}`},
     {at:9,  t:"Finding dinners that suit the fussiest one of you"},
     {at:15, t:`Writing all ${nights||7} days, breakfast to last orders`},
-    {at:22, t:"Adding the bits you'd only know the second time round"},
-    {at:30, t:"Nearly there — making sure the days actually hang together"},
+    {at:22, t:"Arguing with ourselves about the second evening"},
+    {at:28, t:"Adding the bits you'd only know the second time round"},
+    {at:36, t:"Checking nothing has you in two places at once"},
   ];
   const [secs,setSecs]=useState(0);
   useEffect(()=>{
@@ -1770,7 +1771,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 // ─── CREATE GROUP ─────────────────────────────────────────────────────────────
 const DEFAULT_GROUP_EMOJI="🎉";
 function inferGroupEmoji(n){const s=(n||"").toLowerCase();const rules=[[/birthday|bday/,"🎂"],[/ski|snow|tahoe|aspen/,"🎿"],[/beach|cabo|cancun|island|bahamas|miami|playa|lake/,"🏝️"],[/concert|show|festival|music|tour/,"🎸"],[/dinner|food|restaurant|brunch|taco|pizza|omakase/,"🍕"],[/camp|hike|hiking|trail|mountain|yosemite|zion/,"🏕️"],[/vegas|party|bachelor|bachelorette/,"🎉"],[/golf/,"⛳"],[/wedding/,"💍"],[/road ?trip|drive/,"🚗"],[/europe|paris|tokyo|london|flight|abroad|trip|travel/,"✈️"]];for(const r of rules){if(r[0].test(s))return r[1];}return DEFAULT_GROUP_EMOJI;}
-function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me}){
+function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,replace}){
   // Solo is a choice made here, before anything else, because everything
   // downstream changes: no inviting, no voting, and recommendations written
   // for one person rather than a committee. It used to be inferred from a
@@ -1823,9 +1824,19 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me}){
     const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:finalMembers,inviteEmails:finalInvites,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
     setGroups(gs=>[...gs,newGroup]);
     toast(mode==="solo"?`${name} — just you 🧍`:`${name} created!`);
-    // Save to server in background
-    if(typeof saveGroupToServer==="function")saveGroupToServer(newGroup);
-    onBack();
+    // Straight into planning rather than back to a list. Creating a group was
+    // never the thing somebody came to do: it dropped them on the Groups tab
+    // to find what they had just made and press another button. Nine screens
+    // stood between opening the app and seeing a single suggestion, and most
+    // of them were navigation.
+    const goPlan=(id)=>replace&&replace("groupTrip",{groupId:id});
+    if(typeof saveGroupToServer==="function"){
+      Promise.resolve(saveGroupToServer(newGroup))
+        .then(realId=>goPlan(realId||tempId))
+        .catch(()=>goPlan(tempId));
+    }else{
+      goPlan(tempId);
+    }
     // The screen normally unmounts on onBack, so this rarely runs — but if it
     // ever does not, a flag that is never cleared leaves the button dead.
     setTimeout(()=>setCreating(false),1500);
@@ -3882,7 +3893,7 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
         <div style={{padding:"12px 16px 16px",display:"flex",alignItems:"center",gap:9}}>
           <span style={{fontSize:20}}>🎉</span>
           <div style={{fontSize:13,color:C.t1,lineHeight:1.5}}>
-            All done — {doneCount} of {doneCount} steps. Go and enjoy it.
+            That's everything. Nothing left to organise — go and have it.
           </div>
         </div>
       )}
@@ -4091,7 +4102,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 <div style={{fontSize:13,color:C.t2,marginBottom:20,lineHeight:1.55}}>
                   {loadFailed
                     ?"Your days may already be saved. Check your connection and reopen this plan."
-                    :`We can write the whole ${plan.title} plan, morning to night. Or build it yourself if you would rather.`}
+                    :`Give us twenty seconds and we'll write the whole ${plan.title} plan — where to eat, what it costs, which places only take cash. Or do it yourself, if that's the fun bit for you.`}
                 </div>
                 {!loadFailed&&(
                   <>
@@ -5670,6 +5681,10 @@ export default function ReachApp({realUser,onSignOut}={}){
   const showToast=msg=>setToastMsg(msg);
   const push=(screen,props={})=>setStack(s=>[...s,{screen,props}]);
   const pop=()=>setStack(s=>s.slice(0,-1));
+  // Swaps the current screen for another. Pushing instead would leave the
+  // screen you just finished with sitting underneath, so Back would walk you
+  // into the form you had already completed.
+  const replace=(screen,props={})=>setStack(s=>[...s.slice(0,-1),{screen,props}]);
   // Applies the change to whatever state is current, not to whatever `groups`
   // happened to hold when this closure was made.
   //
@@ -5703,7 +5718,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   };
 
   const cur=stack[stack.length-1];
-  const cp={onBack:pop,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
+  const cp={onBack:pop,replace,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
 
   const renderSub=()=>{
     if(!cur)return null;
