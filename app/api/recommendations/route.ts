@@ -1,90 +1,89 @@
+// ─── /api/recommendations ────────────────────────────────────────────────
+// Six suggestions for whatever the group is planning: a dinner, a gig, a
+// weekend, a fortnight. Reach plans experiences, not only travel.
+//
+// This route was the last one still on the old pattern — a raw HTTP call to a
+// previous-generation model, asking for JSON in the prompt and parsing the
+// answer unguarded. The trip path learned each of those lessons by failing in
+// production. Applying them here rather than waiting for the same failures.
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
+import { requireUser, isFail } from '@/lib/auth';
+import Anthropic from '@anthropic-ai/sdk';
+import {
+  RecommendationsSchema, RECOMMENDATIONS_JSON_SCHEMA, EXPERIENCE_BRIEF,
+} from '@/lib/recommendation-schema';
+import { parseModelJSON, textOf } from '@/lib/trip-schema';
+
+// Six short suggestions while somebody waits on a form. Speed is the feature.
+const MODEL = 'claude-haiku-4-5';
+
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const body = await req.json();
-  const { vibe, destStyle, accommodation, dealbreakers, budget, nights, travelers, location, planType, cuisine, genre } = body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    console.error('[recommendations] ANTHROPIC_API_KEY is not set');
+    return NextResponse.json(
+      { error: 'Suggestions are switched off for this deployment.' },
+      { status: 503 },
+    );
+  }
 
-  const type = (planType as string) || 'trip';
+  const body = await req.json().catch(() => ({}));
+  const type = typeof body.planType === 'string' && EXPERIENCE_BRIEF[body.planType]
+    ? body.planType : 'trip';
 
-  const prompts: Record<string, string> = {
-    restaurant: `You are a restaurant recommendation engine. Generate 6 restaurant recommendations for a group dinner.
-Cuisine: ${cuisine || 'any'}, Atmosphere: ${vibe || 'casual'}, Budget: $${budget || 100}pp, Group size: ${travelers || 4}, Location: ${location || 'US city'}.
-Return ONLY a JSON array with 6 items, each: {"title":"Name, City","sub":"Cuisine · Neighborhood","price":"$XX pp","emoji":"🍽️","reason":"Why perfect for this group","highlights":["item1","item2","item3"],"bestFor":"occasion type","avoid":false}`,
+  const prompt = `${EXPERIENCE_BRIEF[type](body)}
 
-    concert: `You are a concert recommendation engine. Generate 6 event recommendations for a group night out.
-Genre: ${genre || 'any'}, Venue: ${destStyle || 'any'}, Budget: $${budget || 150}pp, Group size: ${travelers || 4}, Location: ${location || 'US city'}.
-Return ONLY a JSON array with 6 items, each: {"title":"Artist/Event","sub":"Genre · Venue","price":"$XX pp","emoji":"🎵","reason":"Why this group will love it","highlights":["h1","h2","h3"],"bestFor":"fan type","avoid":false}`,
+For every suggestion:
+- "cost" is what one person actually spends, in whole dollars. Free is 0.
+- "booking" is "reach" if it can be reserved through a booking system, "ahead"
+  if it needs booking direct, "walk_in" if you just turn up.
+- "payment" is what they really take, in a few words — "Cash only", "Cards, no
+  Amex", "Contactless everywhere". Say so when somewhere is known for cash
+  only; that is the thing nobody finds out until they are standing there.
+- "reason" is one sentence on why this group in particular.
+- "highlights" is three short specifics — a dish, a room, a support act.
 
-    weekend: `You are a weekend getaway recommendation engine. Generate 6 short trip destinations (2-3 nights).
-Vibe: ${vibe || 'mix'}, Style: ${destStyle || 'any'}, Accommodation: ${accommodation || 'hotel'}, Budget: $${budget || 500}pp, Group: ${travelers || 4}, From: ${location || 'US'}.
-Avoid: ${(dealbreakers || []).join(', ') || 'nothing'}.
-Return ONLY a JSON array with 6 items, each: {"title":"Destination, State","sub":"2 nights · Style","price":"$XXX weekend","emoji":"🏡","reason":"Why perfect weekend","highlights":["h1","h2","h3"],"bestFor":"group type","avoid":false}`,
-
-    trip: `You are a travel recommendation engine. Generate 6 trip destinations.
-Vibe: ${vibe || 'mix'}, Style: ${destStyle || 'city'}, Accommodation: ${accommodation || 'hotel'}, Budget: $${budget || 2000}pp, ${nights || 7} nights, ${travelers || 4} travelers, From: ${location || 'US'}.
-Avoid: ${(dealbreakers || []).join(', ') || 'nothing'}.
-Return ONLY a JSON array with 6 items, each: {"title":"City, Country","sub":"${nights || 7} nights · Style","price":"$X,XXX","emoji":"✈️","reason":"Why perfect for this group","highlights":["h1","h2","h3"],"bestFor":"traveler type","avoid":false}`,
-  };
-
-  const prompt = prompts[type] || prompts.trip;
+Real places with real names. Never "placeholder", "TBD" or any other filler —
+return fewer than six rather than pad.`;
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+    const res = await new Anthropic({ apiKey }).messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      messages: [{ role: 'user', content: prompt }],
+      output_config: { format: { type: 'json_schema', schema: RECOMMENDATIONS_JSON_SCHEMA } },
     });
 
-    if (!response.ok) {
-      return NextResponse.json({ recommendations: getFallback(type, budget) });
+    const parsed = parseModelJSON(textOf(res), RecommendationsSchema, 'recommendations');
+    const all = parsed?.recommendations ?? [];
+    // Same filler rule as the itinerary: a suggestion nobody can act on is
+    // worse than one fewer suggestion.
+    const recommendations = all.filter(r => r.title && r.title.trim().length > 3);
+
+    if (!recommendations.length) {
+      console.error('[recommendations] nothing usable came back', {
+        type, stop_reason: res.stop_reason, returned: all.length,
+      });
+      return NextResponse.json(
+        { error: 'No suggestions came back — try adjusting the budget or the vibe.' },
+        { status: 502 },
+      );
     }
 
-    const data = await response.json();
-    const text = (data.content[0]?.text || '[]') as string;
-    let recommendations;
-    try {
-      recommendations = JSON.parse(text.replace(/```json|```/g, '').trim());
-    } catch {
-      recommendations = getFallback(type, budget);
-    }
-    return NextResponse.json({ recommendations });
-  } catch {
-    return NextResponse.json({ recommendations: getFallback(type, budget) });
+    return NextResponse.json({ recommendations, type });
+  } catch (e: any) {
+    console.error('[recommendations] generation failed', { type, status: e?.status, message: e?.message });
+    const status = e?.status === 429 ? 429 : 502;
+    return NextResponse.json(
+      { error: status === 429
+          ? 'Reach is busy right now — try again in a moment.'
+          : 'Could not fetch suggestions — please try again.' },
+      { status },
+    );
   }
-}
-
-function getFallback(type: string, budget: number): object[] {
-  const defaults: Record<string, object[]> = {
-    restaurant: [
-      { title: "Nobu", sub: "Japanese · Downtown", price: "$120 pp", emoji: "🍱", reason: "World-class sushi perfect for a special group dinner", highlights: ["Signature black cod", "Omakase menu", "Stunning atmosphere"], bestFor: "Special occasions" },
-      { title: "Carbone", sub: "Italian-American · Greenwich Village", price: "$95 pp", emoji: "🍝", reason: "Classic NYC Italian with incredible energy and great for groups", highlights: ["Rigatoni vodka", "Veal parmesan", "Live DJ vibes"], bestFor: "Fun nights out" },
-      { title: "STK Steakhouse", sub: "Steakhouse · Midtown", price: "$110 pp", emoji: "🥩", reason: "High-energy steakhouse that's perfect for celebrating together", highlights: ["Wagyu beef", "Rooftop bar", "Group-friendly menu"], bestFor: "Celebrations" },
-    ],
-    concert: [
-      { title: "Rolling Loud Festival", sub: "Hip-Hop · Outdoor festival", price: "$180 pp", emoji: "🎤", reason: "The biggest names in hip-hop for an unforgettable group experience", highlights: ["Multiple stages", "Surprise guests", "Full day event"], bestFor: "Hip-hop fans" },
-      { title: "Jazz in Central Park", sub: "Jazz · Outdoor venue", price: "$45 pp", emoji: "🎷", reason: "Intimate outdoor jazz perfect for a relaxed group evening", highlights: ["Beautiful setting", "Local legends", "Picnic-friendly"], bestFor: "Chill groups" },
-    ],
-    trip: [
-      { title: "Lisbon, Portugal", sub: "7 nights · Culture & food", price: "$1,800", emoji: "🇵🇹", reason: "Perfect blend of history, food, and nightlife at an affordable price", highlights: ["Alfama district", "Pastéis de Belém", "Sintra day trip"], bestFor: "Culture lovers" },
-      { title: "Tulum, Mexico", sub: "5 nights · Beach & wellness", price: "$1,600", emoji: "🌴", reason: "Beautiful cenotes, beach clubs, and vibrant nightlife", highlights: ["Mayan ruins", "Cenote swimming", "Beach clubs"], bestFor: "Beach groups" },
-      { title: "Tokyo, Japan", sub: "8 nights · City adventure", price: "$2,400", emoji: "🗼", reason: "Incredible food scene, safe, endlessly fascinating", highlights: ["Shibuya crossing", "Ramen bars", "Akihabara"], bestFor: "Food & culture lovers" },
-    ],
-    weekend: [
-      { title: "Napa Valley, CA", sub: "2 nights · Wine & food", price: "$450 weekend", emoji: "🍷", reason: "World-class wineries and restaurants perfect for a group getaway", highlights: ["Wine tasting", "Farm-to-table dining", "Scenic drives"], bestFor: "Wine lovers" },
-      { title: "Palm Springs, CA", sub: "2 nights · Desert & pools", price: "$380 weekend", emoji: "🌵", reason: "Mid-century modern vibes, pools, and great restaurants", highlights: ["Pool parties", "Art museums", "Date shakes"], bestFor: "Social groups" },
-    ],
-  };
-  return defaults[type] || defaults.trip;
 }
