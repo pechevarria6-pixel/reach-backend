@@ -368,6 +368,12 @@ function fixedCostRows(trip){
 // pay on. One helper, used everywhere a count meets a noun.
 function plural(n,one,many){return `${n} ${n===1?one:(many||one+"s")}`;}
 
+// Travelling alone is a different product, not a group with one person in it.
+// Members, wallets, shares, voting and "nothing books until everyone is in"
+// are all meaningless on your own, and leaving them on screen made a solo
+// trip feel like a group trip nobody else had joined yet.
+function isSoloGroup(g){return (g?.memberIds||[]).length<=1;}
+
 // ─── Itinerary rows ───────────────────────────────────────────────────────
 // Turns generated days into the rows the itinerary tab and the API both use.
 // Written once because two screens had their own copy and they disagreed: one
@@ -554,12 +560,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           <div style={{fontSize:12,color:C.t2,fontWeight:500,textAlign:"center"}}>New plan</div>
         </div>
       </div>
-      <div style={{padding:"0 20px 10px"}}><span className="sl">Your groups</span></div>
+      <div style={{padding:"0 20px 10px"}}><span className="sl">Jump back in</span></div>
       {(groups.length>0?[
         {emoji:"✈️",text:groups[0].name+" · "+(groups[0].plans?.length||0)+" plan"+(((groups[0].plans?.length||0)!==1)?"s":""),cta:"Open →",action:()=>push("groupDetail",{groupId:groups[0].id})},
-        groups.length>1?{emoji:"👥",text:"You're in "+groups.length+" groups.",cta:"See all →",action:()=>setTab("groups")}:{emoji:"➕",text:"Invite friends to plan together.",cta:"Create a group →",action:()=>push("createGroup")},
+        groups.length>1?{emoji:"🧭",text:plural(groups.length,"trip")+" on the go.",cta:"See all →",action:()=>setTab("groups")}:{emoji:"➕",text:"Plan another — on your own or with people.",cta:"Start one →",action:()=>push("createGroup")},
       ]:[
-        {emoji:"👋",text:"Welcome! Start a group to start planning.",cta:"Get started →",action:()=>push("createGroup")},
+        {emoji:"👋",text:"Nothing planned yet. Going solo or taking people?",cta:"Start a trip →",action:()=>push("createGroup")},
       ]).filter(Boolean).map((ins,i)=>(
         <div key={i} onClick={ins.action} style={{margin:"0 20px 10px",background:C.s1,border:"1px solid "+C.border,borderRadius:16,padding:14,display:"flex",gap:12,cursor:"pointer"}}>
           <span style={{fontSize:24}}>{ins.emoji}</span>
@@ -1250,7 +1256,7 @@ function GroupsScreen({groups,um,push,loading}){
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
-        <div><div className="pt">Groups</div><div style={{fontSize:13,color:C.t2,marginTop:2}}>Your planning circles</div></div>
+        <div><div className="pt">Your trips</div><div style={{fontSize:13,color:C.t2,marginTop:2}}>Solo and together</div></div>
         <button className="bsm bsm-p" onClick={()=>push("createGroup")}>+ New</button>
       </div>
       {/* With no groups this screen rendered a heading and nothing else — a
@@ -1285,12 +1291,12 @@ function GroupsScreen({groups,um,push,loading}){
                   <div style={{fontSize:28}}>{g.emoji}</div>
                   <div>
                     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>{g.name}</div>
-                    <div style={{fontSize:12,color:C.t2}}>{g.memberIds.length} members</div>
+                    <div style={{fontSize:12,color:C.t2}}>{isSoloGroup(g)?"Just you":plural(g.memberIds.length,"person","people")}</div>
                   </div>
                 </div>
-                <span className="pill pill-g">💰 ${g.wallet.toLocaleString()}</span>
+                {!isSoloGroup(g)&&<span className="pill pill-g">💰 ${g.wallet.toLocaleString()}</span>}
               </div>
-              <AvCluster ids={g.memberIds} um={um} max={5}/>
+              {!isSoloGroup(g)&&<AvCluster ids={g.memberIds} um={um} max={5}/>}
               <div style={{height:1,background:C.border,margin:"12px 0"}}/>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div style={{fontSize:12,color:C.t2}}>{g.lastActivity}</div>
@@ -1312,6 +1318,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
   const [refreshing,setRefreshing]=useState(false);
   const [busyId,setBusyId]=useState(null);
   const isAdmin=group?.role==="admin";
+  const isAlone=isSoloGroup(group);
 
   const doRemove=async(uid,name)=>{
     if(busyId)return;setBusyId(uid);
@@ -1340,12 +1347,14 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           <div>
             <div style={{fontSize:32,marginBottom:4}}>{group.emoji}</div>
             <div className="pt">{group.name}</div>
-            <div style={{fontSize:13,color:C.t2,marginTop:2}}>{group.memberIds.length} members · ${group.wallet.toLocaleString()} wallet</div>
+            <div style={{fontSize:13,color:C.t2,marginTop:2}}>
+              {isAlone?"Travelling on your own":`${plural(group.memberIds.length,"person","people")} · $${group.wallet.toLocaleString()} wallet`}
+            </div>
           </div>
           {isAdmin&&<button className="bsm bsm-g" onClick={()=>push("editGroup",{groupId})}>Edit</button>}
         </div>
         <div style={{display:"flex",gap:0,marginTop:16,borderBottom:`1px solid ${C.border}`}}>
-          {["plans","members","wallet"].map(t=>(
+          {(isAlone?["plans"]:["plans","members","wallet"]).map(t=>(
             <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"10px 0",background:"none",border:"none",borderBottom:`2px solid ${tab===t?C.accentText:"transparent"}`,color:tab===t?C.accentText:C.t2,fontSize:13,fontWeight:600,cursor:"pointer",textTransform:"capitalize",transition:"all .15s"}}>{t}</button>
           ))}
         </div>
@@ -1630,7 +1639,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       })}
 
       <div style={{padding:"14px 20px 10px"}}>
-        <span className="sl">Members ({members.length})</span>
+        <span className="sl">{members.length<=1?"Bring someone along":`Members (${members.length})`}</span>
       </div>
       {members.map(uid=>{
         const u=um[uid];if(!u)return null;
@@ -3922,7 +3931,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         {atab==="overview"&&(
           <div style={{padding:"16px 0"}}>
             <div style={{display:"flex",gap:10,padding:"0 20px 14px"}}>
-              {[{l:"Travelers",v:plan.participants.length,e:"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
+              {[{l:soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
                 <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
                   <div style={{fontSize:20}}>{s.e}</div>
                   <div style={{fontFamily:"'Instrument Serif',serif",fontSize:18,color:C.t1,marginTop:4}}>{s.v}</div>
@@ -4105,7 +4114,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
               <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Budget per person</div>
               <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${plan.budget.toLocaleString()}</div>
-              <div style={{fontSize:12,color:C.t2,marginTop:4}}>{plural(plan.participants.length,"traveller")} total</div>
+              <div style={{fontSize:12,color:C.t2,marginTop:4}}>{soloTrip?"Travelling on your own":`${plural(plan.participants.length,"traveller")} total`}</div>
             </div>
             {/* Itemised from the plan itself. This was a percentage split of
                 the budget — flights 28%, accommodation 34% — which told you
@@ -4572,13 +4581,17 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast}){
         </div>))}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
-        <span style={{fontSize:14,color:C.t2}}>Your share of {plural(participants,"person","people")}</span>
+        <span style={{fontSize:14,color:C.t2}}>{participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`}</span>
         <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1}}>{fmt(myShareCents)}</span>
       </div>
       <button disabled={busy} onClick={startPayment}
         style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.page,fontWeight:700,fontSize:16,opacity:busy?.6:1}}>
         {busy?"One sec\u2026":"Looks good"}</button>
-      <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>Nothing books until the whole group is in \uD83E\uDD1D</div>
+      <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>
+        {participants<=1
+          ?"Pay when you're ready and we'll book it \uD83C\uDF0D"
+          :"Nothing books until the whole group is in \uD83E\uDD1D"}
+      </div>
     </div>
   </div>);
 }
