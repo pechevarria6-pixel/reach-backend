@@ -1,0 +1,182 @@
+// ─── Yelp: the local long tail ───────────────────────────────────────────
+// Two sources, both on the Fusion API.
+//
+//   yelp-events — what is on near you, from listings rather than ticketing.
+//   yelp-places — the studios and schools behind an interest. This is the
+//                 one that answers "I like pottery", because a wheel on a
+//                 Tuesday evening is a business with a class, not a ticketed
+//                 event, and no ticketing catalogue has ever held one.
+//
+// Both fail quietly and separately. Discover showing two sources' worth of
+// things is better than showing none because a third was misconfigured.
+import type { Finding, SourceResult, Seeker } from './types';
+
+const BASE = 'https://api.yelp.com/v3';
+const MILES = 1609.34;
+
+function auth() {
+  const key = process.env.YELP_API_KEY;
+  return key ? { Authorization: `Bearer ${key}` } : null;
+}
+
+const money = (p?: string | null) =>
+  p && /^\$+$/.test(p) ? ({ $: 'Inexpensive', $$: 'Moderate', $$$: 'Pricey', $$$$: 'Splashing out' }[p] ?? p) : null;
+
+const milesFrom = (metres?: number | null) =>
+  typeof metres === 'number' && Number.isFinite(metres) ? `${Math.max(1, Math.round(metres / MILES))} mi` : null;
+
+/**
+ * Anything a hard no matches never reaches the screen, whatever it scored.
+ *
+ * Whole words only. A plain substring test rules out a Departures Bar for
+ * somebody who said no to art, and a cartwheel class along with it — which is
+ * the worst way for this to fail, because the person never sees what was
+ * taken away or why.
+ */
+export function notRuledOut(text: string, avoid: string[]): boolean {
+  const hay = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+  return !avoid.some(raw => {
+    const a = raw.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (a.length < 3) return false;
+    return hay.includes(` ${a} `);
+  });
+}
+
+// ── What's on near you ──────────────────────────────────────────────────
+export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {
+  const headers = auth();
+  if (!headers) return { source: 'yelp-events', status: 'no_key', findings: [] };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const url = `${BASE}/events?latitude=${seeker.lat}&longitude=${seeker.lng}`
+    + `&radius=${Math.round(40 * MILES)}&limit=20&sort_on=time_start&sort_by=asc`
+    + `&start_date=${Math.floor(new Date(`${today}T00:00:00`).getTime() / 1000)}`;
+
+  let json: any;
+  try {
+    const res = await fetch(url, { headers, next: { revalidate: 1800 } });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      console.error('[discover/yelp-events] returned', res.status, detail.slice(0, 200));
+      return { source: 'yelp-events', status: 'error', findings: [], detail: `${res.status}` };
+    }
+    json = await res.json();
+  } catch (e: unknown) {
+    const detail = e instanceof Error ? e.message : 'request failed';
+    console.error('[discover/yelp-events] request failed', detail);
+    return { source: 'yelp-events', status: 'error', findings: [], detail };
+  }
+
+  const findings: Finding[] = (json?.events ?? [])
+    // No link means nothing to do with it, which is the whole point of a card.
+    .filter((e: any) => e?.event_site_url && e?.name)
+    .map((e: any): Finding => {
+      const when = e.time_start
+        ? new Date(e.time_start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+        : 'Date TBC';
+      const where = e.location?.city || seeker.city;
+      return {
+        id: `yelp_event_${e.id}`,
+        title: e.name,
+        meta: [when, where].filter(Boolean).join(' · '),
+        emoji: '📍',
+        // is_free is a statement; a missing cost is not. Only one of them
+        // may be printed as a price.
+        price: e.is_free ? 'Free' : (typeof e.cost === 'number' ? `From $${Math.round(e.cost)}` : null),
+        dist: null,
+        category: e.category ? String(e.category).replace(/[-_]/g, ' ') : 'Event',
+        url: e.event_site_url,
+        date: e.time_start ? String(e.time_start).slice(0, 10) : null,
+        venue: e.location?.address1 || null,
+        source: 'yelp-events',
+        because: null,
+      };
+    })
+    .filter((f: Finding) => notRuledOut(`${f.title} ${f.category}`, seeker.avoid));
+
+  return { source: 'yelp-events', status: 'ok', findings };
+}
+
+// ── The places behind an interest ───────────────────────────────────────
+// A search term rather than a category alias, because the quiz lets people
+// type their own — "sourdough", "sea swimming", "letterpress" — and a fixed
+// map of category aliases would throw away exactly the answers that make a
+// suggestion feel like it was meant for one person.
+const CLASS_WORDS: Record<string, string> = {
+  'cooking': 'cooking class',
+  'pottery & crafts': 'pottery class',
+  'art & galleries': 'art class',
+  'photography': 'photography workshop',
+  'dancing': 'dance class',
+  'wellness': 'yoga studio',
+  'books & talks': 'bookshop events',
+  'comedy': 'comedy club',
+  'live music': 'live music venue',
+  'film & theatre': 'independent cinema',
+  'sport': 'climbing gym',
+  'outdoors': 'guided walks',
+};
+
+/** "pottery" becomes "pottery class"; anything typed is searched as written. */
+export function searchTermFor(interest: string): string {
+  const key = interest.trim().toLowerCase();
+  return CLASS_WORDS[key] || (key.includes('class') || key.includes('workshop') ? key : `${key} class`);
+}
+
+async function placesFor(interest: string, seeker: Seeker, headers: Record<string, string>): Promise<Finding[]> {
+  const term = searchTermFor(interest);
+  const url = `${BASE}/businesses/search?latitude=${seeker.lat}&longitude=${seeker.lng}`
+    + `&term=${encodeURIComponent(term)}&radius=${Math.round(40 * MILES)}&limit=4&sort_by=rating`;
+
+  const res = await fetch(url, { headers, next: { revalidate: 3600 } });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    console.error('[discover/yelp-places] returned', res.status, 'for', term, detail.slice(0, 160));
+    throw new Error(String(res.status));
+  }
+  const json = await res.json();
+  return (json?.businesses ?? [])
+    .filter((b: any) => b?.url && b?.name && !b.is_closed)
+    .map((b: any): Finding => ({
+      id: `yelp_place_${b.id}`,
+      title: b.name,
+      meta: [
+        (b.categories ?? []).map((c: any) => c.title).slice(0, 2).join(' · '),
+        b.location?.city || seeker.city,
+      ].filter(Boolean).join(' · '),
+      emoji: '🎨',
+      price: money(b.price),
+      dist: milesFrom(b.distance),
+      // The interest is the category, so the filter chips on Discover read
+      // as the person's own words rather than a provider's taxonomy.
+      category: interest.charAt(0).toUpperCase() + interest.slice(1),
+      url: b.url,
+      // A studio is open on Tuesdays; it does not happen once. Giving it a
+      // date is what made the detail screen ask people to pick one.
+      date: null,
+      venue: b.location?.address1 || null,
+      source: 'yelp-places',
+      because: interest,
+    }))
+    .filter((f: Finding) => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid));
+}
+
+export async function yelpPlaces(seeker: Seeker): Promise<SourceResult> {
+  const headers = auth();
+  if (!headers) return { source: 'yelp-places', status: 'no_key', findings: [] };
+  // Nothing to look for. Not an error — they have not done the quiz yet.
+  if (!seeker.interests.length) return { source: 'yelp-places', status: 'ok', findings: [] };
+
+  // Three at once. Every interest would be a dozen round trips inside one
+  // request, and the three they picked first are the three they care about.
+  const wanted = seeker.interests.slice(0, 3);
+  const settled = await Promise.allSettled(wanted.map(i => placesFor(i, seeker, headers)));
+
+  const findings = settled.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+  const failed = settled.filter(r => r.status === 'rejected').length;
+  // One interest failing while two answered is not a broken source.
+  if (failed === wanted.length) {
+    return { source: 'yelp-places', status: 'error', findings: [], detail: `all ${failed} searches failed` };
+  }
+  return { source: 'yelp-places', status: 'ok', findings };
+}

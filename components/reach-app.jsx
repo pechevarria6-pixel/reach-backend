@@ -732,6 +732,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
   const [loading,setLoading]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [reason,setReason]=useState(null);
+  const [sources,setSources]=useState([]);
 
   useEffect(()=>{
     if(loaded)return;
@@ -770,6 +771,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
       if(res.ok){
         const data=await res.json();
         setReason(data.reason||null);
+        // Which providers answered. A screen that cannot tell a quiet week
+        // from a dead key tells everybody their city is boring.
+        setSources(data.sources||[]);
         if(data.events?.length){
           setLocalRecs(data.events);
           // Cache in sessionStorage so reload is instant
@@ -822,6 +826,11 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
     date:e.date||null,
     venue:e.venue||null,
     tags:[e.category||"Event"],
+    // Why this one. A suggestion that says it came from something you told
+    // us reads as the app paying attention; the same card without it reads
+    // as an advert.
+    because:e.because||null,
+    provider:e.source||null,
     bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
     isLocal:true,
   }));
@@ -956,19 +965,32 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
             justifyContent:"space-between",alignItems:"center"}}>
             <div>
               <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:exp.price?C.t1:C.t2}}>
-                {exp.price||"Price on Ticketmaster"}
+                {/* Ticketmaster is no longer the only place this came from,
+                    so the card stopped naming it as though it were. */}
+                {exp.price||(exp.provider==="ticketmaster"?"Price on Ticketmaster":"Price at the door")}
               </div>
               <div style={{fontSize:11,color:C.t2}}>
-                {exp.isLocal?"Near you":"per person, all-in"}
+                {exp.because?`Because you like ${String(exp.because).toLowerCase()}`
+                  :exp.isLocal?"Near you":"per person, all-in"}
               </div>
             </div>
+            {/* This used to be a "Share with group" button whose entire
+                handler was a toast saying it had been shared. The screen
+                that actually shares is one tap away and always has been. */}
             <button className="bsm bsm-p"
-              onClick={e=>{e.stopPropagation();toast(exp.title+" shared");}}>
-              Share with group
+              onClick={e=>{e.stopPropagation();push("expDetail",{exp,groups});}}>
+              Take a look →
             </button>
           </div>
         </div>
       ))}
+
+      {!loading&&sources.some(s=>s.status==="error")&&shown.length>0&&(
+        <div style={{margin:"0 20px 14px",padding:"10px 14px",background:C.s2,
+          border:`1px solid ${C.border}`,borderRadius:14,fontSize:12,color:C.t3,lineHeight:1.5}}>
+          One of our sources isn't answering, so there may be more on than this.
+        </div>
+      )}
 
       {shown.length===0&&!loading&&!emptyNote&&(
         <div style={{textAlign:"center",padding:"40px 20px",color:C.t3,fontSize:14}}>
@@ -983,7 +1005,6 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
 
 // ─── EXPERIENCE DETAIL ───────────────────────────────────────────────────────
 function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToServer}){
-  const [gpicker,setGpicker]=useState(false);
   const [planPicker,setPlanPicker]=useState(false);
   const [saving,setSaving]=useState(false);
   const [quizDone,setQuizDone]=useState(false);
@@ -1185,14 +1206,14 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             🎯 Book Now
           </button>
         )}
+        {/* The one real way to put this in front of people: it becomes a
+            plan in the group, which everybody can open. The button beside
+            it used to say "Share with a Group" and only showed a toast. */}
         <button className="bs" style={{marginBottom:10,width:"100%"}}
           onClick={()=>setPlanPicker(true)}>
-          ➕ Add to a Group Plan
+          ➕ Put this in front of a group
         </button>
-        <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",width:"100%",padding:"8px 0"}}
-          onClick={()=>setGpicker(true)}>
-          💬 Share with a Group
-        </button>
+
       </div>
 
       {/* Welcome back — did that actually happen? */}
@@ -1430,25 +1451,6 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
         </div>
       )}
 
-      {/* Share picker */}
-      {gpicker&&(
-        <div className="ov" onClick={()=>setGpicker(false)}>
-          <div className="sh" onClick={e=>e.stopPropagation()}>
-            <div className="sh-hdl"/>
-            <div className="sh-hdr">
-              <span className="sh-ttl">Share with group</span>
-              <button style={{background:"none",border:"none",cursor:"pointer",color:C.t2}} onClick={()=>setGpicker(false)}><Ic.X/></button>
-            </div>
-            {groups.map(g=>(
-              <div key={g.id} className="ri" onClick={()=>{setGpicker(false);toast("Shared with "+g.name);}}>
-                <div className="ri-ic" style={{background:C.s3}}>{g.emoji}</div>
-                <div className="ri-inf"><div className="ri-t">{g.name}</div><div className="ri-s">{g.memberIds?.length||0} members</div></div>
-                <Ic.ChevR/>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2362,6 +2364,10 @@ function TasteQuizScreen({onBack,toast,onSaved}){
   const q=TASTE_QUESTIONS[step];
   const total=TASTE_QUESTIONS.length;
   const isLast=step===total-1;
+  // Answers are stored as the words on the chip, not its id. "earlyMornings"
+  // and "livemusic" are matched against listing text and read by a model,
+  // and neither understands them; "Early mornings" and "Live music" are what
+  // a person would write and what everything downstream can actually use.
   const tog=(k,v)=>setAnswers(a=>({...a,[k]:(a[k]||[]).includes(v)?a[k].filter(x=>x!==v):[...(a[k]||[]),v]}));
   const sel=(k,v)=>setAnswers(a=>({...a,[k]:a[k]===v?null:v}));
   const canNext=q.optional||q.free
@@ -2470,11 +2476,12 @@ function TasteQuizScreen({onBack,toast,onSaved}){
         ):(
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
             {q.options.map(opt=>{
-              const selected=q.multi?(answers[q.id]||[]).includes(opt.id):answers[q.id]===opt.id;
+              const value=opt.l;
+              const selected=q.multi?(answers[q.id]||[]).includes(value):answers[q.id]===value;
               const isVeto=q.noWay&&selected;
               return(
                 <button key={opt.id}
-                  onClick={()=>q.multi?tog(q.id,opt.id):sel(q.id,opt.id)}
+                  onClick={()=>q.multi?tog(q.id,value):sel(q.id,value)}
                   style={{padding:"14px 8px",borderRadius:14,
                     border:"2px solid "+(isVeto?"rgba(239,68,68,.6)":selected?C.accent:C.border),
                     background:isVeto?"rgba(239,68,68,.1)":selected?C.accentDim:C.s2,

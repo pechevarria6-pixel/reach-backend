@@ -38,7 +38,7 @@ const FILES = [...walkFiles('app'), ...walkFiles('components')]
 // An action verb says something left the device. Navigating to the screen
 // that does the work counts — "Invite someone" opening the invite screen is
 // an honest button.
-const ACTION = /\b(send|sends|sent|book|books|confirm|confirms|pay|invite|submit|request|reserve|charge|notify|remind)\b/i;
+const ACTION = /\b(send|sends|sent|book|books|confirm|confirms|pay|invite|submit|request|reserve|charge|notify|remind|share|shares|post|publish)\b/i;
 // A permission verb says the platform granted something. Only the platform
 // can keep that promise, and navigating away emphatically does not — which is
 // exactly how "Allow →" shipped doing nothing but advancing a step.
