@@ -352,15 +352,20 @@ function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);retu
 // memory, because the plans table has no column for it.
 function fixedCostRows(trip){
   const c=trip?.costs||{};
-  const row=(label,detail,cents,type)=>cents>0?{
-    time:"Before you go",title:label,sub:detail||"",type,conf:null,filled:false,
+  // Name the actual thing. This wrote "Flights", "Accommodation" and "Airport
+  // transfers" onto the itinerary while the real detail — the airline, the
+  // hotel — sat unused one field away, so three placeholder lines sat at the
+  // top of a plan that was otherwise specific throughout.
+  const row=(title,detail,cents,type)=>cents>0&&title?{
+    time:"Before you go",title,sub:detail||"",type,conf:null,filled:false,
     cost_cents:Math.round(cents*100),booking_mode:"reach",
     payment_note:"Paid through Reach when the group funds the trip",
   }:null;
   return [
-    row("Flights",c.flights?.details,c.flights?.per_person,"flight"),
-    row("Accommodation",c.accommodation?.example||c.accommodation?.details,c.accommodation?.per_person,"hotel"),
-    row("Airport transfers",c.ground_transport?.details,c.ground_transport?.per_person,"transport"),
+    row(c.flights?.details||"Round-trip flights",c.flights?.airlines,c.flights?.per_person,"flight"),
+    // example is the hotel or neighbourhood; details is "7 nights, hotel".
+    row(c.accommodation?.example||c.accommodation?.details,c.accommodation?.details,c.accommodation?.per_person,"hotel"),
+    row(c.ground_transport?.details||"Airport transfers",null,c.ground_transport?.per_person,"transport"),
   ].filter(Boolean);
 }
 

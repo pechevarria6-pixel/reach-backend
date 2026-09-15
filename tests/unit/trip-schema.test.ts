@@ -190,3 +190,36 @@ test('fewer than three is passed through rather than padded', () => {
     ({ destination, tier, total_per_person: 1800, costs: costs(500, 600, 200, 300, 150, 50) });
   assert.equal(normalizeTrips([mk('A', 'saver'), mk('B', 'stretch')]).length, 2);
 });
+
+// ── Filler ────────────────────────────────────────────────────────────────
+import { isFiller, dropFillerDays } from '../../lib/trip-schema.ts';
+
+test('the filler a model writes to satisfy a required field is caught', () => {
+  // "placeholder" reached a live itinerary on Day 5 of a real trip.
+  for (const v of ['placeholder', 'TBD', 'n/a', 'N/A', 'Activity', 'Free time', '', '   ', '-', 'Lunch'])
+    assert.equal(isFiller(v), true, `${JSON.stringify(v)} should be filler`);
+});
+
+test('a real plan is never mistaken for filler', () => {
+  for (const v of ['Dinner at the bar at Coyaba Restaurant', 'Snorkel off Grace Bay Beach',
+                   'Walk Chalk Sound National Park', 'Pastéis de Belém'])
+    assert.equal(isFiller(v), false, `${JSON.stringify(v)} is a real plan`);
+});
+
+test('a day containing filler is dropped, not saved as a hole', () => {
+  const real = (n: number) => ({ day: n, morning: { plan: 'Walk the old town' },
+    afternoon: { plan: 'Museu Calouste Gulbenkian' }, evening: { plan: 'Dinner at Ramiro' } });
+  const holed = { day: 5, morning: { plan: 'Grand Turk day trip' },
+    afternoon: { plan: 'placeholder' }, evening: { plan: 'placeholder' } };
+  const out = dropFillerDays([real(1), holed, real(2)]);
+  assert.equal(out.length, 2);
+  assert.ok(!out.some(d => d.day === 5));
+});
+
+test('dropFillerDays copes with the older flat shape', () => {
+  const out = dropFillerDays([
+    { day: 1, morning: 'Walk the old town', afternoon: 'Museum visit', evening: 'Dinner at Ramiro' },
+    { day: 2, morning: 'placeholder', afternoon: 'Museum', evening: 'Dinner' },
+  ] as any);
+  assert.equal(out.length, 1);
+});

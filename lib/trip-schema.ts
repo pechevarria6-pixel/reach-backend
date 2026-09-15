@@ -260,3 +260,21 @@ export function normalizeTrips<T extends TripLike>(trips: T[]): T[] {
   }
   return distinct;
 }
+
+/**
+ * Filler a model writes to satisfy a required field it cannot really fill.
+ * A schema can insist every slot has a plan; it cannot insist the plan names
+ * somewhere real, and "placeholder" reached a live itinerary.
+ */
+const FILLER = /^\s*(placeholder|tbd|n\/?a|none|activity|event|lunch|dinner|breakfast|free time|explore|relax|tba|-+)\s*$/i;
+
+export function isFiller(text: unknown): boolean {
+  const t = String(text ?? '').trim();
+  return !t || t.length < 4 || FILLER.test(t);
+}
+
+/** Drops any day that contains filler, rather than saving a hole. */
+export function dropFillerDays<T extends { morning?: any; afternoon?: any; evening?: any }>(days: T[]): T[] {
+  return (days || []).filter(d =>
+    ![d.morning, d.afternoon, d.evening].some(s => isFiller(typeof s === 'string' ? s : s?.plan)));
+}

@@ -3,7 +3,7 @@ import { requireGroupMember, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
 import {
   TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA,
-  parseModelJSON, textOf, normalizeTrips,
+  parseModelJSON, textOf, normalizeTrips, dropFillerDays,
 } from '@/lib/trip-schema';
 
 // ─── Models ──────────────────────────────────────────────────────────────
@@ -173,6 +173,11 @@ person actually spends there, drinks included. These are the numbers somebody
 budgets against, so be realistic rather than optimistic — and make each day's
 three costs add up to roughly that day's cost_today.
 
+Never write "placeholder", "TBD", "N/A", "Activity" or any other filler. Every
+slot names a real place a person could walk into. If you genuinely cannot fill
+${nights} days with real places, return fewer days rather than padding — a
+short honest itinerary beats a long one with holes in it.
+
 Write one entry for each of the ${nights} days.
 
 Be specific: real venue names, real neighbourhoods. Make it feel like a local
@@ -211,7 +216,16 @@ better than a confident wrong answer.`;
       );
 
       const parsed = parseModelJSON(textOf(res), ItinerarySchema, 'trips itinerary');
-      if (!parsed?.itinerary?.length) {
+      // A day whose slots say "placeholder" is worse than a missing day: it
+      // looks planned. Drop it rather than write a hole into somebody's trip.
+      const days = dropFillerDays(parsed?.itinerary ?? []);
+      if (days.length < (parsed?.itinerary?.length ?? 0)) {
+        console.error('[trips itinerary] dropped filler days', {
+          destination, asked: nights,
+          returned: parsed?.itinerary?.length, kept: days.length,
+        });
+      }
+      if (!days.length) {
         console.error('[trips itinerary] no itinerary in response', {
           destination, nights, stop_reason: res.stop_reason,
         });
@@ -220,7 +234,7 @@ better than a confident wrong answer.`;
           { status: 502 },
         );
       }
-      return NextResponse.json({ itinerary: parsed.itinerary });
+      return NextResponse.json({ itinerary: days });
     } catch (e: any) {
       console.error('[trips itinerary] generation failed', {
         destination, nights, status: e?.status, message: e?.message,
