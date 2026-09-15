@@ -941,6 +941,18 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   const [bookTime,setBookTime]=useState("");
   const [bookGuests,setBookGuests]=useState("2");
   const [bookNotes,setBookNotes]=useState("");
+  // Handing someone to Ticketmaster is where a one-stop shop stops being one.
+  // We cannot take that payment, but we can close the loop: when they come
+  // back, ask whether it happened and put it where the rest of their plans
+  // live, so nobody is keeping half their trip in a confirmation email.
+  const [sentOff,setSentOff]=useState(false);
+  const [askIfBooked,setAskIfBooked]=useState(false);
+  useEffect(()=>{
+    if(!sentOff)return;
+    const onBack2=()=>{if(!document.hidden)setAskIfBooked(true);};
+    document.addEventListener("visibilitychange",onBack2);
+    return()=>document.removeEventListener("visibilitychange",onBack2);
+  },[sentOff]);
 
   // Detect what type of experience this is
   const isLocal=exp.isLocal||exp.tags?.includes("Nearby");
@@ -1050,6 +1062,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             <button className="bp" style={{marginBottom:8,width:"100%",background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`}}
               onClick={()=>{
                 window.open(exp.url,"_blank","noopener,noreferrer");
+                setSentOff(true);
                 toast("Handing you over to Ticketmaster");
               }}>
               🎟️ Get tickets
@@ -1073,6 +1086,33 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
           💬 Share with a Group
         </button>
       </div>
+
+      {/* Welcome back — did that actually happen? */}
+      {askIfBooked&&!planPicker&&(
+        <div className="ov" onClick={()=>setAskIfBooked(false)}>
+          <div className="sh" onClick={e=>e.stopPropagation()}>
+            <div className="sh-hdl"/>
+            <div style={{padding:"18px 20px 24px",textAlign:"center"}}>
+              <div style={{fontSize:30,marginBottom:10}}>🎟️</div>
+              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1,marginBottom:6}}>
+                Did you get them?
+              </div>
+              <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:18}}>
+                If you did, we'll put {exp.title} alongside everything else you
+                have planned, so it isn't living in an email on its own.
+              </div>
+              <button className="bp" style={{width:"100%",marginBottom:8}}
+                onClick={()=>{setAskIfBooked(false);setSentOff(false);setPlanPicker(true);}}>
+                Got them — add to a plan
+              </button>
+              <button className="bs" style={{width:"100%"}}
+                onClick={()=>{setAskIfBooked(false);setSentOff(false);}}>
+                Not yet
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add to group picker */}
       {planPicker&&(
@@ -3046,10 +3086,12 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
   const [vetoes,setVetoes]=useState({});
   const [votes,setVotes]=useState({});
   const [step,setStep]=useState(0); // 0=setup 1=loading 2=results 3=voted
+  const [genError,setGenError]=useState(null);
   const selGroup=groups.find(g=>g.id===groupId);
 
   const generate=async()=>{
     if(!groupId)return;
+    setGenError(null);
     setStep(1);setLoading(true);
     try{
       const res=await fetch("/api/trips/generate",{
@@ -3069,11 +3111,18 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
         setTrips(data.trips);
         setStep(2);
       }else{
-        toast("AI trip generation failed — check your API key");
+        // Two things were wrong here. It told a traveller to check an API
+        // key, which is not theirs to check and not usually the cause; and
+        // it threw away what the server actually said, then dropped them
+        // back on the form with a toast that was gone before they read it.
+        const body=await res.json().catch(()=>null);
+        console.error("[aiTrip] generate failed",res.status,body);
+        setGenError(body?.error||"That didn't come back. Your dates and budget are still here — give it another go.");
         setStep(0);
       }
     }catch(e){
-      toast("Network error — try again");
+      console.error("[aiTrip] generate failed",e);
+      setGenError("Couldn't reach us just then. Check your connection and try again — nothing is lost.");
       setStep(0);
     }finally{setLoading(false);}
   };
@@ -3169,6 +3218,16 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
 
       {step===0&&(
         <div style={{padding:"20px 20px 30px",overflowY:"auto",flex:1}}>
+          {genError&&(
+            <div style={{background:C.redDim,border:`1px solid ${C.red}`,borderRadius:14,
+              padding:12,marginBottom:16,display:"flex",alignItems:"flex-start",gap:8}}>
+              <span>⚠️</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.red,marginBottom:2}}>That didn't work</div>
+                <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5}}>{genError}</div>
+              </div>
+            </div>
+          )}
           <div style={{background:C.accentDim,border:"1px solid "+C.accentBorder,borderRadius:16,padding:16,marginBottom:20}}>
             <div style={{fontSize:13,fontWeight:600,color:C.accentText,marginBottom:4}}>How it works</div>
             <div style={{fontSize:13,color:C.t2,lineHeight:1.7}}>
