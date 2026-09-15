@@ -958,6 +958,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   // We cannot take that payment, but we can close the loop: when they come
   // back, ask whether it happened and put it where the rest of their plans
   // live, so nobody is keeping half their trip in a confirmation email.
+  const [bookedPlan,setBookedPlan]=useState(null);
   const [sentOff,setSentOff]=useState(false);
   const [askIfBooked,setAskIfBooked]=useState(false);
   useEffect(()=>{
@@ -1021,6 +1022,61 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
     setPlanPicker(false);
     toast(exp.title+" added to "+group.name+" 🎉");
     _sp1.then(_rid=>push("planDetail",{planId:_rid||np.id,groupId:group.id})).catch(()=>push("planDetail",{planId:np.id,groupId:group.id}));
+  };
+
+  // "Confirm Booking Request" used to call setBookStep(2) and a toast. That
+  // was the whole implementation. The screen then told the traveller their
+  // request had been sent to the venue, that a card would be charged on
+  // confirmation, that it was in their calendar and that the group had been
+  // told — none of which had happened or could happen. Somebody could have
+  // turned up at a restaurant on the strength of it.
+  //
+  // It now does what it says: the reservation becomes a real plan they can
+  // open, and a concierge booking record the team can act on.
+  const [submitting,setSubmitting]=useState(false);
+  const submitBooking=async(group)=>{
+    if(submitting)return;
+    setSubmitting(true);
+    const when=fixedDate||bookDate||new Date().toISOString().split("T")[0];
+    const np={
+      id:"p"+Date.now(),
+      title:exp.title,
+      status:"planning",
+      dates:formatDates(when)+(bookTime?" at "+bookTime:""),
+      startDate:when,endDate:null,
+      budget:parseInt((exp.price||"0").replace(/[^0-9]/g,""))||0,
+      type:getType(),
+      participants:group.memberIds||[],
+      itinerary:[{
+        time:bookTime||exp.meta?.split("·")[0]?.trim()||"",
+        title:exp.title,sub:exp.sub||"",
+        type:isRestaurant?"restaurant":"activity",
+        conf:null,filled:false,
+        booking_mode:"reach",
+        payment_note:bookNotes||"",
+      }],
+      votes:{},options:[],fromDiscover:true,expData:exp,
+    };
+    updateGroup(group.id,g=>({...g,plans:[...g.plans,np],lastActivity:"Booking: "+exp.title}));
+    let planId=np.id;
+    try{
+      planId=(savePlanToServer?await savePlanToServer(group.id,np):null)||np.id;
+      if(!isTempId(planId)){
+        const r=await fetch("/api/bookings",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({planId,items:[{vertical:"restaurant",restaurant:{
+            name:exp.title,city:exp.city||exp.sub||"",date:when,
+            time:bookTime||"19:00",
+            partySize:bookGuests==="8+"?8:(parseInt(bookGuests)||2),
+            notes:bookNotes||undefined,externalUrl:exp.url||undefined,
+          }}]}),
+        });
+        if(!r.ok)console.error("[expDetail] booking request failed",r.status,await r.text().catch(()=>""));
+      }
+    }catch(e){console.error("[expDetail] booking request failed",e);}
+    setBookedPlan({planId,groupId:group.id,groupName:group.name});
+    setSubmitting(false);
+    setBookStep(2);
   };
 
   return(
@@ -1267,17 +1323,36 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                   </div>
 
                   <div style={{background:"rgba(108,99,255,.08)",border:"1px solid "+C.accentBorder,borderRadius:12,padding:12,marginBottom:16,fontSize:12,color:C.t2,lineHeight:1.6}}>
-                    💡 This sends a booking request to {exp.title}. They'll confirm via the app within 24 hours. No charge until confirmed.
+                    💡 Reach takes it from here and confirms with {exp.title}. It lands in your plans straight away, so you can see it whatever happens. Nothing is charged until it's confirmed.
                   </div>
 
-                  <button className="bp" style={{width:"100%",marginBottom:8}}
-                    onClick={()=>{
-                      // Save as confirmed plan in group
-                      setBookStep(2);
-                      toast("Booking request sent to "+exp.title+" ✓");
-                    }}>
-                    ✓ Confirm Booking Request
-                  </button>
+                  {groups.length===0?(
+                    <>
+                      <div style={{fontSize:12.5,color:C.t2,lineHeight:1.6,marginBottom:12,textAlign:"center"}}>
+                        Your bookings live inside a plan. Make one first — it takes a moment, and you can go solo.
+                      </div>
+                      <button className="bp" style={{width:"100%",marginBottom:8}}
+                        onClick={()=>{setBooking(false);setBookStep(0);push("createGroup");}}>
+                        Set that up →
+                      </button>
+                    </>
+                  ):groups.length===1?(
+                    <button className="bp" style={{width:"100%",marginBottom:8}} disabled={submitting}
+                      onClick={()=>submitBooking(groups[0])}>
+                      {submitting?"Sending…":"✓ Send this to Reach"}
+                    </button>
+                  ):(
+                    <>
+                      <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Put it with</div>
+                      {groups.map(g=>(
+                        <button key={g.id} className="bp" disabled={submitting}
+                          style={{width:"100%",marginBottom:8,display:"flex",alignItems:"center",gap:10,justifyContent:"center"}}
+                          onClick={()=>submitBooking(g)}>
+                          <span>{g.emoji}</span>{submitting?"Sending…":g.name}
+                        </button>
+                      ))}
+                    </>
+                  )}
                   <button className="bs" style={{width:"100%"}} onClick={()=>setBookStep(0)}>Edit details</button>
                 </div>
               </>
@@ -1286,17 +1361,28 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             {bookStep===2&&(
               <div style={{padding:"20px 0 30px",textAlign:"center"}}>
                 <div style={{fontSize:60,marginBottom:16}}>🎉</div>
-                <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1,marginBottom:8}}>Booking request sent!</div>
+                <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1,marginBottom:8}}>We're on it</div>
                 <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:24}}>
-                  Your request for {exp.title} on {bookDate} for {bookGuests==="8+"?"8+ people":plural(parseInt(bookGuests)||2,"person","people")} has been sent. You'll get a confirmation notification within 24 hours.
+                  {exp.title}, {formatDates(fixedDate||bookDate)}{bookTime?" at "+bookTime:""}, {bookGuests==="8+"?"8+ people":plural(parseInt(bookGuests)||2,"person","people")}. It's saved in {bookedPlan?.groupName||"your plans"} — open it whenever you like.
                 </div>
                 <div style={{background:C.s2,border:"1px solid "+C.border,borderRadius:14,padding:14,marginBottom:20,textAlign:"left"}}>
+                  {/* Only things that actually happen. This list used to
+                      promise a calendar entry and an automatic group
+                      notification, neither of which exists. */}
                   <div style={{fontSize:12,color:C.t3,marginBottom:8,textTransform:"uppercase",letterSpacing:".08em"}}>What happens next</div>
-                  {["📱 Venue confirms within 24 hrs","💳 Card charged only on confirmation","📅 Added to your calendar","👥 Group notified automatically"].map((s,i)=>(
+                  {["📋 It's in your plans already — nothing to keep track of",
+                    "📞 Someone at Reach confirms it with the venue",
+                    "💳 Nothing is charged until it's confirmed"].map((s,i)=>(
                     <div key={i} style={{fontSize:13,color:C.t2,padding:"4px 0"}}>{s}</div>
                   ))}
                 </div>
-                <button className="bp" style={{width:"100%"}} onClick={()=>{setBooking(false);setBookStep(0);onBack();}}>
+                {bookedPlan&&(
+                  <button className="bp" style={{width:"100%",marginBottom:8}}
+                    onClick={()=>{setBooking(false);setBookStep(0);push("planDetail",{planId:bookedPlan.planId,groupId:bookedPlan.groupId});}}>
+                    Open the plan →
+                  </button>
+                )}
+                <button className="bs" style={{width:"100%"}} onClick={()=>{setBooking(false);setBookStep(0);onBack();}}>
                   Done
                 </button>
               </div>
@@ -3769,7 +3855,10 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
               <>
                 <div className="pt" style={{marginBottom:6}}>When?</div>
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>
-                  {isWeekend?"Pick your weekend getaway dates.":"Everyone's availability is checked automatically."}
+                  {/* Nothing checks anyone's availability. Saying so was a
+                      promise the app had no way to keep, and it is the sort
+                      a group finds out about the hard way. */}
+                  {isWeekend?"Pick your weekend getaway dates.":"Pick the dates. Everyone gets asked before anything is booked."}
                 </div>
                 {isWeekend&&(
                   <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
