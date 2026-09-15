@@ -14,6 +14,9 @@ import { notRuledOut } from './rules.ts';
 
 const BASE = 'https://api.yelp.com/v3';
 const MILES = 1609.34;
+// Yelp refuses any radius over 40,000 metres, about twenty-five miles. This
+// once asked for forty miles, and every search came back 400.
+const RADIUS = 40000;
 
 function auth() {
   const key = process.env.YELP_API_KEY;
@@ -33,7 +36,7 @@ export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {
 
   const today = new Date().toISOString().slice(0, 10);
   const url = `${BASE}/events?latitude=${seeker.lat}&longitude=${seeker.lng}`
-    + `&radius=${Math.round(40 * MILES)}&limit=20&sort_on=time_start&sort_by=asc`
+    + `&radius=${RADIUS}&limit=20&sort_on=time_start&sort_by=asc`
     + `&start_date=${Math.floor(new Date(`${today}T00:00:00`).getTime() / 1000)}`;
 
   let json: any;
@@ -110,7 +113,7 @@ export function searchTermFor(interest: string): string {
 async function placesFor(interest: string, seeker: Seeker, headers: Record<string, string>): Promise<Finding[]> {
   const term = searchTermFor(interest);
   const url = `${BASE}/businesses/search?latitude=${seeker.lat}&longitude=${seeker.lng}`
-    + `&term=${encodeURIComponent(term)}&radius=${Math.round(40 * MILES)}&limit=4&sort_by=rating`;
+    + `&term=${encodeURIComponent(term)}&radius=${RADIUS}&limit=4&sort_by=rating`;
 
   const res = await fetch(url, { headers, next: { revalidate: 3600 } });
   if (!res.ok) {

@@ -175,3 +175,19 @@ test('a page that lists two dozen dates still fits on a card', () => {
 test('phrasing short enough to keep is kept exactly', () => {
   assert.equal(shorten('Wednesdays, 7-9pm'), 'Wednesdays, 7-9pm');
 });
+
+import { osmFindingId, osmRef } from '../../lib/discovery/osm.ts';
+
+test('a venue keeps the map reference it was found under', () => {
+  // The sweep once read these with a pattern no id matched, so every venue
+  // in every city was stored as nothing. Built one way, read the other.
+  for (const [type, id] of [['node', 123], ['way', 456], ['relation', 7]] as const) {
+    assert.deepEqual(osmRef(osmFindingId(type, id)), { type, id });
+  }
+});
+
+test('something that is not a map reference is not read as one', () => {
+  assert.equal(osmRef('yelp_place_abc'), null);
+  assert.equal(osmRef('osm_node_'), null);
+  assert.equal(osmRef('osm_node_12x'), null);
+});

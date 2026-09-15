@@ -87,6 +87,15 @@ export function overpassQuery(interests: string[], box: string, limit = 30): str
   return `[out:json][timeout:15];\n(\n${clauses}\n);\nout center ${limit};`;
 }
 
+/** A finding's id, built from what the map calls the element. */
+export const osmFindingId = (type: string, id: number | string) => `osm_${type}_${id}`;
+
+/** And back again: osm_way_456 is the way 456. Anything else is not ours. */
+export function osmRef(findingId: string): { type: string; id: number } | null {
+  const m = /^osm_([a-z]+)_(\d+)$/.exec(findingId);
+  return m ? { type: m[1], id: Number(m[2]) } : null;
+}
+
 const websiteOf = (tags: Record<string, string> = {}) =>
   tags.website || tags['contact:website'] || tags.url || null;
 
@@ -157,7 +166,7 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
     const where = tags['addr:street'] || tags['addr:city'] || seeker.city;
 
     const finding: Finding = {
-      id: `osm_${el.type}_${el.id}`,
+      id: osmFindingId(el.type, el.id),
       title: name,
       meta: [what, where].filter(Boolean).join(' · '),
       emoji: EMOJI[interest.toLowerCase()] || '📍',

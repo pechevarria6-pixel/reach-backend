@@ -11,7 +11,7 @@
 // the same secret, which is how you warm a city before a launch.
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { openStreetMap } from '@/lib/discovery/osm';
+import { openStreetMap, osmRef } from '@/lib/discovery/osm';
 import type { Seeker } from '@/lib/discovery/types';
 
 // Overpass is slow and this loops over areas. Give it room, but not so much
@@ -89,14 +89,16 @@ export async function GET(req: NextRequest) {
     }
 
     const rows = found.findings.map(f => {
-      // The id carries what the map called it: osm_node_123_pottery & crafts
-      const [, osmType, osmId] = /^osm_([a-z]+)_(\d+)_/.exec(f.id) ?? [];
+      // The id carries what the map called it. This used to be read with a
+      // pattern expecting a suffix no id has ever had, so every venue parsed
+      // as id 0 and was thrown away, and every city swept "ok" with nothing.
+      const ref = osmRef(f.id);
       // Without its own point a venue sits at the centre of the area, which
       // makes every distance on the screen the same and wrong.
-      if (f.lat == null || f.lng == null) return null;
+      if (!ref || f.lat == null || f.lng == null) return null;
       return {
-        osm_type: osmType ?? 'node',
-        osm_id: Number(osmId ?? 0),
+        osm_type: ref.type,
+        osm_id: ref.id,
         name: f.title,
         lat: f.lat ?? Number(area.lat), lng: f.lng ?? Number(area.lng),
         city: area.city || null,
@@ -106,7 +108,7 @@ export async function GET(req: NextRequest) {
         street: f.venue,
         last_seen_at: new Date().toISOString(),
       };
-    }).filter((r): r is NonNullable<typeof r> => !!r && r.osm_id > 0);
+    }).filter((r): r is NonNullable<typeof r> => !!r);
 
     if (rows.length) {
       const { error: wrote } = await db
