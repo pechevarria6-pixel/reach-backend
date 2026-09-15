@@ -78,13 +78,16 @@ export function boundingBox(lat: number, lng: number, miles: number): string {
   return `${r(lat - dLat)},${r(lng - dLng)},${r(lat + dLat)},${r(lng + dLng)}`;
 }
 
-export function overpassQuery(interests: string[], box: string, limit = 30): string {
+export function overpassQuery(interests: string[], box: string, limit = 30, timeoutSec = 25): string {
   const clauses = interests
     .flatMap(i => tagsFor(i).map(sel => `  nwr[${sel}](${box});`))
     .join('\n');
   // `out center` gives ways and relations a coordinate; without it a studio
   // mapped as a building outline comes back with no position at all.
-  return `[out:json][timeout:15];\n(\n${clauses}\n);\nout center ${limit};`;
+  // The server's own limit, which it enforces by refusing. At fifteen seconds
+  // Aberdeen, New Jersey came back 504 after twelve; given room, the same
+  // query answered in fourteen with twenty-nine places.
+  return `[out:json][timeout:${timeoutSec}];\n(\n${clauses}\n);\nout center ${limit};`;
 }
 
 /** A finding's id, built from what the map calls the element. */
@@ -107,7 +110,8 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
   // Fifteen miles, not twenty-five: nobody crosses a city for a class,
   // and the wider box is what makes a dense city time out.
   const box = boundingBox(seeker.lat, seeker.lng, 15);
-  const body = overpassQuery(interests, box);
+  // Let the server take as long as we are prepared to wait, and no longer.
+  const body = overpassQuery(interests, box, 30, Math.ceil(budgetMs / 1000));
 
   let json: any = null;
   let lastDetail = 'no mirror answered';

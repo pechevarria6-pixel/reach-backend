@@ -191,3 +191,10 @@ test('something that is not a map reference is not read as one', () => {
   assert.equal(osmRef('osm_node_'), null);
   assert.equal(osmRef('osm_node_12x'), null);
 });
+
+test('the map server is given as long as we will wait', () => {
+  // Fifteen seconds had a dense area refused with a 504 it would have
+  // answered in fourteen.
+  assert.match(overpassQuery(['cooking'], '1,2,3,4'), /\[timeout:25\]/);
+  assert.match(overpassQuery(['cooking'], '1,2,3,4', 30, 8), /\[timeout:8\]/);
+});
