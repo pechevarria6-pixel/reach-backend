@@ -210,7 +210,7 @@ export function sendItinerary(to: string, opts: {
     <p style="font-size:13px;color:#635539;margin:0 0 24px;">${escape(opts.groupName)}</p>
 
     ${fixedRows ? `
-      <h2 style="font-size:15px;font-weight:600;margin:0 0 4px;">Booked through Reach</h2>
+      <h2 style="font-size:15px;font-weight:600;margin:0 0 4px;">Reach will book these</h2>
       <p style="font-size:12.5px;color:#635539;margin:0 0 8px;">Paid once the group funds the trip.</p>
       <table style="width:100%;border-collapse:collapse;">${fixedRows}</table>
       <p style="text-align:right;font-size:14px;font-weight:600;margin:8px 0 26px;">${money(fixedTotal)} per person</p>` : ''}

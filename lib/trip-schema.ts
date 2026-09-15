@@ -51,7 +51,7 @@ export const SlotSchema = z.object({
   // event rather than showing a percentage split of the total, so each slot
   // has to carry its own number. 0 means genuinely free, not unknown.
   cost: z.number(),
-  // reach  — Reach can book this for you
+  // reach  — Reach will book this for you
   // ahead  — needs reserving in advance, but not through Reach
   // walk_in— just turn up
   booking: z.enum(['reach', 'ahead', 'walk_in']),

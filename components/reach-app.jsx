@@ -4010,7 +4010,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       {(item.booking_mode||item.payment_note)&&(
                         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
                           {item.booking_mode==="reach"&&(
-                            <span className="pill pill-p">Reach can book this</span>
+                            <span className="pill pill-p">Reach will book this</span>
                           )}
                           {item.booking_mode==="ahead"&&(
                             <span className="pill pill-a">Reserve ahead</span>
@@ -4170,7 +4170,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               return(
                 <>
                   {fixed.length>0&&(
-                    <Section title="Reach books these" tone={C.accentText}
+                    <Section title="Reach will book these" tone={C.accentText}
                       note="Committed once the group funds the trip. You pay this through Reach and it is done."
                       rows={fixed} total={fixedTotal}/>
                   )}
