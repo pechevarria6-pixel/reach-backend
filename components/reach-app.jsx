@@ -3963,12 +3963,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   const castVote=async opt=>{
     if(myVote)return;
+    // Showing the vote immediately is right — waiting on a round trip to tick
+    // a box feels broken. Leaving it there when the server refused is not:
+    // the screen went on saying "✓ Your vote" and "your vote has been
+    // recorded" under a toast explaining it had not been, and the count stayed
+    // up by one for as long as the screen was open.
     setMyVote(opt);
-    // Optimistic update
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:{...p.votes,[opt]:(p.votes[opt]||0)+1}}:p)}));
-    toast(`Voted for ${opt}!`);
-    // Server sync
-    if(castVoteOnServer)await castVoteOnServer(planId,opt);
+    const ok=castVoteOnServer?await castVoteOnServer(planId,opt):true;
+    if(ok){
+      toast(`Voted for ${opt}!`);
+      return;
+    }
+    // castVoteOnServer has already said what went wrong. Put the screen back
+    // the way it was so it agrees with what it just told them.
+    setMyVote(null);
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:{...p.votes,[opt]:Math.max(0,(p.votes[opt]||1)-1)}}:p)}));
   };
 
   // "Results update in real time" was written on the screen and nothing was
@@ -3982,11 +3992,25 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     return()=>clearInterval(id);
   },[atab,groupId]);
 
-  const updateStatus=async(newStatus)=>{
+  // Two of the three status buttons bypassed this and changed local state
+  // only. "Send to the group for a vote" moved the pill to Voting, said so,
+  // and told the server nothing — so nobody else ever saw a vote open, and
+  // the plan was back to Planning on the next load. Same for approving one.
+  // Every transition goes through here, and every one can fail.
+  const updateStatus=async(newStatus,done)=>{
+    if(loading)return false;
     setLoading(true);
+    const previous=plan.status;
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:newStatus}:p)}));
-    if(updatePlanOnServer)await updatePlanOnServer(planId,{status:newStatus});
+    const ok=updatePlanOnServer?await updatePlanOnServer(planId,{status:newStatus}):true;
     setLoading(false);
+    if(ok){
+      if(done)done();
+      return true;
+    }
+    // updatePlanOnServer has already said what went wrong. Put the pill back.
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:previous}:p)}));
+    return false;
   };
   const tabs=["overview","itinerary",(!soloTrip&&plan.options.length>0)?"vote":null,"budget"].filter(Boolean);
 
@@ -4066,9 +4090,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               </div>
             )}
             <div style={{padding:"0 20px"}}>
-              {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"voting"}:p)}));setAtab("vote");toast("Sent round for a vote");}}>Send to the group for a vote</button>}
-              {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updatePlanOnServer&&updatePlanOnServer(planId,{status:"approved"});updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"approved"}:p)}));toast("Locked in — let's book it");}}>Lock this in</button>}
-              {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} onClick={()=>{updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:"approved"}:p)}));toast("Approved — let's book it");}}>Approve and proceed to booking</button>}
+              {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
+              {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
+              {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
               {plan.status==="approved"&&(
                 <>
                   <button className="bp" style={{marginBottom:6,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>

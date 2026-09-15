@@ -44,8 +44,15 @@ const ACTION = /\b(send|sends|sent|book|books|confirm|confirms|pay|invite|submit
 // exactly how "Allow →" shipped doing nothing but advancing a step.
 const PERMISSION = /\b(allow|enable|grant|connect)\b/i;
 
-const KEEPS_ACTION = /fetch\(|ToServer|submitBooking|castVote|nudg|window\.open|push\(|updateGroup\(|setBooking\(true\)|signOut|openSignIn/;
+const KEEPS_ACTION = /fetch\(|ToServer|submitBooking|castVote|nudg|window\.open|push\(|updateStatus\(|setBooking\(true\)|signOut|openSignIn/;
 const KEEPS_PERMISSION = /requestFor|requestPermission|getCurrentPosition|getUserMedia|\.requestAccess/;
+
+// Names the search must not follow into. updateGroup writes local state and,
+// on one optional branch, saves — so following it made every handler that
+// touched local state look like it had reached the server. That is how a
+// "Send to the group for a vote" button that told the server nothing came
+// back clean.
+const LOCAL_ONLY = new Set(['updateGroup', 'setGroups', 'setStack', 'setPlans']);
 
 const found = [];
 
@@ -79,6 +86,7 @@ for (const file of FILES) {
     const bare = /^onClick=\{([A-Za-z_$][\w$]*)\}$/.exec(handler.replace(/\s+/g, ''));
     if (bare) names.add(bare[1]);
     for (const name of names) {
+      if (LOCAL_ONLY.has(name)) continue;
       const body = bodies.get(name);
       if (body && body !== handler && delivers(body, kept, depth + 1)) return true;
     }
