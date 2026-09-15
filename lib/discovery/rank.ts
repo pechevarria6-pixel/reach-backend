@@ -11,6 +11,9 @@ export function rank(findings: Finding[], interests: string[]): Finding[] {
   const score = (f: Finding) => {
     let s = 0;
     if (f.because) s += 100;                       // found because of them
+    // A class beats the studio that runs it: "Thursday, £60" is an evening
+    // somebody can have, and "there is a pottery near you" is homework.
+    if (f.source === 'harvest') s += 60;
     const hay = `${f.title} ${f.category} ${f.meta}`.toLowerCase();
     if (wanted.some(w => w.length > 2 && hay.includes(w))) s += 40;
     if (f.price) s += 5;                           // a price is a kindness

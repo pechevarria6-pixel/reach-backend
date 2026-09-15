@@ -31,7 +31,7 @@ export interface Finding {
   lng?: number | null;
 }
 
-export type SourceName = 'ticketmaster' | 'yelp-events' | 'yelp-places' | 'osm';
+export type SourceName = 'ticketmaster' | 'yelp-events' | 'yelp-places' | 'osm' | 'harvest';
 
 export type SourceStatus =
   | 'ok'            // answered, with or without results

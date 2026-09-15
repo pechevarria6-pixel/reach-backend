@@ -116,3 +116,62 @@ test('the box is centred on where you actually are', () => {
 test('no interests means no query clauses', () => {
   assert.ok(!overpassQuery([], boundingBox(55.95, -3.19, 25)).includes('nwr'));
 });
+
+// ── Harvesting ───────────────────────────────────────────────────────────
+import { disallowedPaths, classesLink, readableText, shorten } from '../../lib/discovery/harvest.ts';
+
+test('robots.txt is read as what it says', () => {
+  const denied = disallowedPaths('User-agent: *\nDisallow: /admin\nDisallow: /cart\n');
+  assert.deepEqual(denied, ['/admin', '/cart']);
+});
+
+test('an empty Disallow permits everything, it does not forbid everything', () => {
+  // "Disallow:" with nothing after it is the canonical way to say "go ahead".
+  // Reading it as "/" would turn the most permissive robots.txt into a wall.
+  assert.deepEqual(disallowedPaths('User-agent: *\nDisallow:\n'), []);
+});
+
+test('a rule aimed at us beats the catch-all', () => {
+  const txt = 'User-agent: *\nDisallow: /\n\nUser-agent: reachdiscovery\nDisallow: /private\n';
+  assert.deepEqual(disallowedPaths(txt), ['/private']);
+});
+
+test('the link most likely to list classes is the one picked', () => {
+  const html = `
+    <a href="/about">About</a>
+    <a href="/book-a-table">Book</a>
+    <a href="/pottery-classes">Classes</a>`;
+  assert.match(classesLink(html, 'https://example.com') ?? '', /pottery-classes$/);
+});
+
+test('a harvester never wanders off the site', () => {
+  // Following a link to a booking platform or a social page is how this ends
+  // up reading somebody else's login screen.
+  const html = '<a href="https://facebook.com/events/123">Events</a>';
+  assert.equal(classesLink(html, 'https://example.com'), null);
+});
+
+test('assets are never mistaken for pages', () => {
+  assert.equal(classesLink('<a href="/classes-hero.jpg">x</a>', 'https://example.com'), null);
+});
+
+test('scripts and styles are not words on a page', () => {
+  const html = '<style>.a{color:red}</style><script>var classes=1</script><p>Wheel throwing, &pound;45</p>';
+  const text = readableText(html);
+  assert.ok(text.includes('Wheel throwing'));
+  assert.ok(!text.includes('color:red'));
+  assert.ok(!text.includes('var classes'));
+});
+
+test('a page that lists two dozen dates still fits on a card', () => {
+  // Measured on a real studio: one taster session, twenty-four sittings.
+  const many = Array.from({ length: 24 }, (_, i) => `Thurs ${i + 1} 3-5pm`).join(', ');
+  const short = shorten(many);
+  assert.ok(short.length <= 90);
+  assert.match(short, /^Thurs 1 3-5pm/);
+  assert.match(short, /\+\d+ more$/);
+});
+
+test('phrasing short enough to keep is kept exactly', () => {
+  assert.equal(shorten('Wednesdays, 7-9pm'), 'Wednesdays, 7-9pm');
+});

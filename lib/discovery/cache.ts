@@ -84,6 +84,66 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
 }
 
 /**
+ * The classes themselves, read off the venues' own pages by the harvest job.
+ * A venue is a place that is open on Tuesdays; this is "Wheel Throwing
+ * Taster Sessions, £60 per individual". It is the whole point of the engine,
+ * so it is ranked above the venue it came from.
+ */
+export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<SourceResult> {
+  const interests = seeker.interests.slice(0, 6);
+  if (!interests.length) return { source: 'harvest', status: 'ok', findings: [] };
+
+  const miles = 15;
+  const dLat = miles / 69;
+  const dLng = miles / (69 * Math.max(0.1, Math.cos((seeker.lat * Math.PI) / 180)));
+
+  const { data, error } = await db
+    .from('discovery_events')
+    .select('id, title, starts_on, when_text, price_text, booking_url, interest, discovery_venues!inner(name, lat, lng, city, street)')
+    .in('interest', interests)
+    // A harvest that failed must not leave last month's classes standing.
+    .gt('stale_after', new Date().toISOString())
+    .gte('discovery_venues.lat', seeker.lat - dLat).lte('discovery_venues.lat', seeker.lat + dLat)
+    .gte('discovery_venues.lng', seeker.lng - dLng).lte('discovery_venues.lng', seeker.lng + dLng)
+    .limit(40);
+
+  if (error) {
+    console.error('[discover/cache] could not read events', error.message);
+    return { source: 'harvest', status: 'error', findings: [], detail: error.message };
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const findings: Finding[] = (data ?? [])
+    // A dated class that has been and gone is worse than no class at all.
+    .filter(e => !e.starts_on || e.starts_on >= today)
+    .map((e): Finding => {
+      const venue = (Array.isArray(e.discovery_venues) ? e.discovery_venues[0] : e.discovery_venues) as
+        { name: string; lat: number; lng: number; city: string | null; street: string | null };
+      return {
+        id: `harvest_${e.id}`,
+        title: e.title,
+        meta: [e.when_text, venue?.name].filter(Boolean).join(' · '),
+        emoji: EMOJI[String(e.interest).toLowerCase()] || '📍',
+        // Their words, not ours. An empty price on the page is "we are not
+        // told", which is a different thing from free.
+        price: e.price_text || null,
+        dist: venue ? `${Math.max(1, Math.round(milesBetween(seeker.lat, seeker.lng, venue.lat, venue.lng)))} mi` : null,
+        category: String(e.interest).charAt(0).toUpperCase() + String(e.interest).slice(1),
+        url: e.booking_url,
+        date: e.starts_on || null,
+        venue: venue?.name || null,
+        source: 'harvest',
+        because: e.interest,
+        lat: venue?.lat ?? null,
+        lng: venue?.lng ?? null,
+      };
+    })
+    .filter(f => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid));
+
+  return { source: 'harvest', status: 'ok', findings };
+}
+
+/**
  * Remember that somebody asked about here, so the sweep knows where to go.
  * Reach cannot sweep the world, and it does not have to: it only has to
  * sweep where its users are, and they say where that is by opening Discover.

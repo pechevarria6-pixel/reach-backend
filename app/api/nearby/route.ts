@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { ticketmaster } from '@/lib/discovery/ticketmaster';
 import { yelpEvents, yelpPlaces } from '@/lib/discovery/yelp';
-import { cachedVenues, noteArea } from '@/lib/discovery/cache';
+import { cachedVenues, cachedEvents, noteArea } from '@/lib/discovery/cache';
 import { rank } from '@/lib/discovery/rank';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
 
@@ -67,6 +67,10 @@ export async function GET(req: NextRequest) {
     // in testing, for a screen somebody is staring at. The sweep goes and
     // looks; this reads what it found.
     cachedVenues(ctx.db, seeker),
+    // The classes themselves, read off those venues' own pages. This is the
+    // whole point: not "there is a pottery near you" but "wheel throwing,
+    // Thursday, sixty pounds".
+    cachedEvents(ctx.db, seeker),
   ]);
 
   // Say we were asked about here, so the sweep knows where to go next. Reach
