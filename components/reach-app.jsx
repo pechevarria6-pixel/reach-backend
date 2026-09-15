@@ -4163,6 +4163,17 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     if(castVoteOnServer)await castVoteOnServer(planId,opt);
   };
 
+  // "Results update in real time" was written on the screen and nothing was
+  // refreshing it. Somebody waiting on the last vote watched a static number
+  // and concluded Reach was broken. Now the claim is true, and only while the
+  // tab is open and a vote is actually outstanding — an idle plan screen has
+  // no business polling.
+  useEffect(()=>{
+    if(atab!=="vote"||!refreshGroup||isTempId(groupId))return;
+    const id=setInterval(()=>refreshGroup(groupId),12000);
+    return()=>clearInterval(id);
+  },[atab,groupId]);
+
   const updateStatus=async(newStatus)=>{
     setLoading(true);
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:newStatus}:p)}));
@@ -4365,7 +4376,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           <div style={{padding:"16px 20px"}}>
             <div className="pt" style={{fontSize:22,marginBottom:6}}>Where should we go?</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:18,flexWrap:"wrap"}}>
-              <div style={{fontSize:13,color:C.t2}}>{totalV} of {plan.participants.length} voted.</div>
+              <div style={{fontSize:13,color:C.t2}}>
+                {totalV>=plan.participants.length
+                  ?"Everyone's voted. Approve it and let's book."
+                  :plan.participants.length-totalV===1
+                    ?"One vote away."
+                    :`${totalV} of ${plan.participants.length} voted.`}
+              </div>
               {/* A plan could sit needing one vote for a week with no way to
                   tell anyone. This emails the people who have not voted. */}
               {totalV<plan.participants.length&&(
