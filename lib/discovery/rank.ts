@@ -1,4 +1,4 @@
-import type { Finding } from './types';
+import type { Finding } from './types.ts';
 
 /**
  * Something found because of an interest outranks something found by being

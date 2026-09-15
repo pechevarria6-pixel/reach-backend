@@ -60,7 +60,7 @@ function checkSelect(list, table, file) {
         // resolves the target from the FK rather than the alias. Verified live;
         // treat an unknown name that is a column somewhere as that form.
         const viaFk = [...live.values()].some(set => set.has(name));
-        if (!viaFk) problems.push(`${file}: embedded table "${name}" does not exist`);
+        if (!viaFk) missing(file, name, `embedded table "${name}" does not exist`);
         continue;
       }
       checked.tables.add(name);
@@ -77,7 +77,26 @@ function checkSelect(list, table, file) {
 }
 
 const problems = [];
+const pending = [];
 const checked = { tables: new Set(), columns: 0 };
+
+// A table the live schema has never heard of is usually a typo, and that is
+// what this check exists to catch. But it is sometimes a migration written
+// and not yet run, which is a different thing and needs a different answer:
+// a typo is a bug, and an unrun migration is a job for whoever has the SQL
+// editor open. Anything named by a CREATE TABLE in sql/ is the second kind.
+const migrations = new Map();
+for (const file of readdirSync('sql').filter(f => f.endsWith('.sql'))) {
+  const sql = readFileSync(`sql/${file}`, 'utf8');
+  for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)) {
+    if (!migrations.has(m[1])) migrations.set(m[1], file);
+  }
+}
+const missing = (file, table, how) => {
+  const from = migrations.get(table);
+  if (from) pending.push(`${table} — run sql/${from}`);
+  else problems.push(`${file}: ${how}`);
+};
 
 for (const file of [...walkFiles('app/api'), ...walkFiles('lib')]) {
   const src = readFileSync(file, 'utf8');
@@ -86,7 +105,7 @@ for (const file of [...walkFiles('app/api'), ...walkFiles('lib')]) {
   let m;
   while ((m = re.exec(src))) {
     const [, table, tail] = m;
-    if (!live.has(table)) { problems.push(`${file}: table "${table}" does not exist`); continue; }
+    if (!live.has(table)) { missing(file, table, `table "${table}" does not exist`); continue; }
     checked.tables.add(table);
     const cols = live.get(table);
 
@@ -103,6 +122,11 @@ for (const file of [...walkFiles('app/api'), ...walkFiles('lib')]) {
 }
 
 console.log(`\n  checked ${checked.columns} column references across ${checked.tables.size} tables\n`);
+if (pending.length) {
+  // Not a failure. The code is right and the database has not caught up.
+  for (const p of [...new Set(pending)]) console.log(`  ⏳ ${p}`);
+  console.log('');
+}
 if (problems.length) {
   for (const p of [...new Set(problems)]) console.log(`  ✗ ${p}`);
   console.log('');

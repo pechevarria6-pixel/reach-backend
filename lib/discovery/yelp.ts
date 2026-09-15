@@ -9,7 +9,8 @@
 //
 // Both fail quietly and separately. Discover showing two sources' worth of
 // things is better than showing none because a third was misconfigured.
-import type { Finding, SourceResult, Seeker } from './types';
+import type { Finding, SourceResult, Seeker } from './types.ts';
+import { notRuledOut } from './rules.ts';
 
 const BASE = 'https://api.yelp.com/v3';
 const MILES = 1609.34;
@@ -24,23 +25,6 @@ const money = (p?: string | null) =>
 
 const milesFrom = (metres?: number | null) =>
   typeof metres === 'number' && Number.isFinite(metres) ? `${Math.max(1, Math.round(metres / MILES))} mi` : null;
-
-/**
- * Anything a hard no matches never reaches the screen, whatever it scored.
- *
- * Whole words only. A plain substring test rules out a Departures Bar for
- * somebody who said no to art, and a cartwheel class along with it — which is
- * the worst way for this to fail, because the person never sees what was
- * taken away or why.
- */
-export function notRuledOut(text: string, avoid: string[]): boolean {
-  const hay = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
-  return !avoid.some(raw => {
-    const a = raw.trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-    if (a.length < 3) return false;
-    return hay.includes(` ${a} `);
-  });
-}
 
 // ── What's on near you ──────────────────────────────────────────────────
 export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {

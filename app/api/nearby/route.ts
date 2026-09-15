@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { ticketmaster } from '@/lib/discovery/ticketmaster';
 import { yelpEvents, yelpPlaces } from '@/lib/discovery/yelp';
+import { cachedVenues, noteArea } from '@/lib/discovery/cache';
 import { rank } from '@/lib/discovery/rank';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
 
@@ -56,7 +57,22 @@ export async function GET(req: NextRequest) {
     ticketmaster(seeker),
     yelpEvents(seeker),
     yelpPlaces(seeker),
+    // Open map data: the only source needing no key and no commercial
+    // relationship, and the only one that knows about the pottery studio
+    // down the road that has never been ticketed or reviewed.
+    //
+    // Read from the cache, never live. Overpass is run by volunteers, it
+    // answers 504 when a city is dense, and when it is merely busy it hangs
+    // rather than refusing — three mirrors in sequence took over two minutes
+    // in testing, for a screen somebody is staring at. The sweep goes and
+    // looks; this reads what it found.
+    cachedVenues(ctx.db, seeker),
   ]);
+
+  // Say we were asked about here, so the sweep knows where to go next. Reach
+  // cannot sweep the world and does not have to: people say where they are
+  // by opening this screen.
+  if (seeker.interests.length) await noteArea(ctx.db, seeker);
 
   const events = rank(results.flatMap(r => r.findings), seeker.interests);
   const sources = results.map(r => ({ source: r.source, status: r.status, found: r.findings.length }));

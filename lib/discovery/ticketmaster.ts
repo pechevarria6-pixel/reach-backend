@@ -7,8 +7,8 @@
 // invented plausible local events, and then to eight hardcoded fixtures of
 // the same shape. Neither could be bought. An empty answer that says why is
 // worth more than a fixture.
-import type { Finding, SourceResult, Seeker } from './types';
-import { notRuledOut } from './yelp';
+import type { Finding, SourceResult, Seeker } from './types.ts';
+import { notRuledOut } from './rules.ts';
 
 const EMOJI: Record<string, string> = {
   Music: '🎵', Sports: '🏆', 'Arts & Theatre': '🎭',

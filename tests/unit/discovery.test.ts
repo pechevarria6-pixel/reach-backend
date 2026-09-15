@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rank } from '../../lib/discovery/rank.ts';
-import { notRuledOut, searchTermFor } from '../../lib/discovery/yelp.ts';
+import { notRuledOut } from '../../lib/discovery/rules.ts';
+import { searchTermFor } from '../../lib/discovery/yelp.ts';
 import type { Finding } from '../../lib/discovery/types.ts';
 
 const make = (over: Partial<Finding>): Finding => ({
@@ -69,4 +70,49 @@ test('what somebody typed is searched as they typed it', () => {
   assert.equal(searchTermFor('letterpress workshop'), 'letterpress workshop');
   assert.equal(searchTermFor('sea swimming'), 'sea swimming class');
   assert.equal(searchTermFor('  Sourdough  '), 'sourdough class');
+});
+
+// ── OpenStreetMap ────────────────────────────────────────────────────────
+import { tagsFor, boundingBox, overpassQuery } from '../../lib/discovery/osm.ts';
+
+test('an interest becomes the tags mappers actually use', () => {
+  const pottery = tagsFor('Pottery & crafts');
+  assert.ok(pottery.includes('craft=pottery'));
+  // The same thing is tagged differently by different mappers, and missing
+  // half a city's studios is not an option.
+  assert.ok(pottery.includes('shop=pottery'));
+  assert.ok(pottery.length > 2);
+});
+
+test('something nobody anticipated is searched by name', () => {
+  const typed = tagsFor('letterpress');
+  assert.equal(typed.length, 1);
+  assert.match(typed[0], /^name~"letterpress",i$/);
+});
+
+test('a typed interest cannot break out of the query', () => {
+  // Overpass takes a query language, so a quote or a newline in somebody's
+  // own words must not become syntax.
+  const nasty = tagsFor('pottery" ; out; //');
+  assert.ok(!nasty[0].includes('\n'));
+  assert.equal((nasty[0].match(/"/g) || []).length, 2);
+});
+
+test('a bounding box narrows with latitude', () => {
+  // A degree of longitude at 56 north is about half its width at the equator.
+  const width = (box: string) => {
+    const [, w, , e] = box.split(',').map(Number);
+    return e - w;
+  };
+  assert.ok(width(boundingBox(56, -3, 25)) > width(boundingBox(0, -3, 25)));
+});
+
+test('the box is centred on where you actually are', () => {
+  const [s, w, n, e] = boundingBox(55.95, -3.19, 25).split(',').map(Number);
+  assert.ok(s < 55.95 && n > 55.95);
+  assert.ok(w < -3.19 && e > -3.19);
+});
+
+test('no interests means no query clauses', () => {
+  assert.ok(!overpassQuery([], boundingBox(55.95, -3.19, 25)).includes('nwr'));
 });

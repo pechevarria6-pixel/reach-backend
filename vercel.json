@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/discovery/sweep",
+      "schedule": "0 4 * * *"
+    }
+  ]
+}

@@ -26,9 +26,12 @@ export interface Finding {
   source: SourceName;
   /** Set when this was found because of something the person told us. */
   because: string | null;
+  /** Where it actually is, when the source knows. Null when it does not. */
+  lat?: number | null;
+  lng?: number | null;
 }
 
-export type SourceName = 'ticketmaster' | 'yelp-events' | 'yelp-places';
+export type SourceName = 'ticketmaster' | 'yelp-events' | 'yelp-places' | 'osm';
 
 export type SourceStatus =
   | 'ok'            // answered, with or without results
