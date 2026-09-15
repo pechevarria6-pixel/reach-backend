@@ -163,3 +163,70 @@ export function sendGroupInvite(
         The invitation expires in 30 days.
       </p>`), 'group invite');
 }
+
+/**
+ * The whole trip as an email: every day, every cost, and what each place
+ * takes. A group needs this somewhere they can find it on the day — in a
+ * pocket, on a plane, with no signal and no app open.
+ */
+export function sendItinerary(to: string, opts: {
+  planTitle: string;
+  dates: string;
+  groupName: string;
+  fixed: Array<{ title: string; detail?: string | null; cents: number }>;
+  days: Array<{ when: string; title: string; payment?: string | null; cents: number }>;
+  url: string;
+}) {
+  const money = (c: number) => `$${Math.round(c / 100).toLocaleString()}`;
+  const fixedTotal = opts.fixed.reduce((a, f) => a + f.cents, 0);
+  const dayTotal = opts.days.reduce((a, d) => a + d.cents, 0);
+
+  const fixedRows = opts.fixed.map(f => `
+    <tr>
+      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;">
+        <div style="font-size:14px;">${escape(f.title)}</div>
+        ${f.detail ? `<div style="font-size:12px;color:#635539;margin-top:1px;">${escape(f.detail)}</div>` : ''}
+      </td>
+      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;text-align:right;font-size:14px;white-space:nowrap;">${money(f.cents)}</td>
+    </tr>`).join('');
+
+  // Cash-only is called out inline, because knowing you need notes for dinner
+  // is only useful before dinner.
+  const dayRows = opts.days.map(d => {
+    const cash = d.payment && /cash only/i.test(d.payment);
+    return `
+    <tr>
+      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;">
+        <div style="font-size:11px;color:#7E6F52;text-transform:uppercase;letter-spacing:.06em;">${escape(d.when)}</div>
+        <div style="font-size:14px;margin-top:2px;">${escape(d.title)}</div>
+        ${d.payment ? `<div style="font-size:12px;margin-top:2px;color:${cash ? '#8A5A0B' : '#635539'};">${cash ? '&#128181; ' : ''}${escape(d.payment)}</div>` : ''}
+      </td>
+      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;text-align:right;font-size:14px;white-space:nowrap;">${d.cents ? money(d.cents) : ''}</td>
+    </tr>`;
+  }).join('');
+
+  return send(to, `${opts.planTitle} — your itinerary`, shell(escape(opts.planTitle), `
+    <p style="font-size:15px;line-height:1.6;margin:0 0 4px;">${escape(opts.dates)}</p>
+    <p style="font-size:13px;color:#635539;margin:0 0 24px;">${escape(opts.groupName)}</p>
+
+    ${fixedRows ? `
+      <h2 style="font-size:15px;font-weight:600;margin:0 0 4px;">Booked through Reach</h2>
+      <p style="font-size:12.5px;color:#635539;margin:0 0 8px;">Paid once the group funds the trip.</p>
+      <table style="width:100%;border-collapse:collapse;">${fixedRows}</table>
+      <p style="text-align:right;font-size:14px;font-weight:600;margin:8px 0 26px;">${money(fixedTotal)} per person</p>` : ''}
+
+    <h2 style="font-size:15px;font-weight:600;margin:0 0 4px;">Day by day</h2>
+    <p style="font-size:12.5px;color:#635539;margin:0 0 8px;">What you spend as you go. Estimates, not a bill.</p>
+    <table style="width:100%;border-collapse:collapse;">${dayRows}</table>
+    <p style="text-align:right;font-size:14px;font-weight:600;margin:8px 0 26px;">${money(dayTotal)} per person</p>
+
+    <table style="width:100%;border-collapse:collapse;border-top:2px solid #241C10;">
+      <tr>
+        <td style="padding:12px 0;font-size:15px;font-weight:600;">Per person, all in</td>
+        <td style="padding:12px 0;text-align:right;font-size:17px;font-weight:700;">${money(fixedTotal + dayTotal)}</td>
+      </tr>
+    </table>
+
+    <p style="margin-top:20px;"><a href="${escape(opts.url)}" style="${emailButtonStyle}">Open it in Reach</a></p>`),
+  'itinerary');
+}

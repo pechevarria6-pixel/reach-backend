@@ -3801,6 +3801,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [loadFailed,setLoadFailed]=useState(false);
   const [building,setBuilding]=useState(false);
   const [nudging,setNudging]=useState(false);
+  const [emailing,setEmailing]=useState(false);
 
   // Every plan made before the itinerary was persisted has no days, and there
   // was no way to get them: the empty state offered only a manual builder. A
@@ -4021,7 +4022,29 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     </div>
                   </div>
                 ))}
-                <div style={{padding:"14px 20px"}}><button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>+ Add or Edit Items</button></div>
+                <div style={{padding:"14px 20px",display:"flex",flexDirection:"column",gap:8}}>
+                  {/* A plan is only useful on the day if it is somewhere you
+                      can find it without signal. */}
+                  <button className="bs" disabled={emailing} onClick={async()=>{
+                    if(emailing)return;
+                    if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+                    setEmailing(true);
+                    try{
+                      const r=await fetch(`/api/plans/${planId}/itinerary/email`,{
+                        method:"POST",headers:{"Content-Type":"application/json"},
+                        body:JSON.stringify({everyone:(group.memberIds||[]).length>1}),
+                      });
+                      const d=await r.json().catch(()=>({}));
+                      if(!r.ok)throw new Error(d.error||"Couldn't send that");
+                      toast(d.sent>1?`Sent to all ${d.sent} of you 📬`:"Sent to your inbox 📬");
+                    }catch(e){
+                      console.error("[planDetail] itinerary email failed",e);
+                      toast(e.message);
+                    }
+                    setEmailing(false);
+                  }}>{emailing?"Sending…":(group.memberIds||[]).length>1?"📬 Email this to everyone":"📬 Email this to me"}</button>
+                  <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>+ Add or edit items</button>
+                </div>
               </>
             )}
           </div>
