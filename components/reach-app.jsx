@@ -4365,22 +4365,60 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
   const [items,setItems]=useState(plan?.itinerary||[]);
   const [adding,setAdding]=useState(false);
   const [ni,setNi]=useState({time:"",title:"",sub:"",type:"activity",conf:""});
+  const [saving,setSaving]=useState(false);
+  // Leaving with unsaved edits used to throw them away without a word. A day
+  // somebody typed out by hand is not something to lose on a stray back tap.
+  const [dirty,setDirty]=useState(false);
+  const [confirmLeave,setConfirmLeave]=useState(false);
   if(!plan)return <NotLoaded what="This plan" onBack={onBack}/>;
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
-  const addItem=()=>{if(!ni.title)return;setItems(p=>[...p,{...ni,filled:!!ni.conf}]);setNi({time:"",title:"",sub:"",type:"activity",conf:""});setAdding(false);};
-  const rm=idx=>setItems(p=>p.filter((_,i)=>i!==idx));
+  const addItem=()=>{if(!ni.title)return;setItems(p=>[...p,{...ni,filled:!!ni.conf}]);setNi({time:"",title:"",sub:"",type:"activity",conf:""});setAdding(false);setDirty(true);};
+  const rm=idx=>{setItems(p=>p.filter((_,i)=>i!==idx));setDirty(true);};
   const save=async()=>{
+    if(saving)return;
+    setSaving(true);
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:items}:p)}));
-    toast("Your days are saved");
-    if(saveItineraryToServer)await saveItineraryToServer(planId,items);
+    // "Your days are saved" used to fire before the request went out, so a
+    // rejected save produced a cheerful confirmation followed by a failure —
+    // in that order. The answer waits for the answer.
+    const ok=saveItineraryToServer?await saveItineraryToServer(planId,items):true;
+    setSaving(false);
+    if(ok)toast("Your days are saved");
+    setDirty(false);
     onBack();
   };
+
+  const leave=()=>{ if(dirty)setConfirmLeave(true); else onBack(); };
   return(
     <div className="sc">
+      {confirmLeave&&(
+        <div className="ov" onClick={()=>setConfirmLeave(false)}>
+          <div className="sh" onClick={e=>e.stopPropagation()}>
+            <div className="sh-hdl"/>
+            <div style={{padding:"18px 20px 24px",textAlign:"center"}}>
+              <div style={{fontSize:28,marginBottom:10}}>✍️</div>
+              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:21,color:C.t1,marginBottom:6}}>
+                Keep what you wrote?
+              </div>
+              <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:18}}>
+                You've changed these days and not saved them yet.
+              </div>
+              <button className="bp" style={{width:"100%",marginBottom:8}} disabled={saving}
+                onClick={()=>{setConfirmLeave(false);save();}}>
+                {saving?"Saving…":"Save and go back"}
+              </button>
+              <button className="bs" style={{width:"100%"}}
+                onClick={()=>{setConfirmLeave(false);onBack();}}>
+                Throw them away
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{padding:"12px 20px 14px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <ScreenHeader onBack={onBack} label="Back"/>
-          <button className="bsm bsm-p" onClick={save}>Save</button>
+          <ScreenHeader onBack={leave} label="Back"/>
+          <button className="bsm bsm-p" disabled={saving} onClick={save}>{saving?"Saving…":"Save"}</button>
         </div>
         <div className="pt" style={{fontSize:24,marginTop:12}}>Edit Itinerary</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>{plan.title}</div>
