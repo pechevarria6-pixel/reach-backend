@@ -23,7 +23,9 @@ export const maxDuration = 300;
 const FRESH_HOURS = 24;
 // Areas per run. Each is several Overpass calls, and a run that tries to do
 // every city at once finishes none of them.
-const PER_RUN = 5;
+// Each is several Overpass calls against a service that hangs when busy, and
+// a run that tries every city at once finishes none of them.
+const PER_RUN = 8;
 
 function authorised(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;

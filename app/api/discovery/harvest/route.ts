@@ -17,7 +17,9 @@ export const maxDuration = 300;
 
 // Venues per run. Each is up to two page fetches and one extraction, and a
 // run that tries to read a whole city at once finishes none of it.
-const PER_RUN = 12;
+// Measured: five to fourteen seconds a venue, so twenty fits comfortably in
+// the five minutes this function is allowed. A manual run can ask for fewer.
+const PER_RUN = 20;
 // How long a reading stands before we go back. A class list read in
 // September is not to be trusted in December.
 const FRESH_DAYS = 14;
@@ -41,13 +43,16 @@ export async function GET(req: NextRequest) {
 
   const db = createServerClient();
   const due = new Date(Date.now() - FRESH_DAYS * 86400_000).toISOString();
+  // Warming one city by hand is a different job from the nightly pass.
+  const asked = Number(req.nextUrl.searchParams.get('limit'));
+  const perRun = Number.isFinite(asked) && asked > 0 ? Math.min(asked, PER_RUN) : PER_RUN;
 
   const { data: venues, error } = await db
     .from('discovery_venues')
     .select('id, name, website, interest, last_harvested_at, harvest_status')
     .or(`last_harvested_at.is.null,last_harvested_at.lt.${due}`)
     .order('last_harvested_at', { ascending: true, nullsFirst: true })
-    .limit(PER_RUN * 3);
+    .limit(perRun * 3);
 
   if (error) {
     console.error('[discovery/harvest] could not read venues', error.message);
@@ -61,7 +66,7 @@ export async function GET(req: NextRequest) {
     if (!v.last_harvested_at) return true;
     const wait = RETRY_DAYS[v.harvest_status ?? 'unreachable'] ?? FRESH_DAYS;
     return Date.now() - new Date(v.last_harvested_at).getTime() > wait * 86400_000;
-  }).slice(0, PER_RUN);
+  }).slice(0, perRun);
 
   const tally: Record<string, number> = {};
   let events = 0;
