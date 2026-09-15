@@ -3502,7 +3502,7 @@ function AiTripScreen({onBack,groups,updateGroup,toast,push,userLocation,departu
   );
 }
 
-function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user}){
+function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user}){
   // ── Draft persistence: load saved progress on mount ──────
   const DRAFT_KEY="reach_plan_draft";
   // SSR-safe localStorage helpers — only run in browser
@@ -3728,8 +3728,19 @@ function CreatePlanFlow({onBack,groups,updateGroup,um,toast,defaultGroupId,push,
     updateGroup(gid,g=>({...g,plans:[...g.plans,np],lastActivity:`Planning: ${np.title}`}));
     toast("Plan created! 🎉");
     clearDraft();
-    const _sp3=(typeof savePlanToServer==="function")?savePlanToServer(gid,np):Promise.resolve(null);
-    onBack();
+    // Finishing a plan used to put you back on the list you came from, with
+    // the thing you just spent six screens on somewhere in it. The plan opens
+    // instead, where the next step — build the days — is waiting. Replace
+    // rather than push, so Back goes to the list and not to a finished form.
+    const land=(id)=>{
+      const go=replace||push;
+      go("planDetail",{planId:id||np.id,groupId:gid});
+    };
+    if(typeof savePlanToServer==="function"){
+      Promise.resolve(savePlanToServer(gid,np)).then(land).catch(()=>land(np.id));
+    }else{
+      land(np.id);
+    }
     setTimeout(()=>setFinishing(false),1500);
   };
 
