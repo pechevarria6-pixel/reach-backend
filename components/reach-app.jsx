@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
+import { itineraryDays } from "@/lib/itinerary";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -4391,12 +4392,33 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               </div>
             ):(
               <>
-                {plan.itinerary.map((item,i)=>(
+                {/* On the trip itself, the day you are having should not take
+                    a scroll to find. Only shown while the trip is running —
+                    there is no "today" on a plan for March. */}
+                {itineraryDays(plan.itinerary,plan.startDate).some(d=>d.isToday)&&(
+                  <div style={{padding:"0 20px 10px"}}>
+                    <button className="bs" onClick={()=>{
+                      const day=itineraryDays(plan.itinerary,plan.startDate).find(d=>d.isToday);
+                      const el=day&&document.getElementById(`itin-${day.key}`);
+                      if(el)el.scrollIntoView({behavior:"smooth",block:"start"});
+                    }}>Jump to today ↓</button>
+                  </div>
+                )}
+                {itineraryDays(plan.itinerary,plan.startDate).map(day=>(
+                  <div key={day.key} id={`itin-${day.key}`}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",
+                      padding:"14px 20px 8px",background:day.isToday?C.accentDim:"transparent"}}>
+                      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:19,
+                        color:day.isPast&&!day.isToday?C.t3:C.t1}}>{day.label}</div>
+                      {day.dateLabel&&<div style={{fontSize:12,color:C.t3}}>{day.dateLabel}</div>}
+                      {day.isToday&&<span className="pill pill-a" style={{fontSize:10}}>Today</span>}
+                    </div>
+                {day.items.map((item,i)=>(
                   <div key={i} className="it-item">
-                    <div className="it-time">{item.time}</div>
+                    <div className="it-time">{(item.time||"").replace(/^Day \d+ · /,"")}</div>
                     <div className="it-lc">
                       <div className={`it-dot ${item.filled?"fi":""}`}/>
-                      {i<plan.itinerary.length-1&&<div className="it-cn"/>}
+                      {i<day.items.length-1&&<div className="it-cn"/>}
                     </div>
                     <div className="it-cont">
                       <div style={{display:"flex",alignItems:"center",gap:6}}><span>{tIc[item.type]||"📌"}</span><div className="it-tt">{item.title}</div></div>
@@ -4429,6 +4451,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       )}
                       {item.conf&&<div className="it-cf">✓ Confirmed · {item.conf}</div>}
                     </div>
+                  </div>
+                ))}
                   </div>
                 ))}
                 <div style={{padding:"14px 20px",display:"flex",flexDirection:"column",gap:8}}>
