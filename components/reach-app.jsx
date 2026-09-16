@@ -3129,12 +3129,12 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
                       // Typing an amount replaces whichever chip was picked.
                       if(digits)sel(quizQ.id,digits);
                     }}
-                    placeholder="3500"
+                    placeholder={isNight?"120":"3500"}
                     style={{flex:1,background:"none",border:"none",
                       fontFamily:"'Instrument Serif',serif",fontSize:30,color:C.t1,width:"100%"}}/>
                 </div>
                 <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.5}}>
-                  {isNight?"Dinner, drinks and tickets. We plan three nights around it —":"Everything in: flights, stay, food, activities. We plan three options around it —"}
+                  {isNight?"Dinner, drinks and tickets. We plan three nights around it — ":"Everything in: flights, stay, food, activities. We plan three options around it —"}
                   one below, one at it, one a stretch.
                 </div>
               </div>
