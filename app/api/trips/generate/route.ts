@@ -100,7 +100,12 @@ export async function POST(req: NextRequest) {
     groupId, startDate, endDate, budgetPerPerson,
     departureCity, departureAirport, tripPrefs = {},
     detailTripId = null, // if set, generate full itinerary for one trip
+    // A night out is not a short trip. No flights, no hotel, one evening, and
+    // the only thing it needs asking that the taste quiz has not already
+    // stored is roughly where it should be.
+    mode = 'trip', nightPrefs = {},
   } = body;
+  const isNight = mode === 'night';
 
   // This reads every member's dietary needs, budget and preferences, so the
   // caller has to actually be in the group.
@@ -121,9 +126,9 @@ export async function POST(req: NextRequest) {
   // Travelling alone is a different trip, not a smaller one. The prompt used
   // to say "GROUP: 1 people" and then plan for a committee.
   const solo = groupSize <= 1;
-  const nights = startDate && endDate
+  const nights = isNight ? 1 : (startDate && endDate
     ? Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000)
-    : 5;
+    : 5);
 
   const budgetMap: Record<string, number> = { budget: 800, mid: 2000, premium: 4000, luxury: 8000 };
   const budgets = prefs.map((p: any) => p.budget_range).filter(Boolean);
@@ -154,7 +159,40 @@ export async function POST(req: NextRequest) {
   // ── STAGE 2: Full itinerary for one selected trip ──────────────────────────
   if (detailTripId) {
     const { destination, vibe, costs } = body.tripData || {};
-    const prompt = `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
+    const nightWhen = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
+    const prompt = isNight ? `Plan one evening out: ${destination}.
+
+${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
+${nightWhen ? `When and where: ${nightWhen}` : ''}
+Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
+Music: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
+Drinks: ${drinkStyles.join(', ') || 'no preference'}
+A good night out, in their words: ${nightlife.join(', ') || 'no preference'}
+Dietary (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
+${allVetoes.length ? `Never include: ${allVetoes.join(', ')}` : ''}
+
+Return exactly one day. Use its three slots as the shape of an evening:
+- "morning" is where they meet first — a bar for a drink, a walk, or the thing
+  before the thing. If the evening genuinely starts at dinner, say so there.
+- "afternoon" is the main event: the game, the gig, the show, the booking.
+- "evening" is what follows: dinner, dessert, a last drink.
+
+Real venues with real names, all within a short ride of each other, all open
+that evening. About $${effectiveBudget} a head across the whole night, and
+each slot's "cost" is what one person actually spends at that stop.
+
+No flights. No hotel. Nobody is going away — this is a night in their own city
+or one nearby.
+
+Every slot needs its practical details, because the point is that nobody turns
+up and finds out the hard way:
+- "booking": "reach" if it takes reservations, "ahead" if it must be booked
+  direct, "walk_in" if you just turn up.
+- "payment": what they really take — "Cash only", "Cards, no Amex",
+  "Contactless everywhere". If somewhere is known for cash only, say so.
+
+Never write "placeholder", "TBD" or any other filler. insider_tip is the thing
+a regular knows — which door, which seat, when to arrive.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
 
 ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
@@ -250,7 +288,39 @@ better than a confident wrong answer.`;
   }
 
   // ── STAGE 1: Fast — just destinations + cost estimates, NO itinerary ───────
-  const prompt = `You are Reach's AI travel planner. Generate exactly 3 destination options. BE FAST — no itinerary needed yet, just destination overviews and cost estimates.
+  const nightWhere = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
+  const prompt = isNight ? `You are Reach. Generate exactly 3 options for ONE NIGHT OUT near ${departureCity || 'the user'}. BE FAST — overviews and honest costs, no itinerary yet.
+
+${solo ? 'ONE PERSON, on their own.' : `GROUP: ${groupSize} people.`}
+WHEN: ${startDate || 'soon'}${nightPrefs.time ? ` around ${nightPrefs.time}` : ''}
+WHERE IT SHOULD FEEL LIKE: ${nightPrefs.where || 'anywhere good'}
+BUDGET: about $${effectiveBudget} each for the whole night
+FOOD: ${cuisines.slice(0, 5).join(', ') || 'varied'}
+MUSIC: ${musicGenres.slice(0, 4).join(', ') || 'mixed'}
+DRINKS: ${drinkStyles.join(', ') || 'no preference'}
+A GOOD NIGHT OUT: ${nightlife.join(', ') || 'no preference'}
+DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
+DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
+${allVetoes.length > 0 ? 'NEVER INCLUDE: ' + allVetoes.join(', ') : ''}
+
+Each option is a real evening in a named neighbourhood — "Dinner and a gig in
+the Mission", not a city. destination is that evening's name. Three genuinely
+different nights: vary what the evening is built around, not just the
+restaurant.
+
+There are no flights and no hotel. Set costs.flights.per_person to 0 and
+costs.accommodation.per_person to 0, and put the real money in activities and
+food. costs must sum to total_per_person.
+
+Price diversity, one per tier, within 10% of these figures:
+- "saver":     total_per_person about $${Math.round(effectiveBudget * 0.65)}
+- "on_budget": total_per_person about $${effectiveBudget}
+- "stretch":   total_per_person about $${Math.round(effectiveBudget * 1.15)}
+
+why_this_group is one sentence tied to their actual food, music and drink
+answers. food_scene and music_scene are two sentences each. tagline is at most
+ten words. emoji is one emoji. accommodation.example is the neighbourhood the
+night happens in.` : `You are Reach's AI travel planner. Generate exactly 3 destination options. BE FAST — no itinerary needed yet, just destination overviews and cost estimates.
 
 ${solo
   ? `TRAVELLING: alone, ${nights} nights, $${effectiveBudget} budget`

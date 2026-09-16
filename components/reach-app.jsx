@@ -40,14 +40,15 @@ const C = Object.fromEntries(
 const PALETTE = {
   // ── Light — warm off-white. The default, and the approachable one. ──────
   light: {
-    page: "#EDE6D8",
-    bg: "#FCFAF5", s1: "#FFFFFF", s2: "#FBF7EF", s3: "#F3ECDD",
-    border: "#E8DFCB", borderLight: "#D8CBAF",
+    page: "#E7DCC6",
+    bg: "#FAF5EA", s1: "#FFFCF4", s2: "#F6EFE1", s3: "#EFE5D2",
+    border: "#E2D7BF", borderLight: "#CFC0A0",
 
     accent: "#D4A843", accentDeep: "#C49A38", accentHover: "#E0BC68",
     accentDim: "rgba(212,168,67,0.18)", accentBorder: "rgba(160,120,30,0.28)",
-    // 5.6:1 on bg, 6.0:1 on white cards.
-    accentText: "#8A6512",
+    // Deepened with the surfaces: 5.5:1 on the ground, 4.9:1 on the deepest
+    // card. The old value fell under the bar once the cream warmed.
+    accentText: "#805D0F",
     onAccent: "#2A1D06", onGreen: "#FFFFFF",
 
     // Semantic colours are darkened for the light theme: the dark-theme values
@@ -57,9 +58,9 @@ const PALETTE = {
     red: "#C2185B", redDim: "rgba(194,24,91,0.10)",
     blue: "#1E62C4", blueDim: "rgba(30,98,196,0.10)",
 
-    t1: "#241C10", t2: "#6B5C42", t3: "#76674C", t4: "#817154",
+    t1: "#241C10", t2: "#63553C", t3: "#6D5F45", t4: "#817154",
 
-    navBg: "rgba(252,250,245,0.92)",
+    navBg: "rgba(250,245,234,0.92)",
     overlay: "rgba(45,35,20,0.45)",
     // Warm shadows, not grey ones. A neutral shadow on a cream ground reads
     // as dirt.
@@ -76,9 +77,9 @@ const PALETTE = {
 
   // ── Dark — the original warm deep noir, kept intact. ────────────────────
   dark: {
-    page: "#050406",
-    bg: "#0A0805", s1: "#120F09", s2: "#1A1510", s3: "#221C14",
-    border: "#2E2618", borderLight: "#3D3220",
+    page: "#080603",
+    bg: "#0E0A06", s1: "#18120B", s2: "#221A11", s3: "#2C2217",
+    border: "#3A2E1E", borderLight: "#4A3B26",
 
     accent: "#D4A843", accentDeep: "#C49A38", accentHover: "#E0BC68",
     accentDim: "rgba(212,168,67,0.12)", accentBorder: "rgba(212,168,67,0.3)",
@@ -91,17 +92,19 @@ const PALETTE = {
     red: "#FF8080", redDim: "rgba(255,128,128,0.1)",
     blue: "#60A5FA", blueDim: "rgba(96,165,250,0.1)",
 
-    t1: "#F5EDD8", t2: "#9A8A6A", t3: "#97845E", t4: "#8A7550",
+    // t3 lifted with the surfaces: on the warmer ground the old value fell
+    // under the body-text bar.
+    t1: "#F5EDD8", t2: "#9A8A6A", t3: "#A08C66", t4: "#8A7550",
 
-    navBg: "rgba(10,8,5,0.95)",
+    navBg: "rgba(14,10,6,0.95)",
     overlay: "rgba(0,0,0,0.72)",
     cardShadow: "0 2px 10px rgba(0,0,0,0.35)",
     cardShadowHover: "0 8px 30px rgba(0,0,0,0.45)",
     accentGlow: "0 4px 20px rgba(212,168,67,0.25)",
     accentGlowHover: "0 6px 24px rgba(212,168,67,0.35)",
     focusRing: "rgba(212,168,67,0.18)",
-    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.16%22/%3E%3C/svg%3E')",
-    edgeHi: "rgba(255,255,255,0.05)",
+    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.22%22/%3E%3C/svg%3E')",
+    edgeHi: "rgba(255,255,255,0.12)",
     frameShadow: "0 80px 200px rgba(0,0,0,.95)",
     frameGlow: "rgba(212,168,67,0.08)",
   },
@@ -2701,6 +2704,13 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   const [qStep,setQStep]=useState(0);
   const [startDate,setStartDate]=useState(known?.startDate||"");
   const [endDate,setEndDate]=useState(known?.endDate||"");
+  // Reach plans experiences, not only travel. A night out is its own thing:
+  // one date, one evening, and almost nothing to answer — food, music and
+  // drinks are already in the taste quiz.
+  const [mode,setMode]=useState(known?.startDate&&known?.endDate?"trip":null);
+  const [nightTime,setNightTime]=useState("");
+  const [nightWhere,setNightWhere]=useState("");
+  const isNight=mode==="night";
   const [answers,setAnswers]=useState({
     tripType:known?.tripType||[],accommodation:known?.accommodation||[],
     budget:null,pace:known?.pace||null,noWayJose:known?.noWayJose||[],
@@ -2807,14 +2817,16 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     return Array.isArray(v)?v.length>0:!!v;
   };
   const carried=questions.filter(isCarried);
-  const asked=questions.filter(q=>!isCarried(q));
+  // A night out does not need a trip type, somewhere to sleep or a pace.
+  const NIGHT_QUESTIONS=["budget","noWayJose"];
+  const asked=questions.filter(q=>!isCarried(q)&&(!isNight||NIGHT_QUESTIONS.includes(q.id)));
 
   const isDateStep=qStep===0;
   const quizQ=asked[qStep-1];
   const totalSteps=asked.length+1;
   const isLast=qStep===totalSteps-1;
   const canNext=isDateStep
-    ?(startDate&&endDate&&nights>0)
+    ?(isNight?!!startDate:(startDate&&endDate&&nights>0))
     :(quizQ?.optional||(quizQ?.multi?(answers[quizQ?.id]||[]).length>0:!!answers[quizQ?.id]));
 
   const handleGenerate=()=>{
@@ -2833,7 +2845,12 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     const budgetNum=Number.isFinite(typed)&&typed>0
       ? typed
       : (parseInt(merged.budget)||null);
-    onGenerate({start:startDate,end:endDate},budgetNum,{...merged,nights});
+    onGenerate(
+      {start:startDate,end:isNight?startDate:endDate},
+      budgetNum,
+      {...merged,nights:isNight?1:nights},
+      isNight?{mode:"night",nightPrefs:{time:nightTime,where:nightWhere}}:{mode:"trip"},
+    );
   };
 
   return(
@@ -2855,11 +2872,14 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
           <div style={{textAlign:"center",marginBottom:24}}>
             <div style={{fontSize:44,marginBottom:10}}>📅</div>
             <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1,marginBottom:6}}>
-              When are you going?
+              {isNight?"When's the night out?":mode==="trip"?"When are you going?":"What are we planning?"}
             </div>
             <div style={{fontSize:14,color:C.t2}}>
-              Departing from {departure?.city||"your location"}
-              {departure?.airport&&" ("+departure.airport+")"}
+              {isNight
+                ?`Out around ${departure?.city||"you"} — home the same night`
+                :mode==="trip"
+                  ?`Departing from ${departure?.city||"your location"}${departure?.airport?" ("+departure.airport+")":""}`
+                  :"A night out is one evening. A trip is days away."}
             </div>
           </div>
           {/* Shown on whichever step you land back on, not only the date step,
@@ -2876,6 +2896,59 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
               </div>
             </div>
           )}
+          {/* One choice before anything else, because a night out and a
+              fortnight need completely different answers. */}
+          <div style={{display:"flex",gap:10,marginBottom:16}}>
+            {[{k:"night",e:"🌃",t:"A night out",s:"Dinner, a game, a gig"},
+              {k:"trip",e:"✈️",t:"A trip",s:"Away for a few days"}].map(o=>(
+              <button key={o.k} onClick={()=>setMode(o.k)}
+                style={{flex:1,textAlign:"left",padding:"14px 14px",borderRadius:16,cursor:"pointer",
+                  border:`2px solid ${mode===o.k?C.accentText:C.border}`,
+                  background:mode===o.k?C.accentDim:C.s2}}>
+                <div style={{fontSize:22,marginBottom:6}}>{o.e}</div>
+                <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{o.t}</div>
+                <div style={{fontSize:11.5,color:C.t2,marginTop:2}}>{o.s}</div>
+              </button>
+            ))}
+          </div>
+
+          {isNight&&(
+            <>
+              <div style={{display:"flex",gap:10,marginBottom:12}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Which night</div>
+                  <input aria-label="Which night" type="date" className="inp" value={startDate}
+                    min={new Date().toISOString().split("T")[0]}
+                    onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
+                </div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Roughly when</div>
+                  <input aria-label="Roughly what time" type="time" className="inp" value={nightTime}
+                    onChange={e=>setNightTime(e.target.value)} style={{color:C.t1}}/>
+                </div>
+              </div>
+              <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Where should it be?</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+                {["By the water","In the city","Local and low-key","Wherever's good"].map(w=>(
+                  <button key={w} onClick={()=>setNightWhere(prev=>prev===w?"":w)}
+                    style={{padding:"9px 13px",borderRadius:20,cursor:"pointer",fontSize:12.5,fontWeight:600,
+                      border:`1px solid ${nightWhere===w?C.accentText:C.border}`,
+                      background:nightWhere===w?C.accentDim:C.s2,
+                      color:nightWhere===w?C.accentText:C.t2}}>
+                    {w}
+                  </button>
+                ))}
+              </div>
+              {/* Food, music and drinks are already answered. Saying so beats
+                  asking again, and the way to change them is one tap. */}
+              <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,
+                padding:"12px 14px",marginBottom:16,fontSize:12.5,color:C.t2,lineHeight:1.6}}>
+                We'll use what {isSolo?"you":"everyone"} said about food, music and drinks in the taste quiz.
+              </div>
+            </>
+          )}
+
+          {mode==="trip"&&(
           <div style={{display:"flex",gap:10,marginBottom:16}}>
             <div style={{flex:1}}>
               <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Departure</div>
@@ -2889,7 +2962,8 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
                 min={startDate} onChange={e=>setEndDate(e.target.value)} style={{color:C.t1}}/>
             </div>
           </div>
-          {nights>0&&(
+          )}
+          {!isNight&&nights>0&&(
             <div style={{textAlign:"center",padding:"14px",background:C.accentDim,
               border:"1px solid "+C.accentBorder,borderRadius:14,marginBottom:16}}>
               <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.accentText}}>
@@ -3040,7 +3114,9 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
           <button className="bp" style={{flex:2,
             background:!allComplete?`linear-gradient(135deg,${C.amber},${C.red})`:undefined}}
             onClick={handleGenerate}>
-            {isSolo?"✨ Build my solo trip":allComplete?"✨ Generate trips for "+group.name:"⚠️ Generate anyway ("+completedCount+"/"+totalCount+" ready)"}
+            {isNight
+              ?(isSolo?"✨ Plan my night out":allComplete?"✨ Plan a night out for "+group.name:"⚠️ Plan anyway ("+completedCount+"/"+totalCount+" ready)")
+              :(isSolo?"✨ Build my solo trip":allComplete?"✨ Generate trips for "+group.name:"⚠️ Generate anyway ("+completedCount+"/"+totalCount+" ready)")}
           </button>
         ):(
           <button className="bp" style={{flex:2}} disabled={!canNext}
@@ -3109,12 +3185,18 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // the guard below rather than beside the code that uses them.
   const [buildingItinerary,setBuildingItinerary]=useState(null);
   const [enriching,setEnriching]=useState(0);
+  // Which shape the group chose on the date page. A night out is saved as one
+  // evening, with no flights and no hotel to pay for.
+  const [nightOut,setNightOut]=useState(false);
 
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
 
   const nights=startDate&&endDate?Math.round((new Date(endDate)-new Date(startDate))/86400000):0;
 
-  const generate=async(sd,ed,bud,prefs={},retrying=false)=>{
+  // `extra` carries what a night out needs and a trip does not: which shape of
+  // plan this is, and the two answers the taste quiz cannot already supply.
+  const generate=async(sd,ed,bud,prefs={},extra={},retrying=false)=>{
+    setNightOut(extra.mode==="night");
     setStep(1);setGenerating(true);setError(null);
     try{
       const res=await fetch("/api/trips/generate",{
@@ -3130,6 +3212,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           userLat:userLocation?.lat||null,
           userLng:userLocation?.lng||null,
           tripPrefs:prefs,
+          mode:extra.mode||"trip",
+          nightPrefs:extra.nightPrefs||{},
         }),
       });
       if(res.ok){
@@ -3225,11 +3309,15 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       id:"p"+Date.now(),
       title:trip.destination,
       status:"approved",
-      dates:formatDates(startDate,endDate),
+      dates:nightOut?formatDates(startDate):formatDates(startDate,endDate),
       startDate:startDate||null,
-      endDate:endDate||null,
+      // One evening starts and ends on the same day. Leaving a return date on
+      // it would put "5 nights" on a dinner.
+      endDate:nightOut?(startDate||null):(endDate||null),
       budget:trip.total_per_person,
-      type:"trip",
+      // The database allows trip, restaurant, concert and weekend. A night out
+      // is closest to restaurant until a migration adds one of its own.
+      type:nightOut?"restaurant":"trip",
       participants:group.memberIds||[],
       itinerary:[],
       votes:{},options:[],
@@ -3248,7 +3336,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       // instant rather than another half-minute of waiting.
       if(trip.itinerary?.length){
         realId=await _sp2.catch(()=>null)||np.id;
-        const rows=[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
+        // No airfare and no hotel on an evening out.
+        const rows=nightOut
+          ?itineraryRows(trip.itinerary)
+          :[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows}:p)}));
         if(saveItineraryToServer)await saveItineraryToServer(realId,rows);
         setBuildingItinerary(null);
@@ -3464,12 +3555,12 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             totalCount={totalCount}
             isSolo={isSolo}
             known={knownFromPlan(latestPlan)}
-            onGenerate={(dates,tripBudget,prefs)=>{
+            onGenerate={(dates,tripBudget,prefs,extra)=>{
               setStartDate(dates.start);
               setEndDate(dates.end);
               setBudget(tripBudget);
               setTripPrefs(prefs);
-              generate(dates.start,dates.end,tripBudget,prefs);
+              generate(dates.start,dates.end,tripBudget,prefs,extra);
             }}
           />
         </>
@@ -4679,7 +4770,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 if(stage==="booked"){push("checkout",{planId,groupId});return;}
               }}/>
             <div style={{display:"flex",gap:10,padding:"0 20px 14px"}}>
-              {[{l:soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
+              {[{l:soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},(plan.startDate&&plan.startDate===plan.endDate)?{l:"When",v:dayLabel(plan.startDate)||"—",e:"🌃"}:{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
                 <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
                   <div style={{fontSize:20}}>{s.e}</div>
                   <div style={{fontFamily:"'Instrument Serif',serif",fontSize:18,color:C.t1,marginTop:4}}>{s.v}</div>
