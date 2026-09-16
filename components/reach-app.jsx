@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
-import { planSections, daysAway, today } from "@/lib/calendar";
+import { planSections, daysAway, today, byNextPlan } from "@/lib/calendar";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -1557,7 +1557,9 @@ function GroupsScreen({groups,um,push,loading}){
           </div>
         </div>
       )}
-      {groups.map(g=>{
+      {/* Nearest thing first. The list arrives from the server in no order at
+          all, so without this it could come back differently each load. */}
+      {[...groups].sort(byNextPlan(today())).map(g=>{
         const active=g.plans.filter(p=>p.status!=="completed");
         return(
           <div key={g.id} className="card" style={{margin:"0 20px 12px",cursor:"pointer"}} {...pressable} onClick={()=>push("groupDetail",{groupId:g.id})}>

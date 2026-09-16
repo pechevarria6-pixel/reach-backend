@@ -1,7 +1,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planSections, planDay, daysAway, today, dayWhere } from '../../lib/calendar.ts';
+import { planSections, planDay, daysAway, today, dayWhere, byNextPlan } from '../../lib/calendar.ts';
 
 // Half past eight on the sixteenth in New York, which the server calls the
 // seventeenth. Every evening in the Americas looks like this.
@@ -129,6 +129,49 @@ test('an evening plan is still coming up all evening', () => {
   assert.equal(daysAway(nightOut, theirToday), 'Today');
   // Read as UTC it was already over, which is the bug this guards.
   assert.equal(planSections([nightOut], '2026-09-17')[0].key, 'past');
+});
+
+test('the group with the nearest plan comes first', () => {
+  const group = (id: string, ...dates: (string | null)[]) =>
+    ({ id, plans: dates.map((d, i) => plan(`${id}-${i}`, d)) });
+  const sorted = [
+    group('december', '2026-12-01'),
+    group('nothingPlanned'),
+    group('tomorrow', '2026-09-17'),
+    group('october', '2026-10-09'),
+  ].sort(byNextPlan(TODAY));
+  assert.deepEqual(sorted.map(g => g.id), ['tomorrow', 'october', 'december', 'nothingPlanned']);
+});
+
+test('a group is ranked by its soonest plan, not by whichever it lists first', () => {
+  const far = { id: 'far', plans: [plan('a', '2026-12-01'), plan('b', '2026-09-18')] };
+  const near = { id: 'near', plans: [plan('c', '2026-09-19')] };
+  assert.deepEqual([far, near].sort(byNextPlan(TODAY)).map(g => g.id), ['far', 'near']);
+});
+
+test('a trip already under way outranks one that has not started', () => {
+  const onNow = { id: 'onNow', plans: [plan('running', '2026-09-14', '2026-09-18')] };
+  const soon = { id: 'soon', plans: [plan('later', '2026-09-17')] };
+  assert.deepEqual([soon, onNow].sort(byNextPlan(TODAY)).map(g => g.id), ['onNow', 'soon']);
+});
+
+test('plans that are over do not drag a group up the list', () => {
+  const overOnly = { id: 'overOnly', plans: [plan('lastWeek', '2026-09-09')] };
+  const upcoming = { id: 'upcoming', plans: [plan('soon', '2026-11-02')] };
+  const sorted = [overOnly, upcoming].sort(byNextPlan(TODAY));
+  assert.deepEqual(sorted.map(g => g.id), ['upcoming', 'overOnly']);
+});
+
+test('sorting groups copes with junk rather than throwing', () => {
+  const junk = [
+    { id: 'noPlansKey' },
+    { id: 'nullPlans', plans: null as never },
+    { id: 'undatedPlan', plans: [plan('x', null)] },
+    { id: 'real', plans: [plan('y', '2026-09-18')] },
+  ];
+  const sorted = junk.sort(byNextPlan(TODAY));
+  assert.equal(sorted[0].id, 'real');
+  assert.equal(sorted.length, 4);
 });
 
 test('a trip you are on says it is on, not when it started', () => {

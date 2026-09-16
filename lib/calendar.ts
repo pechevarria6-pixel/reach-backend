@@ -114,6 +114,40 @@ export function planSections<T extends DatedPlan>(plans: T[], today: string): Pl
 }
 
 /**
+ * Groups, in the order somebody would want to find them: whatever is happening
+ * soonest, first.
+ *
+ * The list arrived in no order at all. The query that fetches it asks for a set
+ * of ids and never says how to sort them, so the database returned them however
+ * it liked and was free to return them differently on the next load — a list
+ * that reshuffles while you are looking at it. What surfaced instead of the
+ * trip you are on tomorrow was whichever group happened to come back first.
+ *
+ * A group is ranked by its nearest plan that has not been and gone. A group
+ * with nothing planned has nothing to rank it by and goes last, most recently
+ * touched first, rather than being given an invented date that would file it
+ * among real ones.
+ */
+export function byNextPlan<T extends { plans?: DatedPlan[] }>(today: string) {
+  const nextDay = (group: T): string | null => {
+    const days = (group?.plans ?? [])
+      .filter(p => (lastDay(p) ?? '') >= today)
+      .map(planDay)
+      .filter((d): d is string => !!d);
+    // A trip already under way started before today; it is still the nearest
+    // thing there is, so it sorts by the day it began and lands at the top.
+    return days.length ? days.reduce((a, b) => (a < b ? a : b)) : null;
+  };
+  return (a: T, b: T): number => {
+    const x = nextDay(a);
+    const y = nextDay(b);
+    if (x && y) return x.localeCompare(y);
+    // Something planned always beats nothing planned.
+    return x ? -1 : y ? 1 : 0;
+  };
+}
+
+/**
  * How far away a plan is, in the words somebody would use. Null for a plan
  * with no date, so the screen can say nothing rather than guess.
  */
