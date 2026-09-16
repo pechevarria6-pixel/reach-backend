@@ -13,7 +13,7 @@
 // here, with this website". Turning that into "Wednesday, 7pm, £45" is the
 // harvest step, and it is slow, so it does not happen in a request.
 import type { Finding, SourceResult, Seeker } from './types.ts';
-import { notRuledOut } from './rules.ts';
+import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor } from './taste.ts';
 
 // Overpass is run by volunteers on donated hardware and the main instance
@@ -175,7 +175,8 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
       lat: el.lat ?? el.center?.lat ?? null,
       lng: el.lon ?? el.center?.lon ?? null,
     };
-    if (notRuledOut(`${finding.title} ${finding.meta}`, seeker.avoid)) findings.push(finding);
+    // A caterer or a campus can carry a tag we asked for. Neither is a night out.
+    if (canTurnUp(name, [what]) && notRuledOut(`${finding.title} ${finding.meta}`, seeker.avoid)) findings.push(finding);
   }
 
   return { source: 'osm', status: 'ok', findings };

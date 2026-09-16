@@ -281,3 +281,32 @@ test('a typed cuisine cannot break out of the query either', () => {
   assert.ok(!sel.includes('\n'));
   assert.equal((sel.match(/"/g) || []).length, 2);
 });
+
+// ── Only things somebody can turn up to ──────────────────────────────────
+import { canTurnUp } from '../../lib/discovery/rules.ts';
+
+test('a supplier or an institution is not a thing to go and do', () => {
+  // All of these answered a search for "cooking class" on a real screen.
+  assert.equal(canTurnUp('Elegant Affairs Caterers', ['caterers']), false);
+  assert.equal(canTurnUp('Monmouth University', ['collegeuniv']), false);
+  assert.equal(canTurnUp('Wholesale Restaurant Supply', ['wholesalers']), false);
+  assert.equal(canTurnUp('Kumon Tutoring', ['tutoring']), false);
+  // No category from the provider, so the name has to carry it.
+  assert.equal(canTurnUp('Bella Vista Catering', []), false);
+  assert.equal(canTurnUp('Middletown School District', []), false);
+});
+
+test('the places an evening actually happens in are kept', () => {
+  assert.equal(canTurnUp('A Time To Kiln', ['pottery']), true);
+  assert.equal(canTurnUp('Sur La Table Cooking Class', ['cookingschools']), true);
+  assert.equal(canTurnUp('Jewish Heritage Museum', ['museums']), true);
+  assert.equal(canTurnUp('Stress Factory Comedy Club', ['comedyclubs']), true);
+  // A name that merely contains a blocked word is not the same thing.
+  assert.equal(canTurnUp('College Park Diner', ['diners']), true);
+});
+
+test('something happening on a day comes before somewhere merely open', () => {
+  const open = make({ id: 'venue', source: 'osm', because: 'pottery & crafts' });
+  const dated = make({ id: 'class', source: 'osm', because: 'pottery & crafts', date: '2026-10-09' });
+  assert.equal(rank([open, dated], ['pottery & crafts'])[0].id, 'class');
+});

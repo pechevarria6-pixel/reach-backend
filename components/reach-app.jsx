@@ -462,6 +462,14 @@ function useEscape(open,onClose){
   },[open]);
 }
 
+// "2026-10-09" as somebody would say it out loud. Anything that is not a
+// date renders nothing at all rather than the words "Invalid Date".
+function dayLabel(iso){
+  const t=Date.parse(`${iso}T12:00:00`);
+  if(!Number.isFinite(t))return null;
+  return new Date(t).toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+}
+
 // A client-made id that the server has never seen. Hitting an API with one of
 // these is always a 404, so the callers that can hold one check first.
 function isTempId(id){
@@ -1000,12 +1008,23 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
               <div style={{fontSize:12,color:"rgba(255,255,255,.65)"}}>{exp.sub}</div>
             </div>
             <div style={{position:"absolute",top:12,right:14,fontSize:34}}>{exp.emoji}</div>
-            {exp.isLocal&&exp.dist&&(
-              <div style={{position:"absolute",top:12,left:14,background:"rgba(0,0,0,.6)",
-                borderRadius:20,padding:"3px 10px",fontSize:11,color:"white"}}>
-                📍 {exp.dist}
-              </div>
-            )}
+            {/* What is happening says which day. What is simply open says
+                where it is and nothing about hours, because nobody has
+                checked them and "open any time" would be a promise. */}
+            <div style={{position:"absolute",top:12,left:14,display:"flex",gap:6,flexWrap:"wrap",maxWidth:"72%"}}>
+              {dayLabel(exp.date)&&(
+                <span style={{background:"rgba(0,0,0,.72)",borderRadius:20,padding:"3px 10px",
+                  fontSize:11,color:"white",fontWeight:600}}>
+                  {dayLabel(exp.date)}
+                </span>
+              )}
+              {exp.isLocal&&exp.dist&&(
+                <span style={{background:"rgba(0,0,0,.6)",borderRadius:20,padding:"3px 10px",
+                  fontSize:11,color:"white"}}>
+                  📍 {exp.dist}
+                </span>
+              )}
+            </div>
           </div>
           <div style={{background:C.s1,padding:"12px 16px",display:"flex",
             justifyContent:"space-between",alignItems:"center"}}>

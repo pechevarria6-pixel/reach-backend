@@ -10,7 +10,7 @@
 // Both fail quietly and separately. Discover showing two sources' worth of
 // things is better than showing none because a third was misconfigured.
 import type { Finding, SourceResult, Seeker } from './types.ts';
-import { notRuledOut } from './rules.ts';
+import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor, searchTermFor } from './taste.ts';
 
 const BASE = 'https://api.yelp.com/v3';
@@ -107,7 +107,11 @@ async function placesFor(interest: string, seeker: Seeker, headers: Record<strin
   }
   const json = await res.json();
   return (json?.businesses ?? [])
-    .filter((b: any) => b?.url && b?.name && !b.is_closed)
+    // Yelp answers "cooking class" with catering companies and colleges. It
+    // also says what each one is, which it had been printing on the card and
+    // never reading.
+    .filter((b: any) => b?.url && b?.name && !b.is_closed
+      && canTurnUp(b.name, (b.categories ?? []).flatMap((c: any) => [c.alias, c.title])))
     .map((b: any): Finding => ({
       id: `yelp_place_${b.id}`,
       title: b.name,

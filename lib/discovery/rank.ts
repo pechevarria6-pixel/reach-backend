@@ -17,7 +17,9 @@ export function rank(findings: Finding[], interests: string[]): Finding[] {
     const hay = `${f.title} ${f.category} ${f.meta}`.toLowerCase();
     if (wanted.some(w => w.length > 2 && hay.includes(w))) s += 40;
     if (f.price) s += 5;                           // a price is a kindness
-    if (f.date) s += 3;                            // something happening beats something open
+    // Something happening on a date is a plan. A place that is simply open is
+    // homework: you still have to decide when, and whether anything is on.
+    if (f.date) s += 25;
     return s;
   };
   // Interleave by source so one prolific provider cannot take the whole page.

@@ -38,7 +38,9 @@ const KINDS: Record<string, Kind> = Object.fromEntries([
   // same thing differently — a ceramics studio is craft=pottery to one and
   // shop=pottery to the next.
   kind('pottery & crafts', '🏺', ['craft=pottery', 'shop=pottery', 'craft=ceramics', 'amenity=arts_centre'], 'pottery class', true),
-  kind('cooking', '🍳', ['amenity=cooking_school', 'craft=confectionery'], 'cooking class', true),
+  // craft=confectionery is somebody who makes sweets for a living, which is a
+  // supplier rather than an evening. amenity=cooking_school teaches people.
+  kind('cooking', '🍳', ['amenity=cooking_school'], 'cooking class', true),
   kind('art & galleries', '🎨', ['tourism=gallery', 'amenity=arts_centre', 'craft=painter'], 'art class', true),
   kind('live music', '🎸', ['amenity=music_venue', 'amenity=nightclub'], 'live music venue', true),
   kind('dancing', '💃', ['amenity=dancing_school', 'leisure=dance'], 'dance class', true),

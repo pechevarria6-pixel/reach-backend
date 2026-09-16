@@ -8,7 +8,7 @@
 // Discover reads here. A fifteen second maybe becomes an indexed select.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Finding, SourceResult, Seeker } from './types.ts';
-import { notRuledOut } from './rules.ts';
+import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor } from './taste.ts';
 
 /**
@@ -109,6 +109,9 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
         miles,
       };
     })
+    // Filtered on the way out as well as the way in, so venues a past sweep
+    // stored before this rule existed stop appearing without waiting a night.
+    .filter(f => canTurnUp(f.title, [String(f.meta).split(' · ')[0]]))
     .filter(f => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid))
     // Theirs before everyday things, then nearest first.
     .sort((a, b) => Number(!a.because) - Number(!b.because) || a.miles - b.miles);
