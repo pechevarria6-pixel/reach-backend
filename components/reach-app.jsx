@@ -1148,7 +1148,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
       fromDiscover:true,
       expData:exp,
     };
-    updateGroup(group.id,g=>({...g,plans:[...g.plans,np],lastActivity:"Added: "+exp.title}));
+    updateGroup(group.id,g=>({...g,plans:[...g.plans,np]}));
     const _sp1=savePlanToServer?savePlanToServer(group.id,np):Promise.resolve(null);
     setSaving(false);
     setPlanPicker(false);
@@ -1189,7 +1189,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
       }],
       votes:{},options:[],fromDiscover:true,expData:exp,
     };
-    updateGroup(group.id,g=>({...g,plans:[...g.plans,np],lastActivity:"Booking: "+exp.title}));
+    updateGroup(group.id,g=>({...g,plans:[...g.plans,np]}));
     let planId=np.id;
     try{
       planId=(savePlanToServer?await savePlanToServer(group.id,np):null)||np.id;
@@ -1647,11 +1647,19 @@ function GroupsScreen({groups,um,push,loading}){
                 {!isSoloGroup(g)&&<span className="pill pill-g">💰 ${g.wallet.toLocaleString()}</span>}
               </div>
               {!isSoloGroup(g)&&<AvCluster ids={g.memberIds} um={um} max={5}/>}
-              <div style={{height:1,background:C.border,margin:"12px 0"}}/>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div style={{fontSize:12,color:C.t2}}>{g.lastActivity}</div>
-                {active.length>0&&<span className="pill pill-p">{active.length} active</span>}
-              </div>
+              {/* Who is in the group is already said under its name, and what
+                  is happening is said by the calendar above. What is left worth
+                  saying here is whether anything is live, so that is all this
+                  says — and when nothing is, the rule goes too rather than
+                  ruling off an empty line. */}
+              {active.length>0&&(
+                <>
+                  <div style={{height:1,background:C.border,margin:"12px 0"}}/>
+                  <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center"}}>
+                    <span className="pill pill-p">{plural(active.length,"plan")} on</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         );
@@ -2213,7 +2221,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
     const finalMembers=mode==="solo"?(me?[me]:[]):members;
     const finalInvites=mode==="solo"?[]:inviteEmails;
     const finalEmoji=mode==="solo"?"🧍":inferGroupEmoji(name);
-    const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:finalMembers,inviteEmails:finalInvites,wallet:0,tags:[],lastActivity:"Just created",plans:[]};
+    const newGroup={id:tempId,name,emoji:finalEmoji,memberIds:finalMembers,inviteEmails:finalInvites,wallet:0,tags:[],plans:[]};
     setGroups(gs=>[...gs,newGroup]);
     toast(mode==="solo"?`${name} — just you 🧍`:`${name} created!`);
     // Straight into planning rather than back to a list. Creating a group was
@@ -3510,7 +3518,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       votes:{},options:[],
       aiGenerated:true,aiData:trip,
     };
-    updateGroup(groupId,g=>({...g,plans:[...g.plans,np],lastActivity:"Planning: "+trip.destination}));
+    updateGroup(groupId,g=>({...g,plans:[...g.plans,np]}));
     toast(trip.destination+" saved! Building itinerary… ✨");
     const _sp2=savePlanToServer?savePlanToServer(groupId,np):Promise.resolve(null);
 
@@ -4080,7 +4088,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
     try{
       const tempId="g_local_"+Date.now();
       const draft={id:tempId,name:"Just me",emoji:"🧍",memberIds:me?[me]:[],
-        inviteEmails:[],wallet:0,tags:[],lastActivity:"Just created",plans:[]};
+        inviteEmails:[],wallet:0,tags:[],plans:[]};
       setGroups(gs=>[...gs,draft]);
       const realId=saveGroupToServer?await saveGroupToServer(draft):null;
       if(!realId)throw new Error("Couldn't set up a solo trip — please try again");
@@ -4228,7 +4236,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       votes:(voting&&!isSoloGroup)?Object.fromEntries(vopts.filter(Boolean).map(o=>[o,0])):{},
       options:voting?vopts.filter(Boolean):[],
     };
-    updateGroup(gid,g=>({...g,plans:[...g.plans,np],lastActivity:`Planning: ${np.title}`}));
+    updateGroup(gid,g=>({...g,plans:[...g.plans,np]}));
     toast("Plan created! 🎉");
     clearDraft();
     // Finishing a plan used to put you back on the list you came from, with
@@ -6544,9 +6552,6 @@ export default function ReachApp({realUser,onSignOut}={}){
           members:(g.group_members||[]).map(m=>m.users||{id:m.user_id}),
           wallet:Math.round((g.wallet_balance_cents||0)/100),
           tags:[],
-          lastActivity:plans.length>0
-            ?`${plans.length} plan${plans.length>1?"s":""}`
-            :(g.updated_at?new Date(g.updated_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"Just created"),
           plans,
         };
       }));
