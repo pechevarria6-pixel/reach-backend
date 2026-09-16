@@ -3269,6 +3269,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // Which shape the group chose on the date page. A night out is saved as one
   // evening, with no flights and no hotel to pay for.
   const [nightOut,setNightOut]=useState(false);
+  // The itinerary is a second request. Without the night's own answers it
+  // would plan the evening blind — and without the mode it recomputed nights
+  // from two identical dates, got zero, and asked for a zero-day itinerary.
+  const [nightAnswers,setNightAnswers]=useState({});
+  const [enrichFailed,setEnrichFailed]=useState(false);
 
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
 
@@ -3278,6 +3283,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // plan this is, and the two answers the taste quiz cannot already supply.
   const generate=async(sd,ed,bud,prefs={},extra={},retrying=false)=>{
     setNightOut(extra.mode==="night");
+    setNightAnswers(extra.nightPrefs||{});
+    setEnrichFailed(false);
     setStep(1);setGenerating(true);setError(null);
     try{
       const res=await fetch("/api/trips/generate",{
@@ -3361,6 +3368,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             groupId,startDate:sd||null,endDate:ed||null,
             detailTripId:trip.id,
             tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
+            mode:nightOut?"night":"trip",
+            nightPrefs:nightOut?nightAnswers:{},
             departureCity:departure?.city||null,
             departureAirport:departure?.airport||null,
           }),
@@ -3368,6 +3377,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         if(!r.ok){
           const err=await r.json().catch(()=>({}));
           console.error("[groupTrip] itinerary failed for",trip.destination,err);
+          // Three options with nothing behind them is not something to leave
+          // somebody to discover by tapping each one.
+          setEnrichFailed(true);
           return null;
         }
         const d=await r.json();
@@ -3435,6 +3447,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           startDate,endDate,
           detailTripId:trip.id,
           tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
+          mode:nightOut?"night":"trip",
+          nightPrefs:nightOut?nightAnswers:{},
           departureCity:departure?.city||null,
           departureAirport:departure?.airport||null,
         }),
@@ -3683,6 +3697,12 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             </div>
             {/* The days are being written while people read. Say so, rather
                 than letting three cards quietly grow a section. */}
+            {enrichFailed&&enriching===0&&(
+              <div style={{display:"flex",alignItems:"center",gap:9,marginTop:10,fontSize:12.5,color:C.t2}}>
+                <span>⚠️</span>
+                Couldn't write the details for some of these. Pick one anyway and we'll try again.
+              </div>
+            )}
             {enriching>0&&(
               <div style={{display:"flex",alignItems:"center",gap:9,marginTop:10,fontSize:12.5,color:C.t2}}>
                 <div style={{width:14,height:14,border:`2px solid ${C.accentText}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
