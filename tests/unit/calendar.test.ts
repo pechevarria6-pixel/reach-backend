@@ -1,7 +1,34 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planSections, planDay, daysAway, today } from '../../lib/calendar.ts';
+import { planSections, planDay, daysAway, today, dayWhere } from '../../lib/calendar.ts';
+
+// Half past eight on the sixteenth in New York, which the server calls the
+// seventeenth. Every evening in the Americas looks like this.
+const EVENING = new Date('2026-09-17T00:30:00Z');
+
+test('the server asks what day it is where the person is', () => {
+  assert.equal(EVENING.toISOString().slice(0, 10), '2026-09-17');
+  assert.equal(dayWhere(-74.0, EVENING), '2026-09-16', 'New York');
+  assert.equal(dayWhere(-66.1, EVENING), '2026-09-16', 'San Juan');
+  assert.equal(dayWhere(-118.2, EVENING), '2026-09-16', 'Los Angeles');
+  // Where it really is the seventeenth, it says so.
+  assert.equal(dayWhere(0, EVENING), '2026-09-17', 'London');
+  assert.equal(dayWhere(139.7, EVENING), '2026-09-17', 'Tokyo, already morning');
+});
+
+test('tonight survives the filter that drops what has been and gone', () => {
+  // The filter in cachedEvents, and the reason it needed the seeker's own day.
+  const tonight = '2026-09-16';
+  assert.ok(tonight >= dayWhere(-66.1, EVENING), 'kept for somebody in San Juan');
+  assert.ok(!(tonight >= EVENING.toISOString().slice(0, 10)), 'the UTC day threw it away');
+});
+
+test('a longitude nobody could be at falls back rather than throwing', () => {
+  for (const bad of [null, undefined, NaN, 'west', Infinity, 9999]) {
+    assert.match(dayWhere(bad as never, EVENING), /^\d{4}-\d{2}-\d{2}$/, String(bad));
+  }
+});
 
 const plan = (id: string, startDate: string | null, endDate?: string | null) =>
   ({ id, startDate, endDate: endDate === undefined ? startDate : endDate });

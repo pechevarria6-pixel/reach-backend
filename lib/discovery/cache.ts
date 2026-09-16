@@ -10,6 +10,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Finding, SourceResult, Seeker } from './types.ts';
 import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor } from './taste.ts';
+import { dayWhere } from '../calendar.ts';
 
 /**
  * The area a point belongs to, rounded to about seven miles. Everybody in a
@@ -156,7 +157,9 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
     return { source: 'harvest', status: 'error', findings: [], detail: error.message };
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Their day, not the server's. Against the UTC date, a class happening
+  // tonight disappeared from Discover from eight in the evening onwards.
+  const today = dayWhere(seeker.lng);
   const findings: Finding[] = (data ?? [])
     // A dated class that has been and gone is worse than no class at all.
     .filter(e => !e.starts_on || e.starts_on >= today)

@@ -53,6 +53,28 @@ export function planDay(plan: DatedPlan): string | null {
 }
 
 /**
+ * The calendar day at a given longitude.
+ *
+ * A server keeps UTC, and somebody looking for something to do tonight is not
+ * in Greenwich. At eight in the evening in New York the UTC date has already
+ * turned over, so filtering "what is still to come" against it threw away
+ * tonight's events — the ones they opened Discover to find, at the hour they
+ * opened it to find them.
+ *
+ * Longitude is not a timezone. Political boundaries wander and a few places
+ * sit hours off their solar time, so this is an approximation — but it only
+ * has to decide which of two days it is, and it is the one clue a request
+ * actually carries. The error it can make is a few hours at a zone's edge;
+ * the error it replaces was a whole day, every evening, for half the world.
+ */
+export function dayWhere(lng: unknown, now: Date = new Date()): string {
+  const deg = typeof lng === 'number' && Number.isFinite(lng) ? lng : 0;
+  // Real offsets run from UTC-12 to UTC+14; anything outside that is bad input.
+  const hours = Math.max(-12, Math.min(14, Math.round(deg / 15)));
+  return new Date(now.getTime() + hours * 3_600_000).toISOString().slice(0, 10);
+}
+
+/**
  * A plan counts as over the day after it ends, so a trip is still "coming up"
  * while you are on it rather than dropping into the past on the morning you
  * arrive. A night out ends the day it starts.

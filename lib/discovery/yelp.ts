@@ -12,6 +12,7 @@
 import type { Finding, SourceResult, Seeker } from './types.ts';
 import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor, searchTermFor } from './taste.ts';
+import { dayWhere } from '../calendar.ts';
 
 const BASE = 'https://api.yelp.com/v3';
 const MILES = 1609.34;
@@ -35,10 +36,15 @@ export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {
   const headers = auth();
   if (!headers) return { source: 'yelp-events', status: 'no_key', findings: [] };
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Their day, not the server's: asking from the UTC date meant that from
+  // eight in the evening onwards Yelp was asked for tomorrow's events, and
+  // tonight's — the ones being looked for — were never requested at all.
+  // The day is anchored in UTC, which for anyone west of Greenwich starts a
+  // few hours early. Erring towards including tonight is the safe direction.
+  const today = dayWhere(seeker.lng);
   const url = `${BASE}/events?latitude=${seeker.lat}&longitude=${seeker.lng}`
     + `&radius=${RADIUS}&limit=20&sort_on=time_start&sort_by=asc`
-    + `&start_date=${Math.floor(new Date(`${today}T00:00:00`).getTime() / 1000)}`;
+    + `&start_date=${Math.floor(Date.parse(`${today}T00:00:00Z`) / 1000)}`;
 
   let json: any;
   try {
