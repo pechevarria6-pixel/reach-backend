@@ -8,7 +8,8 @@
 // splitting the bill were never the same person and settle-up was nonsense.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
-import { evenSplit, settleUp } from '@/lib/money';
+import { apportion, evenSplit, planShares, settleUp } from '@/lib/money';
+import { planSkips } from '@/lib/participation';
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -48,9 +49,12 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
 
-  const [{ data: expenses }, { data: contributions }] = await Promise.all([
+  const [{ data: expenses }, { data: contributions }, { data: bookings }, skips] = await Promise.all([
     ctx.db.from('expenses').select('*').eq('plan_id', params.planId),
     ctx.db.from('contributions').select('*').eq('plan_id', params.planId).eq('status', 'succeeded'),
+    ctx.db.from('bookings').select('id,price_cents,status').eq('plan_id', params.planId)
+      .not('status', 'in', '("failed","cancelled")'),
+    planSkips(ctx.db, params.planId),
   ]);
 
   const members = await groupMemberIds(ctx.db, ctx.plan.group_id as string);
@@ -70,7 +74,11 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
   // for the trip did not reduce anyone's balance.
   const target = (contributions || []).reduce((s, c) => s + c.amount_cents, 0);
   if (target > 0 && members.length > 0) {
-    evenSplit(target, members.length).forEach((share, i) => add(members[i], -share));
+    // Collected money is owed in proportion to each person's share, so
+    // somebody who sat out the dinner is not down for a slice of it. With
+    // nobody sitting anything out this is the even split it always was.
+    const owed = planShares(bookings || [], Number(ctx.plan.budget_cents) || 0, members, skips);
+    apportion(target, members.map(id => owed[id] || 0)).forEach((share, i) => add(members[i], -share));
     for (const c of contributions || []) add(c.user_id, c.amount_cents);
   }
 

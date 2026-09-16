@@ -9,7 +9,8 @@
 // back to 1 and asked every member to pay for the entire trip.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
-import { shareFor } from '@/lib/money';
+import { planShares } from '@/lib/money';
+import { planSkips } from '@/lib/participation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 async function fundingStatus(
@@ -18,7 +19,7 @@ async function fundingStatus(
   // Target = sum of every non-failed booking priced on this plan
   const { data: bookings } = await db
     .from('bookings')
-    .select('price_cents,status')
+    .select('id,price_cents,status')
     .eq('plan_id', planId)
     .not('status', 'in', '("failed","cancelled")');
   const targetCents = (bookings || []).reduce((s, b) => s + (b.price_cents || 0), 0);
@@ -29,13 +30,15 @@ async function fundingStatus(
   const collectedCents = succeeded.reduce((s, c) => s + c.amount_cents, 0);
 
   const memberIds = await groupMemberIds(db, groupId);
+  const skips = await planSkips(db, planId);
 
-  // Before anything is priced there is nothing to collect against, so fall
-  // back to the plan's own budget. `targetCents` still reports the booking
-  // total, because that is what the approve gate compares against.
-  const basisCents = targetCents > 0 ? targetCents : Math.max(0, budgetCents || 0);
-
-  const myShareCents = shareFor(basisCents, memberIds, userId);
+  // Priced bookings, less anything this member is sitting out, split exactly;
+  // before anything is priced, an even share of the plan's budget. The same
+  // function feeds the participation screen and the reminder email, so the
+  // amount charged here is the amount shown there. `targetCents` still reports
+  // the booking total, because that is what the approve gate compares against,
+  // and the shares always add up to it.
+  const myShareCents = planShares(bookings || [], Math.max(0, budgetCents || 0), memberIds, skips)[userId] ?? 0;
 
   const myPaidCents = succeeded
     .filter(c => c.user_id === userId)

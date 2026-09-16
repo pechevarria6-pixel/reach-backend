@@ -88,7 +88,10 @@ const checked = { tables: new Set(), columns: 0 };
 const migrations = new Map();
 for (const file of readdirSync('sql').filter(f => f.endsWith('.sql'))) {
   const sql = readFileSync(`sql/${file}`, 'utf8');
-  for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)) {
+  // `public.` is optional in the migrations and means nothing to this check,
+  // so a table written either way reads as the pending job it is rather than
+  // as a typo nobody made.
+  for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)) {
     if (!migrations.has(m[1])) migrations.set(m[1], file);
   }
 }

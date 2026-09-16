@@ -10,7 +10,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { sendVoteNeeded, sendFundingNeeded, type SendResult } from '@/lib/email';
-import { evenSplit } from '@/lib/money';
+import { planShares } from '@/lib/money';
+import { planSkips } from '@/lib/participation';
 import { z } from 'zod';
 
 const Schema = z.object({ kind: z.enum(['vote', 'funding']) });
@@ -59,7 +60,16 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.alcanzar.io').replace(/\/$/, '');
   const url = `${base}/home`;
-  const shares = evenSplit(plan.budget_cents || 0, memberIds.length);
+  // Each person's own share, the same figure checkout will charge them. This
+  // used to quote the first person's even split of the budget to everybody,
+  // which was wrong for anyone sitting something out and for any priced trip.
+  let shares: Record<string, number> = {};
+  if (kind === 'funding') {
+    const { data: planBookings } = await db
+      .from('bookings').select('id,price_cents,status').eq('plan_id', params.planId)
+      .not('status', 'in', '("failed","cancelled")');
+    shares = planShares(planBookings || [], plan.budget_cents || 0, memberIds, await planSkips(db, params.planId));
+  }
 
   let notified = 0;
   const failures: string[] = [];
@@ -72,7 +82,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
         })
       : await sendFundingNeeded(person.email, {
           planTitle: plan.title, groupName: group?.name || 'Your group',
-          shareCents: shares[0] ?? 0, url,
+          shareCents: shares[person.id] ?? 0, url,
         });
     if (result.sent) {
       notified++;
