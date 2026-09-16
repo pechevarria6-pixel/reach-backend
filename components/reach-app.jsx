@@ -2709,7 +2709,6 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   // drinks are already in the taste quiz.
   const [mode,setMode]=useState(known?.startDate&&known?.endDate?"trip":null);
   const [nightTime,setNightTime]=useState("");
-  const [nightWhere,setNightWhere]=useState("");
   const isNight=mode==="night";
   const [answers,setAnswers]=useState({
     tripType:known?.tripType||[],accommodation:known?.accommodation||[],
@@ -2717,7 +2716,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     // A night has its own mood. What you fancy this Friday is not your
     // standing taste profile, so these are asked fresh every time and never
     // carried over from a previous plan.
-    nightKind:[],nightFood:[],nightEnergy:null,
+    nightKind:[],nightFood:[],nightEnergy:null,nightWhere:null,
   });
   // Default to trusting what was already said. Anyone who wants the full set
   // of questions back gets one tap to have them — the recap card offers it.
@@ -2836,6 +2835,17 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   // Friday to the next. Nothing here is carried over from a previous plan.
   const nightQuestions=[
     {
+      id:"nightWhere",icon:"📍",
+      title:"Where should it be?",
+      sub:"Roughly the part of town, not an address.",
+      options:[
+        {id:"water",e:"🌊",l:"By the water"},
+        {id:"city",e:"🏙️",l:"In the city"},
+        {id:"local",e:"🏡",l:"Local and low-key"},
+        {id:"anywhere",e:"🎲",l:"Wherever's good"},
+      ],
+    },
+    {
       id:"nightKind",icon:"🌃",
       title:"What kind of night?",
       sub:"Pick as many as you like — we'll build the evening around them.",
@@ -2912,7 +2922,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
       budgetNum,
       {...merged,nights:isNight?1:nights},
       isNight?{mode:"night",nightPrefs:{
-        time:nightTime,where:nightWhere,
+        time:nightTime,where:merged.nightWhere||"",
         kind:merged.nightKind||[],food:merged.nightFood||[],energy:merged.nightEnergy||null,
       }}:{mode:"trip"},
     );
@@ -2987,22 +2997,10 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
                     onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
                 </div>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Roughly when</div>
-                  <input aria-label="Roughly what time" type="time" className="inp" value={nightTime}
+                  <div style={{fontSize:12,color:C.t3,marginBottom:6}}>What time</div>
+                  <input aria-label="What time" type="time" className="inp" value={nightTime}
                     onChange={e=>setNightTime(e.target.value)} style={{color:C.t1}}/>
                 </div>
-              </div>
-              <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Where should it be?</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
-                {["By the water","In the city","Local and low-key","Wherever's good"].map(w=>(
-                  <button key={w} onClick={()=>setNightWhere(prev=>prev===w?"":w)}
-                    style={{padding:"9px 13px",borderRadius:20,cursor:"pointer",fontSize:12.5,fontWeight:600,
-                      border:`1px solid ${nightWhere===w?C.accentText:C.border}`,
-                      background:nightWhere===w?C.accentDim:C.s2,
-                      color:nightWhere===w?C.accentText:C.t2}}>
-                    {w}
-                  </button>
-                ))}
               </div>
               {/* Food, music and drinks are already answered. Saying so beats
                   asking again, and the way to change them is one tap. */}
