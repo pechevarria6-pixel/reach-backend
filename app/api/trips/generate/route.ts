@@ -160,11 +160,15 @@ export async function POST(req: NextRequest) {
   if (detailTripId) {
     const { destination, vibe, costs } = body.tripData || {};
     const nightWhen = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
+    const nightKind = (nightPrefs.kind || []).join(', ');
+    const nightFood = (nightPrefs.food || []).join(', ');
     const prompt = isNight ? `Plan one evening out: ${destination}.
 
 ${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
 ${nightWhen ? `When and where: ${nightWhen}` : ''}
-Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
+${nightKind ? `What they want out of it: ${nightKind}` : ''}
+${nightPrefs.energy ? `Energy: ${nightPrefs.energy}` : ''}
+Food tonight: ${nightFood || cuisines.slice(0, 4).join(', ') || 'varied'}
 Music: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
 Drinks: ${drinkStyles.join(', ') || 'no preference'}
 A good night out, in their words: ${nightlife.join(', ') || 'no preference'}
@@ -294,6 +298,9 @@ better than a confident wrong answer.`;
 ${solo ? 'ONE PERSON, on their own.' : `GROUP: ${groupSize} people.`}
 WHEN: ${startDate || 'soon'}${nightPrefs.time ? ` around ${nightPrefs.time}` : ''}
 WHERE IT SHOULD FEEL LIKE: ${nightPrefs.where || 'anywhere good'}
+${(nightPrefs.kind || []).length ? 'WHAT THEY WANT OUT OF IT: ' + (nightPrefs.kind || []).join(', ') : ''}
+${nightPrefs.energy ? 'ENERGY: ' + nightPrefs.energy : ''}
+${(nightPrefs.food || []).length ? 'HUNGRY FOR TONIGHT: ' + (nightPrefs.food || []).join(', ') : ''}
 BUDGET: about $${effectiveBudget} each for the whole night
 FOOD: ${cuisines.slice(0, 5).join(', ') || 'varied'}
 MUSIC: ${musicGenres.slice(0, 4).join(', ') || 'mixed'}

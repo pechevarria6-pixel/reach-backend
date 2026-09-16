@@ -1644,7 +1644,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             <div style={{padding:"40px 20px",textAlign:"center"}}>
               <div style={{fontSize:40,marginBottom:12}}>🗺️</div>
               <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>Nothing planned yet</div>
-              <div style={{fontSize:13,color:C.t2,marginBottom:20}}>Pick somewhere together. We will work out the days, the costs and who owes what.</div>
+              <div style={{fontSize:13,color:C.t2,marginBottom:20}}>Pick a night out or somewhere to go. We'll work out the plan, the costs and who owes what.</div>
               <button className="bp" onClick={()=>push("groupTrip",{groupId})}>✨ Plan a Trip Together</button>
               <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",marginTop:10,padding:"8px 0"}} onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
             </div>
@@ -2714,6 +2714,10 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   const [answers,setAnswers]=useState({
     tripType:known?.tripType||[],accommodation:known?.accommodation||[],
     budget:null,pace:known?.pace||null,noWayJose:known?.noWayJose||[],
+    // A night has its own mood. What you fancy this Friday is not your
+    // standing taste profile, so these are asked fresh every time and never
+    // carried over from a previous plan.
+    nightKind:[],nightFood:[],nightEnergy:null,
   });
   // Default to trusting what was already said. Anyone who wants the full set
   // of questions back gets one tap to have them — the recap card offers it.
@@ -2764,12 +2768,23 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     },
     {
       id:"budget",icon:"💰",
-      title:"What is this costing each of you?",
-      sub:"Everything in — flights, beds, dinners, the lot. One honest number.",
+      title:isNight?"What's the night costing each of you?":"What is this costing each of you?",
+      sub:isNight
+        ?"Dinner, drinks, tickets — what one person spends on the night."
+        :"Everything in — flights, beds, dinners, the lot. One honest number.",
       isbudget:true,
       // Exact amounts, not ranges: the label now says what actually gets sent.
       // "No limit" is gone — it was not a number, so it parsed to nothing.
-      options:[
+      // A night out is not a fortnight. Asking somebody whether their Tuesday
+      // dinner costs $8,000 is how the whole evening comes back absurd.
+      options:isNight?[
+        {id:"50",e:"🍺",l:"$50"},
+        {id:"80",e:"🍝",l:"$80"},
+        {id:"120",e:"🍷",l:"$120"},
+        {id:"180",e:"✨",l:"$180"},
+        {id:"250",e:"🎟️",l:"$250"},
+        {id:"400",e:"👑",l:"$400"},
+      ]:[
         {id:"1000",e:"💵",l:"$1,000"},
         {id:"2000",e:"💳",l:"$2,000"},
         {id:"3500",e:"✨",l:"$3,500"},
@@ -2816,10 +2831,57 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     const v=known?known[q.id]:null;
     return Array.isArray(v)?v.length>0:!!v;
   };
-  const carried=questions.filter(isCarried);
-  // A night out does not need a trip type, somewhere to sleep or a pace.
-  const NIGHT_QUESTIONS=["budget","noWayJose"];
-  const asked=questions.filter(q=>!isCarried(q)&&(!isNight||NIGHT_QUESTIONS.includes(q.id)));
+  // A night out needs different answers from a fortnight away, and it needs
+  // them every time: who is coming and what everyone fancies changes from one
+  // Friday to the next. Nothing here is carried over from a previous plan.
+  const nightQuestions=[
+    {
+      id:"nightKind",icon:"🌃",
+      title:"What kind of night?",
+      sub:"Pick as many as you like — we'll build the evening around them.",
+      multi:true,
+      customPlaceholder:"Something else? Type it",
+      options:[
+        {id:"dinner",e:"🍽️",l:"Dinner"},
+        {id:"drinks",e:"🍸",l:"Drinks"},
+        {id:"livemusic",e:"🎸",l:"Live music"},
+        {id:"game",e:"🏟️",l:"A game"},
+        {id:"show",e:"🎭",l:"A show"},
+        {id:"new",e:"✨",l:"Something new"},
+      ],
+    },
+    {
+      id:"nightFood",icon:"🍜",
+      title:"Hungry for anything in particular?",
+      sub:"Tonight's craving, not your usual. Skip it and we'll use your taste answers.",
+      multi:true,optional:true,
+      customPlaceholder:"Something else you fancy?",
+      options:[
+        {id:"italian",e:"🍝",l:"Italian"},
+        {id:"japanese",e:"🍣",l:"Japanese"},
+        {id:"mexican",e:"🌮",l:"Mexican"},
+        {id:"steak",e:"🥩",l:"Steak"},
+        {id:"seafood",e:"🦞",l:"Seafood"},
+        {id:"smallplates",e:"🫒",l:"Small plates"},
+      ],
+    },
+    {
+      id:"nightEnergy",icon:"🔋",
+      title:"How big is this night?",
+      sub:"There is no wrong answer and home by ten is a real one.",
+      options:[
+        {id:"chilled",e:"🛋️",l:"Chilled"},
+        {id:"lively",e:"🥂",l:"Lively"},
+        {id:"big",e:"🔥",l:"A big one"},
+        {id:"seewhere",e:"🎲",l:"See where it goes"},
+      ],
+    },
+    questions.find(q=>q.id==="budget"),
+    questions.find(q=>q.id==="noWayJose"),
+  ].filter(Boolean);
+
+  const carried=isNight?[]:questions.filter(isCarried);
+  const asked=isNight?nightQuestions:questions.filter(q=>!isCarried(q));
 
   const isDateStep=qStep===0;
   const quizQ=asked[qStep-1];
@@ -2849,7 +2911,10 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
       {start:startDate,end:isNight?startDate:endDate},
       budgetNum,
       {...merged,nights:isNight?1:nights},
-      isNight?{mode:"night",nightPrefs:{time:nightTime,where:nightWhere}}:{mode:"trip"},
+      isNight?{mode:"night",nightPrefs:{
+        time:nightTime,where:nightWhere,
+        kind:merged.nightKind||[],food:merged.nightFood||[],energy:merged.nightEnergy||null,
+      }}:{mode:"trip"},
     );
   };
 
@@ -3069,7 +3134,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
                       fontFamily:"'Instrument Serif',serif",fontSize:30,color:C.t1,width:"100%"}}/>
                 </div>
                 <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.5}}>
-                  Everything in: flights, stay, food, activities. We plan three options around it —
+                  {isNight?"Dinner, drinks and tickets. We plan three nights around it —":"Everything in: flights, stay, food, activities. We plan three options around it —"}
                   one below, one at it, one a stretch.
                 </div>
               </div>
@@ -3398,7 +3463,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {group.emoji} {group.name}
           </div>
           <div style={{fontSize:12,color:C.t2}}>
-            {step===0?"Set your trip details":step===1?"Finding your perfect trips…":"Pick your trip"}
+            {step===0
+              ?"Tell us about it"
+              :step===1
+                ?(nightOut?"Finding you a night out…":"Finding your perfect trips…")
+                :(nightOut?"Pick your night":"Pick your trip")}
           </div>
         </div>
       </div>
