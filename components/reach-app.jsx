@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
-import { planSections, daysAway, today, groupSchedule, byName } from "@/lib/calendar";
+import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars } from "@/lib/calendar";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -1534,7 +1534,12 @@ function GroupsScreen({groups,um,push,loading}){
   // glance. "Which group was that" is a name, and a list you search by name
   // has to be in name order to be searchable at all.
   const todayISO=today();
-  const schedule=groupSchedule(groups,todayISO);
+  const [month,setMonth]=useState(monthOf(todayISO));
+  // The calendar pages backwards as well as forwards, so it draws every dated
+  // plan rather than only what is ahead — a month you cannot see last week in
+  // is not a month. A day before all of them lets the same helper gather and
+  // order them.
+  const dated=groupSchedule(groups,"0000-01-01",500);
   const named=[...groups].sort(byName);
   return(
     <div style={{padding:"12px 0 0"}}>
@@ -1564,28 +1569,62 @@ function GroupsScreen({groups,um,push,loading}){
           </div>
         </div>
       )}
-      {/* What is next, gathered out of every group. Before this it was one
-          plan at a time, each buried inside whichever group it belonged to. */}
-      {schedule.length>0&&(
+      {/* A month at a glance. A list says what is next; a calendar says what
+          the month looks like — that two trips overlap, that the weekend after
+          next is still free. Those are shapes, and a list cannot show one. */}
+      {groups.length>0&&(
         <div style={{margin:"0 20px 18px"}}>
-          <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
             <span className="sl">Coming up</span>
-            <span style={{fontSize:11.5,color:C.t3}}>{plural(schedule.length,"plan")}</span>
+            <div style={{display:"flex",alignItems:"center",gap:2}}>
+              <button aria-label="Previous month" onClick={()=>setMonth(m=>addMonths(m,-1))}
+                style={{background:"none",border:"none",color:C.t2,fontSize:17,lineHeight:1,cursor:"pointer",padding:"5px 9px",borderRadius:8}}>‹</button>
+              <span style={{fontSize:12.5,color:C.t1,minWidth:108,textAlign:"center"}}>{monthLabel(month)}</span>
+              <button aria-label="Next month" onClick={()=>setMonth(m=>addMonths(m,1))}
+                style={{background:"none",border:"none",color:C.t2,fontSize:17,lineHeight:1,cursor:"pointer",padding:"5px 9px",borderRadius:8}}>›</button>
+            </div>
           </div>
           <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden"}}>
-            {schedule.map(({group,plan},i)=>(
-              <div key={plan.id} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:group.id})}
-                style={{display:"flex",alignItems:"center",gap:10,padding:"11px 13px",cursor:"pointer",borderTop:i?`1px solid ${C.border}`:"none"}}>
-                <div style={{fontSize:18,flexShrink:0}}>{group.emoji}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13.5,color:C.t1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{plan.title}</div>
-                  <div style={{fontSize:11.5,color:C.t3,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{group.name} · {plan.dates}</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",padding:"9px 0 5px"}}>
+              {["S","M","T","W","T","F","S"].map((d,i)=>(
+                <div key={i} style={{fontSize:10,color:C.t3,textAlign:"center",letterSpacing:".05em"}}>{d}</div>
+              ))}
+            </div>
+            {monthGrid(month,todayISO).map(week=>{
+              const bars=weekBars(dated,week);
+              const lanes=bars.length?Math.max(...bars.map(b=>b.lane))+1:0;
+              return(
+                <div key={week[0].day} style={{borderTop:`1px solid ${C.border}`,padding:"5px 0 7px"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
+                    {week.map(d=>(
+                      <div key={d.day} style={{textAlign:"center",fontSize:11,padding:"1px 0",
+                        color:d.isToday?C.accentText:d.inMonth?C.t2:C.t3,fontWeight:d.isToday?700:400}}>
+                        {Number(d.day.slice(8))}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Blocks sit over the week rather than inside a day, so a
+                      trip runs across the days it actually covers. */}
+                  <div style={{position:"relative",height:lanes?lanes*16:2,marginTop:3}}>
+                    {bars.map(b=>(
+                      <div key={b.plan.id} {...pressable}
+                        onClick={()=>push("planDetail",{planId:b.plan.id,groupId:b.group.id})}
+                        title={`${b.plan.title} — ${b.group.name}`}
+                        style={{position:"absolute",top:b.lane*16,
+                          left:`calc(${(b.col/7)*100}% + 2px)`,width:`calc(${(b.span/7)*100}% - 4px)`,
+                          height:14,lineHeight:"14px",cursor:"pointer",
+                          background:C.accentDim,color:C.accentText,
+                          borderRadius:4,
+                          borderTopLeftRadius:b.fromEarlier?0:4,borderBottomLeftRadius:b.fromEarlier?0:4,
+                          borderTopRightRadius:b.toLater?0:4,borderBottomRightRadius:b.toLater?0:4,
+                          fontSize:9.5,padding:"0 4px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                        {b.group.emoji} {b.plan.title}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                {daysAway(plan,todayISO)&&(
-                  <span className="pill pill-p" style={{fontSize:10.5,flexShrink:0}}>{daysAway(plan,todayISO)}</span>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

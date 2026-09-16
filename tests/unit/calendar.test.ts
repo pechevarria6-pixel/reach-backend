@@ -1,7 +1,10 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planSections, planDay, daysAway, today, dayWhere, groupSchedule, byName } from '../../lib/calendar.ts';
+import {
+  planSections, planDay, daysAway, today, dayWhere, groupSchedule, byName,
+  monthGrid, monthLabel, monthOf, addMonths, weekBars,
+} from '../../lib/calendar.ts';
 
 // Half past eight on the sixteenth in New York, which the server calls the
 // seventeenth. Every evening in the Americas looks like this.
@@ -182,6 +185,92 @@ test('the schedule copes with junk rather than throwing', () => {
   ], TODAY);
   assert.deepEqual(schedule.map(r => r.group.name), ['c']);
   assert.deepEqual(groupSchedule([], TODAY), []);
+});
+
+test('the grid is whole weeks, Sunday first, with no holes at the corners', () => {
+  const weeks = monthGrid('2026-09', TODAY);
+  assert.ok(weeks.every(w => w.length === 7), 'every week is seven days');
+  // September 2026 begins on a Tuesday, so the first week carries two days of August.
+  assert.equal(weeks[0][0].day, '2026-08-30');
+  assert.equal(weeks[0][0].inMonth, false);
+  assert.equal(weeks[0][2].day, '2026-09-01');
+  assert.equal(weeks[0][2].inMonth, true);
+  // The last day of the month is present, and today is marked exactly once.
+  const all = weeks.flat();
+  assert.ok(all.some(d => d.day === '2026-09-30' && d.inMonth));
+  assert.equal(all.filter(d => d.isToday).length, 1);
+  assert.equal(all.find(d => d.isToday)?.day, TODAY);
+});
+
+test('a month nobody could be looking at does not crash the screen', () => {
+  for (const bad of ['', 'September', '2026-13', '2026-09-16']) {
+    assert.deepEqual(monthGrid(bad, TODAY), [], bad);
+    assert.equal(monthLabel(bad), '');
+  }
+});
+
+test('the arrows walk off the end of a year correctly', () => {
+  assert.equal(addMonths('2026-09', 1), '2026-10');
+  assert.equal(addMonths('2026-12', 1), '2027-01');
+  assert.equal(addMonths('2026-01', -1), '2025-12');
+  assert.equal(addMonths('2026-09', -13), '2025-08');
+  assert.equal(monthLabel('2026-09'), 'September 2026');
+  assert.equal(monthOf('2026-09-16'), '2026-09');
+});
+
+test('a trip is clipped to each week it runs through', () => {
+  const week1 = monthGrid('2026-09', TODAY)[2]; // Sep 13–19
+  const week2 = monthGrid('2026-09', TODAY)[3]; // Sep 20–26
+  const rows = [{ group: { name: 'g' }, plan: plan('long', '2026-09-15', '2026-09-22'), day: '2026-09-15' }];
+
+  const [a] = weekBars(rows, week1);
+  assert.equal(a.col, 2, 'starts on the Tuesday');
+  assert.equal(a.span, 5, 'runs to the end of that week');
+  assert.equal(a.fromEarlier, false);
+  assert.equal(a.toLater, true, 'carries on past Saturday');
+
+  const [b] = weekBars(rows, week2);
+  assert.equal(b.col, 0, 'picks up at the Sunday');
+  assert.equal(b.span, 3);
+  assert.equal(b.fromEarlier, true);
+  assert.equal(b.toLater, false);
+});
+
+test('overlapping trips are stacked into lanes rather than drawn on top of each other', () => {
+  const week = monthGrid('2026-09', TODAY)[2]; // Sep 13–19
+  const rows = [
+    { group: { name: 'a' }, plan: plan('a', '2026-09-13', '2026-09-19'), day: '2026-09-13' },
+    { group: { name: 'b' }, plan: plan('b', '2026-09-14', '2026-09-16'), day: '2026-09-14' },
+    { group: { name: 'c' }, plan: plan('c', '2026-09-15', '2026-09-17'), day: '2026-09-15' },
+  ];
+  const bars = weekBars(rows, week);
+  assert.equal(bars.length, 3);
+  assert.deepEqual([...new Set(bars.map(b => b.lane))], [0, 1, 2], 'three lanes, none shared');
+});
+
+test('trips that do not overlap share a lane rather than wasting a row', () => {
+  const week = monthGrid('2026-09', TODAY)[2]; // Sep 13–19
+  const rows = [
+    { group: { name: 'a' }, plan: plan('a', '2026-09-13', '2026-09-14'), day: '2026-09-13' },
+    { group: { name: 'b' }, plan: plan('b', '2026-09-17', '2026-09-18'), day: '2026-09-17' },
+  ];
+  assert.deepEqual(weekBars(rows, week).map(b => b.lane), [0, 0]);
+});
+
+test('a week with nothing in it draws nothing', () => {
+  const week = monthGrid('2026-09', TODAY)[0];
+  const rows = [{ group: { name: 'a' }, plan: plan('a', '2026-11-02'), day: '2026-11-02' }];
+  assert.deepEqual(weekBars(rows, week), []);
+  assert.deepEqual(weekBars(rows, [] as never), []);
+  assert.deepEqual(weekBars([], week), []);
+});
+
+test('a night out is a single block, not a smear across the week', () => {
+  const week = monthGrid('2026-09', TODAY)[2];
+  const rows = [{ group: { name: 'a' }, plan: plan('night', '2026-09-16'), day: '2026-09-16' }];
+  const [bar] = weekBars(rows, week);
+  assert.equal(bar.span, 1);
+  assert.equal(bar.col, 3, 'the Wednesday');
 });
 
 test('groups are listed by name, the way somebody looks one up', () => {

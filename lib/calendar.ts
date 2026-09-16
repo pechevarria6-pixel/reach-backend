@@ -143,6 +143,142 @@ export function groupSchedule<P extends DatedPlan, G extends { plans?: P[] }>(
   return rows.sort((a, b) => a.day.localeCompare(b.day)).slice(0, Math.max(0, limit));
 }
 
+// ─── The month grid ──────────────────────────────────────────────────────
+// A list says what is next. A calendar says what the month looks like — that
+// two trips overlap, that the weekend after next is empty. Those are shapes,
+// and a list cannot show a shape.
+
+export type CalendarDay = { day: string; inMonth: boolean; isToday: boolean };
+export type PlanBar<P, G> = {
+  plan: P;
+  group: G;
+  /** Column 0-6 within the week, and how many columns it covers. */
+  col: number;
+  span: number;
+  /** Which row within the week's stack, so overlapping trips do not collide. */
+  lane: number;
+  /** The trip carries on past this week's edge, so the block is not capped there. */
+  fromEarlier: boolean;
+  toLater: boolean;
+};
+
+// The shape is not enough, exactly as it was not enough for a day. "2026-13"
+// matches this and is not a month, and Date.UTC rolls it silently into January
+// of the next year — so the grid would be drawn, correctly, for a month nobody
+// asked to see.
+const MONTH_SHAPE = /^\d{4}-\d{2}$/;
+const isMonth = (m: unknown): m is string => {
+  if (typeof m !== 'string' || !MONTH_SHAPE.test(m)) return false;
+  const n = Number(m.slice(5, 7));
+  return n >= 1 && n <= 12;
+};
+const DAY_MS = 86_400_000;
+const utcDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+const parseDay = (d: string) => Date.parse(`${d}T00:00:00Z`);
+
+/** The month a day belongs to, as YYYY-MM. */
+export function monthOf(day: string): string {
+  return ISO.test(day) ? day.slice(0, 7) : '';
+}
+
+/** Months forward or back, so the arrows cannot walk off the end of a year. */
+export function addMonths(month: string, delta: number): string {
+  if (!isMonth(month)) return month;
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  const t = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** "September 2026", for the heading above the grid. */
+export function monthLabel(month: string): string {
+  if (!isMonth(month)) return '';
+  return `${MONTH_NAMES[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
+}
+
+/**
+ * The weeks of a month, each seven days, Sunday first.
+ *
+ * The days either side that finish off the first and last weeks are included
+ * and marked, because a calendar with holes at the corners is not a calendar —
+ * and a trip running from the 29th to the 2nd has to be drawable across the
+ * seam.
+ */
+export function monthGrid(month: string, today: string): CalendarDay[][] {
+  if (!isMonth(month)) return [];
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  const first = Date.UTC(y, m - 1, 1);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const lead = new Date(first).getUTCDay();
+  const weeks: CalendarDay[][] = [];
+  const total = Math.ceil((lead + daysInMonth) / 7) * 7;
+  for (let i = 0; i < total; i++) {
+    const day = utcDay(first + (i - lead) * DAY_MS);
+    if (i % 7 === 0) weeks.push([]);
+    weeks[weeks.length - 1].push({
+      day,
+      inMonth: day.slice(0, 7) === month,
+      isToday: day === today,
+    });
+  }
+  return weeks;
+}
+
+/**
+ * The blocks to draw across one week.
+ *
+ * Each plan is clipped to the week it is being drawn into, so a fortnight
+ * abroad becomes a block on each week's row rather than one impossible block.
+ * Overlapping plans are stacked into lanes — the user had six trips overlapping
+ * in a single September, and without lanes they would have been painted on top
+ * of one another.
+ *
+ * Longest first within a lane, so the big commitment is the one on the top row
+ * and the evening out sits underneath it.
+ */
+export function weekBars<P extends DatedPlan, G>(
+  rows: { group: G; plan: P; day: string }[],
+  week: CalendarDay[],
+): PlanBar<P, G>[] {
+  if (!Array.isArray(week) || week.length !== 7) return [];
+  const from = week[0].day;
+  const to = week[6].day;
+
+  const clipped = (Array.isArray(rows) ? rows : []).flatMap(row => {
+    const start = planDay(row.plan);
+    const end = (lastDay(row.plan) as string) || start;
+    if (!start || !end || end < from || start > to) return [];
+    const col = start <= from ? 0 : Math.round((parseDay(start) - parseDay(from)) / DAY_MS);
+    const endCol = end >= to ? 6 : Math.round((parseDay(end) - parseDay(from)) / DAY_MS);
+    return [{
+      plan: row.plan,
+      group: row.group,
+      col,
+      span: Math.max(1, endCol - col + 1),
+      lane: 0,
+      fromEarlier: start < from,
+      toLater: end > to,
+    }];
+  });
+
+  // Longest first, then earliest, so lanes fill predictably rather than by
+  // whatever order the groups happened to arrive in.
+  clipped.sort((a, b) => b.span - a.span || a.col - b.col);
+
+  const lanes: number[] = []; // the first free column in each lane
+  for (const bar of clipped) {
+    let lane = lanes.findIndex(freeFrom => bar.col >= freeFrom);
+    if (lane < 0) lane = lanes.length;
+    lanes[lane] = bar.col + bar.span;
+    bar.lane = lane;
+  }
+  return clipped.sort((a, b) => a.lane - b.lane || a.col - b.col);
+}
+
 /**
  * Groups by name, the way somebody looks one up.
  *
