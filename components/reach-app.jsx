@@ -26,6 +26,10 @@ const TOKENS = [
   "t1", "t2", "t3", "t4",
   // Surfaces that are translucent or shadowed, and so cannot be a flat token.
   "navBg", "overlay", "cardShadow", "cardShadowHover", "accentGlow",
+  // Texture: a paper grain on the ground, and the hairline highlight along
+  // the top edge of anything raised. Both sit behind content, so neither
+  // can change how readable a word is.
+  "grain", "edgeHi",
   "accentGlowHover", "focusRing", "frameShadow", "frameGlow",
 ];
 
@@ -48,9 +52,9 @@ const PALETTE = {
 
     // Semantic colours are darkened for the light theme: the dark-theme values
     // are tuned to glow on near-black and fail badly as text on white.
-    green: "#1D8248", greenDim: "rgba(29,130,72,0.12)",
-    amber: "#96650A", amberDim: "rgba(150,101,10,0.12)",
-    red: "#C0332C", redDim: "rgba(192,51,44,0.10)",
+    green: "#17703C", greenDim: "rgba(23,112,60,0.12)",
+    amber: "#6F4B00", amberDim: "rgba(111,75,0,0.12)",
+    red: "#C2185B", redDim: "rgba(194,24,91,0.10)",
     blue: "#1E62C4", blueDim: "rgba(30,98,196,0.10)",
 
     t1: "#241C10", t2: "#6B5C42", t3: "#76674C", t4: "#817154",
@@ -64,6 +68,8 @@ const PALETTE = {
     accentGlow: "0 4px 16px rgba(180,135,40,0.28)",
     accentGlowHover: "0 8px 24px rgba(180,135,40,0.36)",
     focusRing: "rgba(212,168,67,0.28)",
+    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.22%22/%3E%3C/svg%3E')",
+    edgeHi: "rgba(255,255,255,0.75)",
     frameShadow: "0 60px 140px rgba(80,62,28,0.28)",
     frameGlow: "rgba(212,168,67,0.10)",
   },
@@ -82,7 +88,7 @@ const PALETTE = {
 
     green: "#52C97B", greenDim: "rgba(82,201,123,0.1)",
     amber: "#F59E0B", amberDim: "rgba(245,158,11,0.1)",
-    red: "#F87171", redDim: "rgba(248,113,113,0.1)",
+    red: "#FF8080", redDim: "rgba(255,128,128,0.1)",
     blue: "#60A5FA", blueDim: "rgba(96,165,250,0.1)",
 
     t1: "#F5EDD8", t2: "#9A8A6A", t3: "#97845E", t4: "#8A7550",
@@ -94,6 +100,8 @@ const PALETTE = {
     accentGlow: "0 4px 20px rgba(212,168,67,0.25)",
     accentGlowHover: "0 6px 24px rgba(212,168,67,0.35)",
     focusRing: "rgba(212,168,67,0.18)",
+    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.16%22/%3E%3C/svg%3E')",
+    edgeHi: "rgba(255,255,255,0.05)",
     frameShadow: "0 80px 200px rgba(0,0,0,.95)",
     frameGlow: "rgba(212,168,67,0.08)",
   },
@@ -119,7 +127,7 @@ const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
 ${THEME_CSS}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-body{background:${C.page};display:flex;justify-content:center;min-height:100vh;font-family:'Space Grotesk',sans-serif;color:${C.t1};-webkit-font-smoothing:antialiased;}
+body{background:${C.page};background-image:${C.grain};display:flex;justify-content:center;min-height:100vh;font-family:'Space Grotesk',sans-serif;color:${C.t1};-webkit-font-smoothing:antialiased;}
 /* Inline styles don't inherit a font, which is why the family string was
    repeated dozens of times across the file. Set it once for every control. */
 button,input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;}
@@ -131,7 +139,7 @@ button{min-height:44px;}
    on an actual phone the frame was wider than the viewport and taller than
    the screen: it overflowed sideways and got clipped at the bottom. Phones
    now get the real viewport; the decorative frame is a desktop affordance. */
-.aw{width:100%;max-width:520px;min-height:100dvh;background:${C.bg};position:relative;display:flex;flex-direction:column;overflow:hidden;
+.aw{width:100%;max-width:520px;min-height:100dvh;background:${C.bg};background-image:${C.grain};position:relative;display:flex;flex-direction:column;overflow:hidden;
   padding-top:env(safe-area-inset-top);}
 @media (min-width:560px) and (min-height:900px){
   body{padding:20px 0 40px;}
@@ -164,7 +172,7 @@ button{min-height:44px;}
 .hd-ov{position:absolute;top:calc(16px + env(safe-area-inset-top));left:16px;width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;z-index:10;}
 .hd-ov:active{transform:scale(.94);}
 .sl{font-size:12.5px;font-weight:600;letter-spacing:0;text-transform:none;color:${C.t2};}
-.card{background:linear-gradient(145deg,${C.s1},${C.s2});border:1px solid ${C.border};border-radius:24px;overflow:hidden;transition:all .2s;cursor:pointer;box-shadow:${C.cardShadow};}
+.card{background:linear-gradient(145deg,${C.s1},${C.s2});border:1px solid ${C.border};border-radius:24px;overflow:hidden;transition:all .2s;cursor:pointer;box-shadow:${C.cardShadow},inset 0 1px 0 ${C.edgeHi};}
 .card:hover{border-color:${C.accentBorder};transform:translateY(-2px);box-shadow:${C.cardShadowHover};}
 .card:active{transform:scale(.98);}
 .pill{display:inline-flex;align-items:center;gap:4px;padding:4px 11px;border-radius:20px;font-size:11.5px;font-weight:600;}
@@ -173,7 +181,7 @@ button{min-height:44px;}
 .pill-r{background:${C.redDim};color:${C.red};}
 .pill-p{background:${C.accentDim};color:${C.accentText};}
 .pill-m{background:${C.s3};color:${C.t2};}
-.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:${C.accentGlow};}
+.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:${C.accentGlow},inset 0 1px 0 rgba(255,255,255,.32);}
 .bp:hover{transform:translateY(-1px);box-shadow:${C.accentGlowHover};}
 .bp:active{transform:scale(.98);}
 .bp:disabled{opacity:.35;cursor:not-allowed;}
@@ -201,8 +209,8 @@ button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2
     transition-duration:.01ms!important;scroll-behavior:auto!important;}
 }
 .inp::placeholder{color:${C.t3};}
-.ov{position:absolute;inset:0;background:${C.overlay};z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
-.sh{width:100%;max-height:90%;background:${C.s1};border-radius:28px 28px 0 0;border-top:1px solid ${C.border};overflow-y:auto;scrollbar-width:none;animation:su .25s cubic-bezier(.32,.72,0,1);padding-bottom:30px;}
+.ov{position:absolute;inset:0;background:${C.overlay};backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
+.sh{width:100%;max-height:90%;background:${C.s1};background-image:${C.grain};border-radius:28px 28px 0 0;border-top:1px solid ${C.border};box-shadow:inset 0 1px 0 ${C.edgeHi};overflow-y:auto;scrollbar-width:none;animation:su .25s cubic-bezier(.32,.72,0,1);padding-bottom:30px;}
 .sh::-webkit-scrollbar{display:none;}
 .sh-hdl{width:36px;height:4px;border-radius:2px;background:${C.border};margin:12px auto 0;}
 .sh-hdr{padding:20px 20px 16px;border-bottom:1px solid ${C.border};display:flex;align-items:center;justify-content:space-between;}
@@ -427,6 +435,33 @@ function NotLoaded({what="This",onBack}){
   );
 }
 
+// Cards, rows and text links that behave as buttons but are not buttons. The
+// stylesheet has drawn a focus ring for [role="button"] since the keyboard
+// audit, and nothing could ever show it: none of these was reachable by
+// keyboard at all. Enter and space press the element itself, so the click
+// handler beside this stays the only description of what the control does.
+const pressable={
+  role:"button",tabIndex:0,
+  onKeyDown:e=>{
+    if(e.key==="Enter"||e.key===" "){e.preventDefault();e.currentTarget.click();}
+  },
+};
+
+// Every sheet in the app closes by tapping the dark area behind it, and that
+// was the only way out: on a keyboard there was none at all. The handler is
+// read through a ref so the listener is attached once per opening rather than
+// on every render.
+function useEscape(open,onClose){
+  const latest=useRef(onClose);
+  latest.current=onClose;
+  useEffect(()=>{
+    if(!open)return;
+    const onKey=e=>{ if(e.key==="Escape")latest.current(); };
+    window.addEventListener("keydown",onKey);
+    return()=>window.removeEventListener("keydown",onKey);
+  },[open]);
+}
+
 // A client-made id that the server has never seen. Hitting an API with one of
 // these is always a 404, so the callers that can hold one check first.
 function isTempId(id){
@@ -551,7 +586,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             </span>
           </div>
           {actions.map((a,i)=>(
-            <div key={i} onClick={()=>{if(a.plan&&a.plan.id&&a.plan.group?.id)push("planDetail",{planId:a.plan.id,groupId:a.plan.group.id});}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderTop:i?"1px solid "+C.accentBorder:"none",cursor:"pointer"}}>
+            <div key={i} {...pressable} onClick={()=>{if(a.plan&&a.plan.id&&a.plan.group?.id)push("planDetail",{planId:a.plan.id,groupId:a.plan.group.id});}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderTop:i?"1px solid "+C.accentBorder:"none",cursor:"pointer"}}>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,color:C.t1,fontWeight:500}}>{a.text}</div>
                 <div style={{fontSize:11,color:C.t2,marginTop:2}}>{a.sub}</div>
@@ -570,7 +605,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       {(upcoming.length>0||groups.length>0)&&(
       <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
         {upcoming.map(plan=>(
-          <div key={plan.id} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
+          <div key={plan.id} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
             style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s"}}>
             <div style={{padding:16}}>
               <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`} style={{marginBottom:10,display:"inline-flex"}}>
@@ -582,7 +617,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             </div>
           </div>
         ))}
-        <div onClick={()=>push("createPlan",{})} style={{minWidth:130,background:"transparent",border:`2px dashed ${C.border}`,borderRadius:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:20,cursor:"pointer",flexShrink:0}}>
+        <div {...pressable} onClick={()=>push("createPlan",{})} style={{minWidth:130,background:"transparent",border:`2px dashed ${C.border}`,borderRadius:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:20,cursor:"pointer",flexShrink:0}}>
           <div style={{fontSize:24,color:C.t3}}>＋</div>
           <div style={{fontSize:12,color:C.t2,fontWeight:500,textAlign:"center"}}>New plan</div>
         </div>
@@ -592,7 +627,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           the ways in rather than buried in a settings list. It goes away the
           moment it is answered. */}
       {user&&user.quizComplete===false&&(
-        <div onClick={()=>push("taste")}
+        <div {...pressable} onClick={()=>push("taste")}
           style={{margin:"0 20px 14px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,
             borderRadius:18,padding:16,display:"flex",gap:12,cursor:"pointer",alignItems:"center"}}>
           <span style={{fontSize:28}}>✨</span>
@@ -624,7 +659,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         {emoji:"🍽️",text:"Just booking one dinner or one gig? That counts as a plan.",cta:"Sort one evening →",action:()=>push("createPlan",{})},
         {emoji:"✈️",text:"Or do the whole thing — solo, or with everyone.",cta:"Plan a trip →",action:()=>push("createGroup")},
       ]).filter(Boolean).map((ins,i)=>(
-        <div key={i} onClick={ins.action} style={{margin:"0 20px 10px",background:C.s1,border:"1px solid "+C.border,borderRadius:16,padding:14,display:"flex",gap:12,cursor:"pointer"}}>
+        <div key={i} {...pressable} onClick={ins.action} style={{margin:"0 20px 10px",background:C.s1,border:"1px solid "+C.border,borderRadius:16,padding:14,display:"flex",gap:12,cursor:"pointer"}}>
           <span style={{fontSize:24}}>{ins.emoji}</span>
           <div>
             <div style={{fontSize:13,color:C.t1,lineHeight:1.5}}>{ins.text}</div>
@@ -1032,6 +1067,9 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   const [bookedPlan,setBookedPlan]=useState(null);
   const [sentOff,setSentOff]=useState(false);
   const [askIfBooked,setAskIfBooked]=useState(false);
+  useEscape(planPicker,()=>setPlanPicker(false));
+  useEscape(booking,()=>{setBooking(false);setBookStep(0);});
+  useEscape(askIfBooked,()=>setAskIfBooked(false));
   useEffect(()=>{
     if(!sentOff)return;
     const onBack2=()=>{if(!document.hidden)setAskIfBooked(true);};
@@ -1272,7 +1310,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
               </div>
             )}
             {groups.map(g=>(
-              <div key={g.id} className="ri" onClick={()=>!saving&&addToGroup(g)}
+              <div key={g.id} className="ri" {...pressable} onClick={()=>!saving&&addToGroup(g)}
                 style={{opacity:saving?.6:1,cursor:saving?"not-allowed":"pointer"}}>
                 <div className="ri-ic" style={{background:C.s3,fontSize:20}}>{g.emoji}</div>
                 <div className="ri-inf">
@@ -1317,7 +1355,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                   ):(
                     <div style={{marginBottom:14}}>
                       <div style={{fontSize:12,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Date</div>
-                      <input type="date" className="inp" value={bookDate}
+                      <input aria-label="Date you booked" type="date" className="inp" value={bookDate}
                         min={new Date().toISOString().split("T")[0]}
                         onChange={e=>setBookDate(e.target.value)} style={{color:C.t1}}/>
                     </div>
@@ -1355,7 +1393,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
 
                   <div style={{marginBottom:20}}>
                     <div style={{fontSize:12,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Special requests (optional)</div>
-                    <input className="inp" value={bookNotes} onChange={e=>setBookNotes(e.target.value)}
+                    <input aria-label="Anything worth remembering" className="inp" value={bookNotes} onChange={e=>setBookNotes(e.target.value)}
                       placeholder="Allergies, celebrations, seating preferences..."/>
                   </div>
 
@@ -1499,7 +1537,7 @@ function GroupsScreen({groups,um,push,loading}){
       {groups.map(g=>{
         const active=g.plans.filter(p=>p.status!=="completed");
         return(
-          <div key={g.id} className="card" style={{margin:"0 20px 12px",cursor:"pointer"}} onClick={()=>push("groupDetail",{groupId:g.id})}>
+          <div key={g.id} className="card" style={{margin:"0 20px 12px",cursor:"pointer"}} {...pressable} onClick={()=>push("groupDetail",{groupId:g.id})}>
             <div style={{padding:16}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -1532,6 +1570,10 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
   const [tab,setTab]=useState("plans");
   const [refreshing,setRefreshing]=useState(false);
   const [busyId,setBusyId]=useState(null);
+  // Removing somebody, or walking out yourself, is a one-tap change to other
+  // people's plans that nothing could undo. Deleting a group makes you type
+  // its name; these asked nothing at all.
+  const [confirming,setConfirming]=useState(null);
   const isAdmin=group?.role==="admin";
   const isAlone=isSoloGroup(group);
 
@@ -1586,7 +1628,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             </div>
           )}
           {group.plans.map(plan=>(
-            <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} onClick={()=>push("planDetail",{planId:plan.id,groupId})}>
+            <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId})}>
               <div style={{padding:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                   <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>{plan.title}</div>
@@ -1634,9 +1676,21 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                 <Av u={u} lg/>
                 <div className="ri-inf"><div className="ri-t">{u.name}</div><div className="ri-s">{u.handle}</div></div>
                 {uid===me
-                  ? <button className="bsm bsm-r" disabled={!!busyId} onClick={doLeave}>{busyId===me?"Leaving…":"Leave"}</button>
+                  ? (confirming==="leave"
+                      ? <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                          <span style={{fontSize:11.5,color:C.t2}}>Leave {group.name}?</span>
+                          <button className="bsm" disabled={!!busyId} onClick={()=>setConfirming(null)}>Stay</button>
+                          <button className="bsm bsm-r" disabled={!!busyId} onClick={doLeave}>{busyId===me?"Leaving…":"Leave"}</button>
+                        </div>
+                      : <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>setConfirming("leave")}>Leave</button>)
                   : isAdmin
-                    ? <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>doRemove(uid,u.name)}>{busyId===uid?"Removing…":"Remove"}</button>
+                    ? (confirming===uid
+                        ? <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                            <span style={{fontSize:11.5,color:C.t2}}>Remove {u.name}?</span>
+                            <button className="bsm" disabled={!!busyId} onClick={()=>setConfirming(null)}>Keep</button>
+                            <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>doRemove(uid,u.name)}>{busyId===uid?"Removing…":"Remove"}</button>
+                          </div>
+                        : <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>setConfirming(uid)}>Remove</button>)
                     : null}
               </div>
             );
@@ -1644,10 +1698,22 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           {isAdmin&&<div style={{padding:"12px 20px"}}><button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Invite Someone</button></div>}
           {!isAdmin&&(
             <div style={{padding:"12px 20px"}}>
-              <button className="bs" disabled={!!busyId} onClick={doLeave}
-                style={{color:C.red,borderColor:C.redDim}}>
-                {busyId===me?"Leaving…":`Leave ${group.name}`}
-              </button>
+              {confirming==="leave"
+                ? (<>
+                    <div style={{fontSize:12,color:C.t2,marginBottom:8,lineHeight:1.5}}>
+                      You'll lose access to {group.name}'s plans. Someone can add you back.
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      <button className="bs" style={{flex:1}} disabled={!!busyId} onClick={()=>setConfirming(null)}>Stay</button>
+                      <button className="bs" style={{flex:1,color:C.red,borderColor:C.redDim}} disabled={!!busyId} onClick={doLeave}>
+                        {busyId===me?"Leaving…":"Leave"}
+                      </button>
+                    </div>
+                  </>)
+                : <button className="bs" disabled={!!busyId} onClick={()=>setConfirming("leave")}
+                    style={{color:C.red,borderColor:C.redDim}}>
+                    {`Leave ${group.name}`}
+                  </button>}
             </div>
           )}
         </div>
@@ -1679,16 +1745,17 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
 // ─── EDIT GROUP ───────────────────────────────────────────────────────────────
 function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup,leaveGroup,deleteGroup,saveGroupToServer,me}){
   const group=groups.find(g=>g.id===groupId);
-  if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
-  const [name,setName]=useState(group.name);
+  const [name,setName]=useState(group?.name||"");
 
-  const members=group.memberIds||[];
+  const members=group?.memberIds||[];
   const [invites,setInvites]=useState([]);
   const [q,setQ]=useState("");
   const [results,setResults]=useState([]);
   const [searching,setSearching]=useState(false);
   const [searchFailed,setSearchFailed]=useState(false);
   const [busy,setBusy]=useState(false);
+  // One tap used to remove somebody from the group with nothing in between.
+  const [confirmingRemove,setConfirmingRemove]=useState(null);
 
   const isEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v||"").trim());
 
@@ -1804,8 +1871,10 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   const [danger,setDanger]=useState(null); // null | "leave" | "delete"
   const [typed,setTyped]=useState("");
   const [working,setWorking]=useState(false);
-  const isAdmin=group.role==="admin";
-  const nameMatches=typed.trim().toLowerCase()===group.name.trim().toLowerCase();
+  const isAdmin=group?.role==="admin";
+  const nameMatches=typed.trim().toLowerCase()===(group?.name||"").trim().toLowerCase();
+  // Every hook above runs on every render; the guard belongs here, below them.
+  if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
 
   const doLeave=async()=>{
     if(working)return;setWorking(true);
@@ -1823,7 +1892,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       <ScreenHeader onBack={onBack} label="Back" title="Edit Group"/>
       <div style={{padding:"0 20px",display:"flex",gap:12,alignItems:"center",marginBottom:18}}>
         <div style={{fontSize:44,minWidth:52,textAlign:"center"}}>{inferGroupEmoji(name)}</div>
-        <input className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="Group name" style={{flex:1}}/>
+        <input aria-label="Group name" className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="Group name" style={{flex:1}}/>
       </div>
       <div style={{padding:"0 20px 14px",fontSize:12,color:C.t3,lineHeight:1.5}}>
         The icon follows the name.
@@ -1833,7 +1902,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 
       <div style={{padding:"0 20px 10px"}}>
         <span className="sl">Add someone</span>
-        <input className="inp" value={q} onChange={e=>search(e.target.value)}
+        <input aria-label="Search people by name or email" className="inp" value={q} onChange={e=>search(e.target.value)}
           placeholder="Search by name, or type an email to invite"
           style={{width:"100%",marginTop:8}}/>
         {searching&&<div style={{fontSize:12,color:C.t2,marginTop:8}}>Searching…</div>}
@@ -1855,7 +1924,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       {results.map(u=>{
         const c=toContact(u);
         return(
-          <div key={u.id} className="ri" onClick={()=>addMember({userId:u.id})}>
+          <div key={u.id} className="ri" {...pressable} onClick={()=>addMember({userId:u.id})}>
             <Av u={c} lg/>
             <div className="ri-inf"><div className="ri-t">{c.name}</div><div className="ri-s">{c.handle}</div></div>
             <button className="bsm bsm-p">+ Add</button>
@@ -1874,7 +1943,13 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
             <div className="ri-inf"><div className="ri-t">{u.name}</div><div className="ri-s">{u.handle}</div></div>
             {uid===me
               ? <span style={{fontSize:11,color:C.t3,fontWeight:600}}>You</span>
-              : <button className="bsm bsm-r" disabled={busy} onClick={()=>removeMember(uid)}>Remove</button>}
+              : confirmingRemove===uid
+                ? <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <span style={{fontSize:11.5,color:C.t2}}>Remove {u.name}?</span>
+                    <button className="bsm" disabled={busy} onClick={()=>setConfirmingRemove(null)}>Keep</button>
+                    <button className="bsm bsm-r" disabled={busy} onClick={()=>{setConfirmingRemove(null);removeMember(uid);}}>Remove</button>
+                  </div>
+                : <button className="bsm bsm-r" disabled={busy} onClick={()=>setConfirmingRemove(uid)}>Remove</button>}
           </div>
         );
       })}
@@ -1946,7 +2021,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
                     <div style={{fontSize:12,color:C.t2,marginBottom:8}}>
                       Type <strong style={{color:C.t1}}>{group.name}</strong> to confirm.
                     </div>
-                    <input className="inp" value={typed} onChange={e=>setTyped(e.target.value)}
+                    <input aria-label="Type the group name to confirm" className="inp" value={typed} onChange={e=>setTyped(e.target.value)}
                       placeholder={group.name} autoFocus style={{marginBottom:10}}/>
                     <div style={{display:"flex",gap:8}}>
                       <button className="bs" style={{flex:1}} disabled={working} onClick={()=>{setDanger(null);setTyped("");}}>Cancel</button>
@@ -2091,7 +2166,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
         <div style={{padding:"0 20px"}}>
           <div style={{display:"flex",gap:12,alignItems:"center",marginBottom:10}}>
             <div style={{fontSize:44,minWidth:52,textAlign:"center"}}>{inferGroupEmoji(name)}</div>
-            <input className="inp" value={name} onChange={e=>setName(e.target.value)}
+            <input aria-label="Group name" className="inp" value={name} onChange={e=>setName(e.target.value)}
               placeholder="e.g., Japan on my own" style={{flex:1}} autoFocus/>
           </div>
           <div style={{fontSize:12,color:C.t3,marginBottom:24,lineHeight:1.55}}>
@@ -2109,7 +2184,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
             {/* The emoji is inferred from the name as you type — one fewer
                 decision, and it updates live so it never feels imposed. */}
             <div style={{fontSize:44,minWidth:52,textAlign:"center"}}>{inferGroupEmoji(name)}</div>
-            <input className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g., Ski Trip Crew" style={{flex:1}} autoFocus/>
+            <input aria-label="Group name" className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g., Ski Trip Crew" style={{flex:1}} autoFocus/>
           </div>
           <div style={{fontSize:12,color:C.t3,marginBottom:24,lineHeight:1.5}}>
             We pick an icon from the name. Call it a ski trip and you get a ski trip.
@@ -2121,7 +2196,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
         <div>
           <div style={{padding:"0 20px 12px",fontSize:13,color:C.t2}}>Invite people to {name||"your group"}</div>
           <div style={{padding:"0 20px 12px"}}>
-            <input className="inp" value={searchQuery||""} onChange={e=>searchUsers(e.target.value)} placeholder="Search by name or email..." style={{marginBottom:8}}/>
+            <input aria-label="Search people by name or email" className="inp" value={searchQuery||""} onChange={e=>searchUsers(e.target.value)} placeholder="Search by name or email..." style={{marginBottom:8}}/>
             {searching&&<div style={{fontSize:12,color:C.t3,padding:"4px 0"}}>Searching...</div>}
             {(searchQuery||"").length>=2&&searchResults.length===0&&!searching&&isEmail(searchQuery)&&(
               <>
@@ -2146,7 +2221,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
             const sel=members.includes(u.id);
             const initials=(u.name||u.email||"?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
             return(
-              <div key={u.id} className="cb-row" onClick={()=>setMembers(m=>sel?m.filter(id=>id!==u.id):[...m,u.id])}>
+              <div key={u.id} className="cb-row" {...pressable} onClick={()=>setMembers(m=>sel?m.filter(id=>id!==u.id):[...m,u.id])}>
                 <div className={"cb "+(sel?"ck":"")}>{sel&&<Ic.Check/>}</div>
                 <div style={{width:36,height:36,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",color:C.onAccent,fontWeight:700,fontSize:14,flexShrink:0,overflow:"hidden"}}>
                   {u.avatar_url?<img src={u.avatar_url} style={{width:36,height:36,objectFit:"cover"}} alt=""/>:initials}
@@ -2487,7 +2562,7 @@ function TasteQuizScreen({onBack,toast,onSaved}){
 
       <div style={{flex:1,overflowY:"auto",scrollbarWidth:"none",padding:"0 20px 8px"}}>
         {q.free?(
-          <input className="inp" value={answers[q.id]||""}
+          <input aria-label="Your answer" className="inp" value={answers[q.id]||""}
             onChange={e=>setAnswers(a=>({...a,[q.id]:e.target.value}))}
             placeholder={q.placeholder}/>
         ):(
@@ -2785,13 +2860,13 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
           <div style={{display:"flex",gap:10,marginBottom:16}}>
             <div style={{flex:1}}>
               <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Departure</div>
-              <input type="date" className="inp" value={startDate}
+              <input aria-label="First day" type="date" className="inp" value={startDate}
                 min={new Date().toISOString().split("T")[0]}
                 onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
             </div>
             <div style={{flex:1}}>
               <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Return</div>
-              <input type="date" className="inp" value={endDate}
+              <input aria-label="Last day" type="date" className="inp" value={endDate}
                 min={startDate} onChange={e=>setEndDate(e.target.value)} style={{color:C.t1}}/>
             </div>
           </div>
@@ -3011,6 +3086,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   const allComplete=isSolo||(completedCount>=totalCount&&totalCount>0);
   const readyPercent=isSolo?100:totalCount>0?Math.round((completedCount/totalCount)*100):0;
 
+  // Every hook in a component has to run on every render, so these live above
+  // the guard below rather than beside the code that uses them.
+  const [buildingItinerary,setBuildingItinerary]=useState(null);
+  const [enriching,setEnriching]=useState(0);
+
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
 
   const nights=startDate&&endDate?Math.round((new Date(endDate)-new Date(startDate))/86400000):0;
@@ -3084,11 +3164,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     }
   };
 
-  const [buildingItinerary,setBuildingItinerary]=useState(null);
 
   // Writes the day-by-day plan for every option, in parallel, and attaches it
   // to the trip it belongs to.
-  const [enriching,setEnriching]=useState(0);
   const enrichWithItineraries=async(list,sd,ed)=>{
     setEnriching(list.length);
     const results=await Promise.all(list.map(async trip=>{
@@ -3674,6 +3752,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   const [aiRecs,setAiRecs]=useState([]);
   const [loadingRecs,setLoadingRecs]=useState(false);
   const [showExitConfirm,setShowExitConfirm]=useState(false);
+  useEscape(showExitConfirm,()=>setShowExitConfirm(false));
   const selGroup=groups.find(g=>g.id===gid);
   // Solo mode is first-class: a group of one gets the same flow with the
   // voting UI absent and enable_voting false.
@@ -3923,9 +4002,9 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           <div>
             <div className="pt" style={{marginBottom:6}}>Who's joining?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Select a group and what you're planning.</div>
-            <input className="inp" value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Plan name (e.g., Summer Beach Trip)" style={{marginBottom:14}}/>
+            <input aria-label="Plan name" className="inp" value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Plan name (e.g., Summer Beach Trip)" style={{marginBottom:14}}/>
             <div className="sl" style={{marginBottom:10}}>Who is this for?</div>
-            <div onClick={chooseSolo}
+            <div {...pressable} onClick={chooseSolo}
               style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,
                 border:`2px solid ${isSoloGroup&&gid?C.accentText:C.border}`,
                 background:isSoloGroup&&gid?C.accentDim:C.s2,marginBottom:8,
@@ -3943,7 +4022,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               <div className="sl" style={{margin:"14px 0 10px"}}>Or with a group</div>
             )}
             {groups.filter(g=>(g.memberIds||[]).length>1).map(g=>(
-              <div key={g.id} onClick={()=>setGid(g.id)} style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,border:`2px solid ${gid===g.id?C.accentText:C.border}`,background:gid===g.id?C.accentDim:C.s2,marginBottom:8,cursor:"pointer"}}>
+              <div key={g.id} {...pressable} onClick={()=>setGid(g.id)} style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,border:`2px solid ${gid===g.id?C.accentText:C.border}`,background:gid===g.id?C.accentDim:C.s2,marginBottom:8,cursor:"pointer"}}>
                 <span style={{fontSize:22}}>{g.emoji}</span>
                 <div style={{flex:1}}><div style={{fontSize:14,fontWeight:600,color:C.t1}}>{g.name}</div><div style={{fontSize:12,color:C.t2}}>{g.memberIds.length} members</div></div>
                 {gid===g.id&&<div style={{color:C.accentText}}><Ic.Check/></div>}
@@ -3970,18 +4049,18 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 </div>
                 <div style={{marginBottom:12}}>
                   <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Date</div>
-                  <input type="date" className="inp" value={eventDate} min={new Date().toISOString().split("T")[0]} onChange={e=>setEventDate(e.target.value)} style={{color:C.t1}}/>
+                  <input aria-label="Date" type="date" className="inp" value={eventDate} min={new Date().toISOString().split("T")[0]} onChange={e=>setEventDate(e.target.value)} style={{color:C.t1}}/>
                 </div>
                 {planType==="restaurant"&&(
                   <div style={{marginBottom:14}}>
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Reservation time (optional)</div>
-                    <input type="time" className="inp" value={eventTime} onChange={e=>setEventTime(e.target.value)} style={{color:C.t1}}/>
+                    <input aria-label="Time" type="time" className="inp" value={eventTime} onChange={e=>setEventTime(e.target.value)} style={{color:C.t1}}/>
                   </div>
                 )}
                 {planType==="concert"&&(
                   <div style={{marginBottom:14}}>
                     <div style={{fontSize:12,color:C.t2,marginBottom:8}}>Do you already have a specific event in mind?</div>
-                    <input className="inp" value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Artist or event name (optional)" style={{marginBottom:8}}/>
+                    <input aria-label="Plan name" className="inp" value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Artist or event name (optional)" style={{marginBottom:8}}/>
                   </div>
                 )}
                 {eventDate&&(
@@ -4023,11 +4102,11 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 <div style={{display:"flex",gap:10,marginBottom:12}}>
                   <div style={{flex:1}}>
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>{isWeekend?"Friday":"Departure"}</div>
-                    <input type="date" className="inp" value={startDate} min={new Date().toISOString().split("T")[0]} onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
+                    <input aria-label="First day" type="date" className="inp" value={startDate} min={new Date().toISOString().split("T")[0]} onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
                   </div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>{isWeekend?"Sunday":"Return"}</div>
-                    <input type="date" className="inp" value={endDate} min={startDate} onChange={e=>setEndDate(e.target.value)} style={{color:C.t1}}/>
+                    <input aria-label="Last day" type="date" className="inp" value={endDate} min={startDate} onChange={e=>setEndDate(e.target.value)} style={{color:C.t1}}/>
                   </div>
                 </div>
                 {nights()>0&&(
@@ -4042,7 +4121,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               <div style={{background:C.s2,borderRadius:14,padding:14,border:`1px solid ${C.border}`}}>
                 <div style={{fontSize:12,color:C.t2,marginBottom:8}}><strong style={{color:C.t1}}>{isEvent?"Going with:":"Traveling with:"}</strong></div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {selGroup.memberIds.map(uid=>{const u=um[uid];return u?(<div key={uid} style={{display:"flex",alignItems:"center",gap:6,background:C.s3,borderRadius:20,padding:"4px 10px"}}><div className="av" style={{background:u.color,width:18,height:18,fontSize:9}}>{u.initials}</div><span style={{fontSize:12,color:C.t1}}>{u.name.split(" ")[0]}</span></div>):null;})}
+                  {selGroup.memberIds.map(uid=>{const u=um[uid];return u?(<div key={uid} style={{display:"flex",alignItems:"center",gap:6,background:C.s3,borderRadius:20,padding:"4px 10px"}}><div className="av" style={{background:u.color,width:18,height:18,fontSize:10}}>{u.initials}</div><span style={{fontSize:12,color:C.t1}}>{u.name.split(" ")[0]}</span></div>):null;})}
                 </div>
               </div>
             )}
@@ -4183,7 +4262,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
             </div>
             <div style={{background:C.s1,border:`2px solid ${C.accentText}`,borderRadius:16,padding:"14px 20px",display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t3}}>$</span>
-              <input style={{background:"none",border:"none",fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,width:"100%"}} value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} inputMode="numeric" placeholder="2500"/>
+              <input aria-label="Budget per person" style={{background:"none",border:"none",fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,width:"100%"}} value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} inputMode="numeric" placeholder="2500"/>
               <span style={{fontSize:12,color:C.t3}}>max</span>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:18}}>
@@ -4203,7 +4282,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                   </button>
                 </div>
                 {voting&&vopts.map((opt,i)=>(
-                  <input key={i} className="inp" style={{fontSize:13,marginTop:8}} placeholder={`Option ${i+1} (e.g. Lisbon)`} value={opt} onChange={e=>setVopts(v=>v.map((x,j)=>j===i?e.target.value:x))}/>
+                  <input aria-label="Something to vote on" key={i} className="inp" style={{fontSize:13,marginTop:8}} placeholder={`Option ${i+1} (e.g. Lisbon)`} value={opt} onChange={e=>setVopts(v=>v.map((x,j)=>j===i?e.target.value:x))}/>
                 ))}
               </div>
             )}
@@ -4268,7 +4347,7 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
         {stages.map((s,i)=>(
           <div key={s.k} style={{flex:1}}>
             <div style={{height:4,borderRadius:2,background:s.done?C.accentText:C.s3,transition:"background .3s"}}/>
-            <div style={{fontSize:10.5,marginTop:6,color:s.done?C.accentText:C.t3,
+            <div style={{fontSize:11,marginTop:6,color:s.done?C.accentText:C.t3,
               fontWeight:s.done?600:500,letterSpacing:".02em"}}>{s.l}</div>
           </div>
         ))}
@@ -4293,7 +4372,7 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
 }
 
 // ─── PLAN DETAIL ──────────────────────────────────────────────────────────────
-function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer}){
+function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
   const [atab,setAtab]=useState("overview");
@@ -4305,6 +4384,92 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [nudging,setNudging]=useState(false);
   const [emailing,setEmailing]=useState(false);
 
+  // What this person is in for, and when the group can go. Both come from the
+  // server, so the figure here is the figure checkout charges, and both stay
+  // hidden until the database has somewhere to keep the answers.
+  const [share,setShare]=useState(null);
+  const [dates,setDates]=useState(null);
+  const [myFrom,setMyFrom]=useState("");
+  const [myTo,setMyTo]=useState("");
+  const [savingDates,setSavingDates]=useState(false);
+  const [skipping,setSkipping]=useState(null);
+
+  const loadShare=async()=>{
+    if(!planId||isTempId(planId))return;
+    try{
+      const r=await fetch(`/api/plans/${planId}/participation`);
+      if(r.ok)setShare(await r.json());
+      else console.error("[planDetail] participation returned",r.status);
+    }catch(e){console.error("[planDetail] could not load who's in for what",e);}
+  };
+  const loadDates=async()=>{
+    if(!planId||isTempId(planId))return;
+    try{
+      const r=await fetch(`/api/plans/${planId}/availability`);
+      if(r.ok)setDates(await r.json());
+      else console.error("[planDetail] availability returned",r.status);
+    }catch(e){console.error("[planDetail] could not load dates",e);}
+  };
+
+  const setSkip=async(item,optOut)=>{
+    if(skipping)return;
+    if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+    setSkipping(item.ref);
+    try{
+      const r=await fetch(`/api/plans/${planId}/participation`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({itemRef:item.ref,optOut}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"That didn't save — try again");
+      await loadShare();
+      toast(optOut?`You're sitting out ${item.title}`:`You're in for ${item.title}`);
+    }catch(e){
+      console.error("[planDetail] could not change who's in",e);
+      toast(e.message);
+    }
+    setSkipping(null);
+  };
+
+  const saveMyDates=async()=>{
+    if(savingDates||!myFrom||!myTo||myTo<myFrom)return;
+    if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+    setSavingDates(true);
+    try{
+      // Adding to what you said before, not replacing it: most people have
+      // more than one weekend that works.
+      const seen=new Set();
+      const ranges=[...(dates?.mine||[]),{start:myFrom,end:myTo}]
+        .filter(x=>{const k=x.start+"|"+x.end;if(seen.has(k))return false;seen.add(k);return true;})
+        .slice(-20);
+      const r=await fetch(`/api/plans/${planId}/availability`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ranges}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Those dates didn't save — try again");
+      setMyFrom("");setMyTo("");
+      await loadDates();
+      toast("Got it — we'll find the dates that suit most of you");
+    }catch(e){
+      console.error("[planDetail] could not save dates",e);
+      toast(e.message);
+    }
+    setSavingDates(false);
+  };
+
+  const applyBestDates=async()=>{
+    const best=dates?.bestWindows?.[0];
+    if(!best||savingDates)return;
+    setSavingDates(true);
+    const ok=await updatePlanOnServer(planId,{start_date:best.start,end_date:best.end});
+    if(ok!==false){
+      if(refreshGroup)await refreshGroup(groupId);
+      toast(`Dates set: ${formatDates(best.start,best.end)}`);
+    }
+    setSavingDates(false);
+  };
+
   // Every plan made before the itinerary was persisted has no days, and there
   // was no way to get them: the empty state offered only a manual builder. A
   // trip the model already chose can have its day-by-day plan generated on
@@ -4314,12 +4479,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
     setBuilding(true);
     try{
+      // The group's dates beat the plan's once people have said which work:
+      // build the days for the stretch most of them can make, and put those
+      // dates on the plan so the days and the plan agree.
+      let startDate=plan.startDate||null,endDate=plan.endDate||null;
+      const best=dates?.ready?dates.bestWindows?.[0]:null;
+      if(best&&(best.start!==startDate||best.end!==endDate)){
+        startDate=best.start;endDate=best.end;
+        const saved=await updatePlanOnServer(planId,{start_date:startDate,end_date:endDate});
+        if(saved!==false&&refreshGroup)refreshGroup(groupId);
+      }
       const res=await fetch("/api/trips/generate",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
           groupId,
-          startDate:plan.startDate||null,
-          endDate:plan.endDate||null,
+          startDate,
+          endDate,
           detailTripId:planId,
           tripData:{destination:plan.title,vibe:plan.vibe||null,costs:null},
         }),
@@ -4369,12 +4544,26 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     };
     fetchPlan();
   },[planId]);
+  useEffect(()=>{loadShare();loadDates();},[planId]);
+
+  // "Results update in real time" was written on the screen and nothing was
+  // refreshing it. Somebody waiting on the last vote watched a static number
+  // and concluded Reach was broken. Now the claim is true, and only while the
+  // tab is open and a vote is actually outstanding — an idle plan screen has
+  // no business polling. It sits above the guard below because a hook that
+  // runs only on some renders is a crash waiting for a slow load.
+  useEffect(()=>{
+    if(atab!=="vote"||!refreshGroup||isTempId(groupId))return;
+    const id=setInterval(()=>refreshGroup(groupId),12000);
+    return()=>clearInterval(id);
+  },[atab,groupId]);
 
   if(!plan||!group)return <NotLoaded what={group?"This plan":"This group"} onBack={onBack}/>;
   // Travelling alone means there is nobody to ask. Every voting affordance is
   // absent rather than disabled — a greyed-out "put this to the group" is
   // still a reminder that the app thinks you are a committee.
   const soloTrip=(group.memberIds||[]).length<=1;
+  const usd=c=>"$"+((c||0)/100).toLocaleString(undefined,{minimumFractionDigits:(c||0)%100?2:0,maximumFractionDigits:2});
   // What Reach itself will put on a card, as opposed to what the traveller
   // pays at the door. Only the first belongs on a "book everything" button.
   const reachItems=(plan?.itinerary||[]).filter(i=>i.booking_mode==="reach");
@@ -4403,17 +4592,6 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     setMyVote(null);
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:{...p.votes,[opt]:Math.max(0,(p.votes[opt]||1)-1)}}:p)}));
   };
-
-  // "Results update in real time" was written on the screen and nothing was
-  // refreshing it. Somebody waiting on the last vote watched a static number
-  // and concluded Reach was broken. Now the claim is true, and only while the
-  // tab is open and a vote is actually outstanding — an idle plan screen has
-  // no business polling.
-  useEffect(()=>{
-    if(atab!=="vote"||!refreshGroup||isTempId(groupId))return;
-    const id=setInterval(()=>refreshGroup(groupId),12000);
-    return()=>clearInterval(id);
-  },[atab,groupId]);
 
   // Two of the three status buttons bypassed this and changed local state
   // only. "Send to the group for a vote" moved the pill to Voting, said so,
@@ -4500,6 +4678,73 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
               ):null;})}
             </div>
+            {/* When the group can go. Everybody says which dates work; Reach
+                finds the stretch most of them can make, and one tap puts it on
+                the plan. */}
+            {!soloTrip&&dates?.ready&&plan.status!=="booked"&&(
+              <div style={{padding:"0 20px 14px"}}>
+                <div className="sl" style={{marginBottom:10}}>When works for you?</div>
+                <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
+                  {dates.bestWindows?.[0]&&(
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:14,color:C.t1,fontWeight:600}}>{formatDates(dates.bestWindows[0].start,dates.bestWindows[0].end)}</div>
+                        <div style={{fontSize:12,color:C.t2}}>
+                          {dates.bestWindows[0].count>=dates.members?"Everyone can make it":`${dates.bestWindows[0].count} of ${dates.members} can make it`}
+                        </div>
+                      </div>
+                      {(plan.startDate!==dates.bestWindows[0].start||plan.endDate!==dates.bestWindows[0].end)&&(
+                        <button className="bsm bsm-p" disabled={savingDates} onClick={applyBestDates}>
+                          {savingDates?"Saving…":"Use these dates"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <div style={{display:"flex",gap:8}}>
+                    <input aria-label="Dates that work for you, from" type="date" className="inp" value={myFrom} onChange={e=>setMyFrom(e.target.value)} style={{flex:1,minWidth:0,color:C.t1}}/>
+                    <input aria-label="Dates that work for you, to" type="date" className="inp" value={myTo} min={myFrom||undefined} onChange={e=>setMyTo(e.target.value)} style={{flex:1,minWidth:0,color:C.t1}}/>
+                  </div>
+                  <button className="bs" style={{marginTop:10}} disabled={savingDates||!myFrom||!myTo||myTo<myFrom} onClick={saveMyDates}>
+                    {savingDates?"Saving…":"These dates work for me"}
+                  </button>
+                  <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
+                    {dates.mine?.length?`You said ${dates.mine.map(x=>formatDates(x.start,x.end)).join(", ")}. `:""}
+                    {`${dates.respondents} of ${dates.members} have answered.`}
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* What you're in for. Getting there and somewhere to sleep are the
+                trip; a dinner or a day out is yours to sit out, and your share
+                moves to the people going. Set once anyone has paid, because
+                moving shares after money has moved leaves somebody overpaid. */}
+            {!soloTrip&&share?.ready&&share.items?.length>0&&(
+              <div style={{padding:"0 20px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
+                  <div className="sl">What you're in for</div>
+                  <div style={{fontSize:13,color:C.t1,fontWeight:600}}>Your trip: {usd(share.yourShare_cents)}</div>
+                </div>
+                {share.items.map(it=>(
+                  <div key={it.ref} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <span style={{fontSize:18}}>{tIc[it.vertical]||"🎟️"}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,color:it.imIn?C.t1:C.t3,fontWeight:500}}>{it.title}</div>
+                      <div style={{fontSize:12,color:C.t2}}>
+                        {it.imIn?`${usd(it.myCents)} for you`:"Sitting this one out"}{` · ${plural(it.inCount,"person","people")} going`}
+                      </div>
+                    </div>
+                    {!share.locked&&(
+                      <button className={`bsm ${it.imIn?"bsm-g":"bsm-p"}`} disabled={!!skipping} onClick={()=>setSkip(it,it.imIn)}>
+                        {skipping===it.ref?"…":it.imIn?"Skip this one":"I'm in"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {share.locked&&(
+                  <div style={{fontSize:11.5,color:C.t3,marginTop:8}}>Someone's already paid, so who's in for what is set now.</div>
+                )}
+              </div>
+            )}
             {plan.itinerary.length>0&&(
               <div style={{padding:"0 20px 14px"}}>
                 <div className="sl" style={{marginBottom:10}}>Bookings</div>
@@ -4576,7 +4821,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   <div key={day.key} id={`itin-${day.key}`}>
                     <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",
                       padding:"14px 20px 8px",background:day.isToday?C.accentDim:"transparent"}}>
-                      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:19,
+                      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,
                         color:day.isPast&&!day.isToday?C.t3:C.t1}}>{day.label}</div>
                       {day.dateLabel&&<div style={{fontSize:12,color:C.t3}}>{day.dateLabel}</div>}
                       {day.isToday&&<span className="pill pill-a" style={{fontSize:10}}>Today</span>}
@@ -4656,7 +4901,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:18,flexWrap:"wrap"}}>
               <div style={{fontSize:13,color:C.t2}}>
                 {totalV>=plan.participants.length
-                  ?"Everyone's voted. Approve it and let's book."
+                  ?(()=>{
+                    // Said as the group's decision, not the organiser's, so
+                    // nobody has to carry the choice on their own.
+                    const ranked=Object.entries(plan.votes||{}).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+                    if(!ranked.length)return "Everyone's voted. Approve it and let's book.";
+                    if(ranked[1]&&ranked[1][1]===ranked[0][1]){
+                      return `Everyone's voted, and it's a tie between ${ranked.filter(x=>x[1]===ranked[0][1]).map(x=>x[0]).join(" and ")}.`;
+                    }
+                    return `The group picked ${ranked[0][0]} — ${ranked[0][1]} of ${plan.participants.length}.`;
+                  })()
                   :plan.participants.length-totalV===1
                     ?"One vote away."
                     :`${totalV} of ${plan.participants.length} voted.`}
@@ -4689,7 +4943,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             {plan.options.map(opt=>{
               const v=plan.votes[opt]||0; const pct=totalV>0?(v/totalV)*100:0; const mine=myVote===opt;
               return(
-                <div key={opt} onClick={()=>castVote(opt)} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accentText:C.border}`,borderRadius:16,padding:16,marginBottom:10,cursor:myVote?"default":"pointer",transition:"all .15s"}}>
+                <div key={opt} {...pressable} onClick={()=>castVote(opt)} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accentText:C.border}`,borderRadius:16,padding:16,marginBottom:10,cursor:myVote?"default":"pointer",transition:"all .15s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>{opt}</div>
                     <div style={{fontSize:13,fontWeight:600,color:mine?C.accentText:C.t2}}>{v} vote{v!==1?"s":""}</div>
@@ -4817,6 +5071,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
   // somebody typed out by hand is not something to lose on a stray back tap.
   const [dirty,setDirty]=useState(false);
   const [confirmLeave,setConfirmLeave]=useState(false);
+  useEscape(confirmLeave,()=>setConfirmLeave(false));
   if(!plan)return <NotLoaded what="This plan" onBack={onBack}/>;
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const addItem=()=>{if(!ni.title)return;setItems(p=>[...p,{...ni,filled:!!ni.conf}]);setNi({time:"",title:"",sub:"",type:"activity",conf:""});setAdding(false);setDirty(true);};
@@ -4844,7 +5099,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
             <div className="sh-hdl"/>
             <div style={{padding:"18px 20px 24px",textAlign:"center"}}>
               <div style={{fontSize:28,marginBottom:10}}>✍️</div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:21,color:C.t1,marginBottom:6}}>
+              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1,marginBottom:6}}>
                 Keep what you wrote?
               </div>
               <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:18}}>
@@ -4894,11 +5149,11 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
             ))}
           </div>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
-            <input className="inp" style={{width:88,fontSize:13}} placeholder="Time / Day" value={ni.time} onChange={e=>setNi(n=>({...n,time:e.target.value}))}/>
-            <input className="inp" style={{flex:1,fontSize:13}} placeholder="Title (required)" value={ni.title} onChange={e=>setNi(n=>({...n,title:e.target.value}))}/>
+            <input aria-label="Time or day" className="inp" style={{width:88,fontSize:13}} placeholder="Time / Day" value={ni.time} onChange={e=>setNi(n=>({...n,time:e.target.value}))}/>
+            <input aria-label="Title" className="inp" style={{flex:1,fontSize:13}} placeholder="Title (required)" value={ni.title} onChange={e=>setNi(n=>({...n,title:e.target.value}))}/>
           </div>
-          <input className="inp" style={{marginBottom:8,fontSize:13}} placeholder="Details or location" value={ni.sub} onChange={e=>setNi(n=>({...n,sub:e.target.value}))}/>
-          <input className="inp" style={{marginBottom:12,fontSize:13}} placeholder="Confirmation number (if booked)" value={ni.conf} onChange={e=>setNi(n=>({...n,conf:e.target.value}))}/>
+          <input aria-label="Details or location" className="inp" style={{marginBottom:8,fontSize:13}} placeholder="Details or location" value={ni.sub} onChange={e=>setNi(n=>({...n,sub:e.target.value}))}/>
+          <input aria-label="Confirmation number" className="inp" style={{marginBottom:12,fontSize:13}} placeholder="Confirmation number (if booked)" value={ni.conf} onChange={e=>setNi(n=>({...n,conf:e.target.value}))}/>
           <div style={{display:"flex",gap:8}}>
             <button className="bsm bsm-p" style={{flex:1}} onClick={addItem} disabled={!ni.title}>Add item</button>
             <button className="bsm bsm-g" style={{flex:1}} onClick={()=>setAdding(false)}>Cancel</button>
@@ -4965,6 +5220,14 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
     handledReturn.current=true;
     if(redirectStatus==="failed"){
       toast("That payment didn't go through. Nothing was taken — you can try again.");
+      return;
+    }
+    if(isTempId(planId)){
+      // The payment is real and this id is not, so there is nothing to record
+      // it against. Say so with the reference rather than dropping it.
+      console.error("[checkout] payment returned against an unsaved plan",{planId,paymentIntentId:returnedIntent});
+      setMsg(`Your payment went through, but this trip hadn't finished saving, so we couldn't attach it. Nothing is lost — quote reference ${returnedIntent} and we'll sort it. Do not pay again.`);
+      setPhase("error");
       return;
     }
     (async()=>{
@@ -5138,7 +5401,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
     <div style={{fontSize:34,marginBottom:12}}>\uD83D\uDE48</div>
     <div style={{color:C.t1,fontWeight:600,marginBottom:8}}>{msg}</div>
     <button onClick={()=>{setPhase("loading");load();}} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700}}>Try again</button>
-    <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Go back</div>
+    <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Go back</div>
   </div></div>);
 
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
@@ -5172,7 +5435,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
     }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,cursor:nudging?"progress":"pointer",opacity:nudging?.6:1}}>
       {nudging?"Sending…":"Give them a nudge"}
     </button>
-    <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
+    <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
   </div></div>);
 
   if(phase==="priceUp")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
@@ -5180,7 +5443,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
     <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>Price went up a little</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>One of your bookings costs a bit more than when we quoted it. Still book it?</div>
     <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
-    <div onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Let me think</div>
+    <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Let me think</div>
   </div></div>);
 
   if(phase==="approving")return(<div className="sc"><div style={{padding:"80px 24px",textAlign:"center"}}>
@@ -5376,7 +5639,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
   };
 
   const Row=({icon,title,sub,right,onClick})=>(
-    <div className="ri" onClick={onClick} style={{cursor:onClick?"pointer":"default"}}>
+    <div className="ri" {...(onClick?pressable:{})} onClick={onClick} style={{cursor:onClick?"pointer":"default"}}>
       <div className="ri-ic" style={{background:C.accentDim,color:C.accentText}}>{icon}</div>
       <div className="ri-inf"><div className="ri-t">{title}</div>{sub&&<div className="ri-s">{sub}</div>}</div>
       {right}
@@ -5423,7 +5686,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
         <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="You"/>
         <div style={{padding:"0 20px 18px"}}>
           <div className="sl" style={{marginBottom:8}}>What should we call you?</div>
-          <input className="inp" value={firstDraft} placeholder="First name"
+          <input aria-label="First name" className="inp" value={firstDraft} placeholder="First name"
             onChange={e=>setDocDraft(x=>({...x,__first:e.target.value}))}/>
           <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
             Used on your home screen and wherever your group sees you.
@@ -5433,10 +5696,10 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
         <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
           <div className="sl" style={{marginBottom:8}}>Home airport</div>
           <div style={{display:"flex",gap:8}}>
-            <input className="inp" value={airDraft} placeholder="SFO" maxLength={3}
+            <input aria-label="Home airport" className="inp" value={airDraft} placeholder="SFO" maxLength={3}
               style={{width:96,textTransform:"uppercase",fontWeight:600,letterSpacing:".08em"}}
               onChange={e=>setDocDraft(x=>({...x,__air:e.target.value}))}/>
-            <input className="inp" value={cityDraft} placeholder="San Francisco, CA" style={{flex:1}}
+            <input aria-label="Home city" className="inp" value={cityDraft} placeholder="San Francisco, CA" style={{flex:1}}
               onChange={e=>setDocDraft(x=>({...x,__city:e.target.value}))}/>
           </div>
           {!airValid&&(
@@ -5546,11 +5809,11 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
         ))}
         <div style={{padding:"16px 20px 30px",borderTop:`1px solid ${C.border}`,marginTop:8}}>
           <div className="sl" style={{marginBottom:10}}>Add a programme</div>
-          <input className="inp" value={loyName} onChange={e=>setLoyName(e.target.value)}
+          <input aria-label="Loyalty programme" className="inp" value={loyName} onChange={e=>setLoyName(e.target.value)}
             placeholder="Programme, e.g. United MileagePlus" style={{marginBottom:8}}/>
-          <input className="inp" value={loyTier} onChange={e=>setLoyTier(e.target.value)}
+          <input aria-label="Tier" className="inp" value={loyTier} onChange={e=>setLoyTier(e.target.value)}
             placeholder="Tier (optional)" style={{marginBottom:8}}/>
-          <input className="inp" value={loyNum} onChange={e=>setLoyNum(e.target.value)}
+          <input aria-label="Membership number" className="inp" value={loyNum} onChange={e=>setLoyNum(e.target.value)}
             placeholder="Membership number (optional, encrypted)" style={{marginBottom:12}}/>
           <button className="bp" disabled={busy==="loyalty"||!loyName.trim()} onClick={addLoyalty}>
             {busy==="loyalty"?"Adding…":"Add programme"}
@@ -5602,7 +5865,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
         <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Privacy"/>
         <div style={{padding:"0 20px 6px"}}><span className="sl">What Reach may do with your data</span></div>
         {toggles.map(t=>(
-          <div key={t.k} className="ri" style={{cursor:"pointer"}} onClick={()=>setConsent(t.k,t.col,!c[t.k])}>
+          <div key={t.k} className="ri" style={{cursor:"pointer"}} {...pressable} onClick={()=>setConsent(t.k,t.col,!c[t.k])}>
             <div className="ri-inf"><div className="ri-t">{t.l}</div><div className="ri-s">{t.d}</div></div>
             <div style={{width:44,height:26,borderRadius:20,flexShrink:0,position:"relative",transition:"background .15s",
               background:c[t.k]?C.accentText:C.s3,border:`1px solid ${c[t.k]?C.accentText:C.border}`}}>
@@ -5646,7 +5909,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
             <div style={{fontSize:13,color:C.t2,marginBottom:8}}>
               Type <strong style={{color:C.t1}}>DELETE</strong> to confirm.
             </div>
-            <input className="inp" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)}
+            <input aria-label="Type to confirm deleting your account" className="inp" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)}
               placeholder="DELETE" style={{marginBottom:12}}/>
             <button className="bs" disabled={busy==="delete"||deleteConfirm!=="DELETE"}
               style={{color:deleteConfirm==="DELETE"?C.onAccent:C.t3,
@@ -6217,7 +6480,14 @@ export default function ReachApp({realUser,onSignOut}={}){
         };
         if(msgs[updates.status])notifyGroupUpdate(plan.groupName,msgs[updates.status]);
       }
-    }catch(e){console.log("Plan update failed",e);}
+      // Callers read this. Returning nothing on success made every one of them
+      // treat a saved change as a failed one and put the screen back.
+      return true;
+    }catch(e){
+      console.error("[plan] update failed",e);
+      showToast("That change didn't save — check your connection");
+      return false;
+    }
   };
 
   // Cast a vote on the server
