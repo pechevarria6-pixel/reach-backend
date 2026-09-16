@@ -1625,6 +1625,15 @@ function GroupsScreen({groups,um,push,loading}){
                 </div>
               );
             })}
+            {/* The one part of the app that could turn up unexplained: a new
+                group means an empty grid, and an empty grid says nothing about
+                what it is for. It needs no dismissing and no remembering —
+                the first plan takes it away. */}
+            {dated.length===0&&(
+              <div style={{borderTop:`1px solid ${C.border}`,padding:"13px 18px",textAlign:"center",fontSize:12,color:C.t3,lineHeight:1.55}}>
+                Plans you make show up here, so you can see your month at a glance.
+              </div>
+            )}
           </div>
         </div>
       )}
