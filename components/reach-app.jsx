@@ -2887,7 +2887,25 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
       ],
     },
     questions.find(q=>q.id==="budget"),
-    questions.find(q=>q.id==="noWayJose"),
+    {
+      // The trip version of this asks about ten-hour flights, cold weather and
+      // early mornings, none of which decide where anybody eats on a Friday.
+      // The ids are the words themselves, because they are read by a model
+      // rather than looked up in a table.
+      id:"noWayJose",icon:"🚫",
+      title:"No Way José",
+      sub:"Absolute nos for tonight. We will never suggest these.",
+      noWay:true,multi:true,optional:true,
+      customPlaceholder:"Anything else that's a hard no tonight?",
+      options:[
+        {id:"big crowds",e:"👥",l:"Big crowds"},
+        {id:"loud rooms",e:"🔊",l:"Loud rooms"},
+        {id:"clubs",e:"🪩",l:"Clubs"},
+        {id:"long queues",e:"🚶",l:"Long queues"},
+        {id:"standing all night",e:"🧍",l:"Standing all night"},
+        {id:"dressing up",e:"👔",l:"Dressing up"},
+      ],
+    },
   ].filter(Boolean);
 
   const carried=isNight?[]:questions.filter(isCarried);
