@@ -114,37 +114,48 @@ export function planSections<T extends DatedPlan>(plans: T[], today: string): Pl
 }
 
 /**
- * Groups, in the order somebody would want to find them: whatever is happening
- * soonest, first.
+ * Everything coming up, across every group, soonest first.
  *
- * The list arrived in no order at all. The query that fetches it asks for a set
- * of ids and never says how to sort them, so the database returned them however
- * it liked and was free to return them differently on the next load — a list
- * that reshuffles while you are looking at it. What surfaced instead of the
- * trip you are on tomorrow was whichever group happened to come back first.
+ * A group list answers "who do I go places with". It does not answer "what is
+ * next", and that is the question somebody actually opens this tab with — the
+ * answer to which was scattered one plan at a time inside however many groups
+ * they belong to. This gathers it into one schedule, and leaves the groups
+ * themselves to be listed by name, where they can be found by name.
  *
- * A group is ranked by its nearest plan that has not been and gone. A group
- * with nothing planned has nothing to rank it by and goes last, most recently
- * touched first, rather than being given an invented date that would file it
- * among real ones.
+ * Only what has not been and gone, so the schedule is a thing to act on rather
+ * than a history. A trip already under way began before today and is still the
+ * nearest thing there is, so it sorts by the day it began and comes first.
  */
-export function byNextPlan<T extends { plans?: DatedPlan[] }>(today: string) {
-  const nextDay = (group: T): string | null => {
-    const days = (group?.plans ?? [])
-      .filter(p => (lastDay(p) ?? '') >= today)
-      .map(planDay)
-      .filter((d): d is string => !!d);
-    // A trip already under way started before today; it is still the nearest
-    // thing there is, so it sorts by the day it began and lands at the top.
-    return days.length ? days.reduce((a, b) => (a < b ? a : b)) : null;
-  };
-  return (a: T, b: T): number => {
-    const x = nextDay(a);
-    const y = nextDay(b);
-    if (x && y) return x.localeCompare(y);
-    // Something planned always beats nothing planned.
-    return x ? -1 : y ? 1 : 0;
-  };
+export function groupSchedule<P extends DatedPlan, G extends { plans?: P[] }>(
+  groups: G[],
+  today: string,
+  limit = 8,
+): { group: G; plan: P; day: string }[] {
+  const rows: { group: G; plan: P; day: string }[] = [];
+  for (const group of Array.isArray(groups) ? groups.filter(Boolean) : []) {
+    for (const plan of group?.plans ?? []) {
+      const day = planDay(plan);
+      // Undated plans cannot be scheduled, and a plan that is over is not news.
+      if (!day || (lastDay(plan) as string) < today) continue;
+      rows.push({ group, plan, day });
+    }
+  }
+  return rows.sort((a, b) => a.day.localeCompare(b.day)).slice(0, Math.max(0, limit));
+}
+
+/**
+ * Groups by name, the way somebody looks one up.
+ *
+ * Case-insensitive, and numbers inside a name sort the way a person reads them
+ * so "Trip 2" comes before "Trip 10". A group nobody named sorts last rather
+ * than jumping to the top on an empty string.
+ */
+export function byName<T extends { name?: unknown }>(a: T, b: T): number {
+  const nameOf = (g: T) => (typeof g?.name === 'string' ? g.name.trim() : '');
+  const x = nameOf(a);
+  const y = nameOf(b);
+  if (!x || !y) return x ? -1 : y ? 1 : 0;
+  return x.localeCompare(y, undefined, { sensitivity: 'base', numeric: true });
 }
 
 /**

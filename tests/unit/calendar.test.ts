@@ -1,7 +1,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planSections, planDay, daysAway, today, dayWhere, byNextPlan } from '../../lib/calendar.ts';
+import { planSections, planDay, daysAway, today, dayWhere, groupSchedule, byName } from '../../lib/calendar.ts';
 
 // Half past eight on the sixteenth in New York, which the server calls the
 // seventeenth. Every evening in the Americas looks like this.
@@ -131,46 +131,71 @@ test('an evening plan is still coming up all evening', () => {
   assert.equal(planSections([nightOut], '2026-09-17')[0].key, 'past');
 });
 
-test('the group with the nearest plan comes first', () => {
-  const group = (id: string, ...dates: (string | null)[]) =>
-    ({ id, plans: dates.map((d, i) => plan(`${id}-${i}`, d)) });
-  const sorted = [
-    group('december', '2026-12-01'),
-    group('nothingPlanned'),
-    group('tomorrow', '2026-09-17'),
-    group('october', '2026-10-09'),
-  ].sort(byNextPlan(TODAY));
-  assert.deepEqual(sorted.map(g => g.id), ['tomorrow', 'october', 'december', 'nothingPlanned']);
+const group = (name: string, ...dates: (string | null)[]) =>
+  ({ id: name, name, plans: dates.map((d, i) => plan(`${name}-${i}`, d)) });
+
+test('the schedule gathers what is next out of every group', () => {
+  const schedule = groupSchedule([
+    group('Ski Trip Crew', '2026-12-01'),
+    group('dinner', '2026-09-17'),
+    group('Beach', '2026-10-09'),
+  ], TODAY);
+  assert.deepEqual(schedule.map(r => r.group.name), ['dinner', 'Beach', 'Ski Trip Crew']);
+  // Each row knows which group it belongs to, so the screen can say.
+  assert.equal(schedule[0].plan.id, 'dinner-0');
+  assert.equal(schedule[0].day, '2026-09-17');
 });
 
-test('a group is ranked by its soonest plan, not by whichever it lists first', () => {
-  const far = { id: 'far', plans: [plan('a', '2026-12-01'), plan('b', '2026-09-18')] };
-  const near = { id: 'near', plans: [plan('c', '2026-09-19')] };
-  assert.deepEqual([far, near].sort(byNextPlan(TODAY)).map(g => g.id), ['far', 'near']);
+test('a group with several plans contributes each of them separately', () => {
+  const schedule = groupSchedule([group('solo', '2026-12-01', '2026-09-18')], TODAY);
+  assert.deepEqual(schedule.map(r => r.day), ['2026-09-18', '2026-12-01']);
 });
 
-test('a trip already under way outranks one that has not started', () => {
-  const onNow = { id: 'onNow', plans: [plan('running', '2026-09-14', '2026-09-18')] };
-  const soon = { id: 'soon', plans: [plan('later', '2026-09-17')] };
-  assert.deepEqual([soon, onNow].sort(byNextPlan(TODAY)).map(g => g.id), ['onNow', 'soon']);
+test('the schedule is what is ahead, not a history', () => {
+  const schedule = groupSchedule([
+    group('over', '2026-09-09'),
+    group('ahead', '2026-11-02'),
+    group('undated', null),
+  ], TODAY);
+  assert.deepEqual(schedule.map(r => r.group.name), ['ahead']);
 });
 
-test('plans that are over do not drag a group up the list', () => {
-  const overOnly = { id: 'overOnly', plans: [plan('lastWeek', '2026-09-09')] };
-  const upcoming = { id: 'upcoming', plans: [plan('soon', '2026-11-02')] };
-  const sorted = [overOnly, upcoming].sort(byNextPlan(TODAY));
-  assert.deepEqual(sorted.map(g => g.id), ['upcoming', 'overOnly']);
+test('a trip you are on is the nearest thing there is', () => {
+  const schedule = groupSchedule([
+    group('startsTomorrow', '2026-09-17'),
+    { id: 'onNow', name: 'onNow', plans: [plan('running', '2026-09-14', '2026-09-18')] },
+  ], TODAY);
+  assert.deepEqual(schedule.map(r => r.group.name), ['onNow', 'startsTomorrow']);
 });
 
-test('sorting groups copes with junk rather than throwing', () => {
-  const junk = [
-    { id: 'noPlansKey' },
-    { id: 'nullPlans', plans: null as never },
-    { id: 'undatedPlan', plans: [plan('x', null)] },
-    { id: 'real', plans: [plan('y', '2026-09-18')] },
-  ];
-  const sorted = junk.sort(byNextPlan(TODAY));
-  assert.equal(sorted[0].id, 'real');
+test('the schedule is capped, so one busy group cannot fill the screen', () => {
+  const busy = group('busy', ...Array.from({ length: 20 }, (_, i) => `2026-10-${String(i + 1).padStart(2, '0')}`));
+  assert.equal(groupSchedule([busy], TODAY).length, 8);
+  assert.equal(groupSchedule([busy], TODAY, 3).length, 3);
+});
+
+test('the schedule copes with junk rather than throwing', () => {
+  const schedule = groupSchedule([
+    { id: 'noPlansKey', name: 'a' },
+    { id: 'nullPlans', name: 'b', plans: null as never },
+    { id: 'real', name: 'c', plans: [plan('y', '2026-09-18')] },
+  ], TODAY);
+  assert.deepEqual(schedule.map(r => r.group.name), ['c']);
+  assert.deepEqual(groupSchedule([], TODAY), []);
+});
+
+test('groups are listed by name, the way somebody looks one up', () => {
+  const names = (gs: { name: string }[]) => [...gs].sort(byName).map(g => g.name);
+  // Case is not a sort order anybody means: "beach" belongs beside "Beach".
+  assert.deepEqual(names([{ name: 'dinner' }, { name: 'Beach' }, { name: 'apple' }]),
+    ['apple', 'Beach', 'dinner']);
+  // Numbers read as numbers, so Trip 2 is not filed after Trip 10.
+  assert.deepEqual(names([{ name: 'Trip 10' }, { name: 'Trip 2' }]), ['Trip 2', 'Trip 10']);
+});
+
+test('a group nobody named sorts last rather than to the top', () => {
+  const sorted = [{ name: '' }, { name: 'Beach' }, {}, { name: '   ' }].sort(byName);
+  assert.equal((sorted[0] as { name: string }).name, 'Beach');
   assert.equal(sorted.length, 4);
 });
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
-import { planSections, daysAway, today, byNextPlan } from "@/lib/calendar";
+import { planSections, daysAway, today, groupSchedule, byName } from "@/lib/calendar";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -1529,6 +1529,13 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
 
 // ─── GROUPS LIST ─────────────────────────────────────────────────────────────
 function GroupsScreen({groups,um,push,loading}){
+  // Two different questions, and they want two different orders. "What is
+  // next" is a date, and it belongs at the top where it can be answered at a
+  // glance. "Which group was that" is a name, and a list you search by name
+  // has to be in name order to be searchable at all.
+  const todayISO=today();
+  const schedule=groupSchedule(groups,todayISO);
+  const named=[...groups].sort(byName);
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
@@ -1557,9 +1564,35 @@ function GroupsScreen({groups,um,push,loading}){
           </div>
         </div>
       )}
-      {/* Nearest thing first. The list arrives from the server in no order at
-          all, so without this it could come back differently each load. */}
-      {[...groups].sort(byNextPlan(today())).map(g=>{
+      {/* What is next, gathered out of every group. Before this it was one
+          plan at a time, each buried inside whichever group it belonged to. */}
+      {schedule.length>0&&(
+        <div style={{margin:"0 20px 18px"}}>
+          <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:8}}>
+            <span className="sl">Coming up</span>
+            <span style={{fontSize:11.5,color:C.t3}}>{plural(schedule.length,"plan")}</span>
+          </div>
+          <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden"}}>
+            {schedule.map(({group,plan},i)=>(
+              <div key={plan.id} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:group.id})}
+                style={{display:"flex",alignItems:"center",gap:10,padding:"11px 13px",cursor:"pointer",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                <div style={{fontSize:18,flexShrink:0}}>{group.emoji}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13.5,color:C.t1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{plan.title}</div>
+                  <div style={{fontSize:11.5,color:C.t3,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{group.name} · {plan.dates}</div>
+                </div>
+                {daysAway(plan,todayISO)&&(
+                  <span className="pill pill-p" style={{fontSize:10.5,flexShrink:0}}>{daysAway(plan,todayISO)}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {groups.length>0&&(
+        <div style={{padding:"0 20px 8px"}}><span className="sl">All groups</span></div>
+      )}
+      {named.map(g=>{
         const active=g.plans.filter(p=>p.status!=="completed");
         return(
           <div key={g.id} className="card" style={{margin:"0 20px 12px",cursor:"pointer"}} {...pressable} onClick={()=>push("groupDetail",{groupId:g.id})}>
