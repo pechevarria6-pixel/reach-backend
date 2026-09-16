@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
-import { planSections, daysAway } from "@/lib/calendar";
+import { planSections, daysAway, today } from "@/lib/calendar";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -1599,6 +1599,9 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
   const [confirming,setConfirming]=useState(null);
   const isAdmin=group?.role==="admin";
   const isAlone=isSoloGroup(group);
+  // Read off this person's clock, not Greenwich's, and read once — so the
+  // section a plan sits under and the chip on it cannot disagree.
+  const todayISO=today();
 
   const doRemove=async(uid,name)=>{
     if(busyId)return;setBusyId(uid);
@@ -1650,7 +1653,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",marginTop:10,padding:"8px 0"}} onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
             </div>
           )}
-          {planSections(group.plans,new Date().toISOString().slice(0,10)).map(section=>(
+          {planSections(group.plans,todayISO).map(section=>(
           <div key={section.key}>
             <div style={{padding:"6px 20px 10px",display:"flex",alignItems:"baseline",justifyContent:"space-between"}}>
               <span className="sl">{section.label}</span>
@@ -1668,9 +1671,9 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                 <div style={{fontSize:13,color:C.t2,marginBottom:10,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                   <span>{plan.dates} · ${plan.budget}/person</span>
                   {/* How near it is, only while that is worth saying. */}
-                  {daysAway(plan,new Date().toISOString().slice(0,10))&&(
+                  {daysAway(plan,todayISO)&&(
                     <span className="pill pill-p" style={{fontSize:10.5}}>
-                      {daysAway(plan,new Date().toISOString().slice(0,10))}
+                      {daysAway(plan,todayISO)}
                     </span>
                   )}
                 </div>

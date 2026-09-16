@@ -20,6 +20,24 @@ export type PlanSection<T> = { key: 'upcoming' | 'undated' | 'past'; label: stri
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * Today, as the person's own calendar has it.
+ *
+ * `new Date().toISOString().slice(0, 10)` is the day in Greenwich, and for
+ * everybody west of it that is already tomorrow for the last hours of the
+ * evening. In New York at eight o'clock the UTC date has turned over while the
+ * person is still on the sixteenth — so tonight's plan sorted into "Been and
+ * gone" and tomorrow's started reading "Today", at precisely the hour somebody
+ * is putting their coat on to go to it.
+ *
+ * `now` is a parameter so the rule can be tested at an hour the test does not
+ * have to wait for.
+ */
+export function today(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/**
  * A plan's own day, or null when nobody ever gave it one.
  *
  * The shape is not enough: "2026-13-45" matches the pattern and is not a date.

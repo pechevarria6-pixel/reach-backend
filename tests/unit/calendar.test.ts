@@ -1,7 +1,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planSections, planDay, daysAway } from '../../lib/calendar.ts';
+import { planSections, planDay, daysAway, today } from '../../lib/calendar.ts';
 
 const plan = (id: string, startDate: string | null, endDate?: string | null) =>
   ({ id, startDate, endDate: endDate === undefined ? startDate : endDate });
@@ -70,6 +70,38 @@ test('how far away is said the way a person says it', () => {
   // Far away in either direction says nothing rather than something useless.
   assert.equal(daysAway(plan('f', '2026-12-01'), TODAY), null);
   assert.equal(daysAway(plan('g', null), TODAY), null);
+});
+
+test('today is the day where the person is, not the day in Greenwich', () => {
+  // Half past eight on the sixteenth, in New York. The same instant is already
+  // the seventeenth in UTC, and reading it that way filed tonight's plan under
+  // "Been and gone" while its owner was still putting their coat on.
+  const instant = new Date('2026-09-17T00:30:00Z');
+  assert.equal(instant.toISOString().slice(0, 10), '2026-09-17');
+  const newYorkClock = { getFullYear: () => 2026, getMonth: () => 8, getDate: () => 16 } as unknown as Date;
+  assert.equal(today(newYorkClock), '2026-09-16');
+
+  // And in whatever zone the tests themselves run in, it reads off the local
+  // calendar rather than the UTC one.
+  assert.equal(today(new Date(2026, 0, 5, 23, 45)), '2026-01-05');
+});
+
+test('a single-digit month and day are padded, so dates still compare as text', () => {
+  assert.equal(today(new Date(2026, 2, 7, 12, 0)), '2026-03-07');
+  // planSections and daysAway compare these with >= and localeCompare, so an
+  // unpadded "2026-3-7" would sort after "2026-12-01" and land in the past.
+  assert.ok(today(new Date(2026, 2, 7)) < '2026-12-01');
+});
+
+test('an evening plan is still coming up all evening', () => {
+  // The whole point: at 20:30 New York time on the sixteenth, a night out
+  // booked for the sixteenth must still be ahead of you.
+  const nightOut = plan('tonight', '2026-09-16');
+  const theirToday = '2026-09-16'; // what today() returns on that clock
+  assert.equal(planSections([nightOut], theirToday)[0].key, 'upcoming');
+  assert.equal(daysAway(nightOut, theirToday), 'Today');
+  // Read as UTC it was already over, which is the bug this guards.
+  assert.equal(planSections([nightOut], '2026-09-17')[0].key, 'past');
 });
 
 test('a trip you are on says it is on, not when it started', () => {
