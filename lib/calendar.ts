@@ -80,18 +80,29 @@ export function planSections<T extends DatedPlan>(plans: T[], today: string): Pl
 export function daysAway(plan: DatedPlan, today: string): string | null {
   const day = planDay(plan);
   if (!day || !ISO.test(today)) return null;
+  // A trip that started on Monday and ends on Friday is not "Yesterday" on
+  // Wednesday. It is happening, and saying anything else contradicts the
+  // section it is sitting under.
+  const ends = lastDay(plan);
+  if (day <= today && ends && ends >= today) return day === today ? 'Today' : 'On now';
   const ms = Date.parse(`${day}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`);
   if (!Number.isFinite(ms)) return null;
   const days = Math.round(ms / 86_400_000);
+  // Something finished is described by when it finished. A trip that ran the
+  // tenth to the fifteenth ended yesterday; measuring from the day it began
+  // called that "6 days ago", which is true of nothing anybody cares about.
+  if (days < 0) {
+    const ended = lastDay(plan) as string;
+    const overBy = Math.round(
+      (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${ended}T00:00:00Z`)) / 86_400_000,
+    );
+    if (overBy === 1) return 'Yesterday';
+    if (overBy > 1 && overBy < 7) return `${overBy} days ago`;
+    return null;
+  }
   if (days === 0) return 'Today';
   if (days === 1) return 'Tomorrow';
   if (days > 1 && days < 7) return `In ${days} days`;
   if (days >= 7 && days < 14) return 'Next week';
-  if (days < 0) {
-    const ago = Math.abs(days);
-    if (ago === 1) return 'Yesterday';
-    if (ago < 7) return `${ago} days ago`;
-    return null;
-  }
   return null;
 }

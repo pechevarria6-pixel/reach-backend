@@ -71,3 +71,16 @@ test('how far away is said the way a person says it', () => {
   assert.equal(daysAway(plan('f', '2026-12-01'), TODAY), null);
   assert.equal(daysAway(plan('g', null), TODAY), null);
 });
+
+test('a trip you are on says it is on, not when it started', () => {
+  // Started Monday, ends Friday, today is Wednesday. "Yesterday" under a
+  // heading that reads "Coming up" contradicts itself.
+  assert.equal(daysAway(plan('inProgress', '2026-09-14', '2026-09-18'), TODAY), 'On now');
+  // A trip starting today still reads Today.
+  assert.equal(daysAway(plan('startsToday', TODAY, '2026-09-20'), TODAY), 'Today');
+  // One that finished yesterday reads from its last day, not its first:
+  // "6 days ago" described nothing anybody cares about.
+  assert.equal(daysAway(plan('over', '2026-09-10', '2026-09-15'), TODAY), 'Yesterday');
+  // Long over, and there is nothing worth saying.
+  assert.equal(daysAway(plan('longOver', '2026-01-02', '2026-01-09'), TODAY), null);
+});
