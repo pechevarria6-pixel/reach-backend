@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
+import { planSections, daysAway } from "@/lib/calendar";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -1649,7 +1650,13 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",marginTop:10,padding:"8px 0"}} onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
             </div>
           )}
-          {group.plans.map(plan=>(
+          {planSections(group.plans,new Date().toISOString().slice(0,10)).map(section=>(
+          <div key={section.key}>
+            <div style={{padding:"6px 20px 10px",display:"flex",alignItems:"baseline",justifyContent:"space-between"}}>
+              <span className="sl">{section.label}</span>
+              <span style={{fontSize:11.5,color:C.t3}}>{plural(section.plans.length,"plan")}</span>
+            </div>
+          {section.plans.map(plan=>(
             <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId})}>
               <div style={{padding:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
@@ -1658,7 +1665,15 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                     {plan.status==="booked"?"✓ Booked":plan.status==="voting"?"Voting":plan.status==="approved"?"Approved":"Planning"}
                   </span>
                 </div>
-                <div style={{fontSize:13,color:C.t2,marginBottom:10}}>{plan.dates} · ${plan.budget}/person</div>
+                <div style={{fontSize:13,color:C.t2,marginBottom:10,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span>{plan.dates} · ${plan.budget}/person</span>
+                  {/* How near it is, only while that is worth saying. */}
+                  {daysAway(plan,new Date().toISOString().slice(0,10))&&(
+                    <span className="pill pill-p" style={{fontSize:10.5}}>
+                      {daysAway(plan,new Date().toISOString().slice(0,10))}
+                    </span>
+                  )}
+                </div>
                 {plan.status==="voting"&&plan.options.length>0&&(
                   <div style={{background:C.s2,borderRadius:12,padding:10,marginBottom:10}}>
                     <div style={{fontSize:11,color:C.t3,marginBottom:8,textTransform:"uppercase",letterSpacing:".06em"}}>Vote in progress</div>
@@ -1679,6 +1694,8 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                 </div>
               </div>
             </div>
+          ))}
+          </div>
           ))}
           <div style={{padding:"4px 20px 20px"}}>
             <button className="bs" onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
