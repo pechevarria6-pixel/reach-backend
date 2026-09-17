@@ -56,10 +56,14 @@ async function probe(
     const res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
     const ms = Date.now() - started;
     if (res.ok) return { provider, lane, key: keyState, status: 'ok', ms, detail: null };
-    // The status is the useful part. A provider's body can quote the key back.
+    // The status is the useful part. A provider's body can quote the key back,
+    // so it is never included. 400 counts as a rejection when a key was sent:
+    // Resend answers an invalid key that way, and reading it as "bad request"
+    // hid a production mailer that had stopped working.
+    const rejected = keyName && [400, 401, 403].includes(res.status);
     return {
       provider, lane, key: keyState, status: 'refused', ms,
-      detail: `HTTP ${res.status}${res.status === 401 || res.status === 403 ? ' — key rejected' : ''}`,
+      detail: `HTTP ${res.status}${rejected ? ' — key rejected' : ''}`,
     };
   } catch (e) {
     const ms = Date.now() - started;
@@ -85,7 +89,9 @@ export async function GET(req: NextRequest) {
     probe('NOAA CO-OPS tides', 'weather', null,
       'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=tidepredictions'),
     probe('Open Brewery DB', 'discovery', null, 'https://api.openbrewerydb.org/v1/breweries?per_page=1'),
-    probe('OpenStreetMap (Overpass)', 'discovery', null, 'https://overpass-api.de/api/status'),
+    // Overpass answers 406 to a request with no User-Agent, which looks like
+    // a broken lane and is not one.
+    probe('OpenStreetMap (Overpass)', 'discovery', null, 'https://overpass-api.de/api/status', { headers: UA }),
     probe('Ticketmaster', 'discovery', 'TICKETMASTER_API_KEY',
       `https://app.ticketmaster.com/discovery/v2/events.json?size=1&apikey=${process.env.TICKETMASTER_API_KEY ?? ''}`),
     probe('Yelp', 'discovery', 'YELP_API_KEY',
@@ -111,6 +117,8 @@ export async function GET(req: NextRequest) {
           Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''}`,
         },
       }),
+    // Resend answers a bad key with 400 "API key is invalid" rather than 401,
+    // so a rejected key has to be read from the status, not assumed from it.
     probe('Resend (email)', 'infrastructure', 'RESEND_API_KEY', 'https://api.resend.com/domains', {
       headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY ?? ''}` },
     }),
