@@ -54,7 +54,26 @@ const CLEARED = 'session_reset';
 // __session_<id> and __client_uat_<id> are the multi-instance variants.
 const CLERK_COOKIE = /^(__session|__client_uat|__clerk_db_jwt|__client)(_|$)/;
 
+// Clerk's own screens live under these, and it walks between them:
+// /sign-up/verify-email-address, /sign-in/factor-one, /sign-up/sso-callback.
+// What it never does is repeat the base — /sign-up/sign-up — and that address
+// renders nothing at all, silently. Links that stacked before the routing was
+// pinned are in people's history and in sent emails, so they are straightened
+// out here rather than left to blank.
+const STACKED = /^\/(sign-in|sign-up)(?:\/\1)+(\/.*)?$/;
+
 export default async function middleware(req: NextRequest, ev: NextFetchEvent) {
+  const stacked = STACKED.exec(req.nextUrl.pathname);
+  if (stacked) {
+    const url = req.nextUrl.clone();
+    // Keep whatever Clerk was doing after the repeats, and the query with it.
+    url.pathname = `/${stacked[1]}${stacked[2] ?? ''}`;
+    console.error('[middleware] straightened a stacked auth path', {
+      from: req.nextUrl.pathname, to: url.pathname,
+    });
+    return NextResponse.redirect(url);
+  }
+
   try {
     return await withClerk(req, ev);
   } catch (error) {
