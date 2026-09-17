@@ -12,7 +12,10 @@ out/
 build/
 
 # Node
-node_modules/
+# No trailing slash: a symlink named node_modules is not a directory, so
+# "node_modules/" did not match one and git tracked a link to a local absolute
+# path — which then shipped to production.
+node_modules
 npm-debug.log*
 
 # Supabase
