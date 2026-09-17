@@ -302,7 +302,10 @@ function toContact(u){
   return {
     id:u.id,
     name,
-    handle:"@"+(u.email?u.email.split("@")[0]:"member"),
+    // No address means no handle to show. It used to read "@member" for
+    // everybody, which is a label that identifies nobody — and search answers
+    // carry no address at all now.
+    handle:u.email?"@"+u.email.split("@")[0]:"",
     email:u.email||"",
     avatar:u.avatar_url||u.avatar||null,
     color:colorFor(u.id),
@@ -2401,19 +2404,21 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
               </div>
             )}
             {(searchQuery||"").length<2&&(
-              <div style={{fontSize:12,color:C.t3,padding:"4px 0"}}>Type a name or email address to find people.</div>
+              <div style={{fontSize:12,color:C.t3,padding:"4px 0"}}>Search people you already share a group with, or type an email address to invite somebody new.</div>
             )}
           </div>
           {searchResults.map(u=>{
             const sel=members.includes(u.id);
-            const initials=(u.name||u.email||"?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+            // Search answers carry no address any more, and this row used to
+            // print one under every name.
+            const initials=(u.name||"?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
             return(
               <div key={u.id} className="cb-row" {...pressable} onClick={()=>setMembers(m=>sel?m.filter(id=>id!==u.id):[...m,u.id])}>
                 <div className={"cb "+(sel?"ck":"")}>{sel&&<Ic.Check/>}</div>
                 <div style={{width:36,height:36,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",color:C.onAccent,fontWeight:700,fontSize:14,flexShrink:0,overflow:"hidden"}}>
                   {u.avatar_url?<img src={u.avatar_url} style={{width:36,height:36,objectFit:"cover"}} alt=""/>:initials}
                 </div>
-                <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>{u.name||u.email}</div><div style={{fontSize:12,color:C.t2}}>{u.email}</div></div>
+                <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>{u.name||"Member"}</div><div style={{fontSize:12,color:C.t2}}>Already on Reach</div></div>
               </div>
             );
           })}
