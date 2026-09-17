@@ -30,10 +30,10 @@ function useShellTheme(): 'light' | 'dark' {
 const PATIENCE_MS = 10_000;
 
 const FALLBACK_CSS = `
-  .auth-fb{color:#241C10}
-  .auth-fb .auth-fb-dim{color:#63553C}
-  :root[data-theme="dark"] .auth-fb{color:#F5EDD8}
-  :root[data-theme="dark"] .auth-fb .auth-fb-dim{color:#9A8A6A}
+  .auth-fb{color:#142119}
+  .auth-fb .auth-fb-dim{color:#576E61}
+  :root[data-theme="dark"] .auth-fb{color:#FEF7D9}
+  :root[data-theme="dark"] .auth-fb .auth-fb-dim{color:#CFC182}
   @keyframes auth-fb-spin{to{transform:rotate(360deg)}}
 `;
 
@@ -58,7 +58,7 @@ function Waiting({ what }: { what: string }) {
           these screens were being fixed for. */}
       <style dangerouslySetInnerHTML={{ __html: FALLBACK_CSS }} />
       <div className="auth-fb">
-        <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 30, marginBottom: 14 }}>reach</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 30, marginBottom: 14 }}>reach</div>
         {stuck ? (
           <>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>
@@ -72,10 +72,10 @@ function Waiting({ what }: { what: string }) {
             <button
               onClick={() => window.location.reload()}
               style={{
-                background: 'linear-gradient(135deg, #C49A38, #D4A843)', color: '#2A1D06',
+                background: 'linear-gradient(135deg, #D24E24, #EC6032)', color: '#2A1D06',
                 border: 'none', borderRadius: 16, padding: '13px 26px',
                 fontSize: 14.5, fontWeight: 600, cursor: 'pointer', minHeight: 48,
-                fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                fontFamily: 'var(--font-body)',
               }}
             >
               Reload
@@ -87,7 +87,7 @@ function Waiting({ what }: { what: string }) {
               aria-hidden
               style={{
                 width: 28, height: 28, margin: '0 auto 14px',
-                border: '3px solid #D4A843', borderTopColor: 'transparent', borderRadius: '50%',
+                border: '3px solid #EC6032', borderTopColor: 'transparent', borderRadius: '50%',
                 animation: 'auth-fb-spin .8s linear infinite',
               }}
             />
