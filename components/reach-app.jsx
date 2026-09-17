@@ -2179,6 +2179,25 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 
 // ─── CREATE GROUP ─────────────────────────────────────────────────────────────
 const DEFAULT_GROUP_EMOJI="🎉";
+
+// ─── What a booking's status is allowed to say ───────────────────────────
+// Both checkout screens used to end their status ternary with a reassuring
+// default, so every state nobody had thought about — failed, cancelled,
+// redirected — rendered as "Booked ✓" in green, or as "We're on it". That is
+// the worst sentence in the app to get wrong: it sits on the screen shown
+// immediately after a real card has been charged.
+//
+// One map, read by both screens, so they cannot drift apart again. Only a
+// confirmed booking is green, and anything unrecognised says it is not booked
+// rather than inventing comfort — an unknown state is not good news.
+const BOOKING_STATE={
+  confirmed:{label:"Booked ✓",tone:"green"},
+  pending:{label:"We're on it",tone:"gold"},
+  awaiting_approval:{label:"Quoted",tone:"plain"},
+  redirected:{label:"Finish on their site",tone:"gold"},
+  failed:{label:"Couldn't book",tone:"red"},
+  cancelled:{label:"Cancelled",tone:"red"},
+};
 function inferGroupEmoji(n){const s=(n||"").toLowerCase();const rules=[[/birthday|bday/,"🎂"],[/ski|snow|tahoe|aspen/,"🎿"],[/beach|cabo|cancun|island|bahamas|miami|playa|lake/,"🏝️"],[/concert|show|festival|music|tour/,"🎸"],[/dinner|food|restaurant|brunch|taco|pizza|omakase/,"🍕"],[/camp|hike|hiking|trail|mountain|yosemite|zion/,"🏕️"],[/vegas|party|bachelor|bachelorette/,"🎉"],[/golf/,"⛳"],[/wedding/,"💍"],[/road ?trip|drive/,"🚗"],[/europe|paris|tokyo|london|flight|abroad|trip|travel/,"✈️"]];for(const r of rules){if(r[0].test(s))return r[1];}return DEFAULT_GROUP_EMOJI;}
 function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,replace}){
   // Solo is a choice made here, before anything else, because everything
@@ -5707,8 +5726,12 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   };
 
   const chip=(label,tone)=>(<span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,letterSpacing:.3,
-    background:tone==="green"?"rgba(16,185,129,.15)":tone==="gold"?"rgba(212,175,55,.15)":"rgba(255,255,255,.08)",
-    color:tone==="green"?C.green:tone==="gold"?C.accentText:C.t2}}>{label}</span>);
+    background:tone==="green"?"rgba(16,185,129,.15)":tone==="gold"?"rgba(212,175,55,.15)":tone==="red"?C.redDim:"rgba(255,255,255,.08)",
+    color:tone==="green"?C.green:tone==="gold"?C.accentText:tone==="red"?C.red:C.t2}}>{label}</span>);
+
+  // Whether anything was actually booked, as opposed to paid for. The success
+  // screen claimed the first while only ever doing the second.
+  const bookedAnything=!!(bookings&&bookings.length);
 
   const lines=(bookings&&bookings.length?bookings.map(b=>({
     icon:vIcon[b.vertical]||"\u2728", l:(b.detail&&(b.detail.title||b.detail.name))||b.vertical,
@@ -5786,8 +5809,17 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
         background:[C.accent,C.green,C.blue,"#F472B6"][i%4],animation:`rfall ${2.2+(i%5)*.4}s ${(i%7)*.18}s ease-in forwards`,zIndex:5}}/>))}
       <div style={{background:`linear-gradient(145deg,#064E3B,${C.green})`,padding:"48px 28px 36px",textAlign:"center"}}>
         <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>\u2713</div>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:"white",marginBottom:6}}>You're all booked!</div>
-        <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>Powered by Stripe \u00B7 PCI-DSS compliant</div>
+        {/* Nothing in the app books an itinerary yet, so when no booking rows
+            exist this said "You're all booked!" over a line reading "Nothing is
+            priced yet" \u2014 contradicting itself on the screen where a real card
+            had just been charged. Money in is worth celebrating; it is simply
+            not the same claim as a booking. */}
+        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:"white",marginBottom:6}}>
+          {bookedAnything?"You're all booked!":"Your share is in"}
+        </div>
+        <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>
+          {bookedAnything?"Powered by Stripe \u00B7 PCI-DSS compliant":"Nothing is booked yet \u2014 we'll confirm each one with you"}
+        </div>
       </div>
       <div style={{padding:"20px 20px 0"}}>
         <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",marginBottom:16}}>
@@ -5804,7 +5836,12 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
             <span style={{fontSize:20}}>{it.icon}</span>
             <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
               {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}</div>
-            {it.st?chip(it.st==="confirmed"?"Booked \u2713":it.st==="pending"?"We're on it":"Booked \u2713",it.st==="pending"?"gold":"green"):null}
+            {/* Every status that was not "confirmed" or "pending" used to fall
+                through to "Booked \u2713" in green \u2014 so a booking that FAILED, or
+                was cancelled, told somebody it was booked. On the screen after
+                a real card payment, that is the worst thing the app could say.
+                Each state now says what it is, and only one of them is green. */}
+            {it.st?chip(BOOKING_STATE[it.st]?.label||"Not booked",BOOKING_STATE[it.st]?.tone||"plain"):null}
           </div>))}
         </div>
         <button onClick={onBack} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15}}>See my itinerary</button>
@@ -5839,7 +5876,11 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
           <span style={{fontSize:20}}>{it.icon}</span>
           <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
             {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}</div>
-          {it.st?chip(it.st==="awaiting_approval"?"Quoted":it.st==="confirmed"?"Booked \u2713":"We're on it",it.st==="confirmed"?"green":it.st==="awaiting_approval"?"":"gold"):null}
+          {/* Same fall-through as the success screen had: anything that was
+              not confirmed or awaiting_approval read "We're on it", so a
+              booking that had already failed claimed somebody was working on
+              it. One map, so the two screens cannot drift apart again. */}
+          {it.st?chip(BOOKING_STATE[it.st]?.label||"Not booked",BOOKING_STATE[it.st]?.tone||"plain"):null}
         </div>))}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
