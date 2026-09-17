@@ -134,28 +134,46 @@ export async function GET(req: NextRequest) {
     const all = [...rows.values()];
     const toRead = all.filter(r => kindFor(r.interest).harvest);
     const notToRead = all.filter(r => !kindFor(r.interest).harvest).map(r => ({ ...r, harvest_status: 'skip' }));
+    // A write that fails is the difference between "this town has nothing on"
+    // and "we could not save what it has". Only one of those is worth acting
+    // on, and the area used to be stamped as swept either way — so a failure
+    // hid the whole city for a day.
+    let wroteAny = false;
+    let writeFailed = false;
     for (const batch of [toRead, notToRead]) {
       if (!batch.length) continue;
       const { error: wrote } = await db
         .from('discovery_venues')
         .upsert(batch, { onConflict: 'osm_type,osm_id,interest' });
-      if (wrote) console.error('[discovery/sweep] could not write venues', wrote.message);
+      if (wrote) {
+        console.error('[discovery/sweep] could not write venues', { area: name, error: wrote.message });
+        writeFailed = true;
+      } else {
+        wroteAny = true;
+      }
     }
 
-    if (failed) {
+    // Nothing stored means nothing was learned, whatever the providers said.
+    const storedNothing = all.length > 0 && !wroteAny;
+    if (failed || writeFailed || storedNothing) {
+      const status = writeFailed || storedNothing
+        ? (wroteAny ? 'partial' : 'write_failed')
+        : (all.length ? 'partial' : 'error');
       await db.from('discovery_areas').update({
-        sweep_status: all.length ? 'partial' : 'error', sweep_detail: detail ?? null,
+        sweep_status: status,
+        sweep_detail: detail ?? (writeFailed || storedNothing ? 'venues could not be written' : null),
         // Deliberately not stamping last_swept_at: a failed sweep must come
         // round again quickly rather than counting as a day's work done.
       }).eq('id', area.id);
-      report.push({ area: name, status: all.length ? 'partial' : 'error', kinds: kinds.length, found: all.length });
+      report.push({ area: name, status, kinds: kinds.length, found: all.length, stored: wroteAny });
       continue;
     }
 
-    await db.from('discovery_areas').update({
+    const { error: marked } = await db.from('discovery_areas').update({
       last_swept_at: now, sweep_status: 'ok', sweep_detail: null,
     }).eq('id', area.id);
-    report.push({ area: name, status: 'ok', kinds: kinds.length, found: all.length });
+    if (marked) console.error('[discovery/sweep] could not mark the area swept', { area: name, error: marked.message });
+    report.push({ area: name, status: 'ok', kinds: kinds.length, found: all.length, stored: wroteAny });
   }
 
   console.log('[discovery/sweep]', JSON.stringify(report));

@@ -76,18 +76,34 @@ export async function GET(req: NextRequest) {
 
   const tally: Record<string, number> = {};
   let events = 0;
+  // Venues whose classes could not be stored, so a run that wrote nothing is
+  // visible in the response rather than looking like a quiet night.
+  let unstored = 0;
 
   for (const venue of ready) {
     const result = await harvestVenue({ name: venue.name, website: venue.website });
     tally[result.status] = (tally[result.status] ?? 0) + 1;
+
+    // Whether this venue's classes are safely on disk. A write that failed
+    // must not be recorded as a successful harvest: the venue would then sit
+    // out its whole back-off period — up to a fortnight — with nothing in the
+    // table, and Discover would show the city as having nothing on.
+    let stored = true;
 
     if (result.events.length) {
       // Replace rather than accumulate: a class that came off the page has
       // stopped running, and leaving it would send somebody to a door that
       // is not open. This is also why events carry a staleness date — a
       // harvest that fails must not leave last month's list standing.
-      await db.from('discovery_events').delete().eq('venue_id', venue.id);
-      const { error: wrote } = await db.from('discovery_events').insert(
+      //
+      // Insert first, then drop the old rows. The other way round left a
+      // venue with no events at all whenever the insert failed — and because
+      // the unique rule is (venue_id, title, when_text), a partial run could
+      // collide with itself and fail the whole batch. Writing first means the
+      // worst case is last week's list surviving one more night, which is
+      // what stale_after already guards.
+      const stamp = new Date().toISOString();
+      const { error: wrote } = await db.from('discovery_events').upsert(
         result.events.map(e => ({
           venue_id: venue.id,
           title: e.title,
@@ -96,19 +112,35 @@ export async function GET(req: NextRequest) {
           price_text: e.price_text || null,
           booking_url: e.booking_url,
           interest: venue.interest,
+          found_at: stamp,
           stale_after: new Date(Date.now() + FRESH_DAYS * 2 * 86400_000).toISOString(),
         })),
+        { onConflict: 'venue_id,title,when_text' },
       );
-      if (wrote) console.error('[discovery/harvest] could not write events', venue.name, wrote.message);
-      else events += result.events.length;
+      if (wrote) {
+        console.error('[discovery/harvest] could not write events', venue.name, wrote.message);
+        stored = false;
+      } else {
+        events += result.events.length;
+        // Anything from an earlier run that this one did not see again has
+        // come off the page. Removed only now that the new list is stored.
+        const { error: pruned } = await db.from('discovery_events')
+          .delete().eq('venue_id', venue.id).lt('found_at', stamp);
+        if (pruned) console.error('[discovery/harvest] could not prune old events', venue.name, pruned.message);
+      }
     }
 
-    await db.from('discovery_venues').update({
+    // A failed write is left un-stamped, so the next run picks this venue up
+    // again instead of treating it as done.
+    if (!stored) { unstored += 1; continue; }
+
+    const { error: marked } = await db.from('discovery_venues').update({
       last_harvested_at: new Date().toISOString(),
       harvest_status: result.status,
     }).eq('id', venue.id);
+    if (marked) console.error('[discovery/harvest] could not mark the venue harvested', venue.name, marked.message);
   }
 
-  console.log('[discovery/harvest]', JSON.stringify({ read: ready.length, events, tally }));
-  return NextResponse.json({ read: ready.length, events, tally });
+  console.log('[discovery/harvest]', JSON.stringify({ read: ready.length, events, tally, unstored }));
+  return NextResponse.json({ read: ready.length, events, tally, unstored });
 }
