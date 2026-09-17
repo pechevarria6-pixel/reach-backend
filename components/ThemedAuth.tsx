@@ -29,6 +29,14 @@ function useShellTheme(): 'light' | 'dark' {
 
 const PATIENCE_MS = 10_000;
 
+const FALLBACK_CSS = `
+  .auth-fb{color:#241C10}
+  .auth-fb .auth-fb-dim{color:#63553C}
+  :root[data-theme="dark"] .auth-fb{color:#F5EDD8}
+  :root[data-theme="dark"] .auth-fb .auth-fb-dim{color:#9A8A6A}
+  @keyframes auth-fb-spin{to{transform:rotate(360deg)}}
+`;
+
 function Waiting({ what }: { what: string }) {
   // Rendered on the server too, so it is on screen before any script runs.
   const [stuck, setStuck] = useState(false);
@@ -40,14 +48,15 @@ function Waiting({ what }: { what: string }) {
   return (
     <div style={{ textAlign: 'center', padding: 24, maxWidth: 360 }}>
       {/* Both themes in one stylesheet: the fallback cannot reach the app's
-          tokens, and it has to be readable before React hydrates. */}
-      <style>{`
-        .auth-fb{color:#241C10}
-        .auth-fb .auth-fb-dim{color:#63553C}
-        :root[data-theme="dark"] .auth-fb{color:#F5EDD8}
-        :root[data-theme="dark"] .auth-fb .auth-fb-dim{color:#9A8A6A}
-        @keyframes auth-fb-spin{to{transform:rotate(360deg)}}
-      `}</style>
+          tokens, and it has to be readable before React hydrates.
+
+          dangerouslySetInnerHTML, not a child string: the server escapes the
+          quotes in [data-theme="dark"] to &quot; inside the style text while
+          the browser writes them raw, and that mismatch failed hydration.
+          React then replaced the document — throwing away the data-theme
+          attribute the pre-paint script had set, which is the very thing
+          these screens were being fixed for. */}
+      <style dangerouslySetInnerHTML={{ __html: FALLBACK_CSS }} />
       <div className="auth-fb">
         <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 30, marginBottom: 14 }}>reach</div>
         {stuck ? (
@@ -91,21 +100,47 @@ function Waiting({ what }: { what: string }) {
 }
 
 function Frame({ what, children }: { what: string; children: React.ReactNode }) {
+  // The first client render has to match the server's exactly. ClerkLoading /
+  // ClerkLoaded do not: the server always renders the waiting state, while a
+  // browser with Clerk already cached renders the widget on its first pass.
+  // That mismatch made React re-render the root <html> — which threw away the
+  // data-theme attribute the pre-paint script had just set, so a dark-theme
+  // visitor got a light sign-in page and the console filled with hydration
+  // errors. Rendering the waiting state until after mount keeps the two
+  // passes identical, and the swap then happens as an ordinary update.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted) {
+    return (
+      <>
+        <Waiting what={what} />
+        <NoScriptNote />
+      </>
+    );
+  }
+
   return (
     <>
       <ClerkLoading>
         <Waiting what={what} />
       </ClerkLoading>
       <ClerkLoaded>{children}</ClerkLoaded>
-      <noscript>
-        {/* With no script the spinner would spin for ever beside a message
-            saying it never will. */}
-        <style>{`.auth-fb-wait{display:none}`}</style>
-        <div style={{ textAlign: 'center', padding: 24, color: '#9A8A6A', fontSize: 13.5, lineHeight: 1.6 }}>
-          Signing in to Reach needs JavaScript. Please turn it on for this site and reload.
-        </div>
-      </noscript>
+      <NoScriptNote />
     </>
+  );
+}
+
+function NoScriptNote() {
+  return (
+    <noscript>
+      {/* With no script the spinner would spin for ever beside a message
+          saying it never will. */}
+      <style dangerouslySetInnerHTML={{ __html: '.auth-fb-wait{display:none}' }} />
+      <div style={{ textAlign: 'center', padding: 24, color: '#9A8A6A', fontSize: 13.5, lineHeight: 1.6 }}>
+        Signing in to Reach needs JavaScript. Please turn it on for this site and reload.
+      </div>
+    </noscript>
   );
 }
 
