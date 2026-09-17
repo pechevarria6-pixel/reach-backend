@@ -84,14 +84,18 @@ export default async function middleware(req: NextRequest, ev: NextFetchEvent) {
     const url = req.nextUrl.clone();
     url.searchParams.set(CLEARED, '1');
     const res = NextResponse.redirect(url);
+    const host = req.nextUrl.hostname;
+    const parent = host.split('.').slice(-2).join('.');
     for (const cookie of req.cookies.getAll()) {
       if (!CLERK_COOKIE.test(cookie.name)) continue;
-      // Set on the exact host and on the parent domain, because Clerk uses
-      // both and a delete only reaches the domain it names.
-      res.cookies.set(cookie.name, '', { maxAge: 0, path: '/' });
-      const host = req.nextUrl.hostname;
-      const parent = host.split('.').slice(-2).join('.');
-      if (parent && parent !== host) res.cookies.set(cookie.name, '', { maxAge: 0, path: '/', domain: `.${parent}` });
+      // A cookie set for www.alcanzar.io and one set for .alcanzar.io are two
+      // different cookies, and a delete only reaches the domain it names — so
+      // both have to be sent. They are appended rather than set through
+      // res.cookies, which is keyed by name and would keep only the last.
+      res.headers.append('set-cookie', `${cookie.name}=; Path=/; Max-Age=0; SameSite=Lax`);
+      if (parent && parent !== host) {
+        res.headers.append('set-cookie', `${cookie.name}=; Path=/; Max-Age=0; Domain=.${parent}; SameSite=Lax`);
+      }
     }
     res.headers.set('cache-control', 'no-store');
     return res;
