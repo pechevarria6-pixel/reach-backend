@@ -148,7 +148,19 @@ export function ThemedSignIn() {
   const theme = useShellTheme();
   return (
     <Frame what="sign-in">
-      <SignIn appearance={clerkAppearance[theme]} />
+      {/* path and routing are not optional on a catch-all route. Without them
+          Clerk builds its own links relative to whatever path it finds itself
+          on, so every click appended another segment —
+          /sign-in/sign-in/sign-in — and at that address Clerk matches no route
+          it knows and renders nothing at all. A blank page, no error, on the
+          two screens a new person meets first. signUpUrl is spelled out for
+          the same reason: the footer link was relative. */}
+      <SignIn
+        path="/sign-in"
+        routing="path"
+        signUpUrl="/sign-up"
+        appearance={clerkAppearance[theme]}
+      />
     </Frame>
   );
 }
@@ -157,7 +169,12 @@ export function ThemedSignUp() {
   const theme = useShellTheme();
   return (
     <Frame what="sign-up">
-      <SignUp appearance={clerkAppearance[theme]} />
+      <SignUp
+        path="/sign-up"
+        routing="path"
+        signInUrl="/sign-in"
+        appearance={clerkAppearance[theme]}
+      />
     </Frame>
   );
 }
