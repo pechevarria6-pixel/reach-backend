@@ -2,6 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
 import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter } from "@/lib/calendar";
+// The two page colours the browser chrome is tinted with, shared with the
+// shell so the toggle and the no-flash script cannot disagree.
+import { SURFACE } from "@/lib/brand";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -6514,6 +6517,21 @@ export default function ReachApp({realUser,onSignOut}={}){
     setTheme(t);
     try{localStorage.setItem(THEME_KEY,t);}catch(e){}
   };
+  // The browser chrome follows the app, not the system. The tint above the
+  // page used to be whatever the OS preferred, so a light-theme visitor on a
+  // dark phone got a maroon bar over a cream screen. The meta tag is the only
+  // way to say it, and it has to be kept in step with the toggle.
+  useEffect(()=>{
+    if(typeof document==="undefined")return;
+    const colour=theme==="dark"?SURFACE.dark:SURFACE.light;
+    let tag=document.querySelector('meta[name="theme-color"]:not([media])');
+    if(!tag){
+      tag=document.createElement("meta");
+      tag.setAttribute("name","theme-color");
+      document.head.appendChild(tag);
+    }
+    tag.setAttribute("content",colour);
+  },[theme]);
   const [groups,setGroups]=useState([]);
   const [groupsLoading,setGroupsLoading]=useState(true);
   const [toastMsg,setToastMsg]=useState(null);
