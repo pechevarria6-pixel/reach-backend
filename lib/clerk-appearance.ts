@@ -34,19 +34,19 @@ type AuthColours = {
 // components/reach-app.jsx): gold stays the button fill, and links use the
 // deepened gold, because gold text on cream is 2.0:1.
 const LIGHT: AuthColours = {
-  bg: '#FAF5EA', s2: '#F6EFE1', border: '#E2D7BF',
-  accent: '#D4A843', accentDeep: '#C49A38', accentText: '#805D0F', onAccent: '#2A1D06',
-  t1: '#241C10', t2: '#63553C',
-  danger: '#C2185B', success: '#17703C', warning: '#6F4B00',
-  shadow: '0 24px 80px rgba(90,70,30,.18)',
+  bg: '#EBEFEC', s2: '#E4EAE6', border: '#D8DED4',
+  accent: '#EC6032', accentDeep: '#D24E24', accentText: '#2B583B', onAccent: '#2A1D06',
+  t1: '#142119', t2: '#576E61',
+  danger: '#C0392B', success: '#2F7D43', warning: '#6F4B00',
+  shadow: '0 24px 80px rgba(30,50,38,.16)',
 };
 
-// Unchanged from the single palette these screens had before.
+// Maroon and gold, from the same BRAND constants the shell and the emails use.
 const DARK: AuthColours = {
   bg: BRAND.bg, s2: BRAND.s2, border: BRAND.border,
-  accent: BRAND.accent, accentDeep: BRAND.accentDeep, accentText: BRAND.accent, onAccent: BRAND.onAccent,
+  accent: '#EC6032', accentDeep: '#D24E24', accentText: BRAND.accent, onAccent: BRAND.onAccent,
   t1: BRAND.t1, t2: BRAND.t2,
-  danger: '#F87171', success: '#52C97B', warning: '#F59E0B',
+  danger: '#E85D5D', success: '#7FB58A', warning: '#E8A33D',
   shadow: '0 24px 80px rgba(0,0,0,.6)',
 };
 
@@ -64,7 +64,7 @@ const appearance = (c: AuthColours): Appearance => ({
     colorSuccess: c.success,
     colorWarning: c.warning,
     borderRadius: '16px',
-    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    fontFamily: 'var(--font-body)',
   },
   elements: {
     rootBox: { width: '100%', maxWidth: 400 },
@@ -73,7 +73,7 @@ const appearance = (c: AuthColours): Appearance => ({
       border: `1px solid ${c.border}`,
       boxShadow: c.shadow,
     },
-    headerTitle: { fontFamily: "'Instrument Serif', serif", fontWeight: 400 },
+    headerTitle: { fontFamily: 'var(--font-display)', fontWeight: 400 },
     formButtonPrimary: {
       background: `linear-gradient(135deg, ${c.accentDeep}, ${c.accent})`,
       color: c.onAccent,

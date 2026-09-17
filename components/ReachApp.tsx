@@ -25,11 +25,11 @@ export default function ReachAppWrapper() {
         // state flashes the dark palette before a light-theme app appears.
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         minHeight: '100dvh', background: 'var(--shell-surface)', flexDirection: 'column', gap: 16,
-        fontFamily: 'Space Grotesk, sans-serif',
+        fontFamily: 'var(--font-body)',
       }}>
         <style>{`:root{--shell-surface:${SURFACE.light};--shell-ink:#241C10;}`
           + `:root[data-theme="dark"]{--shell-surface:${SURFACE.dark};--shell-ink:${BRAND.t1};}`}</style>
-        <div style={{ fontFamily: 'Instrument Serif, serif', fontSize: 28, color: 'var(--shell-ink)' }}>reach</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--shell-ink)' }}>reach</div>
         <div style={{ width: 32, height: 32, border: `3px solid ${BRAND.accent}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>

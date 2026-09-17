@@ -1,6 +1,27 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import type { Metadata, Viewport } from 'next';
+import { Fraunces, Inter } from 'next/font/google';
 import { SHELL, SURFACE, THEME_KEY } from '@/lib/brand';
+import '@/styles/theme.css';
+
+// Fraunces for display — the reference screens' headings are a high-contrast
+// serif and Fraunces is the closest of the free families, with Playfair
+// Display as the fallback in theme.css. Inter for everything else. Loaded
+// through next/font so the files are served from our own origin: the old
+// stylesheet link cost a round trip to Google before the first paint.
+const fraunces = Fraunces({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-fraunces',
+  // The display sizes only. Loading the whole variable range costs weight
+  // nobody sees.
+  weight: ['400', '600', '700'],
+});
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-inter',
+});
 
 export const metadata: Metadata = {
   title: 'Reach — Plan experiences together',
@@ -37,11 +58,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider>
-      <html lang="en">
+      <html lang="en" className={`${fraunces.variable} ${inter.variable}`}>
         <head>
-          <link rel="preconnect" href="https://fonts.googleapis.com" />
-          <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-          <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+
           <meta name="mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-capable" content="yes" />
           <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />

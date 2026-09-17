@@ -39,80 +39,86 @@ const C = Object.fromEntries(
 );
 
 const PALETTE = {
-  // ── Light — warm off-white. The default, and the approachable one. ──────
+  // ── Light — off-white and deep green, sampled from REF4. ───────────────
+  // Ground #EBEFEC, cards #E4EAE6, ink #142119, the green #2B583B. The muted
+  // green was sampled at #617A6C and measured 4.01:1 on the ground — under
+  // the body-text bar — so it is deepened to #576E61, which clears it at
+  // 4.75:1 without touching the brand green.
   light: {
-    page: "#E7DCC6",
-    bg: "#FAF5EA", s1: "#FFFCF4", s2: "#F6EFE1", s3: "#EFE5D2",
-    border: "#E2D7BF", borderLight: "#CFC0A0",
+    page: "#DFE5E0",
+    bg: "#EBEFEC", s1: "#F4F7F5", s2: "#E4EAE6", s3: "#DAE2DC",
+    border: "#D8DED4", borderLight: "#C3CCC5",
 
-    accent: "#D4A843", accentDeep: "#C49A38", accentHover: "#E0BC68",
-    accentDim: "rgba(212,168,67,0.18)", accentBorder: "rgba(160,120,30,0.28)",
-    // Deepened with the surfaces: 5.5:1 on the ground, 4.9:1 on the deepest
-    // card. The old value fell under the bar once the cream warmed.
-    accentText: "#805D0F",
+    // Orange stays the action colour in both themes; as TEXT on the pale
+    // ground it is only 3.2:1, so the green carries text and links.
+    accent: "#EC6032", accentDeep: "#D24E24", accentHover: "#F2764D",
+    accentDim: "rgba(236,96,50,0.12)", accentBorder: "rgba(236,96,50,0.30)",
+    accentText: "#2B583B",
     onAccent: "#2A1D06", onGreen: "#FFFFFF",
 
-    // Semantic colours are darkened for the light theme: the dark-theme values
-    // are tuned to glow on near-black and fail badly as text on white.
-    green: "#17703C", greenDim: "rgba(23,112,60,0.12)",
+    green: "#2F7D43", greenDim: "rgba(47,125,67,0.12)",
     amber: "#6F4B00", amberDim: "rgba(111,75,0,0.12)",
-    red: "#C2185B", redDim: "rgba(194,24,91,0.10)",
+    red: "#C0392B", redDim: "rgba(192,57,43,0.10)",
     blue: "#1E62C4", blueDim: "rgba(30,98,196,0.10)",
 
-    t1: "#241C10", t2: "#63553C", t3: "#6D5F45", t4: "#817154",
+    t1: "#142119", t2: "#576E61", t3: "#5E766A", t4: "#6E8577",
 
-    navBg: "rgba(250,245,234,0.92)",
-    overlay: "rgba(45,35,20,0.45)",
-    // Warm shadows, not grey ones. A neutral shadow on a cream ground reads
-    // as dirt.
-    cardShadow: "0 2px 8px rgba(90,70,30,0.07)",
-    cardShadowHover: "0 10px 28px rgba(90,70,30,0.14)",
-    accentGlow: "0 4px 16px rgba(180,135,40,0.28)",
-    accentGlowHover: "0 8px 24px rgba(180,135,40,0.36)",
-    focusRing: "rgba(212,168,67,0.28)",
-    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.22%22/%3E%3C/svg%3E')",
+    navBg: "rgba(235,239,236,0.94)",
+    overlay: "rgba(20,33,25,0.45)",
+    cardShadow: "0 2px 8px rgba(30,50,38,0.07)",
+    cardShadowHover: "0 10px 28px rgba(30,50,38,0.14)",
+    accentGlow: "0 4px 16px rgba(236,96,50,0.22)",
+    accentGlowHover: "0 8px 24px rgba(236,96,50,0.30)",
+    focusRing: "rgba(236,96,50,0.28)",
+    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.16%22/%3E%3C/svg%3E')",
     edgeHi: "rgba(255,255,255,0.75)",
-    frameShadow: "0 60px 140px rgba(80,62,28,0.28)",
-    frameGlow: "rgba(212,168,67,0.10)",
+    frameShadow: "0 60px 140px rgba(30,50,38,0.24)",
+    frameGlow: "rgba(236,96,50,0.10)",
   },
 
-  // ── Dark — the original warm deep noir, kept intact. ────────────────────
+  // ── Dark — maroon and gold, sampled from REF6. The default. ────────────
+  // Every value here was read off the reference screens rather than guessed:
+  // the ground is #2C0E18, cards #3F1619, the wordmark gold #C3A342, headings
+  // cream #FEF7D9 and the accent word orange #EC6032.
   dark: {
-    page: "#080603",
-    bg: "#0E0A06", s1: "#18120B", s2: "#221A11", s3: "#2C2217",
-    border: "#3A2E1E", borderLight: "#4A3B26",
+    page: "#1F080F",
+    bg: "#2C0E18", s1: "#36121B", s2: "#3F1619", s3: "#4A1B20",
+    border: "#5A2430", borderLight: "#6B2C39",
 
-    accent: "#D4A843", accentDeep: "#C49A38", accentHover: "#E0BC68",
-    accentDim: "rgba(212,168,67,0.12)", accentBorder: "rgba(212,168,67,0.3)",
-    // On near-black the fill gold is already 8.9:1, so text uses it unchanged.
-    accentText: "#D4A843",
-    onAccent: "#1A1206", onGreen: "#0C2A17",
+    // Gold stays the fill in both themes; on maroon it is also readable as
+    // text at 7.3:1, so accentText is the same value here.
+    accent: "#C3A342", accentDeep: "#A8892F", accentHover: "#D8BC63",
+    accentDim: "rgba(195,163,66,0.14)", accentBorder: "rgba(195,163,66,0.32)",
+    accentText: "#C3A342",
+    // The orange from REF6, used for the one accent word and for primary
+    // actions. White on it is 3.34:1, so anything sitting ON it uses ink.
+    onAccent: "#2A1D06", onGreen: "#0C2A17",
 
-    green: "#52C97B", greenDim: "rgba(82,201,123,0.1)",
-    amber: "#F59E0B", amberDim: "rgba(245,158,11,0.1)",
-    red: "#FF8080", redDim: "rgba(255,128,128,0.1)",
-    blue: "#60A5FA", blueDim: "rgba(96,165,250,0.1)",
+    green: "#7FB58A", greenDim: "rgba(127,181,138,0.12)",
+    amber: "#E8A33D", amberDim: "rgba(232,163,61,0.12)",
+    red: "#E85D5D", redDim: "rgba(232,93,93,0.12)",
+    blue: "#7FA8D9", blueDim: "rgba(127,168,217,0.12)",
 
-    // t3 lifted with the surfaces: on the warmer ground the old value fell
-    // under the body-text bar.
-    t1: "#F5EDD8", t2: "#9A8A6A", t3: "#A08C66", t4: "#8A7550",
+    t1: "#FEF7D9", t2: "#CFC182", t3: "#B89A6A", t4: "#9C815A",
 
-    navBg: "rgba(14,10,6,0.95)",
-    overlay: "rgba(0,0,0,0.72)",
+    navBg: "rgba(44,14,24,0.95)",
+    overlay: "rgba(20,5,10,0.78)",
     cardShadow: "0 2px 10px rgba(0,0,0,0.35)",
     cardShadowHover: "0 8px 30px rgba(0,0,0,0.45)",
-    accentGlow: "0 4px 20px rgba(212,168,67,0.25)",
-    accentGlowHover: "0 6px 24px rgba(212,168,67,0.35)",
-    focusRing: "rgba(212,168,67,0.18)",
-    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.22%22/%3E%3C/svg%3E')",
-    edgeHi: "rgba(255,255,255,0.12)",
+    accentGlow: "0 4px 20px rgba(195,163,66,0.22)",
+    accentGlowHover: "0 6px 24px rgba(195,163,66,0.32)",
+    focusRing: "rgba(236,96,50,0.35)",
+    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.18%22/%3E%3C/svg%3E')",
+    edgeHi: "rgba(255,255,255,0.10)",
     frameShadow: "0 80px 200px rgba(0,0,0,.95)",
-    frameGlow: "rgba(212,168,67,0.08)",
+    frameGlow: "rgba(195,163,66,0.10)",
   },
 };
 
 const THEMES = Object.keys(PALETTE);
-const DEFAULT_THEME = "light";
+// REF6 is the app's face: maroon and gold. Light is the alternative, not the
+// starting point.
+const DEFAULT_THEME = "dark";
 // Must match the key the no-flash script in app/layout.tsx reads.
 const THEME_KEY = "reach-theme";
 
@@ -128,10 +134,9 @@ const THEME_CSS = `
 `;
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap');
 ${THEME_CSS}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-body{background:${C.page};background-image:${C.grain};display:flex;justify-content:center;min-height:100vh;font-family:'Space Grotesk',sans-serif;color:${C.t1};-webkit-font-smoothing:antialiased;}
+body{background:${C.page};background-image:${C.grain};display:flex;justify-content:center;min-height:100vh;font-family:var(--font-body);color:${C.t1};-webkit-font-smoothing:antialiased;}
 /* Inline styles don't inherit a font, which is why the family string was
    repeated dozens of times across the file. Set it once for every control. */
 button,input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;}
@@ -155,18 +160,18 @@ button{min-height:44px;}
 .sb-fake{display:none;}
 @media (min-width:560px) and (min-height:900px){.sb-fake{display:inline;}}
 @media (max-width:559px){.sb{justify-content:center;}}
-.sb-logo{font-family:'Instrument Serif',serif;font-size:17px;color:${C.t1};letter-spacing:-.02em;}
+.sb-logo{font-family:var(--font-display);font-size:17px;color:${C.t1};letter-spacing:-.02em;}
 .ma{flex:1;overflow:hidden;position:relative;}
 .sc{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding-bottom:calc(90px + env(safe-area-inset-bottom));}
 .sc::-webkit-scrollbar{display:none;}
 .nb{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;background:${C.navBg};backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid ${C.accentBorder};padding:10px 0 max(24px,env(safe-area-inset-bottom));z-index:100;}
-.nb-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:500;color:${C.t3};transition:color .15s;padding:4px 0;}
+.nb-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;font-family:var(--font-body);font-size:10px;font-weight:500;color:${C.t3};transition:color .15s;padding:4px 0;}
 .nb-btn.active{color:${C.accentText};}
 .nb-btn svg{width:22px;height:22px;transition:transform .15s;}
 .nb-btn.active svg{transform:translateY(-1px);}
 .nb-dot{width:4px;height:4px;border-radius:50%;background:${C.accent};margin:0 auto;opacity:0;transition:opacity .15s;}
 .nb-btn.active .nb-dot{opacity:1;}
-.pt{font-family:'Instrument Serif',serif;font-size:30px;color:${C.t1};line-height:1.1;}
+.pt{font-family:var(--font-display);font-size:30px;color:${C.t1};line-height:1.1;}
 .hd{padding:8px 20px 16px;flex-shrink:0;}
 .hd-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;}
 .hd-back{display:inline-flex;align-items:center;gap:4px;background:none;border:none;cursor:pointer;color:${C.t2};font-size:13px;font-weight:500;padding:10px 14px 10px 0;margin-left:-2px;transition:color .15s;flex-shrink:0;}
@@ -185,19 +190,19 @@ button{min-height:44px;}
 .pill-r{background:${C.redDim};color:${C.red};}
 .pill-p{background:${C.accentDim};color:${C.accentText};}
 .pill-m{background:${C.s3};color:${C.t2};}
-.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:${C.accentGlow},inset 0 1px 0 rgba(255,255,255,.32);}
+.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:var(--font-body);font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:${C.accentGlow},inset 0 1px 0 rgba(255,255,255,.32);}
 .bp:hover{transform:translateY(-1px);box-shadow:${C.accentGlowHover};}
 .bp:active{transform:scale(.98);}
 .bp:disabled{opacity:.35;cursor:not-allowed;}
-.bs{width:100%;padding:15px 20px;background:${C.s2};color:${C.t1};border:1px solid ${C.border};border-radius:18px;font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:500;cursor:pointer;transition:border-color .15s;}
+.bs{width:100%;padding:15px 20px;background:${C.s2};color:${C.t1};border:1px solid ${C.border};border-radius:18px;font-family:var(--font-body);font-size:15px;font-weight:500;cursor:pointer;transition:border-color .15s;}
 .bs:hover{border-color:${C.borderLight};}
-.bsm{padding:7px 14px;border-radius:10px;font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s;}
+.bsm{padding:7px 14px;border-radius:10px;font-family:var(--font-body);font-size:12px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s;}
 .bsm:hover{opacity:.85;}
 .bsm-p{background:${C.accent};color:${C.onAccent};}
 .bsm-g{background:${C.s3};color:${C.t2};}
 .bsm-r{background:${C.redDim};color:${C.red};}
 .bsm-gr{background:${C.greenDim};color:${C.green};}
-.inp{width:100%;padding:15px 16px;background:${C.s2};border:1.5px solid ${C.border};border-radius:16px;color:${C.t1};font-family:'Space Grotesk',sans-serif;font-size:14px;outline:none;transition:all .2s;}
+.inp{width:100%;padding:15px 16px;background:${C.s2};border:1.5px solid ${C.border};border-radius:16px;color:${C.t1};font-family:var(--font-body);font-size:14px;outline:none;transition:all .2s;}
 .inp:focus{border-color:${C.accentText};box-shadow:0 0 0 3px ${C.focusRing};background:${C.s1};}
 /* Keyboard focus was visible on text inputs and nowhere else: not on buttons,
    cards, nav or the two bare inputs that set outline:none with no replacement.
@@ -570,7 +575,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         <div style={{fontSize:13.5,color:C.t2,marginBottom:5,fontWeight:500}}>
           {new Date().getHours()<12?"Good morning":new Date().getHours()<17?"Good afternoon":"Good evening"}
         </div>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,lineHeight:1.1}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:36,color:C.t1,lineHeight:1.1}}>
           Hey {firstNameOf(user)} 👋
         </div>
         {/* Nothing to call them by. Say where to fix it rather than greeting
@@ -647,7 +652,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
               <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`} style={{marginBottom:10,display:"inline-flex"}}>
                 {plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":plan.status==="approved"?"👍 Ready to book":"📋 Planning"}
               </span>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:"white",marginBottom:4}}>{plan.title}</div>
+              <div style={{fontFamily:"var(--font-display)",fontSize:20,color:"white",marginBottom:4}}>{plan.title}</div>
               <div style={{fontSize:12,color:"rgba(255,255,255,.65)",marginBottom:10}}>{plan.startDate?plan.dates:"No date yet"} · {plan.group.name}</div>
               <AvCluster ids={plan.participants} um={um} max={4}/>
             </div>
@@ -771,7 +776,7 @@ function BuildingItinerary({destination,nights,onCancel}){
     <div style={{position:"absolute",inset:0,background:C.bg,zIndex:300,
       display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 32px"}}>
       <div style={{fontSize:44,marginBottom:18}}>🗺️</div>
-      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1,textAlign:"center",lineHeight:1.2,marginBottom:8}}>
+      <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,textAlign:"center",lineHeight:1.2,marginBottom:8}}>
         Building your {destination||"trip"}
       </div>
       <div style={{fontSize:13.5,color:C.t2,textAlign:"center",marginBottom:26,minHeight:38,lineHeight:1.5}}>
@@ -1030,7 +1035,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
             <div style={{position:"absolute",inset:0,
               background:"linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.85))",
               display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:16}}>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:"white",marginBottom:3}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:22,color:"white",marginBottom:3}}>
                 {exp.title}
               </div>
               <div style={{fontSize:12,color:"rgba(255,255,255,.65)"}}>{exp.sub}</div>
@@ -1057,7 +1062,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
           <div style={{background:C.s1,padding:"12px 16px",display:"flex",
             justifyContent:"space-between",alignItems:"center"}}>
             <div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:exp.price?C.t1:C.t2}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:20,color:exp.price?C.t1:C.t2}}>
                 {/* Ticketmaster is no longer the only place this came from,
                     so the card stopped naming it as though it were. */}
                 {exp.price||(exp.provider==="ticketmaster"?"Price on Ticketmaster":"Price at the door")}
@@ -1242,7 +1247,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
         <ScreenHeader onBack={onBack} overlay/>
         <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 40%,rgba(0,0,0,.9))",display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:20}}>
           <div style={{fontSize:40,marginBottom:8}}>{exp.emoji||"🎯"}</div>
-          <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:"white",lineHeight:1.2}}>{exp.title}</div>
+          <div style={{fontFamily:"var(--font-display)",fontSize:24,color:"white",lineHeight:1.2}}>{exp.title}</div>
           <div style={{fontSize:13,color:"rgba(255,255,255,.65)",marginTop:4}}>{exp.sub}</div>
         </div>
         {exp.dist&&(
@@ -1257,12 +1262,12 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
         <div style={{display:"flex",gap:10,marginBottom:20}}>
           <div style={{flex:1,background:C.s2,borderRadius:14,padding:14,border:"1px solid "+C.border}}>
             <div style={{fontSize:11,color:C.t3,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em"}}>Price</div>
-            <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>{exp.price||"—"}</div>
+            <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{exp.price||"—"}</div>
             <div style={{fontSize:11,color:C.t2}}>per person</div>
           </div>
           <div style={{flex:1,background:C.s2,borderRadius:14,padding:14,border:"1px solid "+C.border}}>
             <div style={{fontSize:11,color:C.t3,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em"}}>Type</div>
-            <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>{exp.category||exp.tags?.[0]||"Experience"}</div>
+            <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{exp.category||exp.tags?.[0]||"Experience"}</div>
             <div style={{fontSize:11,color:C.t2}}>{exp.sub?.split("·")[0]?.trim()}</div>
           </div>
         </div>
@@ -1319,7 +1324,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             <div className="sh-hdl"/>
             <div style={{padding:"18px 20px 24px",textAlign:"center"}}>
               <div style={{fontSize:30,marginBottom:10}}>🎟️</div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1,marginBottom:6}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:6}}>
                 Did you get them?
               </div>
               <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:18}}>
@@ -1517,7 +1522,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             {bookStep===2&&(
               <div style={{padding:"20px 0 30px",textAlign:"center"}}>
                 <div style={{fontSize:60,marginBottom:16}}>🎉</div>
-                <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1,marginBottom:8}}>We're on it</div>
+                <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,marginBottom:8}}>We're on it</div>
                 <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:24}}>
                   {exp.title}, {formatDates(fixedDate||bookDate)}{bookTime?" at "+bookTime:""}, {bookGuests==="8+"?"8+ people":plural(parseInt(bookGuests)||2,"person","people")}. It's saved in {bookedPlan?.groupName||"your plans"} — open it whenever you like.
                 </div>
@@ -1687,7 +1692,7 @@ function GroupsScreen({groups,um,push,loading}){
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
                   <div style={{fontSize:28}}>{g.emoji}</div>
                   <div>
-                    <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>{g.name}</div>
+                    <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{g.name}</div>
                     <div style={{fontSize:12,color:C.t2}}>{isSoloGroup(g)?"Just you":plural(g.memberIds.length,"person","people")}</div>
                   </div>
                 </div>
@@ -1792,7 +1797,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId})}>
               <div style={{padding:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                  <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>{plan.title}</div>
+                  <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{plan.title}</div>
                   <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`}>
                     {plan.status==="booked"?"✓ Booked":plan.status==="voting"?"Voting":plan.status==="approved"?"Approved":"Planning"}
                   </span>
@@ -1893,7 +1898,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
         <div style={{padding:"18px 20px"}}>
           <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
             <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Group Wallet</div>
-            <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${group.wallet.toLocaleString()}</div>
+            <div style={{fontFamily:"var(--font-display)",fontSize:44,color:C.t1}}>${group.wallet.toLocaleString()}</div>
             <div style={{fontSize:12,color:C.t2,marginTop:4}}>Shared · {group.memberIds.length} members</div>
           </div>
           <div style={{marginBottom:18,padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
@@ -2712,7 +2717,7 @@ function TasteQuizScreen({onBack,toast,onSaved}){
     return(
       <div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
         <div style={{fontSize:48,marginBottom:14}}>🎉</div>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1,marginBottom:10}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1,marginBottom:10}}>
           Now we know you
         </div>
         <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:26}}>
@@ -2747,7 +2752,7 @@ function TasteQuizScreen({onBack,toast,onSaved}){
 
       <div style={{padding:"8px 20px 14px",textAlign:"center"}}>
         <div style={{fontSize:40,marginBottom:8}}>{q.icon}</div>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,
+        <div style={{fontFamily:"var(--font-display)",fontSize:26,
           color:q.noWay?C.red:C.t1,lineHeight:1.2,marginBottom:4}}>{q.title}</div>
         {q.sub&&<div style={{fontSize:13,color:C.t2,lineHeight:1.5}}>{q.sub}</div>}
       </div>
@@ -3134,7 +3139,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
         <div style={{flex:1,overflowY:"auto",padding:"8px 20px 20px"}}>
           <div style={{textAlign:"center",marginBottom:24}}>
             <div style={{fontSize:44,marginBottom:10}}>📅</div>
-            <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1,marginBottom:6}}>
+            <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1,marginBottom:6}}>
               {isNight?"When's the night out?":mode==="trip"?"When are you going?":"What are we planning?"}
             </div>
             <div style={{fontSize:14,color:C.t2}}>
@@ -3217,7 +3222,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
           {!isNight&&nights>0&&(
             <div style={{textAlign:"center",padding:"14px",background:C.accentDim,
               border:"1px solid "+C.accentBorder,borderRadius:14,marginBottom:16}}>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.accentText}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.accentText}}>
                 {nights} night{nights!==1?"s":""}
               </div>
               <div style={{fontSize:13,color:C.t2,marginTop:2}}>
@@ -3258,7 +3263,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
         <div style={{flex:1,display:"flex",flexDirection:"column"}}>
           <div style={{padding:"8px 20px 14px",textAlign:"center"}}>
             <div style={{fontSize:40,marginBottom:8}}>{quizQ.icon}</div>
-            <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,
+            <div style={{fontFamily:"var(--font-display)",fontSize:26,
               color:quizQ.noWay?C.red:C.t1,lineHeight:1.2,marginBottom:4}}>
               {quizQ.title}
             </div>
@@ -3305,7 +3310,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
               <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14,marginBottom:12}}>
                 <div style={{fontSize:12.5,color:C.t2,marginBottom:8}}>Or enter an exact amount per person</div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:C.t2}}>$</span>
+                  <span style={{fontFamily:"var(--font-display)",fontSize:30,color:C.t2}}>$</span>
                   <input
                     inputMode="numeric"
                     value={budgetCustom}
@@ -3317,7 +3322,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
                     }}
                     placeholder={isNight?"120":"3500"}
                     style={{flex:1,background:"none",border:"none",
-                      fontFamily:"'Instrument Serif',serif",fontSize:30,color:C.t1,width:"100%"}}/>
+                      fontFamily:"var(--font-display)",fontSize:30,color:C.t1,width:"100%"}}/>
                 </div>
                 <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.5}}>
                   {isNight?"Dinner, drinks and tickets. We plan three nights around it — ":"Everything in: flights, stay, food, activities. We plan three options around it —"}
@@ -3659,7 +3664,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       <div style={{padding:"12px 20px 16px",display:"flex",alignItems:"center",gap:12}}>
         <ScreenHeader onBack={onBack}/>
         <div style={{flex:1}}>
-          <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>
+          <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>
             {group.emoji} {group.name}
           </div>
           <div style={{fontSize:12,color:C.t2}}>
@@ -3839,7 +3844,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       {step===1&&(
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,textAlign:"center"}}>
           <div style={{fontSize:60,marginBottom:20}}>✨</div>
-          <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1,marginBottom:12}}>
+          <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,marginBottom:12}}>
             Building trips for {group.name}
           </div>
           <div style={{fontSize:14,color:C.t2,lineHeight:1.8,marginBottom:30,maxWidth:280}}>
@@ -3893,7 +3898,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                       <div style={{flex:1}}>
                         <div style={{fontSize:32,marginBottom:6}}>{trip.emoji}</div>
-                        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:4}}>
+                        <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:4}}>
                           {trip.destination}
                         </div>
                         <div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginBottom:8}}>
@@ -3906,7 +3911,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                         )}
                       </div>
                       <div style={{textAlign:"right",marginLeft:12}}>
-                        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:voted?C.accentText:C.t1}}>
+                        <div style={{fontFamily:"var(--font-display)",fontSize:28,color:voted?C.accentText:C.t1}}>
                           ${trip.total_per_person?.toLocaleString()}
                         </div>
                         <div style={{fontSize:11,color:C.t3}}>per person</div>
@@ -4348,7 +4353,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
             <div className="sh-hdl"/>
             <div style={{padding:"20px 20px 10px",textAlign:"center"}}>
               <div style={{fontSize:28,marginBottom:10}}>💾</div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1,marginBottom:8}}>Save your progress?</div>
+              <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:8}}>Save your progress?</div>
               <div style={{fontSize:14,color:C.t2,lineHeight:1.6,marginBottom:20}}>Your plan is saved as a draft. You can pick up exactly where you left off.</div>
               <div style={{display:"flex",flexDirection:"column",gap:10,padding:"0 0 20px"}}>
                 <button className="bp" onClick={()=>{setShowExitConfirm(false);toast("Draft saved — pick up where you left off anytime");onBack();}}>Save draft & exit</button>
@@ -4450,7 +4455,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 )}
                 {eventDate&&(
                   <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:14,padding:"12px 16px",textAlign:"center",marginBottom:14}}>
-                    <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>
+                    <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>
                       {new Date(eventDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
                     </div>
                     {eventTime&&<div style={{fontSize:13,color:C.accentText,marginTop:4}}>{eventTime}</div>}
@@ -4496,7 +4501,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 </div>
                 {nights()>0&&(
                   <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:14,padding:"12px 16px",marginBottom:14,textAlign:"center"}}>
-                    <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1}}>{getDurationLabel()}</div>
+                    <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>{getDurationLabel()}</div>
                     <div style={{fontSize:12,color:C.t2,marginTop:2}}>{selGroup?.name} · {selGroup?.memberIds?.length||"?"} people</div>
                   </div>
                 )}
@@ -4633,7 +4638,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>
                 {isEvent?"Typical cost for this":"AI cost estimate"}
               </div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.accentText}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.accentText}}>
                 {planType==="restaurant"?`$${Math.round(parseInt(budget||0)*.6).toLocaleString()} – $${parseInt(budget||0).toLocaleString()} pp`
                 :planType==="concert"?`$${Math.round(parseInt(budget||0)*.5).toLocaleString()} – $${parseInt(budget||0).toLocaleString()} pp`
                 :`$${Math.round(parseInt(budget||0)*.7).toLocaleString()} – $${Math.round(parseInt(budget||0)*1.05).toLocaleString()}`}
@@ -4646,8 +4651,8 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               </div>
             </div>
             <div style={{background:C.s1,border:`2px solid ${C.accentText}`,borderRadius:16,padding:"14px 20px",display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-              <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t3}}>$</span>
-              <input aria-label="Budget per person" style={{background:"none",border:"none",fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,width:"100%"}} value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} inputMode="numeric" placeholder="2500"/>
+              <span style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t3}}>$</span>
+              <input aria-label="Budget per person" style={{background:"none",border:"none",fontFamily:"var(--font-display)",fontSize:36,color:C.t1,width:"100%"}} value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} inputMode="numeric" placeholder="2500"/>
               <span style={{fontSize:12,color:C.t3}}>max</span>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:18}}>
@@ -5007,7 +5012,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           <ScreenHeader onBack={onBack} overlay/>
           <button className="bsm" style={{background:"rgba(255,255,255,.15)",color:"white",border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
         </div>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:"white",marginBottom:4}}>{plan.title}</div>
+        <div style={{fontFamily:"var(--font-display)",fontSize:26,color:"white",marginBottom:4}}>{plan.title}</div>
         <div style={{fontSize:13,color:"rgba(255,255,255,.65)",marginBottom:12}}>{plan.dates} · {group.name}</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`}>{plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":plan.status==="approved"?"✅ Approved":"📋 Planning"}</span>
@@ -5048,7 +5053,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {[{l:soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},(plan.startDate&&plan.startDate===plan.endDate)?{l:"When",v:dayLabel(plan.startDate)||"—",e:"🌃"}:{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
                 <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
                   <div style={{fontSize:20}}>{s.e}</div>
-                  <div style={{fontFamily:"'Instrument Serif',serif",fontSize:18,color:C.t1,marginTop:4}}>{s.v}</div>
+                  <div style={{fontFamily:"var(--font-display)",fontSize:18,color:C.t1,marginTop:4}}>{s.v}</div>
                   <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:".06em"}}>{s.l}</div>
                 </div>
               ))}
@@ -5206,7 +5211,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   <div key={day.key} id={`itin-${day.key}`}>
                     <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",
                       padding:"14px 20px 8px",background:day.isToday?C.accentDim:"transparent"}}>
-                      <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,
+                      <div style={{fontFamily:"var(--font-display)",fontSize:20,
                         color:day.isPast&&!day.isToday?C.t3:C.t1}}>{day.label}</div>
                       {day.dateLabel&&<div style={{fontSize:12,color:C.t3}}>{day.dateLabel}</div>}
                       {day.isToday&&<span className="pill pill-a" style={{fontSize:10}}>Today</span>}
@@ -5330,7 +5335,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               return(
                 <div key={opt} {...pressable} onClick={()=>castVote(opt)} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accentText:C.border}`,borderRadius:16,padding:16,marginBottom:10,cursor:myVote?"default":"pointer",transition:"all .15s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                    <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:C.t1}}>{opt}</div>
+                    <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{opt}</div>
                     <div style={{fontSize:13,fontWeight:600,color:mine?C.accentText:C.t2}}>{v} vote{v!==1?"s":""}</div>
                   </div>
                   <div className="pb-t" style={{marginBottom:8}}><div className="pb-f" style={{width:`${pct}%`}}/></div>
@@ -5346,7 +5351,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           <div style={{padding:"16px 20px"}}>
             <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
               <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Budget per person</div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:44,color:C.t1}}>${plan.budget.toLocaleString()}</div>
+              <div style={{fontFamily:"var(--font-display)",fontSize:44,color:C.t1}}>${plan.budget.toLocaleString()}</div>
               <div style={{fontSize:12,color:C.t2,marginTop:4}}>{soloTrip?"Travelling on your own":`${plural(plan.participants.length,"traveller")} total`}</div>
             </div>
             {/* Itemised from the plan itself. This was a percentage split of
@@ -5484,7 +5489,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
             <div className="sh-hdl"/>
             <div style={{padding:"18px 20px 24px",textAlign:"center"}}>
               <div style={{fontSize:28,marginBottom:10}}>✍️</div>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1,marginBottom:6}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:6}}>
                 Keep what you wrote?
               </div>
               <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:18}}>
@@ -5805,7 +5810,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
 
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:40,marginBottom:12}}>\uD83E\uDD1D</div>
-    <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>You're in!</div>
+    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>You're in!</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in. The moment the last share lands we'll email everyone, and one of you gives the word to book.</div>
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents+myShareCents)/Math.max(funding.targetCents,1))*100));
       return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
@@ -5839,7 +5844,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
 
   if(phase==="priceUp")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:40,marginBottom:12}}>\uD83D\uDCC8</div>
-    <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.t1,marginBottom:8}}>Price went up a little</div>
+    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Price went up a little</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>One of your bookings costs a bit more than when we quoted it. Still book it?</div>
     <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
     <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Let me think</div>
@@ -5864,7 +5869,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
             priced yet" \u2014 contradicting itself on the screen where a real card
             had just been charged. Money in is worth celebrating; it is simply
             not the same claim as a booking. */}
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:30,color:"white",marginBottom:6}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:30,color:"white",marginBottom:6}}>
           {bookedAnything?"You're all booked!":"Your share is in"}
         </div>
         <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>
@@ -5902,7 +5907,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   if(phase==="pay")return(<div className="sc" style={{paddingBottom:40}}>
     <div style={{padding:"18px 20px 6px",display:"flex",alignItems:"center",gap:10}}>
       <span onClick={()=>setPhase("review")} style={{cursor:"pointer",color:C.t2,fontSize:20}}>←</span>
-      <span style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>Your share \u00B7 {fmt(myShareCents)}</span>
+      <span style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>Your share \u00B7 {fmt(myShareCents)}</span>
     </div>
     <div style={{padding:"8px 20px 0"}}>
       <div ref={payRef} style={{minHeight:220,background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}/>
@@ -5918,7 +5923,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   return(<div className="sc" style={{paddingBottom:40}}>
     <div style={{padding:"18px 20px 6px",display:"flex",alignItems:"center",gap:10}}>
       <span onClick={onBack} style={{cursor:"pointer",color:C.t2,fontSize:20}}>←</span>
-      <span style={{fontFamily:"'Instrument Serif',serif",fontSize:22,color:C.t1}}>{plan?.destination||plan?.name||"Your trip"}</span>
+      <span style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{plan?.destination||plan?.name||"Your trip"}</span>
     </div>
     <div style={{padding:"6px 20px 0"}}>
       <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:"6px 4px",marginBottom:14}}>
@@ -5935,7 +5940,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
         <span style={{fontSize:14,color:C.t2}}>{participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`}</span>
-        <span style={{fontFamily:"'Instrument Serif',serif",fontSize:28,color:C.t1}}>{fmt(myShareCents)}</span>
+        <span style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>{fmt(myShareCents)}</span>
       </div>
       <button disabled={busy} onClick={startPayment}
         style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16,opacity:busy?.6:1}}>
@@ -6351,10 +6356,10 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 18px",textAlign:"center"}}>
-        <div style={{width:80,height:80,borderRadius:"50%",background:`linear-gradient(135deg,${C.accent},${C.accentDeep})`,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Instrument Serif',serif",fontSize:32,color:C.onAccent,border:`3px solid ${C.border}`,overflow:"hidden"}}>
+        <div style={{width:80,height:80,borderRadius:"50%",background:`linear-gradient(135deg,${C.accent},${C.accentDeep})`,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--font-display)",fontSize:32,color:C.onAccent,border:`3px solid ${C.border}`,overflow:"hidden"}}>
           {user?.avatar?<img src={user.avatar} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover"}} alt=""/>:(user?.name||"?")[0]}
         </div>
-        <div style={{fontFamily:"'Instrument Serif',serif",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
+        <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>
           {user?.email}
           {data?.provider&&data.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.accentDim,color:C.accentText,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{data.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
@@ -6362,7 +6367,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         <div style={{display:"flex",gap:0,background:C.s2,borderRadius:16,marginTop:14,border:`1px solid ${C.border}`,overflow:"hidden"}}>
           {[{v:stats?.groups,l:"Groups"},{v:stats?.plans,l:"Plans"},{v:stats?.friends,l:"Travel with"}].map((s,i)=>(
             <div key={i} style={{flex:1,padding:"13px 0",textAlign:"center",borderLeft:i?`1px solid ${C.border}`:"none"}}>
-              <div style={{fontFamily:"'Instrument Serif',serif",fontSize:24,color:C.accentText}}>{s.v??"—"}</div>
+              <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.accentText}}>{s.v??"—"}</div>
               <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginTop:2}}>{s.l}</div>
             </div>
           ))}

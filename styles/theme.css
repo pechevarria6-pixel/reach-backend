@@ -1,0 +1,73 @@
+/* ─── Design tokens ──────────────────────────────────────────────────────
+ * The colours themselves live in PALETTE in components/reach-app.jsx, which
+ * emits them as --c-* on :root and :root[data-theme="dark"]. Copying the
+ * hexes here would give the app two sources of truth and one of them would
+ * drift, so these are aliases: the names the design appendix uses, pointing
+ * at the values the app already resolves.
+ *
+ * Sampled from the reference screens (REF6 dark, REF4 light):
+ *   dark   bg #2C0E18  card #3F1619  ink #FEF7D9  gold #C3A342  accent #EC6032
+ *   light  bg #EBEFEC  card #E4EAE6  ink #142119  green #2B583B accent #EC6032
+ *
+ * Two corrections were made against the sampled values, both for contrast:
+ * the light muted green went from #617A6C (4.01:1, under the body bar) to
+ * #576E61 (4.75:1), and anything sitting on the orange uses ink rather than
+ * white, which measured 3.34:1.
+ */
+
+:root {
+  --bg: var(--c-bg);
+  --surface: var(--c-s1);
+  --card: var(--c-s2);
+  --ink: var(--c-t1);
+  --gold: var(--c-accent-text);
+  --muted: var(--c-t2);
+  --accent: var(--c-accent);
+  --ring: var(--c-border);
+  --logo-circle: #FFFFFF;
+  --success: var(--c-green);
+  --danger: var(--c-red);
+
+  --radius-card: 20px;
+  --radius-pill: 999px;
+  --space-1: 8px;
+  --space-2: 12px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+}
+
+/* The app sets these on <html> via next/font. Named here as well so a page
+   that renders before the font variables land still has a sane stack. */
+:root {
+  --font-display: var(--font-fraunces), 'Playfair Display', Georgia, serif;
+  --font-body: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+/* Serif is for display sizes only. Below 18px it loses its shape and reads as
+   a typo, so small text stays on the body sans. */
+.display {
+  font-family: var(--font-display);
+}
+
+/* A7: the focus ring has to be visible, not merely present. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A6: motion is a courtesy, not a requirement. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

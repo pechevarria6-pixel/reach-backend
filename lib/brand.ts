@@ -9,23 +9,23 @@
 
 export const BRAND = {
   /** The surround outside the app frame. */
-  page: '#050406',
-  /** The app's own surface. */
-  bg: '#0A0805',
-  /** Warm gold. */
-  accent: '#D4A843',
+  page: '#1F080F',
+  /** The app's own surface — the maroon sampled from REF6. */
+  bg: '#2C0E18',
+  /** The wordmark gold, sampled from REF6. */
+  accent: '#C3A342',
   /** Gradient foot for raised buttons. */
-  accentDeep: '#C49A38',
-  /** Text on gold. White on gold is 2.2:1 and fails; this is 9.0:1. */
-  onAccent: '#1A1206',
+  accentDeep: '#A8892F',
+  /** Text on gold or orange. White on the orange is 3.34:1 and fails. */
+  onAccent: '#2A1D06',
   /** Raised surfaces. */
-  s1: '#120F09',
-  s2: '#1A1510',
-  border: '#2E2618',
-  /** Primary and muted text on dark surfaces. All clear 4.5:1 on bg. */
-  t1: '#F5EDD8',
-  t2: '#9A8A6A',
-  t3: '#97845E',
+  s1: '#36121B',
+  s2: '#3F1619',
+  border: '#5A2430',
+  /** Primary and muted text on maroon. Both clear 4.5:1 on bg. */
+  t1: '#FEF7D9',
+  t2: '#CFC182',
+  t3: '#B89A6A',
 } as const;
 
 /** The surround outside the app frame, one value per theme.
@@ -33,10 +33,10 @@ export const BRAND = {
  *  app's own CSS variables — these two have to live somewhere the server can
  *  read. Everything inside the frame themes itself from the token block in
  *  reach-app.jsx. */
-export const SHELL = { light: '#EDE6D8', dark: '#050406' } as const;
+export const SHELL = { light: '#DFE5E0', dark: '#1F080F' } as const;
 
 /** The app surface behind the frame, per theme. Used for the browser chrome. */
-export const SURFACE = { light: '#FCFAF5', dark: '#0A0805' } as const;
+export const SURFACE = { light: '#EBEFEC', dark: '#2C0E18' } as const;
 
 /** The key the app stores the viewer's theme choice under. Shared so the
  *  no-flash script in the shell and the toggle in the app cannot drift. */

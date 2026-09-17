@@ -16,7 +16,7 @@ const shell: React.CSSProperties = {
   minHeight: '100dvh',
   background: BRAND.bg,
   color: BRAND.t1,
-  fontFamily: "'Space Grotesk', system-ui, sans-serif",
+  fontFamily: 'var(--font-body)',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
@@ -35,7 +35,7 @@ const button: React.CSSProperties = {
   fontSize: 15,
   fontWeight: 600,
   cursor: 'pointer',
-  fontFamily: "'Space Grotesk', system-ui, sans-serif",
+  fontFamily: 'var(--font-body)',
 };
 
 export default function InvitePage({ params }: { params: { token: string } }) {
@@ -74,7 +74,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   if (error) {
     return (
       <div style={shell}>
-        <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 30 }}>reach</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 30 }}>reach</div>
         <p style={{ color: BRAND.t2, maxWidth: 320 }}>{error}</p>
         <a href="/home" style={{ ...button, textDecoration: 'none' }}>Go to Reach</a>
       </div>
@@ -84,7 +84,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   if (!invite || !isLoaded) {
     return (
       <div style={shell}>
-        <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 30 }}>reach</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 30 }}>reach</div>
         <p style={{ color: BRAND.t2 }}>Loading your invite…</p>
       </div>
     );
@@ -107,7 +107,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   return (
     <div style={shell}>
       <div style={{ fontSize: 56 }}>{invite.groupEmoji || '✈️'}</div>
-      <div style={{ fontFamily: "'Instrument Serif', serif", fontSize: 30 }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 30 }}>
         {invite.groupName || 'A group'}
       </div>
       <p style={{ color: BRAND.t2, maxWidth: 320, lineHeight: 1.5 }}>

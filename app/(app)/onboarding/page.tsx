@@ -128,7 +128,7 @@ export default function OnboardingPage() {
   };
 
   return (
-    <main style={{ minHeight: '100dvh', background: BRAND.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
+    <main style={{ minHeight: '100dvh', background: BRAND.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: 'var(--font-body)' }}>
       <div style={{ maxWidth: 400, width: '100%' }}>
         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 40 }}>
           {STEPS.map((_, i) => (
@@ -140,7 +140,7 @@ export default function OnboardingPage() {
           <div style={{ width: 88, height: 88, borderRadius: 28, background: 'rgba(212,168,67,0.14)', border: '1px solid rgba(212,168,67,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, margin: '0 auto 24px' }}>
             {card.icon}
           </div>
-          <h1 style={{ fontFamily: 'Instrument Serif, serif', fontSize: 28, color: BRAND.t1, marginBottom: 12 }}>{card.title}</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: BRAND.t1, marginBottom: 12 }}>{card.title}</h1>
           <p style={{ fontSize: 15, color: BRAND.t2, lineHeight: 1.7 }}>{card.why}</p>
           {current !== 'you' && current !== 'ready' && (
             <p style={{ fontSize: 12, color: BRAND.t3, marginTop: 12 }}>You can change this at any time in Settings.</p>
