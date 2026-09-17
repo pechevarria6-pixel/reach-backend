@@ -19,6 +19,13 @@ export type PlanSection<T> = { key: 'upcoming' | 'undated' | 'past'; label: stri
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
+// The column is a DATE, but anything that ever hands back a timestamp
+// ("2026-09-20T00:00:00+00:00") would otherwise fail the pattern and every
+// plan would silently become undated — and vanish from the calendar. The day
+// is the first ten characters either way.
+const dayPart = (v: unknown): string | null =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}(T|$)/.test(v) ? v.slice(0, 10) : null;
+
 /**
  * Today, as the person's own calendar has it.
  *
@@ -46,8 +53,8 @@ export function today(now: Date = new Date()): string {
  * "Coming up" at a position no real date occupies.
  */
 export function planDay(plan: DatedPlan): string | null {
-  const v = plan?.startDate;
-  if (typeof v !== 'string' || !ISO.test(v)) return null;
+  const v = dayPart(plan?.startDate);
+  if (!v) return null;
   const t = Date.parse(`${v}T00:00:00Z`);
   return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v ? v : null;
 }
@@ -80,9 +87,28 @@ export function dayWhere(lng: unknown, now: Date = new Date()): string {
  * arrive. A night out ends the day it starts.
  */
 function lastDay(plan: DatedPlan): string | null {
-  const end = plan?.endDate;
-  if (typeof end === 'string' && ISO.test(end)) return end;
-  return planDay(plan);
+  const start = planDay(plan);
+  const end = dayPart(plan?.endDate);
+  // An end before the start is a typo, not a trip that ended before it began.
+  if (end && start && end >= start) return end;
+  return start;
+}
+
+/**
+ * The first plan that has not happened yet and does not touch the weeks on
+ * screen, so a month with nothing in it can point at what is actually next
+ * instead of looking like there is nothing planned at all.
+ */
+export function nextAfter<R extends { plan: DatedPlan; day: string }>(
+  rows: R[],
+  weeks: CalendarDay[][],
+  today: string,
+): R | null {
+  const last = weeks.at(-1)?.[6]?.day;
+  if (!last) return null;
+  return (Array.isArray(rows) ? rows : [])
+    .filter(r => r.day > last && (lastDay(r.plan) as string) >= today)
+    .sort((a, b) => a.day.localeCompare(b.day))[0] ?? null;
 }
 
 /**

@@ -12,9 +12,13 @@ export async function GET() {
 
   const supabase = createServerClient();
   const email = clerkUser.emailAddresses[0]?.emailAddress || '';
-  const firstName = clerkUser.firstName || '';
-  const lastName = clerkUser.lastName || '';
-  const name = [firstName, lastName].filter(Boolean).join(' ') || email.split('@')[0];
+  // Sign in with Apple hands its name to the external account and not always
+  // to the Clerk user, so look there before giving up on a real name.
+  const external = clerkUser.externalAccounts[0] as { firstName?: string; lastName?: string } | undefined;
+  const firstName = clerkUser.firstName || external?.firstName || '';
+  const lastName = clerkUser.lastName || external?.lastName || '';
+  const realName = [firstName, lastName].filter(Boolean).join(' ');
+  const name = realName || email.split('@')[0];
   const avatar_url = clerkUser.imageUrl || null;
   const provider = clerkUser.externalAccounts[0]?.provider || 'email';
 
@@ -61,12 +65,17 @@ export async function GET() {
       }
     }
   } else {
-    // Update avatar/name if changed
-    if (dbUser.avatar_url !== avatar_url || dbUser.name !== name) {
-      await supabase
-        .from('users')
-        .update({ avatar_url, name, email })
-        .eq('clerk_id', clerkId);
+    // Keep the avatar and address current. The name is only taken from Clerk
+    // when Clerk actually has one and the person has not chosen their own in
+    // Profile: this used to write `name` on every app open, so a name set in
+    // Profile was replaced by the email's local part — "ntzc6jh94w" for an
+    // Apple private-relay account — the next time the app loaded.
+    const refresh: Record<string, string | null> = {};
+    if (dbUser.avatar_url !== avatar_url) refresh.avatar_url = avatar_url;
+    if (dbUser.email !== email) refresh.email = email;
+    if (realName && !dbUser.first_name && dbUser.name !== realName) refresh.name = realName;
+    if (Object.keys(refresh).length) {
+      await supabase.from('users').update(refresh).eq('clerk_id', clerkId);
     }
   }
 
@@ -99,7 +108,10 @@ export async function GET() {
     // What the person set in Profile wins over whatever Clerk knows: Clerk has
     // no first name at all for an Apple private-relay sign-up, which is why
     // the home screen greeted people with "there".
-    name: dbUser?.name || name,
+    // Built from the parts when they exist, because rows written before the
+    // fix above may already hold the email's local part in `name`.
+    name: [dbUser?.first_name, dbUser?.last_name].filter(Boolean).join(' ')
+      || realName || dbUser?.name || name,
     firstName: dbUser?.first_name || firstName,
     lastName: dbUser?.last_name || lastName,
     // Departure airport for every flight estimate. Null until they set one,

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   planSections, planDay, daysAway, today, dayWhere, groupSchedule, byName,
-  monthGrid, monthLabel, monthOf, addMonths, weekBars,
+  monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter,
 } from '../../lib/calendar.ts';
 
 // Half past eight on the sixteenth in New York, which the server calls the
@@ -299,4 +299,22 @@ test('a trip you are on says it is on, not when it started', () => {
   assert.equal(daysAway(plan('over', '2026-09-10', '2026-09-15'), TODAY), 'Yesterday');
   // Long over, and there is nothing worth saying.
   assert.equal(daysAway(plan('longOver', '2026-01-02', '2026-01-09'), TODAY), null);
+});
+
+test('a month with nothing in it points at the trip that is next', () => {
+  const september = monthGrid('2026-09', TODAY);
+  const rows = groupSchedule([{ plans: [
+    plan('lisbon', '2026-10-10', '2026-10-17'),
+    plan('dinner', '2026-11-01'),
+    plan('gone', '2026-08-01', '2026-08-04'),
+  ] }], '0000-01-01', 500);
+  assert.equal(september.every(w => weekBars(rows, w).length === 0), true);
+  assert.equal(nextAfter(rows, september, TODAY)?.plan.id, 'lisbon');
+  // Nothing ahead, nothing to point at.
+  assert.equal(nextAfter(rows, monthGrid('2026-11', TODAY), TODAY), null);
+});
+
+test('a timestamp is still a day, not an undated plan', () => {
+  assert.equal(planDay({ startDate: '2026-10-03T00:00:00+00:00' }), '2026-10-03');
+  assert.equal(planDay({ startDate: '2026-13-03T00:00:00Z' }), null);
 });

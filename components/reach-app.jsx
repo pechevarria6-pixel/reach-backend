@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
-import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars } from "@/lib/calendar";
+import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter } from "@/lib/calendar";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -289,6 +289,10 @@ function firstNameOf(u,fallback="there"){
   if(first)return first;
   const name=(u?.name||"").trim();
   if(!name||name.includes("@"))return fallback;
+  // With no real name the server falls back to the address's local part,
+  // which for Apple private relay is "ntzc6jh94w". That is not a name either.
+  const local=(u?.email||"").split("@")[0].trim();
+  if(local&&name.toLowerCase()===local.toLowerCase())return fallback;
   return name.split(/\s+/)[0];
 }
 
@@ -528,7 +532,16 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
     }
   },[]);
   const allPlans=groups.flatMap(g=>g.plans.map(p=>({...p,group:g})));
-  const upcoming=allPlans.filter(p=>p.status==="booked"||p.status==="voting"||p.status==="approved");
+  // What is ahead, by date. This used to be chosen by status — booked, voting
+  // or approved — so a plan still being planned, which is every plan when it
+  // is first made, never appeared here, while a trip booked for last month
+  // stayed forever. Soonest first; a plan nobody has dated yet follows,
+  // because it is still coming even if nobody knows when.
+  const todayISO=today();
+  const upcoming=[
+    ...groupSchedule(groups,todayISO,500).map(r=>({...r.plan,group:r.group})),
+    ...allPlans.filter(p=>!p.startDate&&p.status!=="completed"&&p.status!=="cancelled"),
+  ].filter(p=>p.status!=="completed"&&p.status!=="cancelled");
   // Everything waiting on somebody, not only votes. Ordered by how close the
   // trip is to finished rather than by age: the one nearly done pulls hardest,
   // and a list sorted by urgency means the top item is always the right one.
@@ -557,6 +570,14 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         <div style={{fontFamily:"'Instrument Serif',serif",fontSize:36,color:C.t1,lineHeight:1.1}}>
           Hey {firstNameOf(user)} 👋
         </div>
+        {/* Nothing to call them by. Say where to fix it rather than greeting
+            "there" forever. Waits for /api/me so it cannot flash on load. */}
+        {user?.id&&firstNameOf(user,"")===""&&(
+          <div {...pressable} onClick={()=>setTab("profile")}
+            style={{fontSize:12.5,color:C.accentText,marginTop:6,fontWeight:600,cursor:"pointer"}}>
+            What should we call you? Add your name →
+          </div>
+        )}
       </div>
 
       {/* Draft resume banner */}
@@ -621,10 +642,10 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s"}}>
             <div style={{padding:16}}>
               <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`} style={{marginBottom:10,display:"inline-flex"}}>
-                {plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":"📋 Planning"}
+                {plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":plan.status==="approved"?"👍 Ready to book":"📋 Planning"}
               </span>
               <div style={{fontFamily:"'Instrument Serif',serif",fontSize:20,color:"white",marginBottom:4}}>{plan.title}</div>
-              <div style={{fontSize:12,color:"rgba(255,255,255,.65)",marginBottom:10}}>{plan.dates} · {plan.group.name}</div>
+              <div style={{fontSize:12,color:"rgba(255,255,255,.65)",marginBottom:10}}>{plan.startDate?plan.dates:"No date yet"} · {plan.group.name}</div>
               <AvCluster ids={plan.participants} um={um} max={4}/>
             </div>
           </div>
@@ -1540,6 +1561,13 @@ function GroupsScreen({groups,um,push,loading}){
   // is not a month. A day before all of them lets the same helper gather and
   // order them.
   const dated=groupSchedule(groups,"0000-01-01",500);
+  const weeks=monthGrid(month,todayISO);
+  // The grid opens on this month. A trip in October drew nothing in
+  // September, and a blank month read as "you have nothing planned" to
+  // somebody with a trip three weeks out. So a month with nothing on it says
+  // what is next, and takes you there.
+  const monthEmpty=weeks.every(w=>weekBars(dated,w).length===0);
+  const next=monthEmpty?nextAfter(dated,weeks,todayISO):null;
   const named=[...groups].sort(byName);
   return(
     <div style={{padding:"12px 0 0"}}>
@@ -1590,7 +1618,7 @@ function GroupsScreen({groups,um,push,loading}){
                 <div key={i} style={{fontSize:10,color:C.t3,textAlign:"center",letterSpacing:".05em"}}>{d}</div>
               ))}
             </div>
-            {monthGrid(month,todayISO).map(week=>{
+            {weeks.map(week=>{
               const bars=weekBars(dated,week);
               const lanes=bars.length?Math.max(...bars.map(b=>b.lane))+1:0;
               return(
@@ -1629,6 +1657,13 @@ function GroupsScreen({groups,um,push,loading}){
                 group means an empty grid, and an empty grid says nothing about
                 what it is for. It needs no dismissing and no remembering —
                 the first plan takes it away. */}
+            {next&&(
+              <div {...pressable} onClick={()=>setMonth(monthOf(next.day))}
+                style={{borderTop:`1px solid ${C.border}`,padding:"12px 18px",textAlign:"center",fontSize:12.5,color:C.t2,lineHeight:1.55,cursor:"pointer"}}>
+                Nothing this month. Next up: <span style={{color:C.t1,fontWeight:600}}>{next.group.emoji} {next.plan.title}</span>, {formatDates(next.day)}{" "}
+                <span style={{color:C.accentText,fontWeight:600}}>Show →</span>
+              </div>
+            )}
             {dated.length===0&&(
               <div style={{borderTop:`1px solid ${C.border}`,padding:"13px 18px",textAlign:"center",fontSize:12,color:C.t3,lineHeight:1.55}}>
                 Plans you make show up here, so you can see your month at a glance.
@@ -5907,7 +5942,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
 // Sections with nothing behind them were removed rather than rebuilt: Reach
 // has no PIN, no Face ID enrolment, no SMS second factor and no spending
 // limits, so showing them as configured was the worst kind of placeholder.
-function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
+function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityChange}){
   const [section,setSection]=useState(null);
   const [data,setData]=useState(null);
   const [loadErr,setLoadErr]=useState(false);
@@ -6044,6 +6079,9 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push}){
         if(!r.ok)throw new Error(d.error||"Couldn't save that");
         setDocDraft(x=>({...x,__first:undefined,__air:undefined,__city:undefined}));
         toast("Saved");await load();
+        // The greeting reads the app's copy of the user, not this screen's,
+        // so without this a new name only appeared after a reload.
+        if(body.firstName!==undefined)onIdentityChange?.();
       }catch(e){toast(e.message);}
       finally{setBusy(null);}
     };
@@ -6997,7 +7035,7 @@ export default function ReachApp({realUser,onSignOut}={}){
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading}/>}
-                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push}/>}
+                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push}/>}
                 </div>
               )}
               {!cur&&(
