@@ -6,6 +6,17 @@ export const metadata: Metadata = {
   title: 'Reach — Plan experiences together',
   description: 'Turn conversations into commitments and commitments into real-world experiences.',
   manifest: '/manifest.json',
+  // Built from the logo by scripts/make_icons.py. Declared here so the head
+  // carries them: an installed app with no apple-touch-icon gets a screenshot
+  // of the page as its home-screen tile.
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: '16x16 32x32 48x48' },
+      { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
+      { url: '/icon-512.png', type: 'image/png', sizes: '512x512' },
+    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180' }],
+  },
 };
 
 export const viewport: Viewport = {
