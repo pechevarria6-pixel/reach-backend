@@ -38,3 +38,6 @@ Thumbs.db
 
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
+
+# Session written by tests/auth.setup.ts on every run — a live login, never commit it
+playwright/.auth/session.json
