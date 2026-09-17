@@ -14,7 +14,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'], storageState: 'playwright/.auth/user.json' } },
-    { name: 'iPhone 14', use: { ...devices['iPhone 14'], storageState: 'playwright/.auth/user.json' } },
+    // Signs in once with Clerk's testing helpers; falls back to the saved jar.
+    { name: 'setup', testMatch: /auth\.setup\.ts/, retries: 0 },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], storageState: 'playwright/.auth/session.json' }, dependencies: ['setup'] },
+    { name: 'iPhone 14', use: { ...devices['iPhone 14'], storageState: 'playwright/.auth/session.json' }, dependencies: ['setup'] },
   ],
 });
