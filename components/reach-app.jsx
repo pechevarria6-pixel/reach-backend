@@ -122,6 +122,22 @@ const DEFAULT_THEME = "dark";
 // Must match the key the no-flash script in app/layout.tsx reads.
 const THEME_KEY = "reach-theme";
 
+// One of these opens Home each day, the accent word carrying the colour.
+// Each asks about a person, not a feature: the app exists to get somebody in
+// front of somebody else. Nothing here promises what the app cannot do.
+const GREETING_QUESTIONS = [
+  { before: "Who's on your ", word: "mind", after: " today?" },
+  { before: "Who are you ", word: "showing up", after: " for today?" },
+  { before: "Who's overdue for a good ", word: "night out", after: "?" },
+  { before: "Who have you been ", word: "meaning", after: " to see?" },
+  { before: "Who would make this week ", word: "better", after: "?" },
+];
+
+// Days since the epoch. The same for everybody on the same day, and it cannot
+// drift between two renders the way a random pick would.
+const dayIndex = (now = new Date()) =>
+  Math.floor((now.getTime() - now.getTimezoneOffset() * 60000) / 86400000);
+
 // kebab-cases the token names to match the var() references built above.
 const paletteVars = theme =>
   Object.entries(PALETTE[theme])
@@ -156,11 +172,20 @@ button{min-height:44px;}
     border:1.5px solid ${C.accentBorder};
     box-shadow:${C.frameShadow},0 0 80px ${C.frameGlow};}
 }
-.sb{display:flex;justify-content:space-between;align-items:center;padding:14px 28px 0;flex-shrink:0;font-size:12px;font-weight:600;color:${C.t2};letter-spacing:.02em;}
+.sb{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;min-height:64px;flex-shrink:0;font-size:12px;font-weight:600;color:${C.t2};letter-spacing:.02em;background:${C.bg};}
 .sb-fake{display:none;}
 @media (min-width:560px) and (min-height:900px){.sb-fake{display:inline;}}
 @media (max-width:559px){.sb{justify-content:center;}}
-.sb-logo{font-family:var(--font-display);font-size:17px;color:${C.t1};letter-spacing:-.02em;}
+.sb-logo{font-family:var(--font-display);font-size:22px;color:${C.accentText};letter-spacing:-.01em;line-height:1;}
+/* The white circle holding the reaching hands, exactly as REF6 has it. White
+   in both themes: it is the logo's own ground, not a surface. */
+.sb-mark{width:40px;height:40px;border-radius:50%;background:var(--logo-circle);border:1px solid ${C.border};display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;}
+.sb-mark img{width:70%;height:auto;display:block;}
+.sb-left{display:flex;align-items:center;gap:10px;}
+.sb-right{display:flex;align-items:center;gap:4px;}
+/* 44px targets on a 64px bar, per the accessibility rule. */
+.sb-act{width:44px;height:44px;min-height:44px;display:flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;color:${C.accentText};border-radius:12px;transition:background .15s;}
+.sb-act:hover{background:${C.accentDim};}
 .ma{flex:1;overflow:hidden;position:relative;}
 .sc{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding-bottom:calc(90px + env(safe-area-inset-bottom));}
 .sc::-webkit-scrollbar{display:none;}
@@ -323,6 +348,11 @@ const INIT_GROUPS = [];
 
 // Icons
 const Ic = {
+  // The header's three: the theme in each direction, and the way out. Sized
+  // here because they sit in a 44px button rather than a nav column.
+  Sun:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" width="20" height="20"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>,
+  Moon:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="20" height="20"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>,
+  SignOut:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="20" height="20"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
   Home:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
   Compass:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>,
   Users:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>,
@@ -574,9 +604,23 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       <div style={{padding:"14px 20px 12px"}}>
         <div style={{fontSize:13.5,color:C.t2,marginBottom:5,fontWeight:500}}>
           {new Date().getHours()<12?"Good morning":new Date().getHours()<17?"Good afternoon":"Good evening"}
+          {firstNameOf(user,"")&&`, ${firstNameOf(user)}`}
         </div>
-        <div style={{fontFamily:"var(--font-display)",fontSize:36,color:C.t1,lineHeight:1.1}}>
-          Hey {firstNameOf(user)} 👋
+        {/* A question rather than a greeting, because the answer is the whole
+            point of the app. One word carries the accent, and the question
+            changes by the day so opening Reach on Tuesday does not feel like
+            Monday. The date decides it, so it cannot flicker between renders
+            or disagree with what was on screen a second ago. */}
+        {(()=>{
+          const q=GREETING_QUESTIONS[dayIndex()%GREETING_QUESTIONS.length];
+          return(
+            <div className="display" style={{fontSize:34,color:C.t1,lineHeight:1.15,fontWeight:600,letterSpacing:"-.01em"}}>
+              {q.before}<span style={{color:C.accent}}>{q.word}</span>{q.after}
+            </div>
+          );
+        })()}
+        <div style={{fontSize:13.5,color:C.t2,marginTop:8,lineHeight:1.55}}>
+          The best plans start with one person saying when.
         </div>
         {/* Nothing to call them by. Say where to fix it rather than greeting
             "there" forever. Waits for /api/me so it cannot flash on load. */}
@@ -7037,14 +7081,22 @@ export default function ReachApp({realUser,onSignOut}={}){
     <>
       <style>{CSS}</style>
       <div className="aw">
+        {/* The header REF6 draws: the mark in its white circle, the wordmark
+            in gold serif, and the two things you might want from any screen —
+            the theme, and the way out. The fake "9:41 / 5G" chrome belonged to
+            the desktop mockup and said nothing on a real phone. */}
         <div className="sb">
-          {/* The fake "9:41 / 5G" chrome belongs to the desktop mockup frame.
-              On a real phone it sits directly under the actual status bar and
-              reads as a bug, so it is hidden there and only the wordmark
-              stays. CSS does the hiding so there is no hydration mismatch. */}
-          <span className="sb-fake">9:41</span>
-          <span className="sb-logo">reach</span>
-          <span className="sb-fake">5G ▪▪▪</span>
+          <div className="sb-left">
+            <span className="sb-mark"><img src="/logo-mark.png" alt="" aria-hidden="true"/></span>
+            <span className="sb-logo">Reach</span>
+          </div>
+          <div className="sb-right">
+            <button className="sb-act" onClick={()=>chooseTheme(theme==="dark"?"light":"dark")}
+              aria-label={theme==="dark"?"Switch to the light theme":"Switch to the dark theme"}>
+              {theme==="dark"?<Ic.Sun/>:<Ic.Moon/>}
+            </button>
+            <button className="sb-act" onClick={handleSignOut} aria-label="Sign out"><Ic.SignOut/></button>
+          </div>
         </div>
         <div className="ma">
           <>
