@@ -1,24 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, isFail } from '@/lib/auth';
+import { requirePlanMember, isFail } from '@/lib/auth';
 
 // POST /api/plans/[id]/vote — cast a vote
+//
+// requirePlanMember, not requireUser. This used to accept any signed-in
+// caller: it loaded the plan's members and never compared them to whoever was
+// asking, so anybody holding a plan's id could vote in another group's poll —
+// and the poll decides where the group goes and what it spends.
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
-  const ctx = await requireUser();
+  const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
 
-  const { option } = await req.json();
+  const { option } = await req.json().catch(() => ({}));
   if (!option) return NextResponse.json({ error: 'option is required' }, { status: 400 });
 
   const supabase = ctx.db;
   const user = ctx.user;
 
-  // Verify plan exists and is in voting status
-  const { data: plan } = await supabase.from('plans').select('*, groups(group_members(*))').eq('id', params.planId).single();
-  if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
+  // requirePlanMember has already established the plan exists and that this
+  // caller belongs to its group.
+  const plan = ctx.plan as { status?: string; vote_options?: string[] };
   if (plan.status !== 'voting') return NextResponse.json({ error: 'Plan is not in voting status' }, { status: 400 });
 
   // Verify option is valid
-  if (!plan.vote_options.includes(option)) return NextResponse.json({ error: 'Invalid vote option' }, { status: 400 });
+  if (!(plan.vote_options || []).includes(option)) return NextResponse.json({ error: 'Invalid vote option' }, { status: 400 });
 
   // Check user hasn't already voted (enforced by DB unique constraint too)
   const { data: existingVote } = await supabase
@@ -32,8 +37,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 }
 
 // GET /api/plans/[id]/vote — get current vote tallies
+//
+// Also members only: a tally is how a group is leaning, and it was readable by
+// anybody signed in who had the plan's id.
 export async function GET(_: NextRequest, { params }: { params: { planId: string } }) {
-  const ctx = await requireUser();
+  const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
 
   const supabase = ctx.db;
