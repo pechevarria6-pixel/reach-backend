@@ -94,6 +94,76 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     Number(ctx.plan.budget_cents) || 0
   );
 
+  // ── Never a second payment for the same share ─────────────────────────
+  // Only succeeded contributions count against what somebody owes, so a
+  // payment still settling left the full share outstanding — and every one of
+  // checkout's error screens offered "Try again", which came back here and
+  // made a second PaymentIntent for the whole amount. A card paid twice is the
+  // worst thing this app can do, and pay-later methods take minutes to clear.
+  //
+  // A contribution in flight is therefore answered with the payment that
+  // already exists, never a new one. Stripe is asked what became of it, so an
+  // abandoned attempt cannot lock somebody out of paying for ever: one that
+  // was never paid is handed back to be finished, and a cancelled one is
+  // written off so the next attempt can start cleanly.
+  const inFlight = (status.contributions || []).find(
+    (c: { user_id?: string; status?: string }) => c.user_id === ctx.user.id && c.status === 'pending',
+  ) as { id: string; stripe_payment_intent?: string; amount_cents?: number } | undefined;
+
+  if (inFlight?.stripe_payment_intent) {
+    const existing = await fetch(
+      `https://api.stripe.com/v1/payment_intents/${inFlight.stripe_payment_intent}`,
+      { headers: { Authorization: `Bearer ${stripeKey}` } },
+    ).then(r => r.json()).catch(() => null);
+
+    // Nothing usable came back from Stripe. Refusing is the safe half of the
+    // guess: a duplicate charge cannot be undone by the app, a refused
+    // payment can be retried.
+    if (!existing || existing.error || typeof existing.status !== 'string') {
+      console.error('[funding] could not read the in-flight payment', {
+        planId: params.planId, paymentIntent: inFlight.stripe_payment_intent, error: existing?.error,
+      });
+      return NextResponse.json(
+        { error: 'You already have a payment on this plan and we could not check it just now. Please wait a moment rather than paying again.', funding: status },
+        { status: 409 },
+      );
+    }
+
+    if (existing.status === 'canceled') {
+      const { error: writeOff } = await ctx.db.from('contributions')
+        .update({ status: 'failed', updated_at: new Date().toISOString() })
+        .eq('id', inFlight.id);
+      if (writeOff) {
+        console.error('[funding] could not write off a cancelled contribution', {
+          planId: params.planId, contribution: inFlight.id, error: writeOff.message,
+        });
+        return NextResponse.json(
+          { error: 'Could not start that payment. Nothing has been charged — try again.' },
+          { status: 500 },
+        );
+      }
+      // Falls through and starts a fresh payment below.
+    } else if (existing.status === 'requires_payment_method') {
+      // Started and never paid: the same intent is handed back to finish.
+      return NextResponse.json({
+        contribution: inFlight,
+        clientSecret: existing.client_secret,
+        amountCents: inFlight.amount_cents ?? existing.amount,
+        resumed: true,
+      });
+    } else {
+      // requires_action, requires_confirmation, processing, succeeded — money
+      // is either moving or already moved.
+      return NextResponse.json({
+        error: existing.status === 'succeeded'
+          ? 'That share is already paid. It can take a moment to show here.'
+          : 'Your payment is still going through. Give it a moment — please do not pay again.',
+        paymentIntent: inFlight.stripe_payment_intent,
+        funding: status,
+      }, { status: 409 });
+    }
+  }
+
   // Default to what this member actually owes. An explicit amount is honoured
   // but capped at the outstanding share, so a stale client can't overcharge.
   const requested = Number(body.amountCents);

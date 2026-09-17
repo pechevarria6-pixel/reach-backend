@@ -5561,6 +5561,13 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   const [clientSecret,setClientSecret]=useState(null);
   const [busy,setBusy]=useState(false);
   const [msg,setMsg]=useState("");
+  // Whether the screen may offer another go. Every error used to, and the
+  // ones that follow a card being charged came back to the review screen
+  // where "Looks good" started a second payment — the app telling somebody
+  // "do not pay again" directly above the button that did.
+  const [retryable,setRetryable]=useState(true);
+  // message, and whether trying again could cost money.
+  const fail=(message,{retry=false}={})=>{setMsg(message);setRetryable(retry);setPhase("error");};
   const [payReady,setPayReady]=useState(false);
   const stripeRef=useRef(null); const elementsRef=useRef(null); const payRef=useRef(null);
 
@@ -5586,7 +5593,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
       setFunding(f);
       setBookings((bJson&&(bJson.bookings||bJson))||[]);
       setPhase("review");
-    }catch(e){ setMsg("Couldn't load your trip \u2014 check your connection and try again."); setPhase("error"); }
+    }catch(e){ console.error("[checkout] could not load the trip",{planId},e); fail("Couldn't load your trip \u2014 check your connection and try again.",{retry:true}); }
   };
   useEffect(()=>{ load(); },[]);
 
@@ -5606,8 +5613,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
       // The payment is real and this id is not, so there is nothing to record
       // it against. Say so with the reference rather than dropping it.
       console.error("[checkout] payment returned against an unsaved plan",{planId,paymentIntentId:returnedIntent});
-      setMsg(`Your payment went through, but this trip hadn't finished saving, so we couldn't attach it. Nothing is lost — quote reference ${returnedIntent} and we'll sort it. Do not pay again.`);
-      setPhase("error");
+      fail(`Your payment went through, but this trip hadn't finished saving, so we couldn't attach it. Nothing is lost — quote reference ${returnedIntent} and we'll sort it. Do not pay again.`);
       return;
     }
     (async()=>{
@@ -5620,15 +5626,13 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
         setBusy(false);
         // Pay-later providers can take a while to settle. Stripe's webhook marks
         // the contribution paid when they do, so the honest message is to wait.
-        setMsg(cr.status===409&&redirectStatus!=="succeeded"
+        fail(cr.status===409&&redirectStatus!=="succeeded"
           ?`Your payment is still being processed. We'll mark it paid as soon as it clears — do not pay again. Reference ${returnedIntent}.`
           :`Your payment went through, but we couldn't record it against this trip. Nothing is lost — quote reference ${returnedIntent} and we'll sort it. Do not pay again.`);
-        setPhase("error");
       }catch(e){
         console.error("[checkout] could not check returned payment",{planId,paymentIntentId:returnedIntent},e);
         setBusy(false);
-        setMsg(`We couldn't check that payment just now. Do not pay again — quote reference ${returnedIntent} and we'll sort it.`);
-        setPhase("error");
+        fail(`We couldn't check that payment just now. Do not pay again — quote reference ${returnedIntent} and we'll sort it.`);
       }
     })();
   },[phase,returnedIntent]);
@@ -5663,14 +5667,14 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
         pe.on("ready",()=>setPayReady(true));
         pe.mount(payRef.current);
         stripeRef.current=stripe; elementsRef.current=elements;
-      }catch(e){ setMsg("Payment form couldn't load \u2014 try again."); setPhase("error"); }
+      }catch(e){ console.error("[checkout] Stripe Elements failed to mount",e); fail("Payment form couldn't load \u2014 try again.",{retry:true}); }
     };
     const withStripeJs=(pk)=>{
       if(cancelled)return;
       if(window.Stripe){boot(pk);return;}
       const s=document.createElement("script"); s.src="https://js.stripe.com/v3";
       s.onload=()=>{ if(!cancelled)boot(pk); };
-      s.onerror=()=>{ if(cancelled)return; setMsg("Payment form couldn't load \u2014 check your connection."); setPhase("error"); };
+      s.onerror=()=>{ if(cancelled)return; fail("Payment form couldn't load \u2014 check your connection.",{retry:true}); };
       document.head.appendChild(s);
     };
     (async()=>{
@@ -5678,9 +5682,9 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
         const r=await fetch("/api/config/stripe");
         const d=await r.json().catch(()=>({}));
         if(cancelled)return;
-        if(!r.ok||!d.publishableKey){ setMsg("Payments aren't switched on yet."); setPhase("error"); return; }
+        if(!r.ok||!d.publishableKey){ fail("Payments aren't switched on yet.",{retry:true}); return; }
         withStripeJs(d.publishableKey);
-      }catch(e){ if(!cancelled){ setMsg("Payment form couldn't load \u2014 check your connection."); setPhase("error"); } }
+      }catch(e){ console.error("[checkout] Stripe key fetch failed",e); if(!cancelled){ fail("Payment form couldn't load \u2014 check your connection.",{retry:true}); } }
     })();
     return ()=>{ cancelled=true; };
   },[phase,clientSecret]);
@@ -5709,8 +5713,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
         const err=await cr.json().catch(()=>({}));
         console.error("[checkout] payment taken but not recorded",{planId,paymentIntentId:paymentIntent.id,status:cr.status,err});
         setBusy(false);
-        setMsg(`Your payment went through, but we couldn't record it against this trip. Nothing is lost — quote reference ${paymentIntent.id} and we'll sort it. Do not pay again.`);
-        setPhase("error");
+        fail(`Your payment went through, but we couldn't record it against this trip. Nothing is lost — quote reference ${paymentIntent.id} and we'll sort it. Do not pay again.`);
         return;
       }
       setBusy(false);
@@ -5753,8 +5756,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
     }
     setBookings(fresh);
     if(failed.length){
-      setMsg(`Your payment is recorded, but ${failed.length} of ${waiting.length} booking${waiting.length===1?"":"s"} couldn't be confirmed. Nothing has been double-charged. We'll follow up — you don't need to do anything.`);
-      setPhase("error");
+      fail(`Your payment is recorded, but ${failed.length} of ${waiting.length} booking${waiting.length===1?"":"s"} couldn't be confirmed. Nothing has been double-charged. We'll follow up — you don't need to do anything.`);
       return;
     }
     setPhase("done");
@@ -5783,9 +5785,17 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
 
   if(phase==="error")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:34,marginBottom:12}}>\uD83D\uDE48</div>
-    <div style={{color:C.t1,fontWeight:600,marginBottom:8}}>{msg}</div>
-    <button onClick={()=>{setPhase("loading");load();}} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700}}>Try again</button>
-    <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Go back</div>
+    <div style={{color:C.t1,fontWeight:600,marginBottom:8,lineHeight:1.5}}>{msg}</div>
+    {/* Only offered where trying again cannot take money twice: a trip that
+        would not load, a payment form that would not appear. Once a card has
+        been charged the way back through this screen is the review screen,
+        and "Looks good" there starts a whole new payment. */}
+    {retryable
+      ?(<>
+        <button onClick={()=>{setPhase("loading");load();}} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700}}>Try again</button>
+        <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Go back</div>
+      </>)
+      :(<button onClick={onBack} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700}}>Go back</button>)}
   </div></div>);
 
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
