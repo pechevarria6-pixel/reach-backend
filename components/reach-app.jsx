@@ -2294,6 +2294,16 @@ const DEFAULT_GROUP_EMOJI="🎉";
 // One map, read by both screens, so they cannot drift apart again. Only a
 // confirmed booking is green, and anything unrecognised says it is not booked
 // rather than inventing comfort — an unknown state is not good news.
+// What a provider is called on a screen. The column holds our own short name
+// for it, which is not what anybody would recognise on a button.
+const PROVIDER_NAME={
+  ticketmaster:"Ticketmaster",
+  viator:"Viator",
+  liteapi:"the hotel",
+  kiwi:"Kiwi",
+  concierge:"Reach",
+};
+
 const BOOKING_STATE={
   confirmed:{label:"Booked ✓",tone:"green"},
   pending:{label:"We're on it",tone:"gold"},
@@ -5907,8 +5917,12 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
 
   const lines=(bookings&&bookings.length?bookings.map(b=>({
     icon:vIcon[b.vertical]||"\u2728", l:(b.detail&&(b.detail.title||b.detail.name))||b.vertical,
-    d:b.provider==="concierge"?"We'll handle this one for you":(b.mode==="redirect"?"Opens in partner site":""),
-    a:b.price_cents, st:b.status
+    d:b.provider==="concierge"?"We'll handle this one for you":(b.mode==="redirect"?"Bought on the seller's own site":""),
+    a:b.price_cents, st:b.status,
+    // A redirected booking finishes somewhere else, and until now the screen
+    // said so with nothing to tap: "Finish on their site" and no site. The
+    // provider hands the address back on the booking; this is it.
+    href:b.redirect_url||null, provider:b.provider||null,
   })):[
     // Nothing is priced yet, so there is nothing to itemise. This used to list
     // flights, accommodation and activities at 34, 40 and 26 per cent of the
@@ -6040,6 +6054,12 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
                 a real card payment, that is the worst thing the app could say.
                 Each state now says what it is, and only one of them is green. */}
             {it.st?chip(BOOKING_STATE[it.st]?.label||"Not booked",BOOKING_STATE[it.st]?.tone||"plain"):null}
+            {it.href?(
+              <a href={it.href} target="_blank" rel="noopener noreferrer"
+                style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
+                Finish on {PROVIDER_NAME[it.provider]||"their site"} \u2192
+              </a>
+            ):null}
           </div>))}
         </div>
         <button onClick={onBack} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15}}>See my itinerary</button>
@@ -6079,6 +6099,12 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
               booking that had already failed claimed somebody was working on
               it. One map, so the two screens cannot drift apart again. */}
           {it.st?chip(BOOKING_STATE[it.st]?.label||"Not booked",BOOKING_STATE[it.st]?.tone||"plain"):null}
+          {it.href?(
+            <a href={it.href} target="_blank" rel="noopener noreferrer"
+              style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
+              Finish on {PROVIDER_NAME[it.provider]||"their site"} \u2192
+            </a>
+          ):null}
         </div>))}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
