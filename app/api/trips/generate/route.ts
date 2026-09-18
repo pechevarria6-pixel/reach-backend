@@ -5,6 +5,7 @@ import {
   TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA,
   parseModelJSON, textOf, normalizeTrips, dropFillerDays,
 } from '@/lib/trip-schema';
+import { applyRules, correctionNote } from '@/lib/generation-rules';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -104,8 +105,14 @@ export async function POST(req: NextRequest) {
     // the only thing it needs asking that the taste quiz has not already
     // stored is roughly where it should be.
     mode = 'trip', nightPrefs = {},
+    // Where they already know they are going, if they do. With one, all three
+    // options are that place at three budgets — somebody who has settled on
+    // Breckenridge is choosing how to do it, not whether. Without one, three
+    // different places that fit what they said they wanted.
+    location = null,
   } = body;
   const isNight = mode === 'night';
+  const fixedPlace = typeof location === 'string' && location.trim() ? location.trim() : null;
 
   // This reads every member's dietary needs, budget and preferences, so the
   // caller has to actually be in the group.
@@ -385,8 +392,11 @@ budget came back clustered at 70%, 89% and 95%, which is not a choice:
 
 Each total must land within 10% of the figure above for its tier.
 
-The three must be genuinely different places, not three versions of the same
-idea — vary the region and the type of destination, not just the hotel.
+${fixedPlace ? `ALL THREE OPTIONS MUST BE AT ${fixedPlace.toUpperCase()}. This is not a
+suggestion and not one of three ideas — they have chosen where they are going.
+Vary the plan, the standard of the stay and the budget. Never the destination.
+Every "destination" and "city" must be ${fixedPlace} or somewhere inside it.` : `The three must be genuinely different places, not three versions of the same
+idea — vary the region and the type of destination, not just the hotel.`}
 
 Honour the climate they asked for and every veto. A vetoed thing must not
 appear in any option, and a group that asked for warm weather must not be
@@ -449,12 +459,50 @@ Return JSON only, shaped exactly like this:
 
 
 
-    const raw = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
+    let parsed = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
     // A live run came back with four trips, one destination twice, and every
     // trip's cost lines summing below its own headline total.
-    const trips = raw ? normalizeTrips(raw) : undefined;
-    if (raw && trips && raw.length !== trips.length) {
-      console.error('[trips generate] trimmed duplicates', { returned: raw.length, kept: trips.length });
+    let trips = parsed ? normalizeTrips(parsed) : undefined;
+    if (parsed && trips && parsed.length !== trips.length) {
+      console.error('[trips generate] trimmed duplicates', { returned: parsed.length, kept: trips.length });
+    }
+
+    // What came back, checked rather than trusted. Ordering and tier labels
+    // are put right here; being at the wrong place earns one more attempt,
+    // because three holidays somewhere else is not a choice, it is being
+    // ignored.
+    const rule = { location: fixedPlace };
+    if (trips?.length) {
+      let report = applyRules(trips, rule);
+      trips = report.trips;
+      if (report.fixed.length) {
+        console.error('[trips generate] corrected the answer', { groupId, fixed: report.fixed });
+      }
+      if (report.fatal.length) {
+        console.error('[trips generate] asking again', { groupId, fatal: report.fatal });
+        const retry = await withSchemaFallback(
+          client, FAST_MODEL, 16000,
+          `${prompt}\n\n${correctionNote(report, rule)}`,
+          TRIPS_JSON_SCHEMA, 'trips generate retry',
+        );
+        const retried = parseModelJSON(textOf(retry), TripsSchema, 'trips generate retry')?.trips;
+        const secondTrips = retried ? normalizeTrips(retried) : undefined;
+        if (secondTrips?.length) {
+          report = applyRules(secondTrips, rule);
+          trips = report.trips;
+        }
+        // Once, then an honest answer. Asking a third time spends somebody's
+        // afternoon to be told the same thing.
+        if (report.fatal.length) {
+          console.error('[trips generate] still wrong after a second attempt', { groupId, fatal: report.fatal });
+          return NextResponse.json(
+            { error: fixedPlace
+                ? `We couldn't put together three options at ${fixedPlace} just now — try again, or plan without a fixed place.`
+                : "We hit a snag building your options — try again?" },
+            { status: 502 },
+          );
+        }
+      }
     }
     // The schema cannot pin the array length, so the count is checked here.
     // Fewer than three is still worth showing — an empty list is not.
