@@ -110,9 +110,13 @@ export async function POST(req: NextRequest) {
     // Breckenridge is choosing how to do it, not whether. Without one, three
     // different places that fit what they said they wanted.
     location = null,
+    // What they wrote when asked what this trip is about. The most useful
+    // thing on the form, because it is the only part not picked from a list.
+    goalBlurb = null,
   } = body;
   const isNight = mode === 'night';
   const fixedPlace = typeof location === 'string' && location.trim() ? location.trim() : null;
+  const goal = typeof goalBlurb === 'string' && goalBlurb.trim() ? goalBlurb.trim().slice(0, 500) : null;
 
   // This reads every member's dietary needs, budget and preferences, so the
   // caller has to actually be in the group.
@@ -374,7 +378,17 @@ ${solo
   : `GROUP: ${groupSize} people, ${nights} nights, $${effectiveBudget}/person budget`}
 DEPARTING: ${departure} (${departureCode})
 DATES: ${startDate || 'flexible'} to ${endDate || 'flexible'}
-WHAT THIS TRIP IS FOR (this leads; standing preferences below yield to it): ${tripTypes}
+${goal ? `WHAT THEY SAID THIS TRIP IS, IN THEIR OWN WORDS — this leads over
+everything below it:
+"${goal}"
+
+Read it properly. If it names a place, that place IS the destination and all
+three options are there at three budgets — "ski trip with the boys in Aspen"
+means Aspen, three ways, not Aspen and two other mountains. If it names an
+occasion, every option should be somewhere that occasion makes sense, and
+why_this_group should say so in a way the person who wrote it would
+recognise. If it names people, plan for those people.
+` : ''}WHAT THIS TRIP IS FOR (standing preferences below yield to it): ${tripTypes}
 PACE: ${tripPace}
 STAY: ${tripAccommodation}
 FOOD: ${cuisines.slice(0, 5).join(', ') || 'varied'}

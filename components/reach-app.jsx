@@ -7,6 +7,7 @@ import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthL
 import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle } from "@/lib/checkout";
 import { visibleCategories } from "@/lib/discovery/category";
+import { goalAnswersTripType, tripTypesFromGoal } from "@/lib/goal";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -3016,6 +3017,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   const [nightTime,setNightTime]=useState("");
   const isNight=mode==="night";
   const [answers,setAnswers]=useState({
+    goalBlurb:known?.goalBlurb||"",
     tripType:known?.tripType||[],accommodation:known?.accommodation||[],
     budget:null,pace:known?.pace||null,noWayJose:known?.noWayJose||[],
     // A night has its own mood. What you fancy this Friday is not your
@@ -3040,6 +3042,16 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     ?Math.round((new Date(endDate)-new Date(startDate))/86400000):0;
 
   const questions=[
+    {
+      // First, and open. Every question after it is a list to pick from, and
+      // a list cannot say "my sister is turning forty and has never seen
+      // snow". Asked before the lists so it can answer some of them: a goal
+      // that plainly names the kind of trip means we stop asking what kind.
+      id:"goalBlurb",icon:"💭",free:true,optional:true,
+      title:"What's this trip about?",
+      sub:"The most useful thing you can tell us. Say who it's for, what you want to do and where, if you know — \"ski trip with the boys in Aspen to celebrate Kyle's promotion\". Everything after this is a list; this is the bit that isn't.",
+      placeholder:"Ski trip with the boys in Aspen to celebrate Kyle…",
+    },
     {
       id:"tripType",icon:"🌍",
       title:"What sort of trip are we doing?",
@@ -3214,7 +3226,14 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   ].filter(Boolean);
 
   const carried=isNight?[]:questions.filter(isCarried);
-  const asked=isNight?nightQuestions:questions.filter(q=>!isCarried(q));
+  // Somebody who has just written "a week skiing in Aspen" should not be
+  // asked next what sort of trip they want. They said. Only an unmistakable
+  // word counts — a question skipped wrongly is an answer nobody gave, which
+  // is worse than one extra tap.
+  const goalSaysType=goalAnswersTripType(answers.goalBlurb);
+  const asked=isNight
+    ?nightQuestions
+    :questions.filter(q=>!isCarried(q)&&!(q.id==="tripType"&&goalSaysType));
 
   const isDateStep=qStep===0;
   const quizQ=asked[qStep-1];
@@ -3236,6 +3255,12 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     // highest choices reached the server as no budget at all and it fell back
     // to the cheapest bucket among the group's stored ranges. Picking a bigger
     // budget made the trips cheaper.
+    // The question was skipped because the goal answered it, so the answer
+    // comes from the goal rather than being lost.
+    if(!(merged.tripType||[]).length){
+      const fromGoal=tripTypesFromGoal(merged.goalBlurb);
+      if(fromGoal.length)merged.tripType=fromGoal;
+    }
     const typed=parseInt(String(budgetCustom).replace(/[^0-9]/g,""));
     const budgetNum=Number.isFinite(typed)&&typed>0
       ? typed
@@ -3243,7 +3268,9 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     onGenerate(
       {start:startDate,end:isNight?startDate:endDate},
       budgetNum,
-      {...merged,nights:isNight?1:nights},
+      // The goal travels with the answers. It is the one thing here written
+      // rather than picked, and the server leads on it.
+      {...merged,nights:isNight?1:nights,goalBlurb:(merged.goalBlurb||"").trim()},
       isNight?{mode:"night",nightPrefs:{
         time:nightTime,where:merged.nightWhere||"",
         kind:merged.nightKind||[],food:merged.nightFood||[],energy:merged.nightEnergy||null,
@@ -3602,6 +3629,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           budgetPerPerson:parseInt(bud||budget)||null,
           departureCity:departure?.city||null,
           departureAirport:departure?.airport||null,
+          // What they wrote when asked what the trip is about. The server
+          // leads on it, including reading a place out of it.
+          goalBlurb:prefs?.goalBlurb||null,
           userLat:userLocation?.lat||null,
           userLng:userLocation?.lng||null,
           tripPrefs:prefs,
