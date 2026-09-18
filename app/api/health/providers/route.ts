@@ -78,6 +78,44 @@ async function probe(
 export async function GET(req: NextRequest) {
   if (!authorised(req)) return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
 
+  // ── ?sample=viator — which base the key belongs to, and what it holds ──
+  // Our code calls api.viator.com; a sandbox key belongs to
+  // api.sandbox.viator.com, and calling the wrong one looks exactly like a
+  // bad key. Both are tried, and the taxonomy call tells us how a city is
+  // identified before any product search is written.
+  if (req.nextUrl.searchParams.get('sample') === 'viator') {
+    const key = process.env.VIATOR_API_KEY;
+    if (!key) {
+      console.error('[health/providers] viator sample asked for, but VIATOR_API_KEY is not set');
+      return NextResponse.json({ error: 'VIATOR_API_KEY is not set' }, { status: 503 });
+    }
+    const headers = {
+      'exp-api-key': key,
+      'Accept': 'application/json;version=2.0',
+      'Accept-Language': 'en-US',
+      'Content-Type': 'application/json',
+    };
+    const bases = ['https://api.sandbox.viator.com/partner', 'https://api.viator.com/partner'];
+    const out: Record<string, unknown> = {};
+    for (const base of bases) {
+      const r = await fetch(`${base}/destinations`, { headers, signal: AbortSignal.timeout(20000) }).catch(() => null);
+      if (!r) { out[base] = 'unreachable'; continue; }
+      if (!r.ok) { out[base] = `HTTP ${r.status}`; continue; }
+      const j = await r.json().catch(() => null);
+      const list: any[] = j?.destinations ?? [];
+      const city = (req.nextUrl.searchParams.get('city') || 'Raleigh').toLowerCase();
+      const hit = list.find(d => String(d?.name ?? '').toLowerCase() === city)
+        ?? list.find(d => String(d?.name ?? '').toLowerCase().includes(city));
+      out[base] = {
+        ok: true,
+        destinations: list.length,
+        destinationKeys: Object.keys(list[0] ?? {}),
+        match: hit ? { destinationId: hit.destinationId ?? hit.ref, name: hit.name, type: hit.type } : null,
+      };
+    }
+    return NextResponse.json({ asked: 'destinations', bases: out });
+  }
+
   // ── ?sample=liteapi-rates — what a rate actually looks like ──────────
   // The booking call was refused twice: first "OfferID required", then
   // "invalid offerId". Guessing which field carries the offer is how that
