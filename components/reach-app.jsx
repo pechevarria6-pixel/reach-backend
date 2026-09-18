@@ -6534,6 +6534,9 @@ export default function ReachApp({realUser,onSignOut}={}){
   },[theme]);
   const [groups,setGroups]=useState([]);
   const [groupsLoading,setGroupsLoading]=useState(true);
+  // /api/me has answered, so the onboarding gate below is deciding on facts
+  // rather than on an empty user object.
+  const [identityLoaded,setIdentityLoaded]=useState(false);
   const [toastMsg,setToastMsg]=useState(null);
   const [stack,setStack]=useState([]);
 
@@ -6605,9 +6608,29 @@ export default function ReachApp({realUser,onSignOut}={}){
         const data=await res.json();
         setUser(u=>u?({...u,...data,id:data.id}):data);
         rememberUsers([{id:data.id,name:data.name,email:data.email,avatar_url:data.avatar}]);
+        setIdentityLoaded(true);
       }
     }catch(e){console.log("User sync failed",e);}
   };
+
+  // ── Onboarding comes first ────────────────────────────────────────────
+  // Sign-up sends people to /onboarding, but that is one route in among
+  // several: a saved link, an invite, a password manager opening /home, or a
+  // sign-up whose redirect was overridden by the Clerk instance's own
+  // settings. An account nobody has told us anything about — no name, no
+  // preferences, no groups — has not been through it, whichever door it came
+  // in by, so it goes there first.
+  //
+  // Only ever once per device: the onboarding screen records that it has been
+  // shown, and somebody who skips every step must not be sent round again.
+  useEffect(()=>{
+    if(!identityLoaded||groupsLoading)return;
+    if(typeof window==="undefined")return;
+    const untouched=user&&!user.quizComplete&&!user.firstName&&groups.length===0;
+    if(!untouched)return;
+    try{ if(localStorage.getItem("reach_onboarding_seen"))return; }catch(e){ return; }
+    window.location.href="/onboarding";
+  },[identityLoaded,groupsLoading,user,groups.length]);
 
   // ── Push notifications ─────────────────────────────────
   const requestNotifications=async()=>{

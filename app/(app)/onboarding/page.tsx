@@ -10,7 +10,7 @@
 // to the taste quiz — which is the part that makes the rest of the app worth
 // opening. Nothing here is a gate: every step can be skipped, because an
 // account somebody cannot finish creating is worse than a thin profile.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
 import { BRAND } from '@/lib/brand';
@@ -18,9 +18,19 @@ import { BRAND } from '@/lib/brand';
 type Step = 'you' | 'location' | 'notifications' | 'ready';
 const STEPS: Step[] = ['you', 'location', 'notifications', 'ready'];
 
+/** Set the moment onboarding is shown; read by the gate in the app shell. */
+export const ONBOARDING_SEEN = 'reach_onboarding_seen';
+
 export default function OnboardingPage() {
   const { user } = useUser();
   const router = useRouter();
+
+  // Seeing this screen is what counts, not finishing it. Somebody who taps
+  // past every step has still been asked, and the gate on Home must not keep
+  // sending them back. Wrapped because storage throws in a private window.
+  useEffect(() => {
+    try { localStorage.setItem(ONBOARDING_SEEN, '1'); } catch {}
+  }, []);
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
 

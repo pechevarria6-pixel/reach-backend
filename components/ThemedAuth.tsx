@@ -155,10 +155,13 @@ export function ThemedSignIn() {
           it knows and renders nothing at all. A blank page, no error, on the
           two screens a new person meets first. signUpUrl is spelled out for
           the same reason: the footer link was relative. */}
+      {/* Fallback, not forced: somebody signing in from a link to a specific
+          plan should land on that plan, not be bounced Home. */}
       <SignIn
         path="/sign-in"
         routing="path"
         signUpUrl="/sign-up"
+        fallbackRedirectUrl="/home"
         appearance={clerkAppearance[theme]}
       />
     </Frame>
@@ -169,10 +172,16 @@ export function ThemedSignUp() {
   const theme = useShellTheme();
   return (
     <Frame what="sign-up">
+      {/* forceRedirectUrl, not the NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL env
+          var: that sets afterSignUpUrl, which Clerk deprecated in v5 and
+          which is why a new account landed straight in the app and never saw
+          onboarding. Forced rather than fallback, because a brand-new account
+          has nowhere else it should go first. */}
       <SignUp
         path="/sign-up"
         routing="path"
         signInUrl="/sign-in"
+        forceRedirectUrl="/onboarding"
         appearance={clerkAppearance[theme]}
       />
     </Frame>
