@@ -25,8 +25,11 @@ export const TripSchema = z.object({
   // takes it. Parsing it back apart with a regex is the kind of guess this
   // codebase keeps removing, so the model states them instead: it knows the
   // country of the place it just chose.
-  city: z.string().optional(),
-  country_code: z.string().length(2).optional(),
+  // nullish, not optional: a model that has no country to give sends null
+  // rather than leaving the key out, and optional() rejects that outright —
+  // losing the whole trip over a field nothing depends on.
+  city: z.string().nullish(),
+  country_code: z.string().length(2).nullish(),
   emoji: z.string(),
   tagline: z.string(),
   vibe: z.string(),

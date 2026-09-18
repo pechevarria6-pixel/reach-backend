@@ -67,6 +67,24 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const provider = PROVIDERS[booking.vertical as Vertical];
   const request = booking.request_payload as BookingItemRequest;
 
+  // Who the room is under. A booking created from an itinerary has nobody
+  // named on it — the bridge does not hold traveller details and should not —
+  // so the person approving stands as the lead guest. They are the one
+  // pressing the button and the one the confirmation goes to, and a provider
+  // will not take a reservation for nobody.
+  if (!request.travelers?.length) {
+    const { data: approver } = await db
+      .from('users').select('name, email').eq('id', ctx.user.id).maybeSingle();
+    const whole = (approver?.name || '').trim();
+    const [first, ...rest] = whole ? whole.split(/\s+/) : [];
+    request.travelers = first
+      ? [{ firstName: first, lastName: rest.join(' ') || first, email: approver?.email ?? '' } as BookingItemRequest['travelers'][number]]
+      : [];
+    if (!request.travelers.length) {
+      console.error('[bookings/approve] nobody to book under', { bookingId: params.id, userId: ctx.user.id });
+    }
+  }
+
   // ── GATE 2: quote freshness ───────────────────────────────────────────
   // Prices drift between propose and approve. Re-quote; if the price moved
   // more than 5% or $25, surface it for re-approval instead of silently
