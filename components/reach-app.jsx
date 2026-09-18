@@ -5917,7 +5917,13 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
         failed.push(b);
       }
     }
-    setBookings(fresh);
+    // The list fetched before approving says "Quoted" for everything, because
+    // that is what it was. Read it again so the screen shows what happened.
+    try{
+      const after=await fetch(`/api/bookings?planId=${planId}`);
+      const aj=after.ok?await after.json():null;
+      setBookings((aj&&(aj.bookings||aj))||fresh);
+    }catch(e){ console.error("[checkout] could not re-read the bookings after approving",e); setBookings(fresh); }
     if(failed.length){
       fail(`Your payment is recorded, but ${failed.length} of ${waiting.length} booking${waiting.length===1?"":"s"} couldn't be confirmed. Nothing has been double-charged. We'll follow up — you don't need to do anything.`);
       return;
@@ -5929,9 +5935,14 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
     background:tone==="green"?"rgba(16,185,129,.15)":tone==="gold"?"rgba(212,175,55,.15)":tone==="red"?C.redDim:"rgba(255,255,255,.08)",
     color:tone==="green"?C.green:tone==="gold"?C.accentText:tone==="red"?C.red:C.t2}}>{label}</span>);
 
-  // Whether anything was actually booked, as opposed to paid for. The success
-  // screen claimed the first while only ever doing the second.
-  const bookedAnything=!!(bookings&&bookings.length);
+  // Whether anything was actually booked, as opposed to paid for or merely
+  // quoted. The first end-to-end run put "You're all booked!" above two lines
+  // both reading "Quoted", because this counted rows rather than reading
+  // them: everything that had a row at all was treated as booked.
+  const settledStates=["confirmed","redirected","pending"];
+  const bookedAnything=!!(bookings&&bookings.length)
+    &&bookings.every(b=>settledStates.includes(b.status))
+    &&bookings.some(b=>b.status==="confirmed"||b.status==="redirected");
 
   const lines=(bookings&&bookings.length?bookings.map(b=>({
     icon:vIcon[b.vertical]||"\u2728", l:(b.detail&&(b.detail.title||b.detail.name))||b.vertical,
