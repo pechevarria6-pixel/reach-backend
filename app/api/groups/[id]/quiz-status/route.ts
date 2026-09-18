@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireGroupMember, isFail } from '@/lib/auth';
 
-// GET /api/groups/[id]/quiz-status — who has completed their preference quiz
+// GET /api/groups/[id]/quiz-status — who has had their say, and who has not
+//
+// Readiness, and nothing else. This used to hand every member's email, their
+// top two preferences and their budget range to anybody else in the group —
+// so joining a trip disclosed what you eat, what you listen to and what you
+// can afford to everyone else on it. Being in a group is not consent to be
+// read that way.
+//
+// The group is entitled to know who it is waiting for. It is not entitled to
+// their answers. Same rule as travel essentials, for the same reason.
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
-  // This returns every member's name, email and preferences, so it must be
-  // restricted to the group itself rather than any signed-in user.
   const ctx = await requireGroupMember(params.id);
   if (isFail(ctx)) return ctx.error;
   const supabase = ctx.db;
@@ -42,21 +49,13 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
       u.budget_range
     );
 
-    // Top prefs for display
-    const topPrefs = [
-      ...(u.cuisines || []).slice(0, 1),
-      ...(u.music_genres || []).slice(0, 1),
-      ...(u.activity_vibe || []).slice(0, 1),
-    ].slice(0, 2);
-
     result[u.id] = {
       id: u.id,
-      name: u.name || u.email?.split('@')[0] || 'Member',
-      email: u.email,
+      // A name the group already sees on its own member list. Not the email:
+      // deriving a display name from one is still handing the email over.
+      name: u.name || 'Member',
       avatar: u.avatar_url,
       quizDone,
-      topPrefs,
-      budgetRange: u.budget_range,
     };
   }
 

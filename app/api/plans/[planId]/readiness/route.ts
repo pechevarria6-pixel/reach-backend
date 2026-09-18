@@ -9,6 +9,7 @@
 import { NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness } from '@/lib/essentials-server';
+import { planReadiness, waitingSentence } from '@/lib/plan-readiness';
 
 export async function GET(_req: Request, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -16,8 +17,25 @@ export async function GET(_req: Request, { params }: { params: { planId: string 
 
   const readiness = await groupReadiness(ctx.db, ctx.plan.group_id as string);
 
+  // Two different questions about the same group, answered together because
+  // a screen asking one usually wants the other: who can be ticketed, and
+  // who has had their say about where to go. Both are status only.
+  let preferences = null;
+  try {
+    const p = await planReadiness(
+      ctx.db, params.planId, String(ctx.plan.group_id),
+      (ctx.plan as { solo_mode?: boolean }).solo_mode === true,
+    );
+    preferences = { ...p, waiting: waitingSentence(p.waitingOn) };
+  } catch {
+    // Reported as absent rather than as "everyone is ready", which would
+    // enable a vote the server is about to refuse.
+    preferences = null;
+  }
+
   return NextResponse.json({
     ...readiness,
+    preferences,
     // Whether the person asking still owes us anything, so the screen can put
     // the prompt in front of them rather than in front of the group.
     you: readiness.travelers.find(t => t.userId === ctx.user.id) ?? null,

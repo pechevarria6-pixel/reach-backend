@@ -3835,11 +3835,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                         {m.quizDone?"✓ Preferences ready":"⏳ Quiz not complete"}
                       </div>
                     </div>
-                    {m.quizDone&&m.topPrefs&&(
-                      <div style={{fontSize:11,color:C.t3,textAlign:"right",maxWidth:100,lineHeight:1.4}}>
-                        {m.topPrefs.slice(0,2).join(" · ")}
-                      </div>
-                    )}
+                    {/* This showed each member's top two answers — what they
+                        eat, what they listen to — to everyone else in the
+                        group. Readiness is the group's business; the answers
+                        are the person's. The server no longer sends them. */}
                   </div>
                 ))}
               </div>
@@ -5154,8 +5153,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const totalV=Object.values(plan.votes||{}).reduce((a,b)=>a+b,0);
 
+  // Votes open when everyone's in. The server refuses early votes outright;
+  // this stops somebody tapping a card that is about to be refused, and says
+  // who the trip is waiting on so there is something to do about it.
+  const prefs=readiness?.preferences;
+  const votingOpen=!prefs||prefs.solo||prefs.allReady;
+
   const castVote=async opt=>{
     if(myVote)return;
+    if(!votingOpen){toast(prefs?.waiting||"Votes open when everyone's in");return;}
     // Showing the vote immediately is right — waiting on a round trip to tick
     // a box feels broken. Leaving it there when the server refused is not:
     // the screen went on saying "✓ Your vote" and "your vote has been
@@ -5536,10 +5542,28 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 }}>{nudging?"Sending…":"Give them a nudge"}</button>
               )}
             </div>
+            {/* Who has had their say. A yes or a no and a name — never what
+                anybody answered, which is theirs. */}
+            {!votingOpen&&prefs&&(
+              <div style={{margin:"0 0 12px",padding:"12px 14px",background:C.amberDim,border:`1px solid ${C.amber}`,borderRadius:14}}>
+                <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:8,lineHeight:1.5}}>
+                  {prefs.waiting||"Votes open when everyone's in"}
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {prefs.members.map(m=>(
+                    <span key={m.userId} style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,
+                      background:m.ready?"rgba(16,185,129,.15)":"rgba(255,255,255,.08)",
+                      color:m.ready?C.green:C.t2}}>
+                      {m.ready?"✓ ":""}{m.name.trim().split(/\s+/)[0]||"Someone"}{m.ready?"":" · waiting…"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             {plan.options.map(opt=>{
               const v=plan.votes[opt]||0; const pct=totalV>0?(v/totalV)*100:0; const mine=myVote===opt;
               return(
-                <div key={opt} {...pressable} onClick={()=>castVote(opt)} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accentText:C.border}`,borderRadius:16,padding:16,marginBottom:10,cursor:myVote?"default":"pointer",transition:"all .15s"}}>
+                <div key={opt} {...pressable} onClick={()=>castVote(opt)} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accentText:C.border}`,borderRadius:16,padding:16,marginBottom:10,cursor:(myVote||!votingOpen)?"default":"pointer",opacity:votingOpen?1:.55,transition:"all .15s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                     <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{opt}</div>
                     <div style={{fontSize:13,fontWeight:600,color:mine?C.accentText:C.t2}}>{v} vote{v!==1?"s":""}</div>

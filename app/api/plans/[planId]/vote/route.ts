@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
+import { planReadiness, waitingSentence } from '@/lib/plan-readiness';
 
 // POST /api/plans/[id]/vote — cast a vote
 //
@@ -24,6 +25,35 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   // Verify option is valid
   if (!(plan.vote_options || []).includes(option)) return NextResponse.json({ error: 'Invalid vote option' }, { status: 400 });
+
+  // Nobody votes until everybody has had their say. A vote cast before the
+  // quiet half of a group answers decides the trip on their behalf, and the
+  // first thing they see is a decision they were never asked about.
+  //
+  // After the membership check above, deliberately: who you are comes before
+  // what state the trip is in. The client disables the controls, but the
+  // client is a courtesy — this is the rule.
+  try {
+    const readiness = await planReadiness(
+      ctx.db, params.planId, String(ctx.plan.group_id),
+      (ctx.plan as { solo_mode?: boolean }).solo_mode === true,
+    );
+    if (!readiness.allReady) {
+      return NextResponse.json({
+        error: waitingSentence(readiness.waitingOn) ?? "Votes open when everyone's in",
+        // First names, so the organizer knows who to nudge. Never answers.
+        waitingOn: readiness.waitingOn,
+      }, { status: 403 });
+    }
+  } catch (e) {
+    // planReadiness throws only when it could not read the group. Opening the
+    // vote on a failed check would be deciding the trip on a guess.
+    console.error('[vote] readiness check failed', { planId: params.planId, error: e instanceof Error ? e.message : String(e) });
+    return NextResponse.json(
+      { error: 'We could not check who is ready just now — try again in a moment.' },
+      { status: 503 },
+    );
+  }
 
   // Check user hasn't already voted (enforced by DB unique constraint too)
   const { data: existingVote } = await supabase
