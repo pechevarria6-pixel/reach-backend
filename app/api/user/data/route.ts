@@ -75,7 +75,24 @@ export async function PATCH(req: NextRequest) {
   if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'No valid fields' }, { status: 400 });
 
   const supabase = createServerClient();
-  await supabase.from('users').update(updates).eq('clerk_id', clerkId);
+  // The error used to be discarded and this answered "Profile updated"
+  // whatever happened. That is the taste quiz's save path — the answers the
+  // whole app personalises from — so a failed write told somebody their
+  // preferences were stored and they were not.
+  const { error } = await supabase.from('users').update(updates).eq('clerk_id', clerkId);
+  if (error) {
+    // Code and message only: `updates` is what this person just told us about
+    // themselves, and error.details can quote the row straight back.
+    console.error('[user/data] update failed', { code: error.code, message: error.message });
+    const missing = /column "?([a-z_]+)"? .*does not exist/i.exec(error.message || '');
+    if (missing) {
+      return NextResponse.json(
+        { error: `This needs a migration: the ${missing[1]} column does not exist yet.` },
+        { status: 503 },
+      );
+    }
+    return NextResponse.json({ error: "Couldn't save that — try again" }, { status: 500 });
+  }
 
   return NextResponse.json({ message: 'Profile updated', updated_fields: Object.keys(updates) });
 }
