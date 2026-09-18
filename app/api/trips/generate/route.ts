@@ -183,7 +183,12 @@ export async function POST(req: NextRequest) {
     .filter((x: { name: string; text: string }) => x.text)
     .map((x: { name: string; text: string }) => `${x.name || 'Someone'} said: "${x.text.slice(0, 300)}"`);
   const saidBlock = suggestions.length
-    ? `\nWHAT THEY EACH SAID THEY WANT (use these; name who you are answering):\n${suggestions.join('\n')}\n`
+    ? `\nWHAT THEY EACH SAID THEY WANT — in their own words:\n${suggestions.join('\n')}\n
+Answer these. For every option, used_suggestions lists which of them it acts
+on and how, naming the person: "Priya wanted somewhere her sister could see
+snow — this is a ski town". If an option genuinely acts on none of them, send
+an empty array rather than inventing one. Do not repeat a wish back as though
+quoting it were the same as planning around it.\n`
     : '';
   const tripTypes = (tripPrefs.tripType || []).join(', ') || 'any';
   const tripPace = tripPrefs.pace || 'balanced';
@@ -442,7 +447,7 @@ Return JSON only, shaped exactly like this:
 "tagline":"Ten words on why this group","vibe":"Vibe label",
 "why_this_group":"One sentence tied to their preferences",
 "food_scene":"Two sentences","music_scene":"Two sentences",
-"total_per_person":1850,"tier":"saver",
+"total_per_person":1850,"tier":"saver","used_suggestions":["Priya wanted somewhere her sister could see snow — this is a ski town"],
 "costs":{"flights":{"per_person":400,"details":"..."},
 "accommodation":{"per_person":500,"details":"...","example":"Hotel or area"},
 "ground_transport":{"per_person":100,"details":"..."},

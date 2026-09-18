@@ -38,6 +38,11 @@ export const TripSchema = z.object({
   music_scene: z.string(),
   total_per_person: z.number(),
   tier: z.enum(['saver', 'on_budget', 'stretch']),
+  // Which member's own words this option answers, and how. Asked for only
+  // when somebody actually wrote something, and nullish rather than optional
+  // so a model that has nothing to say sends null instead of omitting the
+  // key — losing a whole trip over an empty list would be a poor trade.
+  used_suggestions: z.array(z.string()).nullish(),
   costs: z.object({
     flights: CostLine,
     // The card shows the example hotel or area here, not the details line.
@@ -114,6 +119,11 @@ export const TRIPS_JSON_SCHEMA = {
           // option, one on budget, and a stretch. Making it an enum in the
           // schema is what stops three near-identical mid-range trips.
           tier: { type: 'string', enum: ['saver', 'on_budget', 'stretch'] },
+          // Named, so that "we heard you" is a field somebody can read rather
+          // than a hope. Without it, whether the model used what a person
+          // wrote varied run to run: one answered a fortieth birthday in
+          // every option, the next never mentioned it.
+          used_suggestions: { type: 'array', items: str },
           costs: {
             type: 'object',
             properties: {
@@ -132,7 +142,8 @@ export const TRIPS_JSON_SCHEMA = {
           },
         },
         required: ['id', 'destination', 'city', 'country_code', 'emoji', 'tagline', 'vibe',
-                   'why_this_group', 'food_scene', 'music_scene', 'total_per_person', 'tier', 'costs'],
+                   'why_this_group', 'food_scene', 'music_scene', 'total_per_person', 'tier', 'costs',
+                   'used_suggestions'],
         additionalProperties: false,
       },
     },
