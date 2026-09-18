@@ -498,7 +498,16 @@ Return JSON only, shaped exactly like this:
     let parsed = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
     // A live run came back with four trips, one destination twice, and every
     // trip's cost lines summing below its own headline total.
-    let trips = parsed ? normalizeTrips(parsed, !!fixedPlace) : undefined;
+    // Repeated destinations are dropped as a model repeating itself — except
+    // when they are the point. A place can arrive two ways: the explicit
+    // field, or inside what they wrote ("ski trip with the boys in aspen").
+    // Only the first was allowed for, so three options at Aspen came back
+    // deduped to one and somebody was shown a single "choice" again.
+    //
+    // With a goal present, a repeat is far likelier to be intentional than a
+    // slip, and applyRules still reports the count either way.
+    const samePlaceIsFine = !!fixedPlace || !!goal;
+    let trips = parsed ? normalizeTrips(parsed, samePlaceIsFine) : undefined;
     if (parsed && trips && parsed.length !== trips.length) {
       console.error('[trips generate] trimmed duplicates', { returned: parsed.length, kept: trips.length });
     }
@@ -522,7 +531,7 @@ Return JSON only, shaped exactly like this:
           TRIPS_JSON_SCHEMA, 'trips generate retry',
         );
         const retried = parseModelJSON(textOf(retry), TripsSchema, 'trips generate retry')?.trips;
-        const secondTrips = retried ? normalizeTrips(retried, !!fixedPlace) : undefined;
+        const secondTrips = retried ? normalizeTrips(retried, samePlaceIsFine) : undefined;
         if (secondTrips?.length) {
           report = applyRules(secondTrips, rule);
           trips = report.trips;
