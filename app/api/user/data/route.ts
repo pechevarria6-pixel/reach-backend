@@ -84,7 +84,13 @@ export async function PATCH(req: NextRequest) {
     // Code and message only: `updates` is what this person just told us about
     // themselves, and error.details can quote the row straight back.
     console.error('[user/data] update failed', { code: error.code, message: error.message });
-    const missing = /column "?([a-z_]+)"? .*does not exist/i.exec(error.message || '');
+    // Two phrasings for the same fact. Postgres says `column "x" ... does not
+    // exist`; PostgREST, which is what actually answers here, says `Could not
+    // find the 'x' column of 'users' in the schema cache`. Matching only the
+    // first turned a missing migration into a generic "try again", which is
+    // advice that cannot work.
+    const missing = /column "?'?([a-z_]+)'?"? .*does not exist/i.exec(error.message || '')
+      ?? /could not find the '?([a-z_]+)'? column/i.exec(error.message || '');
     if (missing) {
       return NextResponse.json(
         { error: `This needs a migration: the ${missing[1]} column does not exist yet.` },
