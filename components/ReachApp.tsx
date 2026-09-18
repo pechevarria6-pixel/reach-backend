@@ -27,11 +27,16 @@ export default function ReachAppWrapper() {
         minHeight: '100dvh', background: 'var(--shell-surface)', flexDirection: 'column', gap: 16,
         fontFamily: 'var(--font-body)',
       }}>
-        <style>{`:root{--shell-surface:${SURFACE.light};--shell-ink:#241C10;}`
-          + `:root[data-theme="dark"]{--shell-surface:${SURFACE.dark};--shell-ink:${BRAND.t1};}`}</style>
+        {/* dangerouslySetInnerHTML: this contains [data-theme="dark"], and a
+            style child string is escaped by the server and not by the browser.
+            That mismatch failed hydration on every load of the app — the last
+            of three places with the same fault. */}
+        <style dangerouslySetInnerHTML={{ __html:
+          `:root{--shell-surface:${SURFACE.light};--shell-ink:#241C10;}`
+          + `:root[data-theme="dark"]{--shell-surface:${SURFACE.dark};--shell-ink:${BRAND.t1};}` }} />
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--shell-ink)' }}>reach</div>
         <div style={{ width: 32, height: 32, border: `3px solid ${BRAND.accent}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <style dangerouslySetInnerHTML={{ __html: `@keyframes spin { to { transform: rotate(360deg); } }` }} />
       </div>
     );
   }
