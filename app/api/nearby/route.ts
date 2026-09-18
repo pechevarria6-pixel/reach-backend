@@ -11,11 +11,12 @@
 // costs the others nothing, and the response says which answered so the
 // screen can tell the difference between a quiet week and a broken key.
 import { NextRequest, NextResponse } from 'next/server';
+import { dayWhere } from '@/lib/calendar';
 import { requireUser, isFail } from '@/lib/auth';
 import { ticketmaster } from '@/lib/discovery/ticketmaster';
 import { yelpEvents, yelpPlaces } from '@/lib/discovery/yelp';
 import { cachedVenues, cachedEvents, noteArea } from '@/lib/discovery/cache';
-import { rank } from '@/lib/discovery/rank';
+import { rank, rotateDaily, seedOf, THIN_POOL } from '@/lib/discovery/rank';
 import { tasteFrom } from '@/lib/discovery/taste';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
 
@@ -86,7 +87,12 @@ export async function GET(req: NextRequest) {
   // by opening this screen — including people who have not done the quiz.
   await noteArea(ctx.db, seeker);
 
-  const events = rank(results.flatMap(r => r.findings), seeker.interests);
+  // Ranked first, so the best match for this person is still the best match,
+  // then rotated within bands so the page is not identical to yesterday's.
+  // The seed is the local day and the person: two people in the same town see
+  // different orders, and each of them sees a different one tomorrow.
+  const ranked = rank(results.flatMap(r => r.findings), seeker.interests);
+  const events = rotateDaily(ranked, seedOf(dayWhere(lng), ctx.user.id));
   const sources = results.map(r => ({ source: r.source, status: r.status, found: r.findings.length }));
 
   // Every source refusing is a different problem from a quiet week, and the
@@ -106,5 +112,14 @@ export async function GET(req: NextRequest) {
     return empty('none_nearby', city, results, personal);
   }
 
-  return NextResponse.json({ events, reason: 'ok', city, sources, personal });
+  // How much there actually is. A dozen places shuffled daily is still a
+  // dozen places, and the screen says so rather than implying a deep catalogue
+  // — the honest answer while the sweep and harvest fill a new area in.
+  const thin = events.length < THIN_POOL;
+
+  return NextResponse.json({
+    events, reason: 'ok', city, sources, personal,
+    pool: events.length,
+    thin,
+  });
 }

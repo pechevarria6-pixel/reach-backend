@@ -40,3 +40,60 @@ export function rank(findings: Finding[], interests: string[]): Finding[] {
   return out;
 }
 
+// ─── The same city, a different evening ──────────────────────────────────
+// Discover was showing the same things in the same order every day. Ranking
+// is deterministic, which is right — the best match should not move because a
+// coin landed differently — but it means a small pool reads as a frozen one,
+// and the pilot area has twelve venues in it.
+//
+// So the order is nudged by the day and the person: enough that Tuesday does
+// not look like Monday, not so much that the strongest matches fall off the
+// screen. Nothing is invented and nothing is hidden — the same findings, met
+// in a different order.
+
+/** A small, stable number from a string. Same input, same answer, anywhere. */
+export function seedOf(...parts: (string | number)[]): number {
+  let h = 2166136261;
+  for (const part of parts.join('|')) {
+    h ^= part.charCodeAt(0);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** A deterministic shuffle: the same seed always deals the same hand. */
+function dealt<T>(items: T[], seed: number): T[] {
+  const out = [...items];
+  let state = seed || 1;
+  for (let i = out.length - 1; i > 0; i--) {
+    // xorshift, so the sequence does not repeat over a page of results.
+    state ^= state << 13; state >>>= 0;
+    state ^= state >> 17;
+    state ^= state << 5; state >>>= 0;
+    const j = state % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/**
+ * Rotate within bands rather than across the whole list, so the top of the
+ * page stays the best matches and the order inside each band moves daily.
+ * A band of four keeps a strong result on the first screen while making the
+ * screen itself different.
+ */
+export function rotateDaily<T>(items: T[], seed: number, band = 4): T[] {
+  if (items.length <= 1) return items;
+  const out: T[] = [];
+  for (let i = 0; i < items.length; i += band) {
+    out.push(...dealt(items.slice(i, i + band), seedOf(seed, i)));
+  }
+  return out;
+}
+
+/**
+ * Below this, a city's list is thin enough that shuffling it would be the
+ * only thing changing. The screen says so instead of implying depth.
+ */
+export const THIN_POOL = 15;
+
