@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
 import { createServerClient } from '@/lib/supabase';
+import { refundOutcome } from '@/lib/refunds';
 import { sendPaymentReceipt, sendFullyFunded } from '@/lib/email';
 import Stripe from 'stripe';
 
@@ -72,7 +73,48 @@ export async function POST(req: NextRequest) {
     }
     case 'charge.refunded': {
       const charge = event.data.object as Stripe.Charge;
-      await supabase.from('payments').update({ status: charge.amount_refunded === charge.amount ? 'refunded' : 'partially_refunded', refund_amount_cents: charge.amount_refunded }).eq('stripe_charge_id', charge.id);
+      const { error: paymentError } = await supabase.from('payments')
+        .update({
+          status: charge.amount_refunded === charge.amount ? 'refunded' : 'partially_refunded',
+          refund_amount_cents: charge.amount_refunded,
+        })
+        .eq('stripe_charge_id', charge.id);
+      if (paymentError) console.error('[webhooks/stripe] could not record a refund against the payment', { charge: charge.id, error: paymentError.message });
+
+      // A contribution is what the funding math counts, and it was never
+      // told. A refunded share went on counting towards the target, so a
+      // plan could sit there looking funded with the money already handed
+      // back — and the approve gate would have spent it.
+      const intentId = typeof charge.payment_intent === 'string'
+        ? charge.payment_intent
+        : charge.payment_intent?.id;
+      if (intentId) {
+        const { data: contribution, error: readError } = await supabase
+          .from('contributions')
+          .select('id, amount_cents, status')
+          .eq('stripe_payment_intent', intentId)
+          .maybeSingle();
+        if (readError) {
+          console.error('[webhooks/stripe] could not read the contribution for a refund', { intent: intentId, error: readError.message });
+        } else if (contribution) {
+          const outcome = refundOutcome(contribution.amount_cents, charge.amount_refunded);
+          if (outcome.note) {
+            console.error('[webhooks/stripe] refund not fully reflected in the funding math', {
+              contribution: contribution.id, plan: charge.metadata?.plan_id, note: outcome.note,
+            });
+          }
+          if (outcome.status === 'refunded' && contribution.status !== 'refunded') {
+            const { error: writeError } = await supabase.from('contributions')
+              .update({ status: 'refunded', updated_at: new Date().toISOString() })
+              .eq('id', contribution.id);
+            if (writeError) {
+              // Stripe will retry this event, which is the point of saying so.
+              console.error('[webhooks/stripe] could not mark a contribution refunded', { contribution: contribution.id, error: writeError.message });
+              return NextResponse.json({ error: 'could not record the refund' }, { status: 500 });
+            }
+          }
+        }
+      }
       break;
     }
   }
