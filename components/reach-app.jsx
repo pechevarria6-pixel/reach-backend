@@ -527,6 +527,11 @@ function isTempId(id){
 
 // ─── HOME ────────────────────────────────────────────────────────────────────
 function HomeScreen({groups,um,push,toast,loading,user,setTab}){
+  // The server has no idea what time it is where you are. Anything that reads
+  // the clock waits for the browser rather than guessing and being corrected.
+  const [mounted,setMounted]=useState(false);
+  const [hour,setHour]=useState(12);
+  useEffect(()=>{ setHour(new Date().getHours()); setMounted(true); },[]);
   // These were three San Francisco events hardcoded as the default, shown to
   // everyone everywhere until the API answered — and left standing forever if
   // it never did. An empty list that says so is more honest than a fixture.
@@ -605,9 +610,17 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"14px 20px 12px"}}>
-        <div style={{fontSize:13.5,color:C.t2,marginBottom:5,fontWeight:500}}>
-          {new Date().getHours()<12?"Good morning":new Date().getHours()<17?"Good afternoon":"Good evening"}
-          {firstNameOf(user,"")&&`, ${firstNameOf(user)}`}
+        {/* Rendered after mount, and empty before it. The hour and the day are
+            the browser's, not the server's: rendering them server-side meant
+            "Good afternoon" from a machine in UTC against "Good morning" in
+            the browser, which is a text mismatch, which fails hydration —
+            React then replaced the document on every single load. The space is
+            held so nothing jumps when it arrives. */}
+        <div style={{fontSize:13.5,color:C.t2,marginBottom:5,fontWeight:500,minHeight:18}}>
+          {mounted?(<>
+            {hour<12?"Good morning":hour<17?"Good afternoon":"Good evening"}
+            {firstNameOf(user,"")&&`, ${firstNameOf(user)}`}
+          </>):null}
         </div>
         {/* A question rather than a greeting, because the answer is the whole
             point of the app. One word carries the accent, and the question
@@ -615,7 +628,8 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             Monday. The date decides it, so it cannot flicker between renders
             or disagree with what was on screen a second ago. */}
         {(()=>{
-          const q=GREETING_QUESTIONS[dayIndex()%GREETING_QUESTIONS.length];
+          // Same reason: which day it is depends on where you are standing.
+          const q=GREETING_QUESTIONS[(mounted?dayIndex():0)%GREETING_QUESTIONS.length];
           return(
             <div className="display" style={{fontSize:34,color:C.t1,lineHeight:1.15,fontWeight:600,letterSpacing:"-.01em"}}>
               {q.before}<span style={{color:C.accent}}>{q.word}</span>{q.after}
