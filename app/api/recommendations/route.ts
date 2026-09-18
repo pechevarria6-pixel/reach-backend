@@ -43,8 +43,23 @@ export async function POST(req: NextRequest) {
   // between "six restaurants" and "six restaurants for someone who cooks".
   const { data: me } = await ctx.db
     .from('users')
-    .select('favorite_activities, cuisines, music_genres, dining_vibe, drink_style, nightlife_style, dietary_needs, no_way_jose, budget_range')
+    .select('favorite_activities, cuisines, music_genres, dining_vibe, drink_style, nightlife_style, dietary_needs, no_way_jose, budget_range, home_city')
     .eq('id', ctx.user.id).single();
+
+  // ── Where, or nowhere ────────────────────────────────────────────────
+  // The brief used to fall back to "the city" when no location was sent, and
+  // the client never sent one — so the model chose a city it had heard of. A
+  // pilot user in Aberdeen, North Carolina was offered San Francisco
+  // restaurants. Suggestions somebody cannot drive to are worse than no
+  // suggestions, so this asks rather than guesses.
+  const asked = typeof body.location === 'string' ? body.location.trim().slice(0, 80) : '';
+  const location = asked || (typeof me?.home_city === 'string' ? me.home_city.trim() : '');
+  if (!location) {
+    return NextResponse.json({
+      error: 'Tell us where you are and we will find real places near you.',
+      need: 'location',
+    }, { status: 422 });
+  }
 
   const list = (v: unknown) => Array.isArray(v) ? v.filter(Boolean).slice(0, 8).join(', ') : '';
   const about = me ? [
@@ -58,7 +73,7 @@ export async function POST(req: NextRequest) {
     list(me.no_way_jose) && `Never suggest: ${list(me.no_way_jose)}`,
   ].filter(Boolean).join('\n') : '';
 
-  const prompt = `${EXPERIENCE_BRIEF[type](body)}
+  const prompt = `${EXPERIENCE_BRIEF[type]({ ...body, location })}
 ${about ? `\nWho this is for:\n${about}\nLean into these. If something here rules a suggestion out, it is out.\n` : ''}
 
 For every suggestion:
