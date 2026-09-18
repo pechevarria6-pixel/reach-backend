@@ -9,8 +9,15 @@
 // Any provider can send us one of these, so the rule lives in one place
 // rather than being remembered at each call site.
 
-/** Words that are a provider saying "we don't know", not a category. */
-const NOT_A_CATEGORY = new Set(['undefined', 'null', 'none', 'n/a', 'unknown', 'other']);
+/**
+ * Words that are a provider saying "we don't know", not a category.
+ *
+ * Deliberately short. "Other" is not here: plenty of catalogues use it as a
+ * real label, and dropping its pill would make those things harder to find
+ * for the sake of tidiness. This list is only the ones that are machine
+ * noise in any language — a null that became a string somewhere upstream.
+ */
+const NOT_A_CATEGORY = new Set(['undefined', 'null', 'nil', 'n/a', '-']);
 
 /**
  * The category, or null when the value is a provider's way of saying it has

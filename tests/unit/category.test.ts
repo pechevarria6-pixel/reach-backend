@@ -32,3 +32,24 @@ test('no items means no pills, and nothing thrown', () => {
   assert.deepEqual(visibleCategories([]), []);
   assert.deepEqual(visibleCategories(undefined as never), []);
 });
+
+test('a category is only dropped when it is machine noise', () => {
+  // The pill is navigation. Dropping a real label makes those things harder
+  // to find, so only values that are plainly a null-turned-string go.
+  assert.equal(usableCategory('Other'), 'Other');
+  assert.equal(usableCategory('Unknown'), 'Unknown');
+  assert.equal(usableCategory('Miscellaneous'), 'Miscellaneous');
+});
+
+test('dropping a pill never drops the thing itself', () => {
+  // Discover shows every item under "All" and filters only when a pill is
+  // chosen, so an item whose category we will not name is still reachable.
+  const items = [
+    { category: 'Undefined', title: 'Deric Cahill' },
+    { category: 'Music', title: 'Ian Asher' },
+  ];
+  assert.deepEqual(visibleCategories(items), ['Music']);
+  // The guard says nothing about which items exist — that is the caller's
+  // list, untouched.
+  assert.equal(items.length, 2);
+});
