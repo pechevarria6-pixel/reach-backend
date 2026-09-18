@@ -393,6 +393,11 @@ means Aspen, three ways, not Aspen and two other mountains. If it names an
 occasion, every option should be somewhere that occasion makes sense, and
 why_this_group should say so in a way the person who wrote it would
 recognise. If it names people, plan for those people.
+
+Every option's used_suggestions must say how it serves THIS — "Aspen, the
+mountain Kyle asked for, at the cheaper end of the season" — before it
+mentions any standing answer. An empty used_suggestions when they have told
+you what the trip is for means you did not use it.
 ` : ''}WHAT THIS TRIP IS FOR (standing preferences below yield to it): ${tripTypes}
 PACE: ${tripPace}
 STAY: ${tripAccommodation}
