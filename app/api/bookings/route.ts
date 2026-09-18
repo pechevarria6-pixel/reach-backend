@@ -9,10 +9,15 @@ import { groupReadiness, withoutTravelerDetails } from '@/lib/essentials-server'
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
 import { kiwiFlights, viatorActivities, ticketmasterEvents, conciergeRestaurants } from '@/lib/booking/providers/rest';
+import { duffelFlights } from '@/lib/booking/providers/flights.duffel';
 
 const PROVIDERS: Record<Vertical, BookingProvider> = {
   hotel: liteApiHotels,
-  flight: kiwiFlights,
+  // Duffel, written against a real offer request. Kiwi stays in the file it
+  // came from: it is dormant (no TEQUILA_API_KEY) and it invents a date of
+  // birth when one is missing, which books a ticket that is refused at the
+  // airport. Nothing routes to it.
+  flight: duffelFlights,
   activity: viatorActivities,
   event: ticketmasterEvents,
   restaurant: conciergeRestaurants,
