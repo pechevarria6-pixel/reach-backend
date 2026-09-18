@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
+import { findProduct } from '@/lib/booking/providers/viator-search';
 
 export const maxDuration = 60;
 
@@ -31,11 +32,15 @@ export const maxDuration = 60;
 const BOOKABLE: Record<string, Vertical> = {
   hotel: 'hotel',
   restaurant: 'restaurant',
+  // An activity is bookable once the line has been matched to a real product
+  // in the provider's catalogue — see findProduct below. Until that match
+  // exists there is nothing to sell.
+  activity: 'activity',
 };
 
 /** Why a line cannot be quoted, in words the screen can show. */
 const CANNOT: Record<string, string> = {
-  activity: 'needs picking from the activity listings first',
+  activity: 'we could not find this as a bookable activity — it stays yours to arrange',
   event: 'tickets are bought on the seller\'s own site',
   flight: 'flights need everyone\'s traveller details first',
   transport: 'not something Reach books',
@@ -62,6 +67,7 @@ function asRequest(
   city: string,
   countryCode: string,
   partySize: number,
+  product: { productCode: string; title: string; priceCents: number | null } | null,
 ): (BookingItemRequest & { itineraryItemId: string; title: string }) | null {
   const vertical = BOOKABLE[item.type];
   if (!vertical) return null;
@@ -93,6 +99,19 @@ function asRequest(
         // a quote for one room when six are going is a misleading number.
         rooms: Math.max(1, Math.ceil(partySize / 2)),
       },
+    } as BookingItemRequest & { itineraryItemId: string; title: string };
+  }
+
+  if (vertical === 'activity') {
+    // A date is required to check availability, and the trip's first day is
+    // the honest default until somebody says otherwise.
+    if (!product || !plan.start_date) return null;
+    return {
+      ...base,
+      // The product's own title, not the itinerary's wording: this is what
+      // was actually booked and what the confirmation will say.
+      title: product.title,
+      activity: { productCode: product.productCode, date: plan.start_date },
     } as BookingItemRequest & { itineraryItemId: string; title: string };
   }
 
@@ -161,8 +180,28 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const requests: (BookingItemRequest & { itineraryItemId: string; title: string })[] = [];
   const skipped: { title: string; why: string }[] = [];
+  const ids = { planId: params.planId, groupId: String(ctx.plan.group_id) };
+
   for (const item of candidates as Item[]) {
-    const request = asRequest(item, plan, { planId: params.planId, groupId: String(ctx.plan.group_id) }, city, countryCode, partySize);
+    // An activity has to become a real product before it can be quoted. The
+    // itinerary says "brewery tour"; Viator sells product 5638853P1. When
+    // nothing matches well enough the line stays the traveller's own — plenty
+    // of a good trip is not a ticketed product, and a walk on the beach
+    // should not be booked as a sunset cruise because both mention the sea.
+    let product: Awaited<ReturnType<typeof findProduct>> = null;
+    if (item.type === 'activity') {
+      if (!city) {
+        skipped.push({ title: item.title, why: 'this trip has no destination saved yet' });
+        continue;
+      }
+      product = await findProduct(city, item.title, plan.start_date, plan.end_date);
+      if (!product) {
+        skipped.push({ title: item.title, why: CANNOT.activity });
+        continue;
+      }
+    }
+
+    const request = asRequest(item, plan, ids, city, countryCode, partySize, product);
     if (request) requests.push(request);
     else skipped.push({
       title: item.title,
