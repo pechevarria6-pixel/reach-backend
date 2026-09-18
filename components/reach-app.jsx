@@ -5034,6 +5034,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     setBuilding(false);
   };
 
+  // Who on this trip could be put on a flight today. Status only — the API
+  // returns names and which fields are outstanding, never anybody's answers.
+  // Asked for once with the plan, because a flight line that cannot be booked
+  // should say who to go and ask before anyone pays for the rest of the trip.
+  const [readiness,setReadiness]=useState(null);
+  useEffect(()=>{
+    if(!planId||isTempId(planId))return;
+    let live=true;
+    fetch(`/api/plans/${planId}/readiness`)
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{if(live&&d)setReadiness(d);})
+      // A readiness check that fails shows no chips rather than a wrong "Ready".
+      .catch(()=>{});
+    return()=>{live=false;};
+  },[planId]);
+
   // Fetch latest plan data on mount
   useEffect(()=>{
     // A temp id means the plan has not reached the server yet; asking for it
@@ -5084,6 +5100,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // absent rather than disabled — a greyed-out "put this to the group" is
   // still a reminder that the app thinks you are a committee.
   const soloTrip=(group.memberIds||[]).length<=1;
+  // A flight on the itinerary is what makes travel details anybody's business.
+  // Without one, nothing on this screen asks for a date of birth.
+  const hasFlight=(plan?.itinerary||[]).some(i=>i.type==="flight");
   const usd=c=>"$"+((c||0)/100).toLocaleString(undefined,{minimumFractionDigits:(c||0)%100?2:0,maximumFractionDigits:2});
   // What Reach itself will put on a card, as opposed to what the traveller
   // pays at the door. Only the first belongs on a "book everything" button.
@@ -5194,7 +5213,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {plan.participants.map(uid=>{const u=um[uid];return u?(
                 <div key={uid} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
                   <div className="av-lg" style={{background:u.color}}>{u.initials}</div>
-                  <div style={{flex:1}}><div style={{fontSize:14,fontWeight:500,color:C.t1}}>{u.name}</div><div style={{fontSize:12,color:C.t2}}>{u.handle}</div></div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,fontWeight:500,color:C.t1}}>{u.name}</div>
+                    <div style={{fontSize:12,color:C.t2}}>{u.handle}</div>
+                  </div>
+                  {/* Only when a flight is on the table: nobody needs a date of
+                      birth for a weekend somebody is driving to. The chip says
+                      ready or not and which fields are outstanding — never a
+                      value, not even to the person's own group. */}
+                  {hasFlight&&(()=>{
+                    const r=readiness?.travelers?.find(t=>t.userId===uid);
+                    if(!r)return null;
+                    return r.ready
+                      ?<span className="pill pill-g" style={{fontSize:10}}>✓ Ready to fly</span>
+                      :<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}
+                         title={`Still needed: ${r.missing.join(", ")}`}>Needs details</span>;
+                  })()}
                   <span className="pill pill-g" style={{fontSize:10}}>✓ In</span>
                 </div>
               ):null;})}
@@ -6352,6 +6386,121 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
     );
   }
 
+  // ═══ Flying details ═══
+  // Three fields an airline checks against the document you travel on. They
+  // are asked for here, once, rather than in a booking form under time
+  // pressure — and they stay yours: the group sees "Ready" or "Incomplete"
+  // and never a value.
+  if(section==="flying"){
+    const e=data?.essentials||{};
+    const lastDraft=docDraft.__last!==undefined?docDraft.__last:(e.lastName??"");
+    const firstDraft=docDraft.__fFirst!==undefined?docDraft.__fFirst:(e.firstName??"");
+    const dobDraft=docDraft.__dob!==undefined?docDraft.__dob:(e.dateOfBirth??"");
+    const genDraft=docDraft.__gender!==undefined?docDraft.__gender:(e.gender??"");
+    const dobValid=!dobDraft||/^\d{4}-\d{2}-\d{2}$/.test(dobDraft);
+    const GENDERS=[
+      {v:"female",label:"Female"},
+      {v:"male",label:"Male"},
+      {v:"x",label:"X"},
+      {v:"unspecified",label:"Rather not say"},
+    ];
+
+    const saveFlying=async()=>{
+      if(busy)return;setBusy("flying");
+      try{
+        const body={};
+        if(docDraft.__fFirst!==undefined)body.firstName=firstDraft.trim()||null;
+        if(docDraft.__last!==undefined)body.lastName=lastDraft.trim()||null;
+        if(docDraft.__dob!==undefined)body.dateOfBirth=dobDraft.trim()||null;
+        if(docDraft.__gender!==undefined)body.gender=genDraft||null;
+        if(!Object.keys(body).length){setBusy(null);return;}
+        const r=await fetch("/api/profile",{
+          method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),
+        });
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok)throw new Error(d.error||"Couldn't save that");
+        setDocDraft(x=>({...x,__fFirst:undefined,__last:undefined,__dob:undefined,__gender:undefined}));
+        toast("Saved");await load();
+        if(body.firstName!==undefined)onIdentityChange?.();
+      }catch(err){toast(err.message);}
+      finally{setBusy(null);}
+    };
+
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Flying details"/>
+        <Empty>
+          No airline will issue a ticket without these three, and each one is checked
+          against the ID you travel on. Your group sees only whether you're ready —
+          never the answers.
+        </Empty>
+
+        <div style={{padding:"0 20px 18px"}}>
+          <div className="sl" style={{marginBottom:8}}>Name, as printed on your ID</div>
+          <div style={{display:"flex",gap:8}}>
+            <input aria-label="Legal first name" className="inp" value={firstDraft} placeholder="First"
+              style={{flex:1}} onChange={ev=>setDocDraft(x=>({...x,__fFirst:ev.target.value}))}/>
+            <input aria-label="Legal last name" className="inp" value={lastDraft} placeholder="Last"
+              style={{flex:1}} onChange={ev=>setDocDraft(x=>({...x,__last:ev.target.value}))}/>
+          </div>
+          <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
+            This is the same name your group already sees. A ticket that doesn't match
+            your ID is refused at the gate, so a nickname here costs a flight.
+          </div>
+        </div>
+
+        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
+          <div className="sl" style={{marginBottom:8}}>Date of birth</div>
+          <input aria-label="Date of birth" className="inp" type="date" value={dobDraft}
+            max={new Date().toISOString().slice(0,10)}
+            onChange={ev=>setDocDraft(x=>({...x,__dob:ev.target.value}))}/>
+          {!dobValid&&(
+            <div style={{fontSize:12,color:C.red,marginTop:8}}>
+              A date of birth looks like 1991-04-02.
+            </div>
+          )}
+        </div>
+
+        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
+          <div className="sl" style={{marginBottom:8}}>Gender on your ID</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {GENDERS.map(g=>(
+              <button key={g.v} className="bs"
+                aria-pressed={genDraft===g.v}
+                style={genDraft===g.v?{color:C.accentText,borderColor:C.accentText,fontWeight:600}:undefined}
+                onClick={()=>setDocDraft(x=>({...x,__gender:g.v}))}>{g.label}</button>
+            ))}
+          </div>
+          <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
+            Airlines carry the marker printed on your passport or licence, which is
+            not always how you'd describe yourself. "Rather not say" is stored, but
+            no airline will ticket on it.
+          </div>
+          {e.gender===undefined&&(
+            <div style={{marginTop:10,padding:"10px 12px",background:C.amberDim,border:`1px solid ${C.amber}`,borderRadius:12,fontSize:12,color:C.t1,lineHeight:1.5}}>
+              Saving this needs a database migration that hasn't been run yet:
+              sql/travel-essentials-2026-09-18.sql
+            </div>
+          )}
+        </div>
+
+        {e.missing?.length>0&&(
+          <div style={{padding:"0 20px 18px"}}>
+            <div style={{fontSize:13,color:C.t2,lineHeight:1.5}}>
+              Still needed before you can be booked on a flight: {e.missing.join(", ")}.
+            </div>
+          </div>
+        )}
+
+        <div style={{padding:"0 20px 30px"}}>
+          <button className="bp" disabled={busy==="flying"||!dobValid} onClick={saveFlying}>
+            {busy==="flying"?"Saving…":"Save"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ═══ Travel documents ═══
   if(section==="documents"){
     const docs=[
@@ -6550,6 +6699,10 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
   // ═══ Root ═══
   const stats=data?.stats;
   const docCount=data?.documents?Object.values(data.documents).filter(d=>d.present).length:0;
+  // Travel essentials. The server works out what is missing, because the same
+  // function decides whether a group is told this person is holding up a
+  // flight — two opinions about that would show one thing and book another.
+  const ess=data?.essentials;
   const connected=(data?.connected||[]).filter(a=>a.status==="connected");
   return(
     <div style={{padding:"12px 0 0"}}>
@@ -6593,6 +6746,20 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         right={<Ic.ChevR/>} onClick={()=>push&&push("taste")}/>
 
       <div style={{padding:"16px 20px 6px"}}><span className="sl">Travel</span></div>
+      {/* The three things no airline will sell a seat without. Shown before
+          travel documents because a passport number is optional and these
+          are not. */}
+      <Row icon="🎟️" title="Flying details"
+        sub={ess?.missing?.length
+          ?`Still needed: ${ess.missing.join(", ")}`
+          :"Ready to be ticketed"}
+        right={<>
+          <span style={{fontSize:12,fontWeight:600,marginRight:8,
+            color:ess?.missing?.length?C.amber:C.green}}>
+            {ess?.missing?.length?"Incomplete":"Ready"}
+          </span>
+          <Ic.ChevR/>
+        </>} onClick={()=>setSection("flying")}/>
       <Row icon="🛂" title="Travel documents"
         sub={docCount?`${docCount} saved · encrypted`:"Passport, PreCheck, Global Entry"}
         right={<Ic.ChevR/>} onClick={()=>setSection("documents")}/>

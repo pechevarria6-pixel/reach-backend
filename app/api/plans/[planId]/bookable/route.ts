@@ -15,6 +15,7 @@
 // re-opening checkout adds what is missing and touches nothing else.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
+import { groupReadiness } from '@/lib/essentials-server';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
 import { findProduct } from '@/lib/booking/providers/viator-search';
 
@@ -182,6 +183,14 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const skipped: { title: string; why: string }[] = [];
   const ids = { planId: params.planId, groupId: String(ctx.plan.group_id) };
 
+  // A flight line is skipped for a reason with a name attached to it:
+  // "Marco and Sam need to add their travel details" is something the
+  // organizer can act on, where "traveller details first" is not. Only asked
+  // when the itinerary actually has a flight on it.
+  const flightWhy = (candidates as Item[]).some(i => i.type === 'flight')
+    ? (await groupReadiness(ctx.db, String(ctx.plan.group_id))).blocking ?? CANNOT.flight
+    : CANNOT.flight;
+
   for (const item of candidates as Item[]) {
     // An activity has to become a real product before it can be quoted. The
     // itinerary says "brewery tour"; Viator sells product 5638853P1. When
@@ -207,6 +216,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       title: item.title,
       why: BOOKABLE[item.type]
         ? (!city || !countryCode ? 'this trip has no destination saved yet' : 'this trip has no dates yet')
+        : item.type === 'flight' ? flightWhy
         : (CANNOT[item.type] ?? `nothing books a ${item.type} yet`),
     });
   }
