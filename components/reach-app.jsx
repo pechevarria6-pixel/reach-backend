@@ -1000,6 +1000,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
     :null;
 
   const city=userLocation?.city||userLocation?.formatted;
+  // Where this came from, because on a trip they are different places and
+  // "near you" would be a claim we cannot make.
+  const placePrefix=userLocation?.source==="home"?"Based on your home city,":"Based on your location in";
   // Said once, under the filters, only when there is genuinely little here.
   // Not an error and not an apology: the sweep runs nightly and this fills in.
   const learningNote=!loading&&thin&&allItems.length>0
@@ -1011,7 +1014,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
       <div style={{padding:"10px 20px 10px"}}>
         <div className="pt">Discover</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>
-          {city?"Based on your location in "+city:"Curated for you"}
+          {city?placePrefix+" "+city:"Curated for you"}
         </div>
         {!userLocation&&(
           <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
@@ -7092,9 +7095,38 @@ export default function ReachApp({realUser,onSignOut}={}){
           }
         }catch(e){setUserLocation({lat:pos.coords.latitude,lng:pos.coords.longitude,city:"Your location",airport:null});}
       },
-      function(err){console.log("Location denied:",err.message);},
+      // Denied, or the device simply cannot say. Somebody who has told us
+      // where they live should not then be asked where they are: the order
+      // is where you are, then where you live, then ask. What never happens
+      // is a silent default — that is how a trip planned from Aberdeen came
+      // back with things to do in San Francisco.
+      function(err){ console.log("Location denied:",err.message); useHomeCity(); },
       {timeout:10000,enableHighAccuracy:false,maximumAge:600000}
     );
+  };
+
+  /**
+   * The city on their profile, turned into a point. Marked as `home` so the
+   * screen can say which it is using — "near you" and "near where you live"
+   * are different claims, and on a trip they are different places.
+   */
+  const useHomeCity=async()=>{
+    const city=user?.homeCity;
+    if(!city)return;                       // nothing to fall back to: ask.
+    try{
+      const res=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&q="+encodeURIComponent(city));
+      if(!res.ok){console.error("[location] home city lookup returned",res.status);return;}
+      const hits=await res.json();
+      const hit=Array.isArray(hits)&&hits[0];
+      if(!hit)return;                      // an unrecognised city is not a point.
+      const lat=Number(hit.lat), lng=Number(hit.lon);
+      if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
+      setUserLocation({lat,lng,city,airport:user?.homeAirport||null,formatted:city,source:"home"});
+    }catch(e){
+      // No location rather than a wrong one. The screen asks, which is the
+      // honest end of the chain.
+      console.error("[location] home city lookup failed",e);
+    }
   };
 
   const getNearestAirport=(city,state)=>{

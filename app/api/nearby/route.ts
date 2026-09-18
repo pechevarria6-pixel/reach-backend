@@ -17,6 +17,7 @@ import { ticketmaster } from '@/lib/discovery/ticketmaster';
 import { yelpEvents, yelpPlaces } from '@/lib/discovery/yelp';
 import { cachedVenues, cachedEvents, noteArea } from '@/lib/discovery/cache';
 import { rank, rotateDaily, seedOf, THIN_POOL } from '@/lib/discovery/rank';
+import { byDistance } from '@/lib/discovery/distance';
 import { whereFrom } from '@/lib/discovery/where';
 import { tasteFrom } from '@/lib/discovery/taste';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
@@ -96,7 +97,13 @@ export async function GET(req: NextRequest) {
   // The seed is the local day and the person: two people in the same town see
   // different orders, and each of them sees a different one tomorrow.
   const ranked = rank(results.flatMap(r => r.findings), seeker.interests);
-  const events = rotateDaily(ranked, seedOf(dayWhere(lng), ctx.user.id));
+  const varied = rotateDaily(ranked, seedOf(dayWhere(lng), ctx.user.id));
+  // Then nearest ring first. Banded rather than sorted by exact yards, and
+  // last of the three steps so it governs: Discover is a list of what is on
+  // near you, and it was not ordered by near. Within a ring the two steps
+  // above survive, so a pottery class four miles away still beats a stadium
+  // show three miles away that nobody asked for.
+  const events = byDistance(varied, { lat, lng });
   const sources = results.map(r => ({ source: r.source, status: r.status, found: r.findings.length }));
 
   // Every source refusing is a different problem from a quiet week, and the
