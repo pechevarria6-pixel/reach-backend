@@ -62,7 +62,9 @@ export const liteApiHotels: BookingProvider = {
       mode: 'native',
       status: 'quoted',
       provider: 'liteapi',
-      providerRef: first.rateId,
+      // v3 calls this an offerId; older responses carried rateId. Whichever
+      // came back is what prebook has to be given.
+      providerRef: first.offerId || first.rateId,
       priceCents: amount ? Math.round(Number(amount) * 100) : undefined,
       currency: first?.retailRate?.total?.[0]?.currency || 'USD',
       detail: `${data.data[0]?.hotelId || h.city} · ${h.checkin} → ${h.checkout}`,
@@ -75,18 +77,32 @@ export const liteApiHotels: BookingProvider = {
       return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'LITEAPI_KEY not set' };
     }
     const h = req.hotel!;
-    // Need a rateId — quote first if the caller didn't supply one
-    let rateId = h.rateId;
-    if (!rateId) {
+    // Need an offer — quote first if the caller didn't supply one.
+    let offerId = h.rateId;
+    if (!offerId) {
       const q = await this.quote(req);
       if (q.status !== 'quoted' || !q.providerRef) return q;
-      rateId = q.providerRef;
+      offerId = q.providerRef;
     }
 
-    // Step 1: prebook locks price + availability
+    // Somebody has to be staying in the room. With no travellers named this
+    // used to read .firstName off undefined and throw; the honest answer is
+    // that a hotel cannot be booked for nobody.
+    const lead = req.travelers?.[0];
+    if (!lead || !lead.firstName || !lead.lastName) {
+      return {
+        vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi',
+        error: 'We need the name of whoever the room is under before this can be booked.',
+      };
+    }
+
+    // Step 1: prebook locks price and availability. The field is offerId in
+    // v3 — sending rateId returned "Field validation for 'OfferID' failed on
+    // the 'required' tag", which is what stopped the first end-to-end run at
+    // the last step. Both names are sent so either version is satisfied.
     const pre = await liteFetch('/rates/prebook', {
       method: 'POST',
-      body: JSON.stringify({ usePaymentSdk: false, rateId }),
+      body: JSON.stringify({ usePaymentSdk: false, offerId, rateId: offerId }),
     });
     const prebookId = pre?.data?.prebookId;
     if (!prebookId) {
@@ -94,7 +110,6 @@ export const liteApiHotels: BookingProvider = {
     }
 
     // Step 2: commit
-    const lead = req.travelers[0];
     const booked = await liteFetch('/rates/book', {
       method: 'POST',
       body: JSON.stringify({

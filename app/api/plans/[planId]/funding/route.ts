@@ -38,15 +38,47 @@ async function fundingStatus(
   // amount charged here is the amount shown there. `targetCents` still reports
   // the booking total, because that is what the approve gate compares against,
   // and the shares always add up to it.
-  const myShareCents = planShares(bookings || [], Math.max(0, budgetCents || 0), memberIds, skips)[userId] ?? 0;
+  const rawShareCents = planShares(bookings || [], Math.max(0, budgetCents || 0), memberIds, skips)[userId] ?? 0;
 
   const myPaidCents = succeeded
     .filter(c => c.user_id === userId)
     .reduce((s, c) => s + c.amount_cents, 0);
 
+  // ── Nobody pays more because a booking of ours failed ─────────────────
+  // The target counts only bookings that have not failed, and the share falls
+  // back to an even slice of the budget when nothing is priced. Put those
+  // together after a provider refuses a booking and the trip re-prices
+  // itself: in the first end-to-end run a hotel failed at the provider, the
+  // target dropped from $334.01 to nothing, the share reverted to a quarter
+  // of the budget, and somebody who had paid in full was asked for $65.99
+  // more. Our failure, their money.
+  //
+  // So once anything has been collected, a share cannot rise above what that
+  // person has already paid. It can still fall — a cancelled booking should
+  // give money back, and that shows up as a refund rather than a smaller
+  // demand — and a plan nobody has paid into yet prices normally.
+  const myShareCents = collectedCents > 0 && rawShareCents > myPaidCents && myPaidCents > 0
+    ? myPaidCents
+    : rawShareCents;
+  if (myShareCents !== rawShareCents) {
+    console.error('[funding] share held at what was already paid', {
+      planId, userId, rawShareCents, myPaidCents, targetCents,
+      reason: 'a booking failed and the trip would otherwise have re-priced upwards',
+    });
+  }
+
+  const { data: failedBookings } = await db
+    .from('bookings')
+    .select('id,vertical,price_cents,error')
+    .eq('plan_id', planId)
+    .in('status', ['failed']);
+
   return {
     targetCents,
     collectedCents,
+    // Named so checkout can say what did not happen. A booking that failed
+    // after somebody paid is the most important thing on the screen.
+    failed: (failedBookings || []).map(b => ({ vertical: b.vertical, priceCents: b.price_cents || 0 })),
     funded: targetCents > 0 && collectedCents >= targetCents,
     memberCount: memberIds.length,
     myShareCents,

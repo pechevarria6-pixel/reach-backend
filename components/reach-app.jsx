@@ -5951,7 +5951,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   if(phase==="loading")return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>Pulling your trip together…</div></div>);
 
   if(phase==="error")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
-    <div style={{fontSize:34,marginBottom:12}}>\uD83D\uDE48</div>
+    <div style={{fontSize:34,marginBottom:12}}>🙈</div>
     <div style={{color:C.t1,fontWeight:600,marginBottom:8,lineHeight:1.5}}>{msg}</div>
     {/* Only offered where trying again cannot take money twice: a trip that
         would not load, a payment form that would not appear. Once a card has
@@ -5966,7 +5966,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   </div></div>);
 
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
-    <div style={{fontSize:40,marginBottom:12}}>\uD83E\uDD1D</div>
+    <div style={{fontSize:40,marginBottom:12}}>🤝</div>
     <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>You're in!</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in. The moment the last share lands we'll email everyone, and one of you gives the word to book.</div>
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents+myShareCents)/Math.max(funding.targetCents,1))*100));
@@ -6000,7 +6000,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   </div></div>);
 
   if(phase==="priceUp")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
-    <div style={{fontSize:40,marginBottom:12}}>\uD83D\uDCC8</div>
+    <div style={{fontSize:40,marginBottom:12}}>📈</div>
     <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Price went up a little</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>One of your bookings costs a bit more than when we quoted it. Still book it?</div>
     <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
@@ -6008,7 +6008,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   </div></div>);
 
   if(phase==="approving")return(<div className="sc"><div style={{padding:"80px 24px",textAlign:"center"}}>
-    <div style={{fontSize:40,marginBottom:14}}>\u2728</div>
+    <div style={{fontSize:40,marginBottom:14}}>✨</div>
     <div style={{color:C.t1,fontWeight:600}}>Locking it all in…</div>
     <div style={{color:C.t2,fontSize:13,marginTop:6}}>This takes a few seconds</div>
   </div></div>);
@@ -6020,7 +6020,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
       {confetti.map(i=>(<span key={i} style={{position:"absolute",left:(i*137)%100+"%",top:-10,width:8,height:12,borderRadius:2,
         background:[C.accent,C.green,C.blue,"#F472B6"][i%4],animation:`rfall ${2.2+(i%5)*.4}s ${(i%7)*.18}s ease-in forwards`,zIndex:5}}/>))}
       <div style={{background:`linear-gradient(145deg,#064E3B,${C.green})`,padding:"48px 28px 36px",textAlign:"center"}}>
-        <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>\u2713</div>
+        <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>✓</div>
         {/* Nothing in the app books an itinerary yet, so when no booking rows
             exist this said "You're all booked!" over a line reading "Nothing is
             priced yet" \u2014 contradicting itself on the screen where a real card
@@ -6040,7 +6040,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
             <span style={{fontSize:13,color:C.t1,fontWeight:700}}>{fmt(myShareCents)}</span></div>
           <div style={{padding:"12px 16px",display:"flex",justifyContent:"space-between"}}>
             <span style={{fontSize:13,color:C.t2}}>Security</span>
-            <span style={{fontSize:12,color:C.green,fontWeight:600}}>\uD83D\uDD12 Secured by Stripe</span></div>
+            <span style={{fontSize:12,color:C.green,fontWeight:600}}>🔒 Secured by Stripe</span></div>
         </div>
         <div style={{marginBottom:16}}>
           <div className="sl" style={{marginBottom:10}}>Your bookings</div>
@@ -6067,7 +6067,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
             <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
               {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}</div>
             {/* Every status that was not "confirmed" or "pending" used to fall
-                through to "Booked \u2713" in green \u2014 so a booking that FAILED, or
+                through to "Booked \u2713" in green — so a booking that FAILED, or
                 was cancelled, told somebody it was booked. On the screen after
                 a real card payment, that is the worst thing the app could say.
                 Each state now says what it is, and only one of them is green. */}
@@ -6075,7 +6075,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
             {it.href?(
               <a href={it.href} target="_blank" rel="noopener noreferrer"
                 style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
-                Finish on {PROVIDER_NAME[it.provider]||"their site"} \u2192
+                Finish on {PROVIDER_NAME[it.provider]||"their site"} →
               </a>
             ):null}
           </div>))}
@@ -6088,15 +6088,15 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   if(phase==="pay")return(<div className="sc" style={{paddingBottom:40}}>
     <div style={{padding:"18px 20px 6px",display:"flex",alignItems:"center",gap:10}}>
       <span onClick={()=>setPhase("review")} style={{cursor:"pointer",color:C.t2,fontSize:20}}>←</span>
-      <span style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>Your share \u00B7 {fmt(myShareCents)}</span>
+      <span style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>Your share · {fmt(myShareCents)}</span>
     </div>
     <div style={{padding:"8px 20px 0"}}>
       <div ref={payRef} style={{minHeight:220,background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}/>
-      {!payReady&&<div style={{textAlign:"center",color:C.t2,fontSize:13,marginTop:10}}>Loading secure payment\u2026</div>}
+      {!payReady&&<div style={{textAlign:"center",color:C.t2,fontSize:13,marginTop:10}}>Loading secure payment…</div>}
       <button disabled={!payReady||busy} onClick={confirmPay}
         style={{width:"100%",marginTop:16,padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15,opacity:(!payReady||busy)?.6:1}}>
         {busy?"Paying\u2026":`Pay ${fmt(myShareCents)}`}</button>
-      <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>\uD83D\uDD12 Secured by Stripe \u00B7 you only pay your share</div>
+      <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>🔒 Secured by Stripe · you only pay your share</div>
     </div>
   </div>);
 
@@ -6120,7 +6120,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
           {it.href?(
             <a href={it.href} target="_blank" rel="noopener noreferrer"
               style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
-              Finish on {PROVIDER_NAME[it.provider]||"their site"} \u2192
+              Finish on {PROVIDER_NAME[it.provider]||"their site"} →
             </a>
           ):null}
         </div>))}
