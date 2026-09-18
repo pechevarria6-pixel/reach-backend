@@ -2657,7 +2657,14 @@ const TASTE_COLUMN={
   budgetRange:"budget_range", dietary:"dietary_needs", noWayJose:"no_way_jose",
 };
 
-function TasteQuizScreen({onBack,toast,onSaved}){
+// `required` is the first run: the account has answered nothing and nothing
+// the app does works well without answers. There is no way back out of it —
+// no header, no exit — because a half-set-up account is the state every empty
+// screen and every bad suggestion comes from.
+/** Set when the quiz has been worked through, whatever was answered. */
+const QUIZ_DONE="reach_quiz_done";
+
+function TasteQuizScreen({onBack,toast,onSaved,required}){
   const [step,setStep]=useState(0);
   const [answers,setAnswers]=useState({
     favoriteActivities:[],cuisines:[],musicGenres:[],noWayJose:[],
@@ -2745,6 +2752,11 @@ function TasteQuizScreen({onBack,toast,onSaved}){
       }
       setSaving(false);
       setDone(true);
+      // quizComplete on the server is derived from budget or cuisines, and
+      // most of these questions can be skipped — so somebody who answered
+      // only the optional ones would be sent back here for ever. Having been
+      // through it counts, whatever they chose to say.
+      try{ localStorage.setItem(QUIZ_DONE,"1"); }catch(e){}
       if(onSaved)onSaved();
     }catch(e){
       console.error("[taste] save failed",e);
@@ -2785,7 +2797,11 @@ function TasteQuizScreen({onBack,toast,onSaved}){
   return(
     <div className="sc" style={{display:"flex",flexDirection:"column",height:"100%"}}>
       <div style={{padding:"12px 20px 10px"}}>
-        <ScreenHeader onBack={onBack} label="Back"/>
+        {required
+          ?(<div style={{fontSize:12.5,color:C.t2,fontWeight:600,letterSpacing:".02em"}}>
+              Setting up your account
+            </div>)
+          :<ScreenHeader onBack={onBack} label="Back"/>}
         <div style={{display:"flex",gap:3,margin:"12px 0 8px"}}>
           {TASTE_QUESTIONS.map((_,i)=>(
             <div key={i} style={{flex:1,height:3,borderRadius:2,
@@ -6632,6 +6648,23 @@ export default function ReachApp({realUser,onSignOut}={}){
     window.location.href="/onboarding";
   },[identityLoaded,groupsLoading,user,groups.length]);
 
+  // The quiz is not optional on a first run. Every recommendation, every
+  // moment and every trip the app generates reads these answers, so an
+  // account without them gets a Discover tab of nothing in particular and a
+  // trip planner guessing. Onboarding can be tapped past — this cannot.
+  //
+  // Only ever a first run: an account with a group has been using Reach, and
+  // whatever it has or has not answered is its own business. Skipping the
+  // quiz from Profile later stays possible for the same reason.
+  // Read once, so a completed run releases the gate immediately rather than
+  // waiting for the server's derived flag to agree.
+  const [quizDone,setQuizDone]=useState(true);
+  useEffect(()=>{
+    try{ setQuizDone(!!localStorage.getItem(QUIZ_DONE)); }catch(e){ setQuizDone(true); }
+  },[]);
+  const quizRequired = identityLoaded && !groupsLoading && !!user && !quizDone
+    && user.quizComplete === false && groups.length === 0;
+
   // ── Push notifications ─────────────────────────────────
   const requestNotifications=async()=>{
     if(typeof Notification==="undefined")return;
@@ -7100,7 +7133,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     // Re-reading /api/me is what makes quizComplete true, which is what
     // takes the prompt off the home screen. Without it the card stays up
     // telling somebody to do the thing they have just done.
-    if(screen==="taste")return <TasteQuizScreen {...cp} {...props} onSaved={syncUser}/>;
+    if(screen==="taste")return <TasteQuizScreen {...cp} {...props} onSaved={syncUser} required={quizRequired&&stack.length<=1}/>;
     if(screen==="createGroup")return <CreateGroupScreen {...cp} {...props}/>;
     if(screen==="groupTrip")return <GroupTripScreen {...cp} {...props}/>;
     if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props} user={user}/>;
@@ -7141,7 +7174,17 @@ export default function ReachApp({realUser,onSignOut}={}){
         </div>
         <div className="ma">
           <>
-              {cur?(
+              {/* A first run answers the quiz before it gets the app. The tabs
+                  and the nav are not rendered at all — not disabled, not
+                  hidden behind a card — because every one of them reads the
+                  answers this screen collects. */}
+              {quizRequired&&!cur?(
+                <div className="sc">
+                  <TasteQuizScreen required toast={showToast}
+                    onSaved={()=>{ setQuizDone(true); syncUser(); }}
+                    onBack={()=>{ setQuizDone(true); syncUser(); setTab("home"); }}/>
+                </div>
+              ):cur?(
                 <div className="sc" style={{paddingBottom:20}}>{renderSub()}</div>
               ):(
                 <div className="sc">
@@ -7151,7 +7194,7 @@ export default function ReachApp({realUser,onSignOut}={}){
                   {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push}/>}
                 </div>
               )}
-              {!cur&&(
+              {!cur&&!quizRequired&&(
                 <nav className="nb">
                   {tabs.map(({id,label,Icon})=>(
                     <button key={id} className={`nb-btn ${tab===id?"active":""}`} onClick={()=>setTab(id)}
