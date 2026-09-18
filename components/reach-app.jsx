@@ -4148,7 +4148,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 }
 
 
-function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user}){
+function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user,departure}){
   // ── Draft persistence: load saved progress on mount ──────
   const DRAFT_KEY="reach_plan_draft";
   // SSR-safe localStorage helpers — only run in browser
@@ -4332,18 +4332,31 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
     const timer=setTimeout(async()=>{
       try{
         setLoadingRecs(true);
+        // Where this group actually is. Without it the server refuses rather
+        // than letting the model pick a city it has heard of — which is how
+        // somebody in Aberdeen was offered San Francisco restaurants.
+        const location=user?.homeCity||departure?.city||"";
         const res=await fetch("/api/recommendations",{
           method:"POST",
           headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({vibe,destStyle:dest,accommodation:accom,dealbreakers:bks,budget:parseInt(budget),nights:nights(),travelers:selGroup?.memberIds?.length||2}),
+          body:JSON.stringify({vibe,destStyle:dest,accommodation:accom,dealbreakers:bks,budget:parseInt(budget),nights:nights(),travelers:selGroup?.memberIds?.length||2,location}),
         });
-        if(res.ok){const {recommendations}=await res.json();setAiRecs(recommendations||[]);}
+        if(res.ok){const {recommendations}=await res.json();setAiRecs(recommendations||[]);setNeedLocation(false);}
+        else if(res.status===422){
+          // Nothing on file and nothing from the browser. Ask, rather than
+          // showing six places in a city nobody is in.
+          setNeedLocation(true);setAiRecs([]);
+          console.error("[createPlan] recommendations need a location");
+        }
         else console.error("[createPlan] recommendations returned",res.status);
       }catch(e){console.error("[createPlan] recommendations failed",e);}
       finally{setLoadingRecs(false);}
     },800);
     return()=>clearTimeout(timer);
   },[vibe,dest,budget,accom]);
+
+  // Set when the server has nothing to place these suggestions near.
+  const [needLocation,setNeedLocation]=useState(false);
 
   const [finishing,setFinishing]=useState(false);
   const finish=()=>{
@@ -4639,6 +4652,19 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                     </button>
                   ))}
                 </div>
+                {/* Nothing on file and nothing from the browser. Say what is
+                    missing and where to put it, rather than showing six
+                    places in a city nobody is in. */}
+                {needLocation&&(
+                  <div style={{marginTop:16,background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}>
+                    <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:5}}>Where are you?</div>
+                    <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
+                      Suggestions are real places you can get to, so we need the town to look in.
+                      Add it once and every suggestion after this reads it.
+                    </div>
+                    <button className="bsm bsm-p" onClick={()=>{onBack();push("profile");}}>Add your town →</button>
+                  </div>
+                )}
                 {aiRecs.length>0&&(
                   <div style={{marginTop:16}}>
                     <div className="sl" style={{marginBottom:10}}>✨ AI picks for your group</div>
@@ -7136,7 +7162,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     if(screen==="taste")return <TasteQuizScreen {...cp} {...props} onSaved={syncUser} required={quizRequired&&stack.length<=1}/>;
     if(screen==="createGroup")return <CreateGroupScreen {...cp} {...props}/>;
     if(screen==="groupTrip")return <GroupTripScreen {...cp} {...props}/>;
-    if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props} user={user}/>;
+    if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props} user={user} departure={departure}/>;
     if(screen==="editGroup")return <EditGroupScreen {...cp} {...props} onBack={pop}/>;
     if(screen==="checkout")return <CheckoutScreenV2 {...cp} {...props}/>;
     if(screen==="editItinerary")return <EditItineraryScreen {...cp} {...props}/>;
