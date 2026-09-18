@@ -3944,7 +3944,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             <div style={{height:"100%",background:"linear-gradient(90deg,"+C.accent+",#C084FC)",borderRadius:2,animation:"loading 1.5s ease-in-out infinite"}}/>
           </div>
           <div style={{fontSize:12,color:C.t3}}>Usually takes 5-8 seconds</div>
-          <style>{`@keyframes loading{0%{width:0%}50%{width:100%}100%{width:0%;margin-left:100%}}`}</style>
+          <style dangerouslySetInnerHTML={{__html:`@keyframes loading{0%{width:0%}50%{width:100%}100%{width:0%;margin-left:100%}}`}}/>
         </div>
       )}
 
@@ -5998,7 +5998,7 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   if(phase==="done"){
     const confetti=Array.from({length:36},(_,i)=>i);
     return(<div className="sc" style={{paddingBottom:40,position:"relative",overflow:"hidden"}}>
-      <style>{`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}`}</style>
+      <style dangerouslySetInnerHTML={{__html:`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}`}}/>
       {confetti.map(i=>(<span key={i} style={{position:"absolute",left:(i*137)%100+"%",top:-10,width:8,height:12,borderRadius:2,
         background:[C.accent,C.green,C.blue,"#F472B6"][i%4],animation:`rfall ${2.2+(i%5)*.4}s ${(i%7)*.18}s ease-in forwards`,zIndex:5}}/>))}
       <div style={{background:`linear-gradient(145deg,#064E3B,${C.green})`,padding:"48px 28px 36px",textAlign:"center"}}>
@@ -7259,7 +7259,15 @@ export default function ReachApp({realUser,onSignOut}={}){
 
   return(
     <>
-      <style>{CSS}</style>
+      {/* dangerouslySetInnerHTML, not a child string. The stylesheet contains
+          :root[data-theme="dark"], and the server escapes those quotes inside
+          style text while the browser writes them raw. React saw the text
+          differ, failed hydration, and replaced the document — which threw
+          away the data-theme attribute the pre-paint script had just set. The
+          whole app lost its theme on every load, and the console filled with
+          #418/#423/#425. Same fault as the auth screens had; this is the rest
+          of it. */}
+      <style dangerouslySetInnerHTML={{__html:CSS}}/>
       <div className="aw">
         {/* The header REF6 draws: the mark in its white circle, the wordmark
             in gold serif, and the two things you might want from any screen —
