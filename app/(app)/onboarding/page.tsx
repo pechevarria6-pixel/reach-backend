@@ -18,8 +18,10 @@ import { BRAND } from '@/lib/brand';
 type Step = 'you' | 'location' | 'notifications' | 'ready';
 const STEPS: Step[] = ['you', 'location', 'notifications', 'ready'];
 
-/** Set the moment onboarding is shown; read by the gate in the app shell. */
-export const ONBOARDING_SEEN = 'reach_onboarding_seen';
+// Set the moment onboarding is shown; read by the gate in the app shell.
+// Not exported: a page module may only export the page and Next's own
+// configuration, and tsc rejects anything else.
+const ONBOARDING_SEEN = 'reach_onboarding_seen';
 
 export default function OnboardingPage() {
   const { user } = useUser();
