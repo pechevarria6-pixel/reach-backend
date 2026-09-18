@@ -74,6 +74,56 @@ type Offer = {
   };
 };
 
+/**
+ * The airport a destination means, or nothing.
+ *
+ * A plan stores "Moab, Utah, USA" and an airline sells between IATA codes.
+ * Duffel's own place lookup is asked rather than a table in this repo,
+ * because codes get reassigned and airports open.
+ *
+ * Two things a real lookup showed, both of which matter:
+ *   "Moab, Utah, USA"  → nothing at all. Plenty of good trips are to places
+ *                        you drive to, and the honest answer is no flight.
+ *   "Raleigh"          → RDU, and then BKW, which is Raleigh County in West
+ *                        Virginia. First-by-relevance is right, and a
+ *                        destination this ambiguous is why we never silently
+ *                        pick the second.
+ */
+const airportCache = new Map<string, string | null>();
+
+export async function resolveAirport(place: string): Promise<string | null> {
+  const query = (place || '').trim();
+  if (!query) return null;
+  if (airportCache.has(query)) return airportCache.get(query) ?? null;
+  if (!process.env.DUFFEL_API_KEY) return null;
+
+  let code: string | null = null;
+  try {
+    const res = await fetch(
+      `${BASE}/places/suggestions?query=${encodeURIComponent(query)}`,
+      { headers: headers(), signal: AbortSignal.timeout(8000) },
+    );
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      const places = (json?.data ?? []) as {
+        type?: string; iata_code?: string; airports?: { iata_code?: string }[];
+      }[];
+      // An airport is sellable as itself. A city is sellable by its own code
+      // when it has one — that is how "all airports in London" is bought.
+      const hit = places.find(p => p.type === 'airport' && p.iata_code)
+        ?? places.find(p => p.iata_code);
+      code = hit?.iata_code ?? hit?.airports?.[0]?.iata_code ?? null;
+    } else {
+      console.error('[duffel] place lookup failed', { status: res.status });
+    }
+  } catch (e) {
+    console.error('[duffel] place lookup unreachable', e instanceof Error ? e.message : String(e));
+  }
+
+  airportCache.set(query, code);
+  return code;
+}
+
 /** One search. Returns the cheapest offer, which is what a quote is. */
 async function cheapestOffer(f: NonNullable<BookingItemRequest['flight']>, seats: number) {
   const res = await fetch(`${BASE}/air/offer_requests?return_offers=true`, {

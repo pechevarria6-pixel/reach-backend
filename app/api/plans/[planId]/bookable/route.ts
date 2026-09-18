@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness } from '@/lib/essentials-server';
+import { resolveAirport } from '@/lib/booking/providers/flights.duffel';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
 import { findProduct } from '@/lib/booking/providers/viator-search';
 
@@ -37,6 +38,10 @@ const BOOKABLE: Record<string, Vertical> = {
   // in the provider's catalogue — see findProduct below. Until that match
   // exists there is nothing to sell.
   activity: 'activity',
+  // A flight is bookable once three things are true: everybody on the trip
+  // has their travel essentials, the destination resolves to an airport, and
+  // somebody has told us where they are flying from.
+  flight: 'flight',
 };
 
 /** Why a line cannot be quoted, in words the screen can show. */
@@ -69,6 +74,7 @@ function asRequest(
   countryCode: string,
   partySize: number,
   product: { productCode: string; title: string; priceCents: number | null } | null,
+  flight: { from: string | null; to: string | null },
 ): (BookingItemRequest & { itineraryItemId: string; title: string }) | null {
   const vertical = BOOKABLE[item.type];
   if (!vertical) return null;
@@ -113,6 +119,27 @@ function asRequest(
       // was actually booked and what the confirmation will say.
       title: product.title,
       activity: { productCode: product.productCode, date: plan.start_date },
+    } as BookingItemRequest & { itineraryItemId: string; title: string };
+  }
+
+  if (vertical === 'flight') {
+    // Both ends and a date, or there is nothing to price. Each of these is
+    // reported separately by the caller, because "we could not find an
+    // airport for Moab" and "tell us your home airport" send somebody to
+    // completely different places.
+    if (!flight.from || !flight.to || !plan.start_date) return null;
+    return {
+      ...base,
+      flight: {
+        origin: flight.from,
+        destination: flight.to,
+        departDate: plan.start_date,
+        // A trip with an end date is a return. Booking two one-ways when
+        // somebody meant a return is both dearer and harder to change.
+        ...(plan.end_date && plan.end_date !== plan.start_date
+          ? { returnDate: plan.end_date }
+          : {}),
+      },
     } as BookingItemRequest & { itineraryItemId: string; title: string };
   }
 
@@ -187,9 +214,22 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // "Marco and Sam need to add their travel details" is something the
   // organizer can act on, where "traveller details first" is not. Only asked
   // when the itinerary actually has a flight on it.
-  const flightWhy = (candidates as Item[]).some(i => i.type === 'flight')
-    ? (await groupReadiness(ctx.db, String(ctx.plan.group_id))).blocking ?? CANNOT.flight
-    : CANNOT.flight;
+  const hasFlight = (candidates as Item[]).some(i => i.type === 'flight');
+  const flightWhy = hasFlight
+    ? (await groupReadiness(ctx.db, String(ctx.plan.group_id))).blocking ?? null
+    : null;
+
+  // Where a flight would go, and where it would leave from. Both are asked
+  // once rather than per line, and either coming back empty is a real answer:
+  // "Moab, Utah, USA" has no airport Duffel will sell to, and plenty of a
+  // good trip is somewhere you drive.
+  const flightTo = hasFlight && !flightWhy
+    ? await resolveAirport([city, countryCode].filter(Boolean).join(', '))
+    : null;
+  const flightFrom = hasFlight && !flightWhy && flightTo
+    ? (await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).single())
+      .data?.home_airport ?? null
+    : null;
 
   for (const item of candidates as Item[]) {
     // An activity has to become a real product before it can be quoted. The
@@ -210,13 +250,20 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       }
     }
 
-    const request = asRequest(item, plan, ids, city, countryCode, partySize, product);
+    const request = asRequest(item, plan, ids, city, countryCode, partySize, product,
+      { from: flightFrom, to: flightTo });
     if (request) requests.push(request);
     else skipped.push({
       title: item.title,
       why: BOOKABLE[item.type]
         ? (!city || !countryCode ? 'this trip has no destination saved yet' : 'this trip has no dates yet')
-        : item.type === 'flight' ? flightWhy
+        : item.type === 'flight'
+          ? (flightWhy
+             ?? (!flightTo
+                 ? `we could not find an airport for ${city || 'this trip'} — this one looks like a drive`
+                 : !flightFrom
+                   ? 'add your home airport in Profile and we can price this flight'
+                   : CANNOT.flight))
         : (CANNOT[item.type] ?? `nothing books a ${item.type} yet`),
     });
   }
