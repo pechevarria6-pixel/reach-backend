@@ -89,7 +89,10 @@ export const kiwiFlights: BookingProvider = {
 // ═══ ACTIVITIES — Viator Partner API (native) ════════════════════════════
 // Apply at partnerresources.viator.com (Merchant tier books natively).
 // Set VIATOR_API_KEY.
-const VIATOR = 'https://api.viator.com/partner';
+// Sandbox and production are different hosts, and a sandbox key on the
+// production host is rejected as if it were invalid — which is what
+// "unknown: key present; no free check to call" was hiding.
+const VIATOR = process.env.VIATOR_BASE || 'https://api.sandbox.viator.com/partner';
 
 export const viatorActivities: BookingProvider = {
   vertical: 'activity',
