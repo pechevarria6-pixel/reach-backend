@@ -396,7 +396,12 @@ ${fixedPlace ? `ALL THREE OPTIONS MUST BE AT ${fixedPlace.toUpperCase()}. This i
 suggestion and not one of three ideas — they have chosen where they are going.
 Vary the plan, the standard of the stay and the budget. Never the destination.
 Every "destination" and "city" must be ${fixedPlace} or somewhere inside it.` : `The three must be genuinely different places, not three versions of the same
-idea — vary the region and the type of destination, not just the hotel.`}
+idea — vary the region and the type of destination, not just the hotel.
+
+Vary the place, never the purpose. All three have to deliver WHAT THIS TRIP IS
+FOR: if that is skiing, all three are places you can ski, at three different
+budgets. Offering one that fits and two that do not is not a choice between
+three trips, it is one trip and two changes of subject.`}
 
 Every veto is absolute: a vetoed thing must not appear in any option.
 
