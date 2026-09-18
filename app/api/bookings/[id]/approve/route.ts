@@ -160,6 +160,35 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
     }
 
+    // ── The plan itself ───────────────────────────────────────────────
+    // Every booking on this trip had been actioned and the plan still said
+    // "planning". The screen announced "You're all booked!" over a record
+    // that disagreed with it, and nothing else — a reminder, a group's list,
+    // an email — could tell a booked trip from one still being argued over.
+    //
+    // A trip is booked when nothing is left awaiting approval, nothing
+    // failed, and at least one booking actually came back confirmed. A
+    // concierge ticket sitting at 'pending' does not block that: somebody is
+    // holding the reservation, which is what the lane means. Anything failed
+    // keeps the plan where it is, because it is not booked.
+    const { data: siblings, error: siblingError } = await db
+      .from('bookings').select('status').eq('plan_id', booking.plan_id);
+    if (siblingError) {
+      console.error('[approve] could not read the plan\'s other bookings', { planId: booking.plan_id, error: siblingError.message });
+    } else {
+      const states = (siblings ?? []).map(b => b.status);
+      const settled = states.length > 0
+        && !states.includes('awaiting_approval')
+        && !states.includes('failed')
+        && states.some(st => st === 'confirmed' || st === 'redirected');
+      if (settled && ctx.plan.status !== 'booked') {
+        const { error: planError } = await db.from('plans')
+          .update({ status: 'booked', booked_at: new Date().toISOString() })
+          .eq('id', booking.plan_id);
+        if (planError) console.error('[approve] could not mark the plan booked', { planId: booking.plan_id, error: planError.message });
+      }
+    }
+
     return NextResponse.json({ booking: updated, result });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Execution failed';
