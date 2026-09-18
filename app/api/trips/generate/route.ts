@@ -385,9 +385,12 @@ Keep it tight — this has to fit in one response:
 - food_scene and music_scene are two short sentences each
 - why_this_group is one sentence
 - tagline is at most ten words
+- destination is for people to read; city and country_code are for looking the
+  place up. city is the city alone, no state and no country. country_code is
+  the two-letter ISO code — US, MX, PT, JP.
 
 Return JSON only, shaped exactly like this:
-{"trips":[{"id":"trip_1","destination":"City, Country","emoji":"🌍",
+{"trips":[{"id":"trip_1","destination":"City, Country","city":"City","country_code":"US","emoji":"🌍",
 "tagline":"Ten words on why this group","vibe":"Vibe label",
 "why_this_group":"One sentence tied to their preferences",
 "food_scene":"Two sentences","music_scene":"Two sentences",

@@ -7,6 +7,8 @@ const UpdatePlanSchema = z.object({
   title: z.string().min(1).max(200).nullish(),
   status: z.enum(['planning','voting','approved','booked','completed','cancelled']).nullish(),
   start_date: z.string().nullish(),
+  destination_city: z.string().trim().max(120).nullish(),
+  destination_country: z.string().trim().length(2).nullish(),
   end_date: z.string().nullish(),
   budget_cents: z.number().min(0).nullish(),
   accommodation: z.string().nullish(),
