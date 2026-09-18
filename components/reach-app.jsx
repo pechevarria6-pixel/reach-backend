@@ -5679,6 +5679,8 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
   // where "Looks good" started a second payment — the app telling somebody
   // "do not pay again" directly above the button that did.
   const [retryable,setRetryable]=useState(true);
+  // Lines of the itinerary that did not become bookings, and why.
+  const [unbooked,setUnbooked]=useState([]);
   // message, and whether trying again could cost money.
   const fail=(message,{retry=false}={})=>{setMsg(message);setRetryable(retry);setPhase("error");};
   const [payReady,setPayReady]=useState(false);
@@ -5697,6 +5699,22 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
 
   const load=async()=>{
     try{
+      // The itinerary becomes bookings here, on the way in. Until this
+      // existed, checkout asked for the plan's bookings and got an empty
+      // list — people paid their share against a target of nothing, and
+      // approval had nothing to approve. Safe to call every time: a line
+      // already booked is skipped, so re-opening adds only what is missing.
+      //
+      // The funding target is read AFTER it, so the amount people are asked
+      // for is the sum of the rows they are about to see.
+      let bridge=null;
+      if(!isTempId(planId)){
+        try{
+          const br=await fetch(`/api/plans/${planId}/bookable`,{method:"POST"});
+          bridge=br.ok?await br.json():null;
+          if(!br.ok)console.error("[checkout] could not add the itinerary to the booking list",br.status);
+        }catch(e){ console.error("[checkout] bridge failed",e); }
+      }
       const [fRes,bRes]=await Promise.all([
         fetch(`/api/plans/${planId}/funding`),
         fetch(`/api/bookings?planId=${planId}`)
@@ -5705,6 +5723,10 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
       const bJson=bRes.ok?await bRes.json():null;
       setFunding(f);
       setBookings((bJson&&(bJson.bookings||bJson))||[]);
+      // What could not be added. Never silent: these are things somebody
+      // believes they are paying for.
+      setUnbooked([...(bridge?.failures||[]).map(f=>({title:f.title,why:f.error})),
+                   ...(bridge?.skipped||[])]);
       setPhase("review");
     }catch(e){ console.error("[checkout] could not load the trip",{planId},e); fail("Couldn't load your trip \u2014 check your connection and try again.",{retry:true}); }
   };
@@ -5990,6 +6012,24 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
         </div>
         <div style={{marginBottom:16}}>
           <div className="sl" style={{marginBottom:10}}>Your bookings</div>
+          {/* Lines of the itinerary that are not on this list. Said here, on
+              the screen where somebody is about to pay, because the amount
+              below covers what is listed and nothing else. */}
+          {unbooked.length>0&&(
+            <div style={{margin:"0 0 12px",padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.border}`,borderRadius:14}}>
+              <div style={{fontSize:12.5,color:C.t1,fontWeight:600,marginBottom:5}}>
+                {unbooked.length===1?"One thing isn't in this total":`${unbooked.length} things aren't in this total`}
+              </div>
+              {unbooked.slice(0,4).map((u,i)=>(
+                <div key={i} style={{fontSize:12,color:C.t2,lineHeight:1.5}}>
+                  {u.title} — {u.why}
+                </div>
+              ))}
+              <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.45}}>
+                You are paying for what is listed below. These stay yours to arrange.
+              </div>
+            </div>
+          )}
           {lines.map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 4px"}}>
             <span style={{fontSize:20}}>{it.icon}</span>
             <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
