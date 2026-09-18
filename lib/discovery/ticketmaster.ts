@@ -8,6 +8,7 @@
 // the same shape. Neither could be bought. An empty answer that says why is
 // worth more than a fixture.
 import type { Finding, SourceResult, Seeker } from './types.ts';
+import { usableCategory } from './category';
 import { notRuledOut } from './rules.ts';
 
 const EMOJI: Record<string, string> = {
@@ -80,7 +81,12 @@ export async function ticketmaster(seeker: Seeker): Promise<SourceResult> {
             weekday: 'short', month: 'short', day: 'numeric',
           })
         : 'Date TBC';
-      const segment = e.classifications?.[0]?.segment?.name || 'Event';
+      // Ticketmaster's own word for an unclassified event is the string
+      // "Undefined" — not a missing field, an actual value, which is how a
+      // filter pill reading "Undefined" reached Discover between "Sports"
+      // and "Wine tasting". A comedy night and a club night both arrive
+      // this way. `|| 'Event'` never caught it: a non-empty string is truthy.
+      const segment = usableCategory(e.classifications?.[0]?.segment?.name) ?? 'Event';
       return {
         id: e.id,
         title: e.name,

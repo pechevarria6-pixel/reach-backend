@@ -6,6 +6,7 @@ import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthL
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle } from "@/lib/checkout";
+import { visibleCategories } from "@/lib/discovery/category";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -982,7 +983,12 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
   }));
 
   // Filters come from what actually came back, so a filter can never be empty.
-  const categories=[...new Set(allItems.map(e=>e.category).filter(Boolean))].sort();
+  // filter(Boolean) kept the string "undefined", because a non-empty string
+  // is truthy — which is how a pill reading "Undefined" reached Discover
+  // between "Sports" and "Wine tasting". Ticketmaster sends that word for an
+  // unclassified event. Guarded at the source too; guarded here as well
+  // because any provider can send one and a nameless tab is a dead end.
+  const categories=visibleCategories(allItems);
   const filters=["All",...categories];
 
   const shown=filter==="All"?allItems:allItems.filter(e=>e.category===filter);
@@ -4905,10 +4911,12 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
 }
 
 // ─── PLAN DETAIL ──────────────────────────────────────────────────────────────
-function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me}){
+function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
-  const [atab,setAtab]=useState("overview");
+  // Opens where the caller asked. "See my itinerary" after a payment means
+  // the itinerary, not the overview.
+  const [atab,setAtab]=useState(initialTab||"overview");
   const [myVote,setMyVote]=useState(null);
   const [loading,setLoading]=useState(false);
 
@@ -5755,7 +5763,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
 // ─── CHECKOUT ─────────────────────────────────────────────────────────────────
 
 // ============ CHECKOUT V2 — real propose -> fund -> approve ============
-function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus}){
+function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans?.find(p=>p.id===planId);
   // phases: loading | review | pay | approving | waiting | priceUp | done | error
@@ -6162,7 +6170,17 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
             ):null}
           </div>))}
         </div>
-        <button onClick={onBack} style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15}}>See my itinerary</button>
+        {/* This was onBack, which is not what it says. Back from here is
+            wherever checkout was opened from — usually the plan's overview,
+            sometimes the group — so the one button on the screen after a
+            payment took people somewhere other than the thing they had just
+            paid for. `replace` rather than `push`: going back from the
+            itinerary must not land on a checkout screen whose "Looks good"
+            would start a second payment. */}
+        <button onClick={()=>replace
+            ?replace("planDetail",{planId,groupId,initialTab:"itinerary"})
+            :onBack()}
+          style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15}}>See my itinerary</button>
       </div>
     </div>);
   }
