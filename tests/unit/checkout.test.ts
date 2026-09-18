@@ -118,3 +118,26 @@ test('a name that happens to contain no separator is left alone', () => {
   // The new short label, which already has the shape we want.
   assert.equal(itemTitle({ vertical: 'restaurant', detail: 'Desert Bistro, Moab' }), 'Desert Bistro, Moab');
 });
+
+test('a line that failed and was then booked shows the booking', () => {
+  // The unique index means one row per line, so a retry arrives as a second
+  // row. Keeping the first would have shown the failure and hidden the fare.
+  const rows = [
+    { vertical: 'flight', detail: 'dates have passed', status: 'failed', price_cents: null, itinerary_item_id: 'f1' },
+    { vertical: 'flight', detail: 'American Airlines · RDU → PVR', status: 'awaiting_approval', price_cents: 23663, itinerary_item_id: 'f1' },
+  ];
+  const s = checkoutState(rows);
+  assert.equal(s.rows.length, 1);
+  assert.equal(s.rows[0].status, 'awaiting_approval');
+  assert.equal(s.totalCents, 23663);
+});
+
+test('a superseded attempt is not listed at all', () => {
+  const s = checkoutState([
+    { vertical: 'flight', detail: 'an older try', status: 'cancelled', price_cents: null },
+    { vertical: 'hotel', detail: 'Best Western', status: 'confirmed', price_cents: 33401, itinerary_item_id: 'h1' },
+  ]);
+  assert.equal(s.rows.length, 1);
+  assert.equal(s.totalCents, 33401);
+  assert.equal(s.canPay, true);
+});

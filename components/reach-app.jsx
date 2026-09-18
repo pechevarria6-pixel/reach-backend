@@ -4860,7 +4860,7 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
     voted:  {label:"Give them a nudge", hint:`${votesIn} of ${heads} have voted. The trip is waiting on the rest.`},
     funded: {label:soloTrip?"Pay and book it":"Collect everyone's share",
              hint:soloTrip?"Pay when you're ready and we'll book it.":`Nothing books until all ${heads} are in.`},
-    booked: {label:"Book everything",   hint:"Funded and agreed. This is the last step."},
+    booked: {label:"Book everything",   hint:"Funded and agreed — the booking button is just below."},
   }[next?.k];
 
   return(
@@ -4877,9 +4877,20 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
       {next?(
         <div style={{padding:"12px 16px 16px"}}>
           <div style={{fontSize:13,color:C.t2,lineHeight:1.55,marginBottom:10}}>{action.hint}</div>
-          <button className="bp" disabled={busy} onClick={()=>onAction(next.k)} style={{width:"100%"}}>
-            {busy?"Working…":action.label}
-          </button>
+          {/* Every stage but the last offers the one thing to do next. The
+              last one does not: the Bookings section below already carries a
+              "Book everything" button, and this card carried a second one
+              beside it priced off the itinerary's estimate while that one was
+              priced off the booking rows — the same trip reading $1,474 here
+              and $404 there. Two buttons that do the same thing for different
+              money is not a choice anybody can make. */}
+          {next.k==="booked"
+            ?null
+            :(
+              <button className="bp" disabled={busy} onClick={()=>onAction(next.k)} style={{width:"100%"}}>
+                {busy?"Working…":action.label}
+              </button>
+            )}
         </div>
       ):(
         <div style={{padding:"12px 16px 16px",display:"flex",alignItems:"center",gap:9}}>
@@ -5040,6 +5051,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // Asked for once with the plan, because a flight line that cannot be booked
   // should say who to go and ask before anyone pays for the rest of the trip.
   const [readiness,setReadiness]=useState(null);
+  // What the server would actually charge. The overview used to price the
+  // booking button off the itinerary's own estimates while checkout priced it
+  // off the booking rows, so the same trip read $1,474 on one screen and $404
+  // on the next. There is one answer to "how much", and the server owns it.
+  const [funding,setFunding]=useState(null);
   useEffect(()=>{
     if(!planId||isTempId(planId))return;
     let live=true;
@@ -5047,6 +5063,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       .then(r=>r.ok?r.json():null)
       .then(d=>{if(live&&d)setReadiness(d);})
       // A readiness check that fails shows no chips rather than a wrong "Ready".
+      .catch(()=>{});
+    fetch(`/api/plans/${planId}/funding`)
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{if(live&&d)setFunding(d);})
+      // No answer means the button falls back to the itinerary estimate and
+      // says "estimated", rather than showing a confident wrong number.
       .catch(()=>{});
     return()=>{live=false;};
   },[planId]);
@@ -5109,7 +5131,14 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // pays at the door. Only the first belongs on a "book everything" button.
   const reachItems=(plan?.itinerary||[]).filter(i=>i.booking_mode==="reach");
   const reachBookable=reachItems.length;
-  const reachTotal=Math.round(reachItems.reduce((a,i)=>a+(i.cost_cents||0),0)/100);
+  // The itinerary's own estimate, used only until there are real booking rows
+  // to price against. Once there are, the server's figure wins: it is the one
+  // a card is actually charged for, and two screens disagreeing about the
+  // price of the same trip is worse than one screen saying "estimated".
+  const estimateTotal=Math.round(reachItems.reduce((a,i)=>a+(i.cost_cents||0),0)/100);
+  const quotedPerHead=funding&&funding.targetCents>0?Math.round(funding.myShareCents/100):null;
+  const reachTotal=quotedPerHead??estimateTotal;
+  const reachTotalIsEstimate=quotedPerHead===null;
 
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const totalV=Object.values(plan.votes||{}).reduce((a,b)=>a+b,0);
@@ -5320,7 +5349,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {plan.status==="approved"&&(
                 <>
                   <button className="bp" style={{marginBottom:6,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>
-                    Book everything{reachTotal>0?` · $${reachTotal.toLocaleString()} each`:""} →
+                    Book everything{reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?" est.":""} each`:""} →
                   </button>
                   {/* The biggest commitment in the app used to be a button
                       with no number on it. People do not press those. Say

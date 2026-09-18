@@ -83,18 +83,37 @@ export function itemTitle(row: CheckoutRow): string {
  * with no usable name is never merged with another — two unnamed rows are
  * two rows until somebody proves otherwise.
  */
+/**
+ * How much a row means, when two describe the same itinerary line.
+ *
+ * Keeping whichever came back first was wrong: a line that failed and was
+ * then booked would have shown the failure and hidden the booking.
+ */
+const WEIGHT: Record<string, number> = {
+  confirmed: 6, redirected: 5, pending: 4, awaiting_approval: 3, quoted: 2, failed: 1, cancelled: 0,
+};
+const weigh = (row: CheckoutRow) => WEIGHT[row.status ?? ''] ?? 2;
+
 export function dedupe(rows: CheckoutRow[]): CheckoutRow[] {
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   const out: CheckoutRow[] = [];
-  for (const row of rows) {
+  // A cancelled row is an attempt that a later one replaced. It is history,
+  // not part of the trip, and listing it only raises a question the screen
+  // cannot answer.
+  for (const row of (rows ?? []).filter(r => r.status !== 'cancelled')) {
     const name = itemTitle(row);
     const key = row.itinerary_item_id
       ? `line:${row.itinerary_item_id}`
       : name === 'Trip item (details coming)'
         ? null                                   // never merged
         : `${row.vertical}|${name.toLowerCase()}|${row.scheduled_date ?? ''}`;
-    if (key && seen.has(key)) continue;
-    if (key) seen.add(key);
+    if (key && seen.has(key)) {
+      // Same line twice: keep whichever actually says more about the trip.
+      const at = seen.get(key) as number;
+      if (weigh(row) > weigh(out[at])) out[at] = row;
+      continue;
+    }
+    if (key) seen.set(key, out.length);
     out.push(row);
   }
   return out;

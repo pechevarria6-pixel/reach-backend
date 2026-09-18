@@ -198,6 +198,35 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const candidates = (items ?? []).filter((i: Item) =>
     i.booking_mode === 'reach' && !alreadyBooked.has(i.id));
 
+  // Free the slot held by a previous failed attempt.
+  //
+  // bookings_one_per_itinerary_item is a unique index on itinerary_item_id
+  // regardless of status, so a row that failed holds its line's slot for
+  // good. A retry could never be linked to the line, the next open could not
+  // see it either, and every visit to checkout left another orphan behind —
+  // which is how a plan ends up with rows nobody can account for.
+  //
+  // The superseded attempt keeps its error and its history; it is marked
+  // cancelled and unlinked, which is what it is once a new one replaces it.
+  const retrying = (candidates as Item[]).map(i => i.id);
+  if (retrying.length) {
+    const { data: stale, error: staleError } = await ctx.db
+      .from('bookings')
+      .select('id')
+      .eq('plan_id', params.planId)
+      .in('itinerary_item_id', retrying)
+      .in('status', ['failed', 'cancelled']);
+    if (staleError) {
+      console.error('[bookable] could not look for superseded attempts', { planId: params.planId, error: staleError.message });
+    } else if (stale?.length) {
+      const { error } = await ctx.db
+        .from('bookings')
+        .update({ status: 'cancelled', itinerary_item_id: null })
+        .in('id', stale.map(r => r.id));
+      if (error) console.error('[bookable] could not release a superseded attempt', { planId: params.planId, error: error.message });
+    }
+  }
+
   // Where the trip is. destination_style is a style — "city", "beach" — and
   // the title is prose, so neither is a place a provider can search. A trip
   // with no destination stored cannot be quoted, and says so.
