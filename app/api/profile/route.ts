@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { encrypt, decrypt } from '@/lib/encryption';
+import { GENDERS, missingFor, validBirthDate } from '@/lib/essentials';
 import { z } from 'zod';
 
 // A document number is stored encrypted and must never travel back in full.
@@ -98,6 +99,31 @@ export async function GET() {
       firstName: row.first_name ?? null,
       lastName: row.last_name ?? null,
     },
+    // What an airline needs before it will sell a seat. This is the only
+    // response in the app that carries these values, and it carries them to
+    // exactly one person: requireUser above, and `eq('id', user.id)` on the
+    // row. Everyone else in a group gets readiness from
+    // /api/plans/[planId]/readiness, which has no values in it at all.
+    essentials: {
+      // The legal name is the same name the app greets them by, deliberately:
+      // two copies would drift and the airline would refuse the ticket.
+      firstName: row.first_name ?? null,
+      lastName: row.last_name ?? null,
+      dateOfBirth: row.date_of_birth ?? null,
+      // Undefined means the migration has not run, which the screen shows
+      // differently from an unanswered question.
+      gender: 'gender' in row ? (row.gender ?? null) : undefined,
+      // Never in full, not even to its owner — a phone gets looked over.
+      knownTravelerNumber: mask(row.tsa_precheck_enc),
+      homeAirport: row.home_airport ?? null,
+      seatPreference: row.seat_preference ?? null,
+      missing: missingFor({
+        firstName: row.first_name,
+        lastName: row.last_name,
+        dateOfBirth: row.date_of_birth,
+        gender: row.gender,
+      }),
+    },
     preferences: {
       seat: row.seat_preference ?? null,
       dietary: row.dietary_needs ?? null,
@@ -139,6 +165,13 @@ const Schema = z.object({
   // with Apple private relay, which is why the home screen said "Hey there".
   firstName: z.string().trim().min(1).max(40).nullable().nullish(),
   lastName: z.string().trim().max(40).nullable().nullish(),
+  // Travel essentials. Validated with the same function that decides whether
+  // someone is ready to fly, so the form cannot accept a date the readiness
+  // check will then call missing.
+  dateOfBirth: z.string().trim()
+    .refine(v => validBirthDate(v), 'A date of birth looks like 1991-04-02, and is in the past')
+    .nullable().optional(),
+  gender: z.enum(GENDERS as [string, ...string[]]).nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest) {
@@ -165,6 +198,7 @@ export async function PATCH(req: NextRequest) {
     ['seat', 'seat_preference'], ['dietary', 'dietary_needs'], ['climate', 'climate_preference'],
     ['homeAirport', 'home_airport'], ['homeCity', 'home_city'],
     ['firstName', 'first_name'], ['lastName', 'last_name'],
+    ['dateOfBirth', 'date_of_birth'], ['gender', 'gender'],
   ] as const) {
     const value = parsed.data[key];
     if (value !== undefined) updates[column] = value || null;
@@ -187,14 +221,20 @@ export async function PATCH(req: NextRequest) {
 
   const { error } = await ctx.db.from('users').update(updates).eq('id', ctx.user.id);
   if (error) {
-    console.error('[profile PATCH]', error);
+    // Code and message only. Postgres puts "Failing row contains (…)" in
+    // error.details, and that row is this person's date of birth — logging
+    // the whole object would copy it into the platform's log store.
+    console.error('[profile PATCH]', error.code, error.message);
     // The home-airport columns arrive in a migration. Say so plainly instead
     // of "could not save that", which sends someone hunting for a typo.
-    if (/column .* does not exist/i.test(error.message || '')) {
-      return NextResponse.json(
-        { error: 'This needs the home-airport migration: run sql/home-airport-2026-09-12.sql in Supabase.' },
-        { status: 503 },
-      );
+    const missingColumn = /column "?([a-z_]+)"? .*does not exist/i.exec(error.message || '');
+    if (missingColumn) {
+      // Name the migration that adds the column that is actually missing —
+      // sending someone to the wrong file is worse than saying nothing.
+      const file = missingColumn[1] === 'gender'
+        ? 'sql/travel-essentials-2026-09-18.sql'
+        : 'sql/home-airport-2026-09-12.sql';
+      return NextResponse.json({ error: `This needs a migration: run ${file} in Supabase.` }, { status: 503 });
     }
     return NextResponse.json({ error: 'Could not save that' }, { status: 500 });
   }

@@ -5,6 +5,7 @@
 // GET /api/bookings?planId=… — list bookings for a plan.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
+import { groupReadiness, withoutTravelerDetails } from '@/lib/essentials-server';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
 import { kiwiFlights, viatorActivities, ticketmasterEvents, conciergeRestaurants } from '@/lib/booking/providers/rest';
@@ -34,7 +35,25 @@ export async function POST(req: NextRequest) {
   const executeNow = body.executeNow === true;
   const results: BookingItemResult[] = [];
 
+  // No airline issues a ticket without a legal name, a date of birth and a
+  // gender for every passenger. Checked once, before anything is quoted, so
+  // a group is told who is missing rather than watching a flight fail at the
+  // provider — and so nobody's card is touched for a seat that cannot exist.
+  let flightsBlocked: string | null = null;
+  if ((body.items as BookingItemRequest[]).some(i => i.vertical === 'flight')) {
+    const { ready, blocking } = await groupReadiness(ctx.db, ctx.plan.group_id as string);
+    if (!ready) flightsBlocked = blocking;
+  }
+
   for (const item of body.items as BookingItemRequest[]) {
+    if (item.vertical === 'flight' && flightsBlocked) {
+      results.push({
+        vertical: 'flight', mode: 'native', status: 'failed', provider: 'none',
+        // Names, not details: who to go and ask.
+        error: flightsBlocked,
+      });
+      continue;
+    }
     const provider = PROVIDERS[item.vertical];
     if (!provider) {
       results.push({ vertical: item.vertical, mode: 'concierge', status: 'failed', provider: 'none', error: `Unknown vertical ${item.vertical}` });
@@ -73,7 +92,9 @@ export async function POST(req: NextRequest) {
           price_cents: result.priceCents || null,
           currency: result.currency || 'USD',
           detail: result.detail || null,
-          request_payload: item,
+          // Without dates of birth: this column comes back from
+          // GET /api/bookings to every member of the plan.
+          request_payload: withoutTravelerDetails(item),
           response_payload: result.raw || null,
           error: result.error || null,
         });
