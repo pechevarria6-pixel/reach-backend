@@ -203,6 +203,18 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     ? Math.min(Math.round(requested), status.myRemainingCents)
     : status.myRemainingCents;
 
+  // Nothing on this plan has a price yet. That is a different thing from
+  // "you have paid already", and saying the wrong one sends somebody looking
+  // for a receipt that does not exist. A screenshot from production had this
+  // exact state behind a live "Looks good" button on a total of $0 — the
+  // client guard is the courtesy, this is the protection.
+  if (status.targetCents <= 0) {
+    return NextResponse.json(
+      { error: "We're still pricing this — check back soon.", funding: status },
+      { status: 422 }
+    );
+  }
+
   if (!amountCents || amountCents < 50) {
     return NextResponse.json(
       { error: 'Nothing left to pay on this plan', funding: status },

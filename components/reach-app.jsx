@@ -5,6 +5,7 @@ import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthL
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
+import { checkoutState, itemTitle } from "@/lib/checkout";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -5978,8 +5979,15 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
     &&bookings.every(b=>settledStates.includes(b.status))
     &&bookings.some(b=>b.status==="confirmed"||b.status==="redirected");
 
-  const lines=(bookings&&bookings.length?bookings.map(b=>({
-    icon:vIcon[b.vertical]||"\u2728", l:(b.detail&&(b.detail.title||b.detail.name))||b.vertical,
+  // What may be shown, and whether anybody may pay. A production screenshot
+  // had three rows all reading "restaurant" over a total of $0 with the
+  // button live: `detail` is a string, so `detail.title` was undefined on
+  // every row and each fell through to the enum. Naming them correctly comes
+  // first — collapsing on what that screen displayed would have merged three
+  // different dinners into one.
+  const checkout=checkoutState(bookings||[]);
+  const lines=(checkout.rows.length?checkout.rows.map(b=>({
+    icon:vIcon[b.vertical]||"\u2728", l:itemTitle(b),
     d:b.provider==="concierge"?"We'll handle this one for you":(b.mode==="redirect"?"Bought on the seller's own site":""),
     a:b.price_cents, st:b.status,
     // A redirected booking finishes somewhere else, and until now the screen
@@ -6174,13 +6182,24 @@ function CheckoutScreenV2({onBack,planId,groupId,groups,updateGroup,toast,return
         <span style={{fontSize:14,color:C.t2}}>{participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`}</span>
         <span style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>{fmt(myShareCents)}</span>
       </div>
-      <button disabled={busy} onClick={startPayment}
-        style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16,opacity:busy?.6:1}}>
+      {/* Priced separately from the total above, which is this member's
+          share: concierge rows are real things being arranged whose cost is
+          settled on the phone, so they are named rather than counted as $0. */}
+      {checkout.conciergeNote?(
+        <div style={{fontSize:12,color:C.t2,marginBottom:10,padding:"0 4px"}}>{checkout.conciergeNote}</div>
+      ):null}
+      <button disabled={busy||!checkout.canPay} onClick={startPayment}
+        style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16,opacity:(busy||!checkout.canPay)?.6:1}}>
         {busy?"One sec\u2026":"Looks good"}</button>
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>
-        {participants<=1
-          ?"Pay when you're ready and we'll book it \uD83C\uDF0D"
-          :"Nothing books until the whole group is in \uD83E\uDD1D"}
+        {/* The button used to be live over a total of $0. Whatever else is
+            true, nobody should be invited to pay for a trip we have not
+            managed to price. */}
+        {checkout.blockedCopy
+          ?checkout.blockedCopy
+          :participants<=1
+            ?"Pay when you're ready and we'll book it \uD83C\uDF0D"
+            :"Nothing books until the whole group is in \uD83E\uDD1D"}
       </div>
     </div>
   </div>);
