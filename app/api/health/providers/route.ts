@@ -78,6 +78,49 @@ async function probe(
 export async function GET(req: NextRequest) {
   if (!authorised(req)) return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
 
+  // ── ?sample=liteapi-rates — what a rate actually looks like ──────────
+  // The booking call was refused twice: first "OfferID required", then
+  // "invalid offerId". Guessing which field carries the offer is how that
+  // happens a third time, so this asks for one real rate and reports the
+  // shape — key names and whether an offerId is present, never the whole
+  // catalogue.
+  if (req.nextUrl.searchParams.get('sample') === 'liteapi-rates') {
+    const key = process.env.LITEAPI_KEY;
+    if (!key) {
+      console.error('[health/providers] rates sample asked for, but LITEAPI_KEY is not set');
+      return NextResponse.json({ error: 'LITEAPI_KEY is not set' }, { status: 503 });
+    }
+    const base = process.env.LITEAPI_BASE || 'https://api.liteapi.travel/v3.0';
+    const day = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+    const res = await fetch(`${base}/hotels/rates`, {
+      method: 'POST',
+      headers: { 'X-API-Key': key, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        cityName: req.nextUrl.searchParams.get('city') || 'Raleigh',
+        countryCode: 'US', checkin: day(21), checkout: day(23),
+        currency: 'USD', guestNationality: 'US', occupancies: [{ adults: 2 }],
+      }),
+      signal: AbortSignal.timeout(25000),
+    }).catch(() => null);
+    if (!res || !res.ok) {
+      console.error('[health/providers] LiteAPI rates sample failed', { status: res ? res.status : 'unreachable' });
+      return NextResponse.json({ error: `LiteAPI answered ${res ? res.status : 'nothing'}` }, { status: 502 });
+    }
+    const json = await res.json().catch(() => null);
+    const hotel = json?.data?.[0];
+    const roomType = hotel?.roomTypes?.[0];
+    const rate = roomType?.rates?.[0];
+    return NextResponse.json({
+      hotelKeys: Object.keys(hotel ?? {}),
+      roomTypeKeys: Object.keys(roomType ?? {}),
+      rateKeys: Object.keys(rate ?? {}),
+      // The two candidates, and where each was found.
+      offerIdOnRoomType: roomType?.offerId ? String(roomType.offerId).slice(0, 18) + '…' : null,
+      offerIdOnRate: rate?.offerId ? String(rate.offerId).slice(0, 18) + '…' : null,
+      rateIdOnRate: rate?.rateId ? String(rate.rateId).slice(0, 18) + '…' : null,
+    });
+  }
+
   // ── ?sample=liteapi — what inventory does a lane actually hold? ───────
   // Whether LiteAPI carries apartments and aparthotels decides whether big
   // groups can be offered a whole place through a lane we already pay for.
