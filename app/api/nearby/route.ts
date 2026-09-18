@@ -17,6 +17,7 @@ import { ticketmaster } from '@/lib/discovery/ticketmaster';
 import { yelpEvents, yelpPlaces } from '@/lib/discovery/yelp';
 import { cachedVenues, cachedEvents, noteArea } from '@/lib/discovery/cache';
 import { rank, rotateDaily, seedOf, THIN_POOL } from '@/lib/discovery/rank';
+import { whereFrom } from '@/lib/discovery/where';
 import { tasteFrom } from '@/lib/discovery/taste';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
 
@@ -35,10 +36,13 @@ export async function GET(req: NextRequest) {
   const ctx = await requireUser();
   if (isFail(ctx)) return ctx.error;
 
-  const lat = Number(req.nextUrl.searchParams.get('lat'));
-  const lng = Number(req.nextUrl.searchParams.get('lng'));
+  // Number(null) is 0 and 0 is finite, so reading these with Number() let a
+  // request carrying no location at all through as 0,0 — and the providers
+  // answered for somewhere else entirely.
   const city = req.nextUrl.searchParams.get('city') || '';
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return empty('no_location', city);
+  const where = whereFrom(req.nextUrl.searchParams);
+  if (!where) return empty('no_location', city);
+  const { lat, lng } = where;
 
   // What they told the quiz — all of it. This used to read the activities
   // question alone, so somebody who said they eat Japanese, drink cocktails
