@@ -188,6 +188,11 @@ export async function POST(req: NextRequest) {
     .map((x: { name: string; text: string }) => `${x.name || 'Someone'} said: "${x.text.slice(0, 300)}"`);
   const saidBlock = suggestions.length
     ? `\nWHAT THEY EACH SAID THEY WANT — in their own words:\n${suggestions.join('\n')}\n
+These are standing answers about trips in general. Where one disagrees with
+what they said THIS trip is, this trip wins — a note about snow does not
+override "in Aspen to celebrate Kyle", and an option whose used_suggestions
+only mentions a standing answer has ignored the thing actually being planned.
+
 Answer these. For every option, used_suggestions lists which of them it acts
 on and how, naming the person: "Priya wanted somewhere her sister could see
 snow — this is a ski town". If an option genuinely acts on none of them, send
@@ -414,8 +419,10 @@ Each total must land within 10% of the figure above for its tier.
 ${fixedPlace ? `ALL THREE OPTIONS MUST BE AT ${fixedPlace.toUpperCase()}. This is not a
 suggestion and not one of three ideas — they have chosen where they are going.
 Vary the plan, the standard of the stay and the budget. Never the destination.
-Every "destination" and "city" must be ${fixedPlace} or somewhere inside it.` : `The three must be genuinely different places, not three versions of the same
-idea — vary the region and the type of destination, not just the hotel.
+Every "destination" and "city" must be ${fixedPlace} or somewhere inside it.` : `UNLESS the goal above names a place — in which case all three are THAT place
+and nothing else — the three must be genuinely different places, not three
+versions of the same idea: vary the region and the type of destination, not
+just the hotel.
 
 Vary the place, never the purpose. All three have to deliver WHAT THIS TRIP IS
 FOR: if that is skiing, all three are places you can ski, at three different
