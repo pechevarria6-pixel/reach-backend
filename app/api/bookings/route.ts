@@ -44,7 +44,11 @@ export async function POST(req: NextRequest) {
     item.planId = body.planId;
     // Trust the plan's own group, not whatever the client claimed.
     item.groupId = ctx.plan.group_id as string;
-    item.travelers = item.travelers?.length ? item.travelers : body.travelers;
+    // Never undefined: providers read this to work out occupancy, and an
+    // undefined array crashed the hotel quote with "cannot read properties of
+    // undefined" — a five-hundred error for a trip nobody had named anyone on
+    // yet. Who is travelling is settled at approval; a quote needs a count.
+    item.travelers = item.travelers?.length ? item.travelers : (body.travelers ?? []);
 
     try {
       const result = (dryRun || !executeNow)

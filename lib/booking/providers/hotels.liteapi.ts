@@ -37,7 +37,13 @@ export const liteApiHotels: BookingProvider = {
       checkout: h.checkout,
       currency: 'USD',
       guestNationality: 'US',
-      occupancies: Array.from({ length: h.rooms }, () => ({ adults: Math.max(1, Math.ceil(req.travelers.length / h.rooms)) })),
+      // Occupancy, not identity. Named travellers arrive at approval; at quote
+      // time a plan may have nobody listed yet, and asking for zero adults —
+      // or reading .length off an array that is not there — is how this
+      // failed. Two to a room is the assumption a hotel would make.
+      occupancies: Array.from({ length: Math.max(1, h.rooms || 1) }, () => ({
+        adults: Math.max(1, Math.ceil((req.travelers?.length || (h.rooms || 1) * 2) / Math.max(1, h.rooms || 1))),
+      })),
     };
     if (h.hotelId) body.hotelIds = [h.hotelId];
     else if (h.city) body.cityName = h.city;
