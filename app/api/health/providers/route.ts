@@ -78,6 +78,42 @@ async function probe(
 export async function GET(req: NextRequest) {
   if (!authorised(req)) return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
 
+  // ── ?sample=liteapi — what inventory does a lane actually hold? ───────
+  // Whether LiteAPI carries apartments and aparthotels decides whether big
+  // groups can be offered a whole place through a lane we already pay for.
+  // The keys live here and nowhere else, so the question is answered here:
+  // one read, no booking, nothing stored, and only for a caller holding
+  // CRON_SECRET.
+  if (req.nextUrl.searchParams.get('sample') === 'liteapi') {
+    const key = process.env.LITEAPI_KEY;
+    if (!key) return NextResponse.json({ error: 'LITEAPI_KEY is not set' }, { status: 503 });
+    const city = (req.nextUrl.searchParams.get('city') || 'Raleigh').slice(0, 60);
+    const base = process.env.LITEAPI_BASE || 'https://api.liteapi.travel/v3.0';
+    const res = await fetch(
+      `${base}/data/hotels?countryCode=US&cityName=${encodeURIComponent(city)}&limit=50`,
+      { headers: { 'X-API-Key': key, accept: 'application/json' }, signal: AbortSignal.timeout(20000) },
+    ).catch(() => null);
+    if (!res || !res.ok) {
+      return NextResponse.json({ city, error: `LiteAPI answered ${res ? res.status : 'nothing'}` }, { status: 502 });
+    }
+    const json = await res.json().catch(() => null);
+    const rows: any[] = json?.data ?? json?.hotels ?? [];
+    const types: Record<string, number> = {};
+    for (const h of rows) {
+      const t = String(h?.hotelType ?? h?.property_type ?? h?.type ?? 'untyped');
+      types[t] = (types[t] ?? 0) + 1;
+    }
+    return NextResponse.json({
+      city,
+      returned: rows.length,
+      propertyTypes: types,
+      // Names only, so the shape of the inventory is readable without
+      // copying a provider's catalogue into our logs.
+      sampleNames: rows.slice(0, 8).map(h => h?.name ?? h?.hotelName ?? '(unnamed)'),
+      fields: Object.keys(rows[0] ?? {}).slice(0, 20),
+    });
+  }
+
   const UA = { 'User-Agent': 'Reach (pechevarria6@gmail.com)' };
   // Southern Pines, the pilot area — a real point, so a provider that answers
   // only for covered regions answers honestly.
