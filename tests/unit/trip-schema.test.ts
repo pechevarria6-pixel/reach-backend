@@ -223,3 +223,17 @@ test('dropFillerDays copes with the older flat shape', () => {
   ] as any);
   assert.equal(out.length, 1);
 });
+
+test('when the group has chosen the place, three options there all survive', () => {
+  // Deduping on destination is right when the model repeats itself and wrong
+  // when all three are meant to be the same town at three budgets — it threw
+  // two away and showed somebody a single "choice".
+  const atOnePlace = [
+    { id: '1', destination: 'Breckenridge, USA', tier: 'saver', total_per_person: 1300, costs: {} },
+    { id: '2', destination: 'Breckenridge, USA', tier: 'on_budget', total_per_person: 2000, costs: {} },
+    { id: '3', destination: 'Breckenridge, USA', tier: 'stretch', total_per_person: 2600, costs: {} },
+  ];
+  assert.equal(normalizeTrips(atOnePlace, true).length, 3);
+  // And the old behaviour is untouched when the destination is the choice.
+  assert.equal(normalizeTrips(atOnePlace).length, 1);
+});

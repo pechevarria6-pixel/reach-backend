@@ -246,12 +246,18 @@ export function reconcileCosts<T extends TripLike>(trip: T): T {
  * destination rather than id, because the model repeats the place while
  * giving it a fresh id.
  */
-export function normalizeTrips<T extends TripLike>(trips: T[]): T[] {
+export function normalizeTrips<T extends TripLike>(trips: T[], samePlace = false): T[] {
   const seen = new Set<string>();
   const distinct: T[] = [];
   for (const trip of trips) {
     const key = (trip.destination ?? '').trim().toLowerCase();
-    if (!key || seen.has(key)) continue;
+    if (!key) continue;
+    // Two options for the same destination are usually one option returned
+    // twice — unless the group has already chosen where they are going, in
+    // which case all three are meant to be the same place at three budgets.
+    // Deduping on destination then threw away two of the three and showed
+    // somebody a single "choice".
+    if (!samePlace && seen.has(key)) continue;
     seen.add(key);
     distinct.push(reconcileCosts(trip));
   }

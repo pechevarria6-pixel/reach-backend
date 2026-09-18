@@ -369,7 +369,7 @@ ${solo
   : `GROUP: ${groupSize} people, ${nights} nights, $${effectiveBudget}/person budget`}
 DEPARTING: ${departure} (${departureCode})
 DATES: ${startDate || 'flexible'} to ${endDate || 'flexible'}
-TRIP TYPE: ${tripTypes}
+WHAT THIS TRIP IS FOR (this leads; standing preferences below yield to it): ${tripTypes}
 PACE: ${tripPace}
 STAY: ${tripAccommodation}
 FOOD: ${cuisines.slice(0, 5).join(', ') || 'varied'}
@@ -398,9 +398,14 @@ Vary the plan, the standard of the stay and the budget. Never the destination.
 Every "destination" and "city" must be ${fixedPlace} or somewhere inside it.` : `The three must be genuinely different places, not three versions of the same
 idea — vary the region and the type of destination, not just the hotel.`}
 
-Honour the climate they asked for and every veto. A vetoed thing must not
-appear in any option, and a group that asked for warm weather must not be
-sent somewhere cold for the dates given.
+Every veto is absolute: a vetoed thing must not appear in any option.
+
+Climate is a standing preference, not a rule, and what this trip is FOR beats
+it whenever the two disagree. A group that asked for skiing gets skiing even
+though their profile says warm — they know where snow is. Honour the stored
+climate only where the trip type leaves it open. Standing preferences that
+cannot be met by this trip are simply not mentioned; never bend the trip to
+them, and never apologise for them.
 
 For each, costs must sum to total_per_person. Write why_this_group as one
 sentence tied to their actual food, music and activity preferences. Keep
@@ -462,7 +467,7 @@ Return JSON only, shaped exactly like this:
     let parsed = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
     // A live run came back with four trips, one destination twice, and every
     // trip's cost lines summing below its own headline total.
-    let trips = parsed ? normalizeTrips(parsed) : undefined;
+    let trips = parsed ? normalizeTrips(parsed, !!fixedPlace) : undefined;
     if (parsed && trips && parsed.length !== trips.length) {
       console.error('[trips generate] trimmed duplicates', { returned: parsed.length, kept: trips.length });
     }
@@ -486,7 +491,7 @@ Return JSON only, shaped exactly like this:
           TRIPS_JSON_SCHEMA, 'trips generate retry',
         );
         const retried = parseModelJSON(textOf(retry), TripsSchema, 'trips generate retry')?.trips;
-        const secondTrips = retried ? normalizeTrips(retried) : undefined;
+        const secondTrips = retried ? normalizeTrips(retried, !!fixedPlace) : undefined;
         if (secondTrips?.length) {
           report = applyRules(secondTrips, rule);
           trips = report.trips;
