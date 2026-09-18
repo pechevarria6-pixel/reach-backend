@@ -78,6 +78,17 @@ async function probe(
 export async function GET(req: NextRequest) {
   if (!authorised(req)) return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
 
+  // ── ?sample=viator-products — the real search, against a real city ────
+  if (req.nextUrl.searchParams.get('sample') === 'viator-products') {
+    const { findProduct, destinationIdFor } = await import('@/lib/booking/providers/viator-search');
+    const city = req.nextUrl.searchParams.get('city') || 'Raleigh';
+    const line = req.nextUrl.searchParams.get('q') || 'walking tour';
+    const day = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+    const destination = await destinationIdFor(city);
+    const product = await findProduct(city, line, day(21), day(23));
+    return NextResponse.json({ city, destination, line, product });
+  }
+
   // ── ?sample=viator — which base the key belongs to, and what it holds ──
   // Our code calls api.viator.com; a sandbox key belongs to
   // api.sandbox.viator.com, and calling the wrong one looks exactly like a
@@ -95,7 +106,7 @@ export async function GET(req: NextRequest) {
       'Accept-Language': 'en-US',
       'Content-Type': 'application/json',
     };
-    const bases = ['https://api.sandbox.viator.com/partner', 'https://api.viator.com/partner'];
+    const bases = [process.env.VIATOR_BASE || 'https://api.sandbox.viator.com/partner', 'https://api.viator.com/partner'];
     const out: Record<string, unknown> = {};
     for (const base of bases) {
       const r = await fetch(`${base}/destinations`, { headers, signal: AbortSignal.timeout(20000) }).catch(() => null);
