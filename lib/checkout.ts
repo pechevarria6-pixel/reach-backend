@@ -32,6 +32,27 @@ export type CheckoutRow = {
   scheduled_date?: string | null;
 };
 
+
+/**
+ * Rows written before the concierge label was shortened.
+ *
+ * They hold the whole request in one string, which on the Moab trip reads:
+ *
+ *   Reservation request: Seafood dinner at Desert Bistro,  · 2026-09-17
+ *   Day 3 · Evening · party of 2 · "Mesa Arch at sunrise means a crowd…"
+ *
+ * The name is the part before the first separator. Trimming it here rather
+ * than rewriting the rows means nobody's existing trip has its booking
+ * history edited to make a screen look tidier.
+ */
+function tidyLegacy(detail: string): string {
+  let text = detail.replace(/^Reservation request:\s*/i, '');
+  const cut = text.indexOf(' · ');
+  if (cut > 0) text = text.slice(0, cut);
+  // A missing city left "Desert Bistro, " with nothing after the comma.
+  return text.replace(/,\s*$/, '').trim() || detail;
+}
+
 /**
  * What this row is, in the words it was booked under.
  *
@@ -40,7 +61,7 @@ export type CheckoutRow = {
  */
 export function itemTitle(row: CheckoutRow): string {
   const d = row.detail;
-  if (typeof d === 'string' && d.trim()) return d.trim();
+  if (typeof d === 'string' && d.trim()) return tidyLegacy(d.trim());
   // Older rows stored an object. Both spellings appear in the table.
   if (d && typeof d === 'object') {
     const o = d as { title?: unknown; name?: unknown };

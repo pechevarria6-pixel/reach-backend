@@ -189,15 +189,37 @@ export const ticketmasterEvents: BookingProvider = {
 // 'pending'); ops confirms it and PATCHes status → 'confirmed' with the
 // reservation name/number. When a real API lands, swap book() internals —
 // the interface and the frontend don't change.
+/**
+ * The name of the place, and the city only when we know it. A trip with no
+ * destination stored left "Desert Bistro, " with a comma and nothing after
+ * it on somebody's checkout screen.
+ */
+function conciergeLabel(r: { name: string; city?: string }): string {
+  const name = (r.name || '').trim() || 'Reservation';
+  const city = (r.city || '').trim();
+  return city ? `${name}, ${city}` : name;
+}
+
 export const conciergeRestaurants: BookingProvider = {
   vertical: 'restaurant',
   name: 'concierge',
 
+  // `detail` is the line a person reads on their checkout screen, so it is
+  // the name of the place and nothing else. It used to be the whole request
+  // concatenated, which on a real trip produced:
+  //
+  //   Reservation request: Seafood dinner at Desert Bistro,  · 2026-09-17
+  //   Day 3 · Evening · party of 2 · "Mesa Arch at sunrise means a crowd…"
+  //
+  // — a stray comma where the city was missing, a date the itinerary stored
+  // as prose rather than a time, and a tip about a sunrise hike quoted
+  // underneath a dinner booking. Everything ops needs is already on the row
+  // in request_payload; none of it belongs in the title.
   async quote(req): Promise<BookingItemResult> {
     const r = req.restaurant!;
     return {
       vertical: 'restaurant', mode: 'concierge', status: 'quoted', provider: 'concierge',
-      detail: `${r.name}, ${r.city} · ${r.date} ${r.time} · party of ${r.partySize}`,
+      detail: conciergeLabel(r),
       redirectUrl: r.externalUrl,
     };
   },
@@ -207,8 +229,10 @@ export const conciergeRestaurants: BookingProvider = {
     return {
       vertical: 'restaurant', mode: 'concierge', status: 'pending', provider: 'concierge',
       providerRef: `CNC-${Date.now().toString(36).toUpperCase()}`,
-      detail: `Reservation request: ${r.name}, ${r.city} · ${r.date} ${r.time} · party of ${r.partySize}${r.notes ? ` · "${r.notes}"` : ''}`,
+      detail: conciergeLabel(r),
       redirectUrl: r.externalUrl,
+      // The context the concierge actually rings with, kept off the screen.
+      raw: { date: r.date, time: r.time, partySize: r.partySize, notes: r.notes ?? null },
     };
   },
 };

@@ -14,7 +14,9 @@ const SCREENSHOT = [
 ];
 
 test('a row is named by what was booked, never by its category', () => {
-  assert.equal(itemTitle(SCREENSHOT[0]), 'Reservation request: seafood dinner at the marina');
+  // The "Reservation request:" prefix is how the row was stored, not what
+  // the place is called, so it is not part of the name.
+  assert.equal(itemTitle(SCREENSHOT[0]), 'seafood dinner at the marina');
   // The actual defect: detail is a string, so .title and .name were both
   // undefined and every row fell through to the enum.
   assert.notEqual(itemTitle(SCREENSHOT[0]), 'restaurant');
@@ -99,4 +101,20 @@ test('an empty trip cannot be paid for', () => {
   const s = checkoutState([]);
   assert.equal(s.canPay, false);
   assert.equal(s.totalCents, 0);
+});
+
+test('rows written before the label was shortened still read as a name', () => {
+  // Verbatim from production on the Moab trip: the whole request in one
+  // string, including a tip about a sunrise hike under a dinner booking.
+  const legacy = 'Reservation request: Seafood dinner at the chef\'s counter at Desert Bistro,  · 2026-09-17 Day 3 · Evening · party of 2 · "Mesa Arch at sunrise means a crowd of photographers shoulder to shoulder."';
+  assert.equal(
+    itemTitle({ vertical: 'restaurant', detail: legacy }),
+    "Seafood dinner at the chef's counter at Desert Bistro",
+  );
+});
+
+test('a name that happens to contain no separator is left alone', () => {
+  assert.equal(itemTitle({ vertical: 'hotel', detail: 'Best Western Raleigh' }), 'Best Western Raleigh');
+  // The new short label, which already has the shape we want.
+  assert.equal(itemTitle({ vertical: 'restaurant', detail: 'Desert Bistro, Moab' }), 'Desert Bistro, Moab');
 });
