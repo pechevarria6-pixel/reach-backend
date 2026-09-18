@@ -76,12 +76,22 @@ function terms(text: string): string[] {
   return (text || '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2 && !stop.has(w));
 }
 
-/** How much of the line's wording a product title carries, 0–1. */
+/**
+ * How much of the line's wording a product title carries, 0–1.
+ *
+ * One word in common is not a match. "Kayak tour of the bay" against "Sunset
+ * Cruise on the Bay" shares only "bay" — half the line once filler is
+ * stripped, which a plain ratio would wave through and book. So a single
+ * overlapping word scores nothing unless the line is a single word.
+ */
 export function titleScore(line: string, title: string): number {
   const wanted = terms(line);
   if (!wanted.length) return 0;
   const have = new Set(terms(title));
-  return wanted.filter(w => have.has(w)).length / wanted.length;
+  const hits = wanted.filter(w => have.has(w)).length;
+  if (hits === 0) return 0;
+  if (hits === 1 && wanted.length > 1) return 0;
+  return hits / wanted.length;
 }
 
 /**
