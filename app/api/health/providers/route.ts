@@ -86,7 +86,10 @@ export async function GET(req: NextRequest) {
   // CRON_SECRET.
   if (req.nextUrl.searchParams.get('sample') === 'liteapi') {
     const key = process.env.LITEAPI_KEY;
-    if (!key) return NextResponse.json({ error: 'LITEAPI_KEY is not set' }, { status: 503 });
+    if (!key) {
+      console.error('[health/providers] LiteAPI sample asked for, but LITEAPI_KEY is not set');
+      return NextResponse.json({ error: 'LITEAPI_KEY is not set' }, { status: 503 });
+    }
     const city = (req.nextUrl.searchParams.get('city') || 'Raleigh').slice(0, 60);
     const base = process.env.LITEAPI_BASE || 'https://api.liteapi.travel/v3.0';
     const res = await fetch(
@@ -94,6 +97,7 @@ export async function GET(req: NextRequest) {
       { headers: { 'X-API-Key': key, accept: 'application/json' }, signal: AbortSignal.timeout(20000) },
     ).catch(() => null);
     if (!res || !res.ok) {
+      console.error('[health/providers] LiteAPI sample failed', { city, status: res ? res.status : 'unreachable' });
       return NextResponse.json({ city, error: `LiteAPI answered ${res ? res.status : 'nothing'}` }, { status: 502 });
     }
     const json = await res.json().catch(() => null);

@@ -855,6 +855,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
   const [loading,setLoading]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [reason,setReason]=useState(null);
+  const [thin,setThin]=useState(false);
   const [sources,setSources]=useState([]);
   // Whether anything here was found because of what they told us. When not,
   // the screen is a bit of everything and says so, once, quietly.
@@ -901,6 +902,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
         // from a dead key tells everybody their city is boring.
         setSources(data.sources||[]);
         setPersonal(data.personal!==false);
+        // How much there is here at all. A thin list shuffled daily is still
+        // a thin list, and saying so beats implying a deep catalogue.
+        setThin(!!data.thin);
         if(data.events?.length){
           setLocalRecs(data.events);
           // Cache in sessionStorage so reload is instant
@@ -975,6 +979,11 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
     :null;
 
   const city=userLocation?.city||userLocation?.formatted;
+  // Said once, under the filters, only when there is genuinely little here.
+  // Not an error and not an apology: the sweep runs nightly and this fills in.
+  const learningNote=!loading&&thin&&allItems.length>0
+    ?`We're still learning ${city||"your area"} — ${allItems.length} ${allItems.length===1?"place":"places"} so far, and more each night.`
+    :null;
 
   return(
     <div style={{padding:"12px 0 0"}}>
@@ -1055,6 +1064,11 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
         </div>
       )}
 
+      {learningNote&&(
+        <div style={{margin:"0 20px 12px",padding:"11px 14px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.55}}>
+          {learningNote}
+        </div>
+      )}
       {emptyNote&&shown.length===0&&(
         <div style={{margin:"0 20px",padding:"18px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,fontSize:13,color:C.t2,lineHeight:1.6}}>
           <div>{emptyNote}</div>
