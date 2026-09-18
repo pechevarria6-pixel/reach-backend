@@ -78,6 +78,89 @@ async function probe(
 export async function GET(req: NextRequest) {
   if (!authorised(req)) return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
 
+  // ── ?sample=duffel — the shape of a real offer, before we write to it ──
+  // The flight adapter is not written yet, deliberately. Three times now the
+  // honest answer came from one real response rather than from the docs: an
+  // offerId that turned out to live on the room type, not the rate; a
+  // "travelers" array that was undefined; a search that matched on one shared
+  // word. So this asks Duffel for one offer request and prints where the
+  // price, the id and the passenger requirements actually sit.
+  //
+  // It creates nothing that can be paid for. An offer request is a search.
+  if (req.nextUrl.searchParams.get('sample') === 'duffel') {
+    const key = process.env.DUFFEL_API_KEY;
+    if (!key) {
+      return NextResponse.json({
+        provider: 'duffel', key: 'missing',
+        detail: 'DUFFEL_API_KEY is not set. Test tokens start duffel_test_, live ones duffel_live_.',
+      }, { status: 503 });
+    }
+    // Which mode the key is, before anything is sent with it. A live token
+    // here would mean a real order is one mistake away.
+    const mode = key.startsWith('duffel_test_') ? 'test'
+      : key.startsWith('duffel_live_') ? 'live' : 'unrecognised';
+    if (mode !== 'test') {
+      return NextResponse.json({
+        provider: 'duffel', key: 'present', mode,
+        detail: 'Refusing to probe on anything but a test token.',
+      }, { status: 409 });
+    }
+
+    const origin = req.nextUrl.searchParams.get('from') || 'RDU';
+    const destination = req.nextUrl.searchParams.get('to') || 'LIS';
+    const departure_date = req.nextUrl.searchParams.get('on')
+      || new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10);
+
+    const res = await fetch('https://api.duffel.com/air/offer_requests?return_offers=true', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Duffel-Version': 'v2',
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        data: {
+          slices: [{ origin, destination, departure_date }],
+          passengers: [{ type: 'adult' }],
+          cabin_class: 'economy',
+        },
+      }),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      return NextResponse.json({
+        provider: 'duffel', mode, status: res.status,
+        errors: json?.errors ?? null,
+      }, { status: 502 });
+    }
+    const offers = json?.data?.offers ?? [];
+    const first = offers[0];
+    return NextResponse.json({
+      provider: 'duffel', mode, route: `${origin}→${destination}`, on: departure_date,
+      offerRequestId: json?.data?.id ?? null,
+      offers: offers.length,
+      // Named explicitly rather than dumped: the point is to learn which
+      // field the adapter must read, and a 200KB offer dump hides that.
+      shape: first ? {
+        id: first.id,
+        total_amount: first.total_amount,
+        total_currency: first.total_currency,
+        expires_at: first.expires_at,
+        owner: first.owner?.name ?? null,
+        passenger_ids: (first.passengers ?? []).map((p: { id: string }) => p.id),
+        // What the airline insists on knowing about each passenger — the
+        // whole reason travel essentials exists.
+        passenger_identity_documents_required:
+          first.passenger_identity_documents_required ?? null,
+        segments: (first.slices?.[0]?.segments ?? []).map((sg: Record<string, unknown>) => ({
+          marketing: `${(sg.marketing_carrier as { iata_code?: string })?.iata_code ?? ''}${sg.marketing_carrier_flight_number ?? ''}`,
+          departing_at: sg.departing_at,
+        })),
+      } : null,
+    });
+  }
+
   // ── ?sample=viator-products — the real search, against a real city ────
   if (req.nextUrl.searchParams.get('sample') === 'viator-products') {
     const { findProduct, destinationIdFor } = await import('@/lib/booking/providers/viator-search');
@@ -240,7 +323,11 @@ export async function GET(req: NextRequest) {
       `${process.env.LITEAPI_BASE || 'https://api.liteapi.travel/v3.0'}/data/countries`,
       { headers: { 'X-API-Key': process.env.LITEAPI_KEY ?? '', accept: 'application/json' } }),
     probe('Viator (activities)', 'booking', 'VIATOR_API_KEY', null),
-    probe('Kiwi/Tequila (flights)', 'booking', 'TEQUILA_API_KEY', null),
+    // Duffel is the flight provider; Kiwi stays dormant behind it. Listed
+    // with its mode, because a live token is the one credential here that
+    // could issue a real ticket by accident.
+    probe('Duffel (flights)', 'booking', 'DUFFEL_API_KEY', null),
+    probe('Kiwi/Tequila (flights, dormant)', 'booking', 'TEQUILA_API_KEY', null),
     probe('AeroAPI (flight status)', 'booking', 'AEROAPI_KEY', null),
 
     // ── Everything the app cannot run without ──────────────────────────

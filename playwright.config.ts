@@ -12,6 +12,12 @@ export default defineConfig({
     trace: 'on-first-retry',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // Discover is a map of what is on near you, and a headless browser has no
+    // location. Without this the whole lane answers "allow location to see
+    // what's on near you" — correct behaviour, and it tests nothing. Southern
+    // Pines is the pilot area, so these are real venues and real events.
+    permissions: ['geolocation'],
+    geolocation: { latitude: 35.17, longitude: -79.39 },
   },
   projects: [
     // Signs in once with Clerk's testing helpers; falls back to the saved jar.
