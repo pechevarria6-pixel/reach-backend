@@ -182,3 +182,18 @@ export function describeConditions(c: FareConditions | undefined): string[] {
   }
   return out;
 }
+
+/**
+ * A departure date that has been.
+ *
+ * Compared as calendar days, not instants: a flight later today has not
+ * departed, and comparing timestamps would say it had. Duffel answers a past
+ * date with "Field 'departure_date' must be after …", which is written for
+ * whoever wrote the API rather than whoever reads this app, so the check
+ * happens here instead.
+ */
+export function departed(departDate: string | null | undefined, today = new Date()): boolean {
+  if (!departDate || !/^\d{4}-\d{2}-\d{2}$/.test(departDate)) return false;
+  const todayYmd = today.toISOString().slice(0, 10);
+  return departDate < todayYmd;
+}

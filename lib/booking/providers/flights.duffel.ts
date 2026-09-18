@@ -17,7 +17,7 @@
 import { BookingProvider, BookingItemRequest, BookingItemResult } from '../types';
 import {
   amountToCents, offerExpired, duffelGender, toDuffelPassenger,
-  describeOffer, flightIdent, describeConditions, type DuffelPassenger,
+  describeOffer, flightIdent, describeConditions, departed, type DuffelPassenger,
 } from '../duffel-map';
 
 const BASE = process.env.DUFFEL_BASE || 'https://api.duffel.com';
@@ -168,6 +168,12 @@ export const duffelFlights: BookingProvider = {
     const f = req.flight;
     if (!f?.origin || !f?.destination || !f?.departDate) {
       return fail('A flight needs a departure airport, an arrival airport and a date.');
+    }
+    // Nobody sells a seat on a flight that has gone. Asking anyway earns
+    // "Field 'departure_date' must be after 2026-09-17", which is a sentence
+    // written for whoever wrote the API and not for whoever reads this app.
+    if (departed(f.departDate)) {
+      return fail("This trip's dates have already passed — pick new ones and we can price the flights.");
     }
 
     const { error, offer } = await cheapestOffer(f, req.travelers?.length || 1);

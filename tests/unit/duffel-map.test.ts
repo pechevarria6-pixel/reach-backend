@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   amountToCents, offerExpired, minutesLeft, duffelGender, duffelTitle,
-  toDuffelPassenger, describeOffer, flightIdent, describeConditions,
+  toDuffelPassenger, describeOffer, flightIdent, describeConditions, departed,
 } from '../../lib/booking/duffel-map.ts';
 
 test('a decimal string becomes cents without losing one', () => {
@@ -126,4 +126,15 @@ test('fare conditions read as words, not a nested object', () => {
     describeConditions({ refund_before_departure: { allowed: false } }),
     ['Non-refundable'],
   );
+});
+
+test('a flight that has gone is not offered', () => {
+  const today = new Date('2026-09-18T12:00:00Z');
+  // The real case: a trip whose dates passed yesterday. Duffel answers this
+  // with "Field 'departure_date' must be after 2026-09-17".
+  assert.equal(departed('2026-09-17', today), true);
+  // Later today has not departed. Comparing instants would say it had.
+  assert.equal(departed('2026-09-18', today), false);
+  assert.equal(departed('2026-11-02', today), false);
+  assert.equal(departed(null, today), false);
 });
