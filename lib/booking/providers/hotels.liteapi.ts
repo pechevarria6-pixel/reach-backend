@@ -52,7 +52,13 @@ export const liteApiHotels: BookingProvider = {
     else if (h.city && h.countryCode) { body.cityName = h.city; body.countryCode = h.countryCode; }
 
     const data = await liteFetch('/hotels/rates', { method: 'POST', body: JSON.stringify(body) });
-    const first = data?.data?.[0]?.roomTypes?.[0]?.rates?.[0];
+    // The offer and the rate live at different levels, and prebook wants the
+    // offer. Asked LiteAPI directly rather than guessing a third time: the
+    // roomType carries offerId, and the rate underneath carries rateId,
+    // pricing and the cancellation policy. Sending the rate's id was refused
+    // as "invalid offerId" — it is a real identifier for a different thing.
+    const roomType = data?.data?.[0]?.roomTypes?.[0];
+    const first = roomType?.rates?.[0];
     if (!first) {
       return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'No rates available' };
     }
@@ -62,9 +68,9 @@ export const liteApiHotels: BookingProvider = {
       mode: 'native',
       status: 'quoted',
       provider: 'liteapi',
-      // v3 calls this an offerId; older responses carried rateId. Whichever
-      // came back is what prebook has to be given.
-      providerRef: first.offerId || first.rateId,
+      // What prebook is given. The rate's own id is kept in `raw` for the
+      // record, but it is not what books a room.
+      providerRef: roomType?.offerId || first.offerId || first.rateId,
       priceCents: amount ? Math.round(Number(amount) * 100) : undefined,
       currency: first?.retailRate?.total?.[0]?.currency || 'USD',
       detail: `${data.data[0]?.hotelId || h.city} · ${h.checkin} → ${h.checkout}`,
