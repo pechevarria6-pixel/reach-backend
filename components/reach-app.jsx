@@ -3684,6 +3684,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       // it would put "5 nights" on a dinner.
       endDate:nightOut?(startDate||null):(endDate||null),
       budget:trip.total_per_person,
+      // The place in the two parts a provider can search on. "Moab, Utah,
+      // USA" is for reading; a hotel API wants the city and the country.
+      destinationCity:trip.city||null,
+      destinationCountry:trip.country_code||null,
       // The database allows trip, restaurant, concert and weekend. A night out
       // is closest to restaurant until a migration adds one of its own.
       type:nightOut?"restaurant":"trip",
@@ -6938,6 +6942,8 @@ export default function ReachApp({realUser,onSignOut}={}){
     dates:formatDates(p.start_date,p.end_date),
     startDate:p.start_date||null,
     endDate:p.end_date||null,
+    destinationCity:p.destination_city||null,
+    destinationCountry:p.destination_country||null,
     budget:Math.round((p.budget_cents||0)/100),
     participants:p.participants||fallbackMembers||[],
     itinerary:(p.itinerary||[]).map(item=>({
@@ -7088,6 +7094,8 @@ export default function ReachApp({realUser,onSignOut}={}){
           type:plan.type||"trip",
           start_date:startDate||null,
           end_date:endDate||null,
+          destination_city:plan.destinationCity||null,
+          destination_country:plan.destinationCountry||null,
           budget_cents:(plan.budget||0)*100,
           accommodation:plan.accommodation||null,
           vibe:plan.vibe||null,

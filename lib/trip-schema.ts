@@ -20,6 +20,13 @@ export const CostLine = z.object({
 export const TripSchema = z.object({
   id: z.string(),
   destination: z.string(),
+  // The place, in the two parts a provider can actually search on. The
+  // destination string is for people — "Moab, Utah, USA" — and no hotel API
+  // takes it. Parsing it back apart with a regex is the kind of guess this
+  // codebase keeps removing, so the model states them instead: it knows the
+  // country of the place it just chose.
+  city: z.string().optional(),
+  country_code: z.string().length(2).optional(),
   emoji: z.string(),
   tagline: z.string(),
   vibe: z.string(),
@@ -97,6 +104,7 @@ export const TRIPS_JSON_SCHEMA = {
         type: 'object',
         properties: {
           id: str, destination: str, emoji: str, tagline: str, vibe: str,
+          city: str, country_code: str,
           why_this_group: str, food_scene: str, music_scene: str,
           total_per_person: num,
           // Price diversity is a product principle, not a suggestion: a saver
@@ -120,8 +128,8 @@ export const TRIPS_JSON_SCHEMA = {
             additionalProperties: false,
           },
         },
-        required: ['id', 'destination', 'emoji', 'tagline', 'vibe', 'why_this_group',
-                   'food_scene', 'music_scene', 'total_per_person', 'tier', 'costs'],
+        required: ['id', 'destination', 'city', 'country_code', 'emoji', 'tagline', 'vibe',
+                   'why_this_group', 'food_scene', 'music_scene', 'total_per_person', 'tier', 'costs'],
         additionalProperties: false,
       },
     },

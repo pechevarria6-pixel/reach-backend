@@ -43,6 +43,7 @@ export interface BookingItemRequest {
   hotel?: {
     hotelId?: string;      // LiteAPI hotel id if already selected
     city?: string;
+    countryCode?: string;  // ISO-2. LiteAPI refuses a city on its own.
     checkin: string;
     checkout: string;
     rooms: number;

@@ -45,8 +45,11 @@ export const liteApiHotels: BookingProvider = {
         adults: Math.max(1, Math.ceil((req.travelers?.length || (h.rooms || 1) * 2) / Math.max(1, h.rooms || 1))),
       })),
     };
+    // LiteAPI: "you must search by either country code, latitude and
+    // longitude, placeId, lastUpdatedAt, IATA code, or hotelIds". A city name
+    // on its own is refused, which is what the first end-to-end run hit.
     if (h.hotelId) body.hotelIds = [h.hotelId];
-    else if (h.city) body.cityName = h.city;
+    else if (h.city && h.countryCode) { body.cityName = h.city; body.countryCode = h.countryCode; }
 
     const data = await liteFetch('/hotels/rates', { method: 'POST', body: JSON.stringify(body) });
     const first = data?.data?.[0]?.roomTypes?.[0]?.rates?.[0];

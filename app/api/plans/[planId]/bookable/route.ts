@@ -60,6 +60,7 @@ function asRequest(
   plan: { start_date?: string | null; end_date?: string | null },
   ctxIds: { planId: string; groupId: string },
   city: string,
+  countryCode: string,
   partySize: number,
 ): (BookingItemRequest & { itineraryItemId: string; title: string }) | null {
   const vertical = BOOKABLE[item.type];
@@ -78,12 +79,14 @@ function asRequest(
   };
 
   if (vertical === 'hotel') {
-    // Dates are the whole quote. Without them LiteAPI has nothing to price.
-    if (!plan.start_date || !plan.end_date) return null;
+    // Dates and a place are the whole quote. Without either, LiteAPI has
+    // nothing to price and answers with an error rather than a rate.
+    if (!plan.start_date || !plan.end_date || !city || !countryCode) return null;
     return {
       ...base,
       hotel: {
         city,
+        countryCode,
         checkin: plan.start_date,
         checkout: plan.end_date,
         // One room per two people, rounded up: the group can change it, and
@@ -111,7 +114,10 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
 
-  const plan = ctx.plan as { start_date?: string | null; end_date?: string | null; title?: string; destination_style?: string | null };
+  const plan = ctx.plan as {
+    start_date?: string | null; end_date?: string | null; title?: string;
+    destination_city?: string | null; destination_country?: string | null;
+  };
 
   const { data: items, error: itemsError } = await ctx.db
     .from('itinerary_items')
@@ -145,18 +151,24 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const candidates = (items ?? []).filter((i: Item) =>
     i.booking_mode === 'reach' && !alreadyBooked.has(i.id));
 
-  const city = (plan.destination_style || plan.title || '').toString();
+  // Where the trip is. destination_style is a style — "city", "beach" — and
+  // the title is prose, so neither is a place a provider can search. A trip
+  // with no destination stored cannot be quoted, and says so.
+  const city = (plan.destination_city || '').trim();
+  const countryCode = (plan.destination_country || '').trim().toUpperCase();
   // Everybody in the group, unless somebody has sat this one out.
   const partySize = Math.max(1, (ctx.plan.participants as unknown[] | null)?.length ?? 2);
 
   const requests: (BookingItemRequest & { itineraryItemId: string; title: string })[] = [];
   const skipped: { title: string; why: string }[] = [];
   for (const item of candidates as Item[]) {
-    const request = asRequest(item, plan, { planId: params.planId, groupId: String(ctx.plan.group_id) }, city, partySize);
+    const request = asRequest(item, plan, { planId: params.planId, groupId: String(ctx.plan.group_id) }, city, countryCode, partySize);
     if (request) requests.push(request);
     else skipped.push({
       title: item.title,
-      why: BOOKABLE[item.type] ? 'this trip has no dates yet' : (CANNOT[item.type] ?? `nothing books a ${item.type} yet`),
+      why: BOOKABLE[item.type]
+        ? (!city || !countryCode ? 'this trip has no destination saved yet' : 'this trip has no dates yet')
+        : (CANNOT[item.type] ?? `nothing books a ${item.type} yet`),
     });
   }
 

@@ -8,6 +8,9 @@ const CreatePlanSchema = z.object({
   title: z.string().min(1).max(200),
   type: z.enum(['trip', 'restaurant', 'concert', 'weekend']),
   start_date: z.string().nullish(),
+  // Where this actually is, in the two parts a hotel provider can search on.
+  destination_city: z.string().trim().max(120).nullish(),
+  destination_country: z.string().trim().length(2).nullish(),
   end_date: z.string().nullish(),
   budget_cents: z.number().min(0),
   accommodation: z.string().nullish(),
@@ -48,6 +51,8 @@ export async function POST(req: NextRequest) {
     type: body.type,
     status: body.enable_voting ? 'voting' : 'planning',
     start_date: toDateOrNull(body.start_date),
+    destination_city: body.destination_city || null,
+    destination_country: body.destination_country ? body.destination_country.toUpperCase() : null,
     end_date: toDateOrNull(body.end_date),
     budget_cents: body.budget_cents,
     accommodation: body.accommodation || null,
