@@ -97,7 +97,13 @@ test.describe('3. Discover tab', () => {
   });
 
   test('Experience cards are displayed', async ({ page }) => {
-    await expect(page.locator('text=Share with group').first().or(page.locator('text=/No local events|Nothing here yet/i').first())).toBeVisible({ timeout: 20000 });
+    // The suite grants a real location (see playwright.config.ts), so this is
+    // the discovery lane doing its actual job: things on near Southern Pines.
+    // It used to look for "Share with group", which is on the detail view and
+    // not on this list, and it passed only because the empty state matched.
+    await expect(
+      page.locator('text=/NEAR YOU|Based on your location/i').first(),
+    ).toBeVisible({ timeout: 20000 });
   });
 
   test('Clicking a card opens detail view', async ({ page }) => {
@@ -143,9 +149,14 @@ test.describe('4. Groups tab', () => {
         break;
       }
     }
-    const nameInput = await page.locator('input[placeholder*="group" i]').isVisible({ timeout: 5000 }).catch(() => false);
-    const emojiSection = await page.locator('text=/emoji|Pick/i').isVisible({ timeout: 5000 }).catch(() => false);
-    expect(nameInput || emojiSection).toBeTruthy();
+    // The flow opens on "Who's going?" — solo or with other people — because
+    // that answer changes every screen after it. It does not open on a name
+    // field or an emoji picker, which is what this used to look for.
+    const whosGoing = await page.locator('text=/Who.s going/i').first()
+      .isVisible({ timeout: 8000 }).catch(() => false);
+    const choices = await page.locator('text=/Just me|With other people/i').first()
+      .isVisible({ timeout: 8000 }).catch(() => false);
+    expect(whosGoing || choices).toBeTruthy();
   });
 });
 
@@ -204,8 +215,13 @@ test.describe('6. Trip quiz flow', () => {
     if (cards.length > 0) {
       await cards[0].click();
       await page.waitForTimeout(1000);
-      const planBtn = await page.locator('text=/Plan a Trip|groupTrip/i').isVisible({ timeout: 5000 }).catch(() => false);
-      expect(planBtn).toBeTruthy();
+      // A group opens on its plans: the trips it already has, each with a way
+      // in, and a way to start another. "Plan a Trip" was the old label.
+      const plans = await page.locator('text=/Plans|Coming up/i').first()
+        .isVisible({ timeout: 8000 }).catch(() => false);
+      const intoAPlan = await page.locator('text=/View|New/i').first()
+        .isVisible({ timeout: 8000 }).catch(() => false);
+      expect(plans || intoAPlan).toBeTruthy();
     }
   });
 });
