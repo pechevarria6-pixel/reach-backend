@@ -37,6 +37,18 @@ create index if not exists plan_preferences_plan on public.plan_preferences (pla
 -- no voting, no chips.
 alter table public.plans add column if not exists solo_mode boolean not null default false;
 
+-- ─── "What's this trip about? Anything you're hoping happens?" ──────────
+-- The standing answer, on the person rather than the trip, because it feeds
+-- two things and only one of them is a trip:
+--
+--   * generation, where every member's answer is quoted back attributed, so
+--     the model hears the whole group and not just whoever pressed the button
+--   * Discover, where free text is matched against what is on — somebody who
+--     writes "hot dogs" should be told about National Hot Dog Day
+--
+-- A trip-specific answer overrides it in plan_preferences.summary_text above.
+alter table public.users add column if not exists trip_summary text;
+
 -- ── Deliberately no RLS policies ────────────────────────────────────────
 -- Consistent with every other table here: the anon key never reaches this
 -- data, and authorization is done in lib/auth.ts on the service-role client.

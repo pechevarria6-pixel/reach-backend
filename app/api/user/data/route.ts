@@ -70,7 +70,7 @@ export async function PATCH(req: NextRequest) {
   if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const allowed = ['name', 'seat_preference', 'dietary_needs', 'climate_preference', 'consent_personalized', 'consent_analytics', 'consent_marketing', 'consent_third_party', 'travel_style', 'trip_frequency', 'budget_range', 'favorite_activities', 'cuisines', 'music_genres', 'dining_vibe', 'drink_style', 'nightlife_style', 'concert_types', 'activity_vibe', 'no_way_jose'];
+  const allowed = ['name', 'seat_preference', 'dietary_needs', 'climate_preference', 'consent_personalized', 'consent_analytics', 'consent_marketing', 'consent_third_party', 'travel_style', 'trip_frequency', 'budget_range', 'favorite_activities', 'cuisines', 'music_genres', 'dining_vibe', 'drink_style', 'nightlife_style', 'concert_types', 'activity_vibe', 'no_way_jose', 'trip_summary'];
   const updates = Object.fromEntries(Object.entries(body).filter(([k]) => allowed.includes(k)));
   if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'No valid fields' }, { status: 400 });
 

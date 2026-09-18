@@ -132,6 +132,9 @@ export async function GET() {
       concertTypes: dbUser.concert_types || [],
       activityVibe: dbUser.activity_vibe || [],
       budgetRange: dbUser.budget_range,
+      // Their own words about what they want from a trip. Read back so the
+      // quiz is something you revise rather than redo.
+      tripSummary: dbUser.trip_summary ?? '',
       climate: dbUser.climate_preference,
       dietary: dbUser.dietary_needs,
       travelStyle: dbUser.travel_style,

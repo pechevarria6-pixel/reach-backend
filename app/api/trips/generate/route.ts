@@ -114,12 +114,25 @@ export async function POST(req: NextRequest) {
   if (isFail(ctx)) return ctx.error;
   const supabase = ctx.db;
 
-  const { data: members } = await supabase
-    .from('group_members')
-    .select(`users(id,name,budget_range,climate_preference,dietary_needs,
+  // trip_summary arrives in sql/plan-preferences-2026-09-18.sql. Naming a
+  // column that does not exist fails the entire select, and this select is
+  // what trip generation is built on — so a migration that had not been run
+  // yet would take the whole feature down rather than one line of a prompt.
+  const WITH_SUMMARY = `users(id,name,budget_range,climate_preference,dietary_needs,
       cuisines,music_genres,dining_vibe,drink_style,nightlife_style,
-      concert_types,activity_vibe,no_way_jose)`)
-    .eq('group_id', groupId);
+      concert_types,activity_vibe,no_way_jose,trip_summary)`;
+  const WITHOUT_SUMMARY = `users(id,name,budget_range,climate_preference,dietary_needs,
+      cuisines,music_genres,dining_vibe,drink_style,nightlife_style,
+      concert_types,activity_vibe,no_way_jose)`;
+
+  const full = await supabase.from('group_members').select(WITH_SUMMARY).eq('group_id', groupId);
+  const fallback = full.error && /trip_summary/.test(full.error.message || '')
+    ? await supabase.from('group_members').select(WITHOUT_SUMMARY).eq('group_id', groupId)
+    : null;
+  const members = (fallback ?? full).data;
+  if ((fallback ?? full).error) {
+    console.error('[generate] could not read the group', { groupId, code: (fallback ?? full).error?.code });
+  }
 
   const prefs = (members || []).map((m: any) => m.users).filter(Boolean);
   const groupSize = prefs.length || 2;
@@ -150,6 +163,21 @@ export async function POST(req: NextRequest) {
   const drinkStyles = [...new Set(prefs.map((p: any) => p.drink_style).filter(Boolean))];
   const nightlife = [...new Set(prefs.map((p: any) => p.nightlife_style).filter(Boolean))];
   const concertTypes = [...new Set(prefs.flatMap((p: any) => p.concert_types || []))];
+
+  // What each of them said in their own words, with their name on it.
+  //
+  // Everything above is a set of tick-boxes flattened across the group, which
+  // loses who wanted what — and the one thing somebody actually cares about
+  // is rarely on a list. "My sister is turning forty" cannot be inferred from
+  // cuisines. Attributed, because a plan that answers a named person is one
+  // they recognise as theirs.
+  const suggestions = prefs
+    .map((p: any) => ({ name: String(p.name || '').trim().split(/\s+/)[0], text: String(p.trip_summary || '').trim() }))
+    .filter((x: { name: string; text: string }) => x.text)
+    .map((x: { name: string; text: string }) => `${x.name || 'Someone'} said: "${x.text.slice(0, 300)}"`);
+  const saidBlock = suggestions.length
+    ? `\nWHAT THEY EACH SAID THEY WANT (use these; name who you are answering):\n${suggestions.join('\n')}\n`
+    : '';
   const tripTypes = (tripPrefs.tripType || []).join(', ') || 'any';
   const tripPace = tripPrefs.pace || 'balanced';
   const tripAccommodation = (tripPrefs.accommodation || []).join(', ') || 'hotel';
@@ -307,7 +335,7 @@ MUSIC: ${musicGenres.slice(0, 4).join(', ') || 'mixed'}
 DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 A GOOD NIGHT OUT: ${nightlife.join(', ') || 'no preference'}
 DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
-DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
+DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}
 ${allVetoes.length > 0 ? 'NEVER INCLUDE: ' + allVetoes.join(', ') : ''}
 
 Each option is a real evening in a named neighbourhood — "Dinner and a gig in
@@ -345,7 +373,7 @@ DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
 DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 NIGHTLIFE: ${nightlife.join(', ') || 'no preference'}
 LIVE MUSIC THEY GO TO: ${concertTypes.slice(0, 4).join(', ') || 'no preference'}
-DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
+DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}
 ${allVetoes.length > 0 ? 'VETOES (never include): ' + allVetoes.join(', ') : ''}
 
 Price diversity is required. Return exactly three options, one per tier, and

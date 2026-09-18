@@ -2695,6 +2695,18 @@ const TASTE_QUESTIONS=[
       {id:"karaoke",e:"🎤",l:"Karaoke"},
     ],
   },
+  {
+    // Last, and open. Everything above is a list somebody picks from, which
+    // is quick and never says the one thing they actually want. This is where
+    // "my sister is turning forty" and "I want to eat hot dogs" go, and both
+    // are read: generation quotes every member's answer back attributed, so
+    // the model hears the whole group rather than whoever pressed the button,
+    // and Discover matches the words against what is on.
+    id:"tripSummary",icon:"💭",free:true,optional:true,
+    title:"What's this trip about?",
+    sub:"Anything you're hoping happens. Skip it if nothing comes to mind.",
+    placeholder:"Somewhere warm with my sister for her fortieth…",
+  },
 ];
 
 // The API takes snake_case columns; the quiz and /api/me speak camelCase.
@@ -2703,6 +2715,11 @@ const TASTE_COLUMN={
   musicGenres:"music_genres", nightlifeStyle:"nightlife_style",
   diningVibe:"dining_vibe", drinkStyle:"drink_style",
   budgetRange:"budget_range", dietary:"dietary_needs", noWayJose:"no_way_jose",
+  // Free text, in their own words. Read by trip generation — where every
+  // member's is quoted back attributed, so the model hears the group and not
+  // only whoever pressed the button — and by Discover, where "hot dogs"
+  // should find National Hot Dog Day.
+  tripSummary:"trip_summary",
 };
 
 // `required` is the first run: the account has answered nothing and nothing
@@ -2717,6 +2734,7 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
   const [answers,setAnswers]=useState({
     favoriteActivities:[],cuisines:[],musicGenres:[],noWayJose:[],
     nightlifeStyle:null,diningVibe:null,drinkStyle:null,budgetRange:null,dietary:"",
+    tripSummary:"",
   });
   const [custom,setCustom]=useState({});
   const [loading,setLoading]=useState(true);
@@ -2744,6 +2762,7 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
             drinkStyle:p.drinkStyle||null,
             budgetRange:p.budgetRange||null,
             dietary:p.dietary||"",
+            tripSummary:p.tripSummary||"",
           }));
         }else console.error("[taste] could not load your answers",r.status);
       }catch(e){console.error("[taste] could not load your answers",e);}
