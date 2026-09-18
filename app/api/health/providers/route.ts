@@ -78,6 +78,41 @@ async function probe(
 export async function GET(req: NextRequest) {
   if (!authorised(req)) return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
 
+  // ── ?sample=duffel-places — a city name is not an airport code ────────
+  // A plan stores "Lisbon, Portugal". Duffel prices between IATA codes, and
+  // there is no table in this repo that turns one into the other. This asks
+  // Duffel's own place lookup, which is the only answer that stays right when
+  // an airport opens or a code is reassigned.
+  if (req.nextUrl.searchParams.get('sample') === 'duffel-places') {
+    const key = process.env.DUFFEL_API_KEY;
+    if (!key) {
+      console.error('[health/providers] duffel places sample asked for, but DUFFEL_API_KEY is not set');
+      return NextResponse.json({ provider: 'duffel', key: 'missing' }, { status: 503 });
+    }
+    const query = req.nextUrl.searchParams.get('q') || 'Lisbon';
+    const res = await fetch(
+      `https://api.duffel.com/places/suggestions?query=${encodeURIComponent(query)}`,
+      { headers: { Authorization: `Bearer ${key}`, 'Duffel-Version': 'v2', Accept: 'application/json' } },
+    );
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      console.error('[health/providers] duffel places lookup failed', { query, status: res.status });
+      return NextResponse.json({ provider: 'duffel', query, status: res.status, errors: json?.errors ?? null }, { status: 502 });
+    }
+    const places = (json?.data ?? []) as Record<string, unknown>[];
+    return NextResponse.json({
+      provider: 'duffel', query, returned: places.length,
+      places: places.slice(0, 6).map(p => ({
+        type: p.type, iata_code: p.iata_code, name: p.name,
+        city_name: p.city_name, iata_country_code: p.iata_country_code,
+        // A city can carry several airports; which one is the sellable code
+        // is the thing worth knowing.
+        airports: ((p.airports as { iata_code?: string; name?: string }[] | undefined) ?? [])
+          .slice(0, 4).map(a => `${a.iata_code}:${a.name}`),
+      })),
+    });
+  }
+
   // ── ?sample=duffel — the shape of a real offer, before we write to it ──
   // The flight adapter is not written yet, deliberately. Three times now the
   // honest answer came from one real response rather than from the docs: an
@@ -90,6 +125,7 @@ export async function GET(req: NextRequest) {
   if (req.nextUrl.searchParams.get('sample') === 'duffel') {
     const key = process.env.DUFFEL_API_KEY;
     if (!key) {
+      console.error('[health/providers] duffel sample asked for, but DUFFEL_API_KEY is not set');
       return NextResponse.json({
         provider: 'duffel', key: 'missing',
         detail: 'DUFFEL_API_KEY is not set. Test tokens start duffel_test_, live ones duffel_live_.',
@@ -129,6 +165,7 @@ export async function GET(req: NextRequest) {
     });
     const json = await res.json().catch(() => null);
     if (!res.ok) {
+      console.error('[health/providers] duffel offer request failed', { status: res.status });
       return NextResponse.json({
         provider: 'duffel', mode, status: res.status,
         errors: json?.errors ?? null,
@@ -149,6 +186,12 @@ export async function GET(req: NextRequest) {
         expires_at: first.expires_at,
         owner: first.owner?.name ?? null,
         passenger_ids: (first.passengers ?? []).map((p: { id: string }) => p.id),
+        // The whole passenger object, because what an order requires is the
+        // question the adapter has to answer and the docs are not the thing
+        // that runs. Duffel's own test data, not anybody's details.
+        passenger_shape: first.passengers?.[0] ?? null,
+        conditions: first.conditions ?? null,
+        payment_requirements: first.payment_requirements ?? null,
         // What the airline insists on knowing about each passenger — the
         // whole reason travel essentials exists.
         passenger_identity_documents_required:
