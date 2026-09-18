@@ -107,8 +107,13 @@ export async function GET(req: NextRequest) {
       const t = String(h?.hotelType ?? h?.property_type ?? h?.type ?? 'untyped');
       types[t] = (types[t] ?? 0) + 1;
     }
+    // Sandbox or production, from the prefix alone — LiteAPI names its keys
+    // sand_… and prod_…. Which one is configured decides whether a booking in
+    // the end-to-end run costs money or is a test reservation.
+    const mode = /^sand[_-]/i.test(key) ? 'sandbox' : /^prod[_-]/i.test(key) ? 'production' : `unrecognised (starts ${key.slice(0, 5)})`;
     return NextResponse.json({
       city,
+      keyMode: mode,
       returned: rows.length,
       propertyTypes: types,
       // Names only, so the shape of the inventory is readable without
