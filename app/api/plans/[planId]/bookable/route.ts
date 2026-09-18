@@ -202,6 +202,17 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // the title is prose, so neither is a place a provider can search. A trip
   // with no destination stored cannot be quoted, and says so.
   const city = (plan.destination_city || '').trim();
+  // Trips made before the destination was captured as its own column keep it
+  // in the title — "Puerto Vallarta, Mexico" is a plan title in the database
+  // right now, and without this nothing on those trips can be booked at all.
+  //
+  // The title is prose and generally not a place ("E2E test weekend", "Test"),
+  // so it is never trusted on its own. It is only offered to the two lanes
+  // that check a name against a real catalogue before using it: Duffel's
+  // place lookup, and Viator's destination taxonomy. Both answer nothing for
+  // a name that is not a place, which is exactly the right outcome. The hotel
+  // lane, which cannot check, still requires the stored city and country.
+  const named = city || (plan.title || '').trim();
   const countryCode = (plan.destination_country || '').trim().toUpperCase();
   // Everybody in the group, unless somebody has sat this one out.
   const partySize = Math.max(1, (ctx.plan.participants as unknown[] | null)?.length ?? 2);
@@ -224,7 +235,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // "Moab, Utah, USA" has no airport Duffel will sell to, and plenty of a
   // good trip is somewhere you drive.
   const flightTo = hasFlight && !flightWhy
-    ? await resolveAirport([city, countryCode].filter(Boolean).join(', '))
+    ? await resolveAirport(city ? [city, countryCode].filter(Boolean).join(', ') : named)
     : null;
   const flightFrom = hasFlight && !flightWhy && flightTo
     ? (await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).single())
@@ -239,11 +250,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     // should not be booked as a sunset cruise because both mention the sea.
     let product: Awaited<ReturnType<typeof findProduct>> = null;
     if (item.type === 'activity') {
-      if (!city) {
+      if (!named) {
         skipped.push({ title: item.title, why: 'this trip has no destination saved yet' });
         continue;
       }
-      product = await findProduct(city, item.title, plan.start_date, plan.end_date);
+      product = await findProduct(named, item.title, plan.start_date, plan.end_date);
       if (!product) {
         skipped.push({ title: item.title, why: CANNOT.activity });
         continue;
@@ -260,7 +271,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
         : item.type === 'flight'
           ? (flightWhy
              ?? (!flightTo
-                 ? `we could not find an airport for ${city || 'this trip'} — this one looks like a drive`
+                 ? `we could not find an airport for ${named || 'this trip'} — this one looks like a drive`
                  : !flightFrom
                    ? 'add your home airport in Profile and we can price this flight'
                    : CANNOT.flight))
