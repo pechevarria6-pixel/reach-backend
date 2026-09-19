@@ -5584,11 +5584,25 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               <div style={{padding:"0 20px 14px"}}>
                 <div className="sl" style={{marginBottom:10}}>Bookings</div>
                 <div style={{background:C.s2,borderRadius:14,padding:14,border:`1px solid ${C.border}`}}>
+                  {/* Against what Reach books, not against every line of the
+                      itinerary. This read "0/39" on a 13-night trip — one for
+                      every slot, including the walks and the mornings at
+                      leisure, none of which can ever be confirmed — while the
+                      button underneath said "7 bookings Reach handles". Two
+                      counts of the same thing that never agreed, and the one
+                      on the progress bar could not reach the end. */}
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                     <span style={{fontSize:13,color:C.t1}}>Confirmed</span>
-                    <span style={{fontSize:13,color:C.green,fontWeight:600}}>{plan.itinerary.filter(i=>i.conf).length}/{plan.itinerary.length}</span>
+                    <span style={{fontSize:13,color:C.green,fontWeight:600}}>
+                      {reachItems.filter(i=>i.conf).length}/{reachBookable}
+                    </span>
                   </div>
-                  <div className="pb-t"><div className="pb-f" style={{width:`${(plan.itinerary.filter(i=>i.conf).length/Math.max(plan.itinerary.length,1))*100}%`,background:C.green}}/></div>
+                  <div className="pb-t"><div className="pb-f" style={{width:`${(reachItems.filter(i=>i.conf).length/Math.max(reachBookable,1))*100}%`,background:C.green}}/></div>
+                  {plan.itinerary.length>reachBookable&&(
+                    <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
+                      The other {plan.itinerary.length-reachBookable} things on your days are yours to turn up to.
+                    </div>
+                  )}
                 </div>
               </div>
             )}
