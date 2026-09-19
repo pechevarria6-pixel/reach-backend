@@ -78,6 +78,36 @@ async function probe(
 export async function GET(req: NextRequest) {
   if (!authorised(req)) return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
 
+  // ── ?sample=yelp-events — a lane that has been failing all along ──────
+  // yelp-places answers and yelp-events does not, on the same key, which
+  // rules out the key and points at the endpoint. The route only reports
+  // "error", so this asks Yelp directly and prints what it actually says.
+  if (req.nextUrl.searchParams.get('sample') === 'yelp-events') {
+    const key = process.env.YELP_API_KEY;
+    if (!key) {
+      console.error('[health/providers] yelp sample asked for, but YELP_API_KEY is not set');
+      return NextResponse.json({ provider: 'yelp', key: 'missing' }, { status: 503 });
+    }
+    const headers = { Authorization: `Bearer ${key}`, accept: 'application/json' };
+    const lat = 35.17, lng = -79.39;
+    const day = Math.floor(Date.now() / 1000);
+    const [events, places] = await Promise.all([
+      fetch(`https://api.yelp.com/v3/events?latitude=${lat}&longitude=${lng}&radius=40000&limit=5&start_date=${day}`, { headers }),
+      fetch(`https://api.yelp.com/v3/businesses/search?latitude=${lat}&longitude=${lng}&limit=1`, { headers }),
+    ]);
+    const body = await events.text().catch(() => '');
+    if (!events.ok) {
+      console.error('[health/providers] yelp events refused', { status: events.status });
+    }
+    return NextResponse.json({
+      provider: 'yelp',
+      // Side by side, because one working and one not is the whole clue.
+      events: { status: events.status, body: body.slice(0, 400) },
+      places: { status: places.status },
+      keyLength: key.length,
+    });
+  }
+
   // ── ?sample=duffel-places — a city name is not an airport code ────────
   // A plan stores "Lisbon, Portugal". Duffel prices between IATA codes, and
   // there is no table in this repo that turns one into the other. This asks
@@ -357,8 +387,13 @@ export async function GET(req: NextRequest) {
     probe('OpenStreetMap (Overpass)', 'discovery', null, 'https://overpass-api.de/api/status', { headers: UA }),
     probe('Ticketmaster', 'discovery', 'TICKETMASTER_API_KEY',
       `https://app.ticketmaster.com/discovery/v2/events.json?size=1&apikey=${process.env.TICKETMASTER_API_KEY ?? ''}`),
-    probe('Yelp', 'discovery', 'YELP_API_KEY',
+    probe('Yelp (places)', 'discovery', 'YELP_API_KEY',
       'https://api.yelp.com/v3/businesses/search?latitude=35.17&longitude=-79.39&limit=1',
+      { headers: { Authorization: `Bearer ${process.env.YELP_API_KEY ?? ''}` } }),
+    // Its own row: the same key opens one of these and not the other, and a
+    // single "Yelp: ok" hid a lane that has never once returned anything.
+    probe('Yelp (events)', 'discovery', 'YELP_API_KEY',
+      `https://api.yelp.com/v3/events?latitude=35.17&longitude=-79.39&radius=40000&limit=1&start_date=${Math.floor(Date.now() / 1000)}`,
       { headers: { Authorization: `Bearer ${process.env.YELP_API_KEY ?? ''}` } }),
 
     // ── Booking ────────────────────────────────────────────────────────

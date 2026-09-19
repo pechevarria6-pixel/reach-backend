@@ -51,6 +51,19 @@ export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {
     const res = await fetch(url, { headers, next: { revalidate: 1800 } });
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
+      // Yelp's Events API is behind a developer beta, and a key that works
+      // perfectly for places is refused here with NOT_IN_DEVELOPER_BETA. That
+      // is a lane switched off for this account, not a lane that is broken —
+      // the same category as a missing key, and reporting it as an error made
+      // the health table cry wolf on every single check.
+      //
+      // To turn it on: Yelp's "Manage App" page has a join-beta button.
+      if (res.status === 403 && /DEVELOPER_BETA/i.test(detail)) {
+        return {
+          source: 'yelp-events', status: 'no_key', findings: [],
+          detail: 'Yelp Events needs the developer beta — join it on Yelp\'s Manage App page.',
+        };
+      }
       console.error('[discover/yelp-events] returned', res.status, detail.slice(0, 200));
       return { source: 'yelp-events', status: 'error', findings: [], detail: `${res.status}` };
     }
