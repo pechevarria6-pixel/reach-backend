@@ -458,11 +458,11 @@ function itineraryRows(days){
     const each=(sl)=>sl.cost!=null?Math.round(sl.cost*100):Math.round(cost/3);
     return [
       {time:`Day ${day.day} · Morning`,title:m.plan,sub:day.title||"",type:"activity",conf:null,filled:false,
-        cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null},
+        cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null,because:m.because||null},
       {time:`Day ${day.day} · Afternoon`,title:a.plan,sub:"",type:"activity",conf:null,filled:false,
-        cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null},
+        cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null,because:a.because||null},
       {time:`Day ${day.day} · Evening`,title:e.plan,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false,
-        cost_cents:each(e),booking_mode:e.booking||null,payment_note:e.payment||null},
+        cost_cents:each(e),booking_mode:e.booking||null,payment_note:e.payment||null,because:e.because||null},
     ].filter(r=>r.title);
   });
 }
@@ -5697,6 +5697,17 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           <span>{item.payment_note}</span>
                         </div>
                       )}
+                      {/* Whose wish this answers. The itinerary is written
+                          from what each member said about this trip, and
+                          without this it could answer somebody and never
+                          tell them — the plan reads like a guidebook rather
+                          than like their trip. */}
+                      {item.because&&(
+                        <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,color:C.accentText}}>
+                          <span style={{flexShrink:0}}>›</span>
+                          <span>{item.because}</span>
+                        </div>
+                      )}
                       {item.conf&&<div className="it-cf">✓ Confirmed · {item.conf}</div>}
                     </div>
                   </div>
@@ -7509,6 +7520,10 @@ export default function ReachApp({realUser,onSignOut}={}){
       // that lost whole itineraries.
       booking_mode:item.booking_mode||null,
       payment_note:item.payment_note||null,
+      // Whose wish this answers. Dropped here and it would show once after
+      // generating and never again — the exact shape of the bug that lost
+      // the practicals, and then the trip reasons.
+      because:item.because||null,
     })),
     votes:p.votes||{},
     options:p.vote_options||[],

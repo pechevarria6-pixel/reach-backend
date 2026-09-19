@@ -377,7 +377,13 @@ nobody arrives somewhere and finds out the hard way:
   say so — that is the single most useful thing on the whole line.
 
 Do not guess a card policy you are unsure of. "Cards usually accepted" is
-better than a confident wrong answer.`;
+better than a confident wrong answer.
+
+"because" is the one thing on a slot that is about a person rather than a
+place: whose request this answers, in their own terms — "Peter asked for one
+big night out", "the sunset Sarah wanted, from the sand". Use their name. If a
+slot answers nobody in particular, send an empty string rather than a reason
+you have made up; a day that is simply a good day is allowed to be one.`;
 
     const client = anthropicOrNull();
     if (!client) {

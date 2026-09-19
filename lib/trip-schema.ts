@@ -73,6 +73,11 @@ export const SlotSchema = z.object({
   // Free text because the real world is not an enum: "Cash only",
   // "Cards, no Amex", "Contactless everywhere", "Cash for the boat".
   payment: z.string(),
+  // Whose wish this answers, when it answers one. "Peter asked for one big
+  // night out." Nullish rather than optional: plenty of a good day is just a
+  // good day, and a model with nothing to say should send null rather than
+  // invent a reason or omit the key and lose the whole slot.
+  because: z.string().nullish(),
 });
 
 export const ItineraryDaySchema = z.object({
@@ -159,8 +164,12 @@ export const slot = {
     cost: num,
     booking: { type: 'string', enum: ['reach', 'ahead', 'walk_in'] },
     payment: str,
+    // Required in the wire format so it cannot be quietly skipped, and
+    // allowed to be empty: a day that answers nobody in particular should
+    // say so rather than have a reason invented for it.
+    because: str,
   },
-  required: ['plan', 'cost', 'booking', 'payment'],
+  required: ['plan', 'cost', 'booking', 'payment', 'because'],
   additionalProperties: false,
 } as const;
 

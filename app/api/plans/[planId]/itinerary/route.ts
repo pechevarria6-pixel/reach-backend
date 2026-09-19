@@ -8,6 +8,8 @@ const ItemSchema = z.object({
   subtitle: z.string().nullish(),
   booking_mode: z.enum(['reach','ahead','walk_in']).nullish(),
   payment_note: z.string().max(120).nullish(),
+  // Whose wish this slot answers, when it answers one.
+  because: z.string().max(200).nullish(),
   scheduled_time: z.string().nullish(),
   confirmation_number: z.string().nullish(),
   is_confirmed: z.boolean().nullish(),
@@ -82,6 +84,7 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
         // everything else the traveller needs these before they arrive.
         booking_mode: item.booking_mode || null,
         payment_note: item.payment_note || null,
+        because: item.because || null,
         sort_order: idx,
     }));
 
@@ -97,10 +100,11 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
       const missingColumn = error.code === 'PGRST204'
         || /column .* does not exist|could not find the .* column/i.test(error.message || '');
       if (missingColumn) {
-        console.error('[itinerary] practical columns missing, saving without them —'
-          + ' run sql/itinerary-practicals-2026-09-14.sql');
+        console.error('[itinerary] optional columns missing, saving without them —'
+          + ' run sql/itinerary-practicals-2026-09-14.sql and'
+          + ' sql/itinerary-because-2026-09-18.sql');
         const { error: retry } = await supabase.from('itinerary_items').insert(
-          rows.map(({ booking_mode, payment_note, ...rest }: any) => rest),
+          rows.map(({ booking_mode, payment_note, because, ...rest }: any) => rest),
         );
         if (retry) {
           console.error('[itinerary] save failed', retry);
