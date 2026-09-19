@@ -92,13 +92,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         supabase.from('groups').select('name, emoji').eq('id', params.id).single(),
         supabase.from('users').select('name').eq('id', ctx.user.id).maybeSingle(),
       ]);
-      await sendGroupInvite(email, {
+      // The result, not the absence of a throw. lib/email reports a failure
+      // by returning { sent: false } — it deliberately never throws into a
+      // request that was doing something more important — so this said
+      // emailed: true whenever the key was rejected, and the screen told
+      // somebody an invitation had gone out that never left the building.
+      const result = await sendGroupInvite(email, {
         groupName: group?.name || 'a group',
         groupEmoji: group?.emoji,
         inviterName: inviter?.name,
         acceptUrl,
       });
-      emailed = true;
+      emailed = result.sent;
+      if (!result.sent) {
+        console.error('[members POST] invite not sent', { reason: result.reason, detail: result.detail });
+      }
     } catch (e) {
       console.error('[members POST] invite email failed', e);
     }
