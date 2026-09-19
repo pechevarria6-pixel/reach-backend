@@ -2730,6 +2730,124 @@ const TASTE_COLUMN={
 /** Set when the quiz has been worked through, whatever was answered. */
 const QUIZ_DONE="reach_quiz_done";
 
+// ─── WHAT I WANT FROM THIS TRIP ──────────────────────────────────────────
+// The taste quiz is a standing profile and it is the right input for
+// Discover, which answers "what is on near you" and has no trip to be about.
+// It is the wrong input for a trip: what somebody wants from a week with
+// their family in March is not what they want from a weekend with friends in
+// October, and a profile cannot tell the two apart.
+//
+// So every trip asks its own members. Short on purpose — three questions,
+// two of them skippable — because this is asked once per trip per person and
+// a long form is one nobody fills in.
+function PlanPreferencesScreen({onBack,planId,toast}){
+  const [summary,setSummary]=useState("");
+  const [mustDo,setMustDo]=useState("");
+  const [noWay,setNoWay]=useState("");
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [loadErr,setLoadErr]=useState(false);
+
+  // Editing what you said starts from what you said.
+  useEffect(()=>{
+    let alive=true;
+    // A trip that has not reached the server yet has a local id, and asking
+    // about it is a guaranteed 404. It cannot have answers stored against it
+    // either, so there is nothing to load.
+    if(!planId||isTempId(planId)){setLoading(false);return()=>{alive=false;};}
+    (async()=>{
+      try{
+        const r=await fetch(`/api/plans/${planId}/preferences`);
+        if(!r.ok)throw new Error(String(r.status));
+        const d=await r.json();
+        if(!alive)return;
+        setSummary(d.summary||"");
+        setMustDo(d.answers?.mustDo||"");
+        setNoWay(d.answers?.noWay||"");
+      }catch(e){
+        console.error("[plan preferences] could not load",e);
+        if(alive)setLoadErr(true);
+      }
+      if(alive)setLoading(false);
+    })();
+    return()=>{alive=false;};
+  },[planId]);
+
+  const save=async()=>{
+    if(saving)return;
+    // Saving against a local id would answer 404 and lose what they wrote.
+    // Saying so is better than a generic failure they cannot act on.
+    if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+    setSaving(true);
+    try{
+      const r=await fetch(`/api/plans/${planId}/preferences`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          summary:summary.trim()||null,
+          answers:{mustDo:mustDo.trim()||null,noWay:noWay.trim()||null},
+        }),
+      });
+      if(!r.ok){
+        const d=await r.json().catch(()=>({}));
+        throw new Error(d.error||"Couldn't save that");
+      }
+      toast("Thanks — that's you in");
+      onBack();
+    }catch(e){
+      console.error("[plan preferences] save failed",e);
+      toast(e.message);
+    }
+    setSaving(false);
+  };
+
+  if(loading)return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>One moment…</div></div>);
+
+  const field=(label,hint,value,setter,placeholder,rows)=>(
+    <div style={{padding:"0 20px 18px"}}>
+      <div className="sl" style={{marginBottom:6}}>{label}</div>
+      <div style={{fontSize:12,color:C.t3,marginBottom:8,lineHeight:1.5}}>{hint}</div>
+      <textarea aria-label={label} value={value} rows={rows}
+        onChange={e=>setter(e.target.value)} placeholder={placeholder}
+        style={{width:"100%",padding:"14px",borderRadius:14,border:`1px solid ${C.border}`,
+          background:C.s2,color:C.t1,fontSize:15,lineHeight:1.5,fontFamily:"inherit",
+          resize:"none",outline:"none"}}/>
+    </div>
+  );
+
+  return(
+    <div className="sc">
+      <ScreenHeader onBack={onBack} label="This trip" title="What do you want from it?"/>
+      <div style={{padding:"0 20px 14px",fontSize:13,color:C.t2,lineHeight:1.55}}>
+        Your answers here are about this trip only — they do not change your
+        profile. Everyone sees that you have answered, never what you said.
+      </div>
+      {loadErr&&(
+        <div style={{margin:"0 20px 14px",padding:"11px 13px",background:C.amberDim,
+          border:`1px solid ${C.amber}`,borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
+          We could not load anything you had already written. Saving now will replace it.
+        </div>
+      )}
+      {field("What's this trip about, for you?",
+        "The most useful thing you can tell us. Say what you are hoping happens.",
+        summary,setSummary,"A proper rest, and one big night out…",4)}
+      {field("Anything you want to make sure we do?",
+        "Optional. One thing that would make the trip for you.",
+        mustDo,setMustDo,"See the sunrise from somewhere high…",3)}
+      {field("Anything you would rather we didn't?",
+        "Optional. We will not suggest these.",
+        noWay,setNoWay,"Nothing that starts before 9am…",3)}
+      <div style={{padding:"0 20px 30px"}}>
+        <button className="bp" disabled={saving} onClick={save}>
+          {saving?"Saving…":"That's me in"}
+        </button>
+        <div style={{textAlign:"center",fontSize:11.5,color:C.t3,marginTop:10,lineHeight:1.5}}>
+          You can skip anything. Having been through it is what the group is waiting for.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TasteQuizScreen({onBack,toast,onSaved,required}){
   const [step,setStep]=useState(0);
   const [answers,setAnswers]=useState({
@@ -5613,6 +5731,23 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 }}>{nudging?"Sending…":"Give them a nudge"}</button>
               )}
             </div>
+            {/* The person the group is waiting on sees the way to stop being
+                waited on, not just the fact of it. Shown to anybody who has
+                not answered for this trip, whether or not voting is open. */}
+            {prefs&&!prefs.solo&&prefs.members.some(m=>m.userId===me&&!m.ready)&&(
+              <div style={{margin:"0 0 12px",padding:"14px",background:C.accentDim,
+                border:`1px solid ${C.accentText}`,borderRadius:14}}>
+                <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>
+                  The group is waiting on you
+                </div>
+                <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
+                  Three questions about this trip. Your profile stays as it is.
+                </div>
+                <button className="bp" onClick={()=>push("planPrefs",{planId})}>
+                  Say what you want from this trip
+                </button>
+              </div>
+            )}
             {/* Who has had their say. A yes or a no and a name — never what
                 anybody answered, which is theirs. */}
             {!votingOpen&&prefs&&(
@@ -7638,6 +7773,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     // takes the prompt off the home screen. Without it the card stays up
     // telling somebody to do the thing they have just done.
     if(screen==="taste")return <TasteQuizScreen {...cp} {...props} onSaved={syncUser} required={quizRequired&&stack.length<=1}/>;
+    if(screen==="planPrefs")return <PlanPreferencesScreen {...cp} {...props}/>;
     if(screen==="createGroup")return <CreateGroupScreen {...cp} {...props}/>;
     if(screen==="groupTrip")return <GroupTripScreen {...cp} {...props}/>;
     if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props} user={user} departure={departure}/>;

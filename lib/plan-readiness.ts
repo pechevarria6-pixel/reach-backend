@@ -8,12 +8,14 @@
 // they said. That is the same rule travel essentials follows, for the same
 // reason — being in a group is not consent to be read.
 //
-// The definition is a union on purpose, and it is worth saying why. A member
-// counts as ready if they have submitted preferences for this trip, or, when
-// they have no row for it, if they have answered the standing quiz. Gating
-// only on the new table would have locked every group that exists today out
-// of voting the moment this shipped, because nothing had written a row yet.
-// As trips collect their own preferences the first half takes over.
+// Readiness is therefore about this trip and nothing else. Having done the
+// taste quiz once does not make somebody ready to vote on where the group
+// goes in March; it says what they like, not what they want this time.
+//
+// One grace: a plan with no preferences at all predates this being asked, so
+// it is not gated. Trips already in flight do not freeze because the rule
+// changed under them. The moment one member answers for a trip, the trip is
+// running the new way and everybody is counted.
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface MemberReadiness {
@@ -32,7 +34,14 @@ export interface ReadinessReport {
   solo: boolean;
 }
 
-/** The quiz counts as answered if they told us anything at all. */
+/**
+ * Whether somebody has ever filled in the standing taste quiz.
+ *
+ * No longer part of readiness: that profile is what Discover is built on —
+ * what a person is into, generally — and it says nothing about what they
+ * want from one particular trip. Kept because "have they set up an account
+ * properly" is still a real question elsewhere, and it is the answer to it.
+ */
 export function answeredStandingQuiz(u: Record<string, unknown> | null | undefined): boolean {
   if (!u) return false;
   const filled = (v: unknown) => Array.isArray(v) ? v.length > 0 : !!v;
@@ -64,7 +73,7 @@ export async function planReadiness(
 
   const { data: members, error } = await db
     .from('group_members')
-    .select('user_id, users(id, name, email, cuisines, music_genres, activity_vibe, no_way_jose, dining_vibe, drink_style, nightlife_style, budget_range)')
+    .select('user_id, users(id, name)')
     .eq('group_id', groupId);
 
   if (error) {
@@ -74,9 +83,9 @@ export async function planReadiness(
     throw new Error('readiness unavailable');
   }
 
-  // Who has submitted for this trip specifically. A missing table means the
-  // migration has not run yet, which is not an error here — the standing
-  // quiz answers the question until it does.
+  // Who has answered for this trip. A missing table would mean the migration
+  // had not run; then nobody has answered, which lands on the grace below
+  // rather than on an error.
   const submitted = new Set<string>();
   const { data: prefs, error: prefsError } = await db
     .from('plan_preferences')
@@ -90,6 +99,9 @@ export async function planReadiness(
     for (const row of prefs ?? []) if (row.submitted_at) submitted.add(String(row.user_id));
   }
 
+  // Nobody has been asked about this trip yet, so nobody can be behind on it.
+  const asked = submitted.size > 0;
+
   const rows: MemberReadiness[] = (members ?? []).map(m => {
     const record = m as Record<string, unknown>;
     const raw = record.users as Record<string, unknown> | Record<string, unknown>[] | null;
@@ -97,11 +109,7 @@ export async function planReadiness(
     const userId = String(record.user_id);
     // The email is deliberately not a fallback name: it is somebody's email.
     const name = String(u.name || '').trim() || 'A traveller';
-    return {
-      userId,
-      name,
-      ready: submitted.has(userId) || answeredStandingQuiz(u),
-    };
+    return { userId, name, ready: !asked || submitted.has(userId) };
   });
 
   return {
