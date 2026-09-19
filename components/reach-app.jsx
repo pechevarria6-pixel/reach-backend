@@ -3892,6 +3892,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       // readiness gate counts and what a later regeneration should start
       // from — the sentence that explains why this trip exists.
       goalBlurb:tripPrefs?.goalBlurb||null,
+      // The organiser's own answers for this trip. They answered the quiz to
+      // get here, so they have had their say and should not be asked again.
+      tripAnswers:tripPrefs||null,
       soloMode:(group.memberIds||[]).length<=1,
       aiGenerated:true,aiData:trip,
     };
@@ -7613,6 +7616,7 @@ export default function ReachApp({realUser,onSignOut}={}){
           // the quiz. The server records it against the plan, which is what
           // makes readiness about this trip rather than a quiz done once.
           goal_blurb:plan.goalBlurb||null,
+          trip_answers:plan.tripAnswers||null,
           solo_mode:plan.soloMode===true,
         }),
       });

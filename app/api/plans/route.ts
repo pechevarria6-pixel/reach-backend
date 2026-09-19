@@ -23,6 +23,10 @@ const CreatePlanSchema = z.object({
   // the plan rather than only on the person, because it is the answer for
   // this trip — and because it is what the readiness gate counts.
   goal_blurb: z.string().trim().max(500).nullish(),
+  // What the organiser answered on the trip quiz to get here. Loose on
+  // purpose: the quiz's questions are a product decision that changes, and a
+  // schema pinned to today's would reject tomorrow's answers.
+  trip_answers: z.record(z.unknown()).nullish(),
   // A trip somebody is taking alone waits for nobody.
   solo_mode: z.boolean().nullish(),
 });
@@ -78,11 +82,12 @@ export async function POST(req: NextRequest) {
   // The organiser has now said what this trip is for, which is exactly what
   // the readiness gate is waiting to hear. Recording it here is what makes
   // readiness about this trip rather than about a quiz somebody did once.
-  if (body.goal_blurb) {
+  if (body.goal_blurb || body.trip_answers) {
     const { error: prefError } = await supabase.from('plan_preferences').upsert({
       plan_id: plan.id,
       user_id: user.id,
-      summary_text: body.goal_blurb,
+      summary_text: body.goal_blurb || null,
+      answers: body.trip_answers ?? null,
       submitted_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: 'plan_id,user_id' });
