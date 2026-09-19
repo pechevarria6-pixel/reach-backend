@@ -67,6 +67,31 @@ export function validBirthDate(value: string | null | undefined, today = new Dat
 }
 
 /**
+ * A number that could actually be somebody's.
+ *
+ * Deliberately shaped like E.164, because that is what the airline checks
+ * against: a real country and area code, and the right number of digits. A
+ * looser rule was worse than none — seven digits passed, the traveller was
+ * told they were ready to fly, and the order came back "Field 'phone_number'
+ * is invalid" at the moment of booking. Telling somebody they are ready when
+ * they are not is the one thing this file exists to prevent.
+ *
+ * It cannot be exhaustive. Numbering plans are a moving target and the
+ * carrier is the final judge; this catches the wrong shape, not the wrong
+ * number.
+ */
+export function plausiblePhone(phone: string | null | undefined): boolean {
+  const digits = String(phone ?? '').replace(/\D/g, '');
+  // E.164 allows up to 15 digits, and no country has a subscriber number
+  // short enough to make a total under 8 workable for an airline.
+  if (digits.length < 8 || digits.length > 15) return false;
+  // A number that is all one digit is a placeholder somebody typed to get
+  // past the form.
+  if (/^(\d)\1+$/.test(digits)) return false;
+  return true;
+}
+
+/**
  * What this person still has to provide before a ticket can be issued.
  * Returns field names in the order of REQUIRED — the list is shown to the
  * person themselves, and to their group as a readiness chip.
@@ -85,9 +110,7 @@ export function missingFor(e: Essentials | null | undefined, today = new Date())
   // booking goes to a person rather than failing, so somebody who has told
   // us is not left looking at an unfinished form for ever.
   if (!gender || !GENDERS.includes(gender as Gender)) missing.push('gender');
-  // Seven digits is not a validation of anything much; it is enough to catch
-  // a half-typed number, and the airline will reject a wrong one anyway.
-  if (String(e?.phone ?? '').replace(/\D/g, '').length < 7) missing.push('phone number');
+  if (!plausiblePhone(e?.phone)) missing.push('phone number');
   return missing;
 }
 

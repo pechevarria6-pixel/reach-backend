@@ -99,3 +99,15 @@ test('a document number shows four characters at most', () => {
   assert.deepEqual(maskNumber('TT1234567'), { present: true, last4: '4567' });
   assert.deepEqual(maskNumber(null), { present: false });
 });
+
+test('a phone number has to be the right shape to be worth having', () => {
+  // The failure this prevents: a traveller told they are ready to fly, and
+  // then "Field 'phone_number' is invalid" at the moment of booking.
+  assert.equal(missingFor({ ...COMPLETE, phone: '+1 415 523 8886' }, TODAY).length, 0);
+  assert.equal(missingFor({ ...COMPLETE, phone: '+44 20 7183 8750' }, TODAY).length, 0);
+  // Too short to be anybody's.
+  assert.deepEqual(missingFor({ ...COMPLETE, phone: '555 0100' }, TODAY), ['phone number']);
+  // Typed to get past the form.
+  assert.deepEqual(missingFor({ ...COMPLETE, phone: '0000000000' }, TODAY), ['phone number']);
+  assert.deepEqual(missingFor({ ...COMPLETE, phone: '+1 2345678901234567' }, TODAY), ['phone number']);
+});

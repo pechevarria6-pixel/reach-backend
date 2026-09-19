@@ -11,7 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { encrypt, decrypt } from '@/lib/encryption';
-import { GENDERS, missingFor, validBirthDate } from '@/lib/essentials';
+import { GENDERS, missingFor, validBirthDate, plausiblePhone } from '@/lib/essentials';
 import { z } from 'zod';
 
 // A document number is stored encrypted and must never travel back in full.
@@ -175,9 +175,12 @@ const Schema = z.object({
     .refine(v => validBirthDate(v), 'A date of birth looks like 1991-04-02, and is in the past')
     .nullable().optional(),
   gender: z.enum(GENDERS as [string, ...string[]]).nullable().optional(),
-  // Loosely checked on purpose: numbers are written a dozen ways and the
-  // airline rejects a wrong one anyway. This only catches a half-typed one.
-  phone: z.string().trim().min(7).max(32).nullable().optional(),
+  // Checked with the same rule readiness uses, so the form cannot accept a
+  // number that the chips will then call missing — or worse, that they will
+  // call present right up until the airline refuses it.
+  phone: z.string().trim().max(32)
+    .refine(v => plausiblePhone(v), 'That does not look like a phone number an airline will accept')
+    .nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest) {
