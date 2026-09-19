@@ -19,6 +19,12 @@ const CreatePlanSchema = z.object({
   dealbreakers: z.array(z.string()).nullish(),
   vote_options: z.array(z.string()).nullish(),
   enable_voting: z.boolean().nullish(),
+  // What the organiser wrote when asked what this trip is about. Kept with
+  // the plan rather than only on the person, because it is the answer for
+  // this trip — and because it is what the readiness gate counts.
+  goal_blurb: z.string().trim().max(500).nullish(),
+  // A trip somebody is taking alone waits for nobody.
+  solo_mode: z.boolean().nullish(),
 });
 
 // POST /api/plans — create a new plan
@@ -60,12 +66,31 @@ export async function POST(req: NextRequest) {
     destination_style: body.destination_style || null,
     dealbreakers: body.dealbreakers || [],
     vote_options: body.vote_options || [],
+    solo_mode: body.solo_mode === true,
     created_by: user.id,
   }).select().single();
 
   if (error || !plan) {
     console.error('[plans POST] insert failed', error);
     return NextResponse.json({ error: error?.message || 'Failed to create plan' }, { status: 500 });
+  }
+
+  // The organiser has now said what this trip is for, which is exactly what
+  // the readiness gate is waiting to hear. Recording it here is what makes
+  // readiness about this trip rather than about a quiz somebody did once.
+  if (body.goal_blurb) {
+    const { error: prefError } = await supabase.from('plan_preferences').upsert({
+      plan_id: plan.id,
+      user_id: user.id,
+      summary_text: body.goal_blurb,
+      submitted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'plan_id,user_id' });
+    // Never fatal. A plan that exists without its blurb recorded is a working
+    // plan; failing the creation over it would lose the trip instead.
+    if (prefError) {
+      console.error('[plans POST] could not record the goal', { plan: plan.id, code: prefError.code });
+    }
   }
 
   await supabase.from('audit_logs').insert({ user_id: user.id, action: 'plan_created', resource: 'plans', resource_id: plan.id, success: true });

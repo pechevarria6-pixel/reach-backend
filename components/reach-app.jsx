@@ -3437,9 +3437,23 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
           </div>
 
           <div style={{flex:1,overflowY:"auto",scrollbarWidth:"none",padding:"0 20px 8px"}}>
+            {/* A question with nothing to pick from. This grid assumed every
+                question had options, so a free-text one would have thrown on
+                `.map` of undefined and taken the whole quiz down with it. */}
+            {quizQ.free&&(
+              <textarea
+                aria-label={quizQ.title}
+                value={answers[quizQ.id]||""}
+                onChange={e=>setAnswers(a=>({...a,[quizQ.id]:e.target.value}))}
+                placeholder={quizQ.placeholder||""}
+                rows={4}
+                style={{width:"100%",padding:"14px",borderRadius:14,border:`1px solid ${C.border}`,
+                  background:C.s2,color:C.t1,fontSize:15,lineHeight:1.5,fontFamily:"inherit",
+                  resize:"none",outline:"none",marginBottom:12}}/>
+            )}
             {/* 6 option grid */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:12}}>
-              {quizQ.options.map(opt=>{
+              {(quizQ.options||[]).map(opt=>{
                 const isMulti=quizQ.multi;
                 const selected=isMulti
                   ?(answers[quizQ.id]||[]).includes(opt.id)
@@ -3753,6 +3767,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       participants:group.memberIds||[],
       itinerary:[],
       votes:{},options:[],
+      // Carried onto the plan so it survives the choosing. This is what the
+      // readiness gate counts and what a later regeneration should start
+      // from — the sentence that explains why this trip exists.
+      goalBlurb:tripPrefs?.goalBlurb||null,
+      soloMode:(group.memberIds||[]).length<=1,
       aiGenerated:true,aiData:trip,
     };
     updateGroup(groupId,g=>({...g,plans:[...g.plans,np]}));
@@ -7452,6 +7471,11 @@ export default function ReachApp({realUser,onSignOut}={}){
           dealbreakers:plan.dealbreakers||[],
           vote_options:plan.options||[],
           enable_voting:plan.status==="voting",
+          // What they wrote when asked what this trip is about, carried from
+          // the quiz. The server records it against the plan, which is what
+          // makes readiness about this trip rather than a quiz done once.
+          goal_blurb:plan.goalBlurb||null,
+          solo_mode:plan.soloMode===true,
         }),
       });
       if(res.ok){
