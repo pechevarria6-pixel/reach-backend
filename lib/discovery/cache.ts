@@ -58,10 +58,12 @@ const label = (interest: string) => {
 const PER_KIND = 4;
 const MAX_VENUES = 40;
 
-function box(seeker: Seeker) {
+/** What the live ticketed search covers, so the cache matches it. */
+const TICKETED_MILES = 90;
+
+function box(seeker: Seeker, miles = 15) {
   // A degree of longitude narrows towards the poles, so a fixed box would
   // search twice as wide as asked for in Edinburgh and correctly in Quito.
-  const miles = 15;
   const dLat = miles / 69;
   const dLng = miles / (69 * Math.max(0.1, Math.cos((seeker.lat * Math.PI) / 180)));
   return { dLat, dLng };
@@ -218,9 +220,17 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
     })
     // Near them, now that the box cannot be a condition of the join. A row
     // that cannot say where it is does not get to claim it is nearby.
+    //
+    // How near depends on what it is. Fifteen miles is right for a pottery
+    // class — that is a thing you go to on a Tuesday evening. It is wrong for
+    // a stadium: the live ticketed search covers ninety miles and people do
+    // drive that far for a game. Holding cached events to the walking radius
+    // stored twenty of them and returned none, because every venue was a
+    // stadium twenty to sixty miles out.
     .filter(f => {
       if (f.lat == null || f.lng == null) return false;
-      return Math.abs(f.lat - seeker.lat) <= dLat && Math.abs(f.lng - seeker.lng) <= dLng;
+      const reach = f.source === 'harvest' ? box(seeker) : box(seeker, TICKETED_MILES);
+      return Math.abs(f.lat - seeker.lat) <= reach.dLat && Math.abs(f.lng - seeker.lng) <= reach.dLng;
     })
     .filter(f => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid))
     .slice(0, 40);
