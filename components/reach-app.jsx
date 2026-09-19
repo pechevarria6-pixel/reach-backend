@@ -6333,7 +6333,12 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   const checkout=checkoutState(bookings||[]);
   const lines=(checkout.rows.length?checkout.rows.map(b=>({
     icon:vIcon[b.vertical]||"\u2728", l:itemTitle(b),
-    d:b.provider==="concierge"?"We'll handle this one for you":(b.mode==="redirect"?"Bought on the seller's own site":""),
+    // The provider's own note when it left one. A seat being booked by hand
+    // because automatic booking will not carry somebody's passport marker
+    // deserves that sentence, not "we'll handle this one for you" — the
+    // person it concerns is reading this screen.
+    d:b.response_payload?.note
+      ||(b.provider==="concierge"?"We'll handle this one for you":(b.mode==="redirect"?"Bought on the seller's own site":"")),
     a:b.price_cents, st:b.status,
     // A redirected booking finishes somewhere else, and until now the screen
     // said so with nothing to tap: "Finish on their site" and no site. The

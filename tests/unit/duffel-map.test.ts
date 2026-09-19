@@ -138,3 +138,24 @@ test('a flight that has gone is not offered', () => {
   assert.equal(departed('2026-11-02', today), false);
   assert.equal(departed(null, today), false);
 });
+
+test('an X marker is a concierge case, not a blank to fill in', () => {
+  // The distinction the booking path turns on: a missing date of birth is
+  // theirs to fix, an X passport marker is not. The passport is right and
+  // the automated channel is what is narrow.
+  const missing = toDuffelPassenger('pas_1', { ...WHO, dateOfBirth: null }, 'Marco');
+  assert.equal(missing.ok, false);
+  if (missing.ok === false) assert.equal(missing.problem, 'dob');
+
+  for (const marker of ['x', 'unspecified']) {
+    const r = toDuffelPassenger('pas_1', { ...WHO, gender: marker }, 'Sam');
+    assert.equal(r.ok, false);
+    if (r.ok === false) {
+      assert.equal(r.problem, 'gender');
+      // Worth being careful about: this sentence is read by the person it is
+      // about. It says the channel is narrow, not that they are wrong.
+      assert.match(r.why, /can't go through automatic booking/);
+      assert.doesNotMatch(r.why, /invalid|unsupported|error/i);
+    }
+  }
+});

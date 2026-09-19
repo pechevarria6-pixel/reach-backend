@@ -141,3 +141,27 @@ test('a superseded attempt is not listed at all', () => {
   assert.equal(s.totalCents, 33401);
   assert.equal(s.canPay, true);
 });
+
+test('a flight a person books is still a flight the group pays for', () => {
+  // Booked by hand because the automated channel will not carry an X
+  // passport marker. It has a real fare and the group owes it — excluding
+  // it by provider showed a total of nothing and refused a real payment.
+  const s = checkoutState([
+    { vertical: 'flight', detail: 'American Airlines · RDU → PVR', price_cents: 23663,
+      provider: 'concierge', mode: 'concierge', status: 'pending', itinerary_item_id: 'f1' },
+  ]);
+  assert.equal(s.totalCents, 23663);
+  assert.equal(s.canPay, true);
+  assert.equal(s.conciergeNote, null, 'it has a price, so nothing is priced later');
+});
+
+test('a table somebody rings up about is still not a purchase', () => {
+  const s = checkoutState([
+    { vertical: 'hotel', detail: 'Best Western', price_cents: 33401, provider: 'liteapi', itinerary_item_id: 'h1' },
+    { vertical: 'restaurant', detail: 'Desert Bistro', price_cents: null,
+      provider: 'concierge', mode: 'concierge', status: 'pending', itinerary_item_id: 'r1' },
+  ]);
+  assert.equal(s.totalCents, 33401, 'the dinner is settled at the venue');
+  assert.equal(s.canPay, true);
+  assert.equal(s.conciergeNote, '+ concierge items priced after confirmation');
+});

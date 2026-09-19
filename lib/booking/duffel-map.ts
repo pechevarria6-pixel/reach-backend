@@ -75,9 +75,19 @@ export interface DuffelPassenger {
   phone_number?: string;
 }
 
+/**
+ * Why a traveller cannot be sent to the airline as they are.
+ *
+ * The distinction that matters: 'gender' is not something they can fix. An X
+ * passport marker is correct, and the automated channel simply does not carry
+ * it — so that booking belongs with a person, not on an error screen. The
+ * others are blanks on a form, and telling somebody which one is useful.
+ */
+export type PassengerProblem = 'name' | 'dob' | 'gender' | 'email';
+
 export type PassengerResult =
   | { ok: true; passenger: DuffelPassenger }
-  | { ok: false; why: string };
+  | { ok: false; why: string; problem: PassengerProblem };
 
 /**
  * One traveller, ready for an order — or the reason they are not.
@@ -96,8 +106,8 @@ export function toDuffelPassenger(
 ): PassengerResult {
   const given = (who.firstName ?? '').trim();
   const family = (who.lastName ?? '').trim();
-  if (!given || !family) return { ok: false, why: `${displayName} has no legal name saved` };
-  if (!who.dateOfBirth) return { ok: false, why: `${displayName} has no date of birth saved` };
+  if (!given || !family) return { ok: false, why: `${displayName} has no legal name saved`, problem: 'name' };
+  if (!who.dateOfBirth) return { ok: false, why: `${displayName} has no date of birth saved`, problem: 'dob' };
 
   const gender = duffelGender(who.gender);
   const title = duffelTitle(who.gender);
@@ -106,11 +116,14 @@ export function toDuffelPassenger(
     // they have already filled in.
     return {
       ok: false,
-      why: `${displayName}'s gender marker cannot be ticketed by this airline automatically`,
+      // Not a fault of theirs and not a blank to fill in. The marker is
+      // right; the automated channel is what is narrow.
+      why: `${displayName}'s gender marker can't go through automatic booking`,
+      problem: 'gender',
     };
   }
   const email = (who.email ?? '').trim();
-  if (!email) return { ok: false, why: `${displayName} has no email address` };
+  if (!email) return { ok: false, why: `${displayName} has no email address`, problem: 'email' };
 
   return {
     ok: true,

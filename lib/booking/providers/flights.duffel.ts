@@ -236,7 +236,9 @@ export const duffelFlights: BookingProvider = {
     }
 
     const passengers: DuffelPassenger[] = [];
+    const needsAPerson: string[] = [];
     for (const [i, t] of req.travelers.entries()) {
+      const who = [t.firstName, t.lastName].filter(Boolean).join(' ') || 'A traveller';
       const mapped = toDuffelPassenger(
         passengerIds[i],
         {
@@ -244,13 +246,45 @@ export const duffelFlights: BookingProvider = {
           dateOfBirth: t.dateOfBirth, gender: (t as { gender?: string }).gender,
           email: t.email, phone: t.phone,
         },
-        [t.firstName, t.lastName].filter(Boolean).join(' ') || 'A traveller',
+        who,
       );
-      // An X marker or a declined answer lands here. Duffel takes m or f and
-      // nothing else, and picking one on somebody's behalf issues a ticket
-      // that is refused at the gate.
-      if (mapped.ok === false) return fail(mapped.why);
+      if (mapped.ok === false) {
+        // A blank on a form is theirs to fill in, and saying which one is
+        // the useful thing to do.
+        if (mapped.problem !== 'gender') return fail(mapped.why);
+        // An X marker is not a blank. The passport is right and the
+        // automated channel is what is narrow: Duffel takes m or f and
+        // nothing else. Airlines do issue these tickets — through a person.
+        // Failing here would mean somebody cannot fly with their friends
+        // because of what is printed on their passport, which is not an
+        // outcome this app is going to produce.
+        needsAPerson.push(who);
+        continue;
+      }
       passengers.push(mapped.passenger);
+    }
+
+    if (needsAPerson.length) {
+      const names = needsAPerson.length === 1
+        ? needsAPerson[0]
+        : `${needsAPerson.slice(0, -1).join(', ')} and ${needsAPerson[needsAPerson.length - 1]}`;
+      return {
+        vertical: 'flight', mode: 'concierge', status: 'pending', provider: 'concierge',
+        providerRef: `CNC-${Date.now().toString(36).toUpperCase()}`,
+        // The fare they were quoted, so the group's total does not move.
+        priceCents: q.priceCents, currency: q.currency,
+        detail: q.detail,
+        // Said plainly, and without making it sound like something went
+        // wrong. Nothing has: this booking is being made by a person.
+        error: null,
+        raw: {
+          conciergeReason: 'gender-marker',
+          travellers: needsAPerson,
+          note: `${names} will be booked directly with the airline — automatic booking only carries male or female, and we are not putting the wrong one on a ticket.`,
+          offerId: q.providerRef,
+          flightIdent: (q.raw as { flightIdent?: string | null })?.flightIdent ?? null,
+        },
+      };
     }
 
     if (liveToken()) {

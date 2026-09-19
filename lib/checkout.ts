@@ -119,20 +119,29 @@ export function dedupe(rows: CheckoutRow[]): CheckoutRow[] {
   return out;
 }
 
-/** A row that costs money to the person tapping the button. */
-function charged(row: CheckoutRow): boolean {
-  // Concierge is a request, not a purchase: somebody rings the restaurant
-  // and the price is settled there. A failed or cancelled row is not a
-  // purchase either, and counting it would ask for money for nothing.
-  return row.provider !== 'concierge'
-    && row.mode !== 'concierge'
-    && row.status !== 'failed'
-    && row.status !== 'cancelled';
-}
-
 function priced(row: CheckoutRow): boolean {
   return typeof row.price_cents === 'number' && row.price_cents > 0;
 }
+
+const isConcierge = (row: CheckoutRow) => row.provider === 'concierge' || row.mode === 'concierge';
+const settled = (row: CheckoutRow) => row.status !== 'failed' && row.status !== 'cancelled';
+
+/**
+ * A row that costs money to the person tapping the button.
+ *
+ * Who books it is not the question — whether it has a price is. A table
+ * somebody rings up about is a request with no price, settled at the venue.
+ * A flight booked by a person because the automated channel will not carry
+ * an X passport marker is a seat that costs $236 and the group owes it.
+ * Excluding by provider put the second in the same bucket as the first, so a
+ * trip whose only booking was that flight showed a total of nothing and
+ * refused to take payment for a real fare.
+ */
+function charged(row: CheckoutRow): boolean {
+  if (!settled(row)) return false;
+  return priced(row) || !isConcierge(row);
+}
+
 
 export interface CheckoutState {
   rows: CheckoutRow[];
@@ -159,8 +168,9 @@ export function checkoutState(rows: CheckoutRow[]): CheckoutState {
   // it is going on the trip and its cost is not in the number on the screen.
   const unpricedCharged = chargeable.filter(r => !priced(r));
 
-  const conciergeCount = deduped.filter(r => !charged(r)
-    && r.status !== 'failed' && r.status !== 'cancelled' && !priced(r)).length;
+  // Real things being arranged that genuinely have no price yet — the table,
+  // not the seat.
+  const conciergeCount = deduped.filter(r => settled(r) && isConcierge(r) && !priced(r)).length;
 
   const canPay = totalCents > 0 && unpricedCharged.length === 0;
 
