@@ -208,6 +208,54 @@ quoting it were the same as planning around it.\n`
   // ── STAGE 2: Full itinerary for one selected trip ──────────────────────────
   if (detailTripId) {
     const { destination, vibe, costs } = body.tripData || {};
+
+    // What this group asked for, for THIS trip.
+    //
+    // Until now the itinerary was written from standing taste answers —
+    // cuisines, music, activity vibes — which describe a person in general
+    // and not a week in particular. The trip collects its own answers from
+    // every member; this is where they are finally used, which is the point
+    // of having asked.
+    //
+    // Only for a saved plan: detailTripId is the plan's id, and a local one
+    // has no rows to find.
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(detailTripId));
+    let wantedBlock = '';
+    const tripVetoes: string[] = [];
+    if (isUuid) {
+      const { data: said, error: saidError } = await supabase
+        .from('plan_preferences')
+        .select('summary_text, answers, users(name)')
+        .eq('plan_id', detailTripId)
+        .not('submitted_at', 'is', null);
+      if (saidError) {
+        console.error('[generate] could not read what the group asked for', { plan: detailTripId, code: saidError.code });
+      } else {
+        const lines: string[] = [];
+        for (const row of said ?? []) {
+          const r = row as Record<string, unknown>;
+          const raw = r.users as Record<string, unknown> | Record<string, unknown>[] | null;
+          const u = ((Array.isArray(raw) ? raw[0] : raw) ?? {}) as Record<string, unknown>;
+          const who = String(u.name || '').trim().split(/\s+/)[0] || 'Someone';
+          const a = (r.answers ?? {}) as Record<string, unknown>;
+          const parts: string[] = [];
+          if (r.summary_text) parts.push(String(r.summary_text));
+          if (a.mustDo) parts.push(`must do: ${String(a.mustDo)}`);
+          if (a.noWay) {
+            parts.push(`will not: ${String(a.noWay)}`);
+            // A thing somebody said to avoid is a constraint, not a hint.
+            tripVetoes.push(String(a.noWay));
+          }
+          if (parts.length) lines.push(`- ${who}: ${parts.join(' · ')}`);
+        }
+        if (lines.length) {
+          wantedBlock = `\nWHAT EACH OF THEM ASKED FOR, FOR THIS TRIP — these are the
+answers that matter most here, because they were given about this trip and not
+about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
+        }
+      }
+    }
+    const allVetoesHere = [...allVetoes, ...tripVetoes];
     const nightWhen = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = (nightPrefs.food || []).join(', ');
@@ -222,7 +270,7 @@ Music: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
 Drinks: ${drinkStyles.join(', ') || 'no preference'}
 A good night out, in their words: ${nightlife.join(', ') || 'no preference'}
 Dietary (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
-${allVetoes.length ? `Never include: ${allVetoes.join(', ')}` : ''}
+${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${wantedBlock}
 
 Return exactly one day. Use its three slots as the shape of an evening:
 - "morning" is where they meet first — a bar for a drink, a walk, or the thing
@@ -253,6 +301,7 @@ Music/nightlife: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
 Activities: ${activityVibes.slice(0, 4).join(', ') || 'mixed'}
 Dietary: ${dietaryNeeds.join(', ') || 'no restrictions'}
 Accommodation: ${tripAccommodation}
+${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${wantedBlock}
 
 ${solo ? `On their own, so every slot works for one: counter or bar seating,
 neighbourhoods that are comfortable solo, some days to meet people and some to
