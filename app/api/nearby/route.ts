@@ -100,8 +100,11 @@ export async function GET(req: NextRequest) {
     // The interest a cached row is filed under has to be one the reader asks
     // for, or it is stored where nobody will look. The category the source
     // gave is what Discover shows, so it is what the row is filed under.
-    void rememberEvents(ctx.db, live, f => String(f.category || 'events').toLowerCase())
-      .catch((e: unknown) => console.error('[nearby] could not remember events', e));
+    // Awaited, not fired and forgotten. This runs in a serverless function:
+    // once the response is returned the instance can be frozen, and an
+    // un-awaited write is one that may simply never happen — which is how a
+    // cache appears to work in review and stores nothing in production.
+    await rememberEvents(ctx.db, live, f => String(f.category || 'events').toLowerCase());
   }
 
   // Ranked first, so the best match for this person is still the best match,

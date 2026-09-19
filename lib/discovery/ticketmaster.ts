@@ -102,6 +102,12 @@ export async function ticketmaster(seeker: Seeker): Promise<SourceResult> {
         venue: venue?.name || null,
         source: 'ticketmaster',
         because: null,
+        // Ticketmaster sends the venue's position and this dropped it, which
+        // was invisible while only `dist` was read — and then stopped events
+        // being cached at all, because a row that cannot say where it is is
+        // not worth storing.
+        lat: Number(venue?.location?.latitude) || null,
+        lng: Number(venue?.location?.longitude) || null,
       };
     })
     .filter((f: Finding) => notRuledOut(`${f.title} ${f.category}`, seeker.avoid));
