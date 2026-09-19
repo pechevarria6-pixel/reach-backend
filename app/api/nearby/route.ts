@@ -15,7 +15,7 @@ import { dayWhere } from '@/lib/calendar';
 import { requireUser, isFail } from '@/lib/auth';
 import { ticketmaster } from '@/lib/discovery/ticketmaster';
 import { yelpEvents, yelpPlaces } from '@/lib/discovery/yelp';
-import { cachedVenues, cachedEvents, noteArea } from '@/lib/discovery/cache';
+import { cachedVenues, cachedEvents, noteArea, rememberEvents } from '@/lib/discovery/cache';
 import { rank, rotateDaily, seedOf, THIN_POOL } from '@/lib/discovery/rank';
 import { byDistance } from '@/lib/discovery/distance';
 import { whereFrom } from '@/lib/discovery/where';
@@ -91,6 +91,18 @@ export async function GET(req: NextRequest) {
   // cannot sweep the world and does not have to: people say where they are
   // by opening this screen — including people who have not done the quiz.
   await noteArea(ctx.db, seeker);
+
+  // Keep what the ticketed sources said, so the lane still answers when the
+  // API is slow or down. After the results are already in hand: this is a
+  // slower tomorrow if it fails, never a broken today.
+  const live = results.flatMap(r => r.findings).filter(f => f.source === 'ticketmaster');
+  if (live.length) {
+    // The interest a cached row is filed under has to be one the reader asks
+    // for, or it is stored where nobody will look. The category the source
+    // gave is what Discover shows, so it is what the row is filed under.
+    void rememberEvents(ctx.db, live, f => String(f.category || 'events').toLowerCase())
+      .catch((e: unknown) => console.error('[nearby] could not remember events', e));
+  }
 
   // Ranked first, so the best match for this person is still the best match,
   // then rotated within bands so the page is not identical to yesterday's.

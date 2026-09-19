@@ -142,15 +142,22 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   if (!keys.length) return { source: 'harvest', status: 'ok', findings: [] };
   const { dLat, dLng } = box(seeker);
 
+  // An inner join here, which is what this used to be, asks the database for
+  // events that hang off a venue we found ourselves. That is every harvested
+  // row and none of the others — a ticketed gig has a venue's NAME, not a row
+  // in our table, so the rows the sources migration exists to allow were
+  // excluded before anything could look at them.
+  //
+  // Left join, and the row describes itself when there is nothing to join to.
+  // The bounding box then has to be applied here rather than in the query,
+  // because it can no longer be expressed against a joined table alone.
   const { data, error } = await db
     .from('discovery_events')
-    .select('id, title, starts_on, when_text, price_text, booking_url, interest, discovery_venues!inner(name, lat, lng, city, street)')
+    .select('id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues(name, lat, lng, city, street)')
     .in('interest', asStored(keys))
     // A harvest that failed must not leave last month's classes standing.
     .gt('stale_after', new Date().toISOString())
-    .gte('discovery_venues.lat', seeker.lat - dLat).lte('discovery_venues.lat', seeker.lat + dLat)
-    .gte('discovery_venues.lng', seeker.lng - dLng).lte('discovery_venues.lng', seeker.lng + dLng)
-    .limit(40);
+    .limit(120);
 
   if (error) {
     console.error('[discover/cache] could not read events', error.message);
@@ -164,10 +171,14 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
     // A dated class that has been and gone is worse than no class at all.
     .filter(e => !e.starts_on || e.starts_on >= today)
     .map((e): Finding => {
-      const venue = (Array.isArray(e.discovery_venues) ? e.discovery_venues[0] : e.discovery_venues) as
-        { name: string; lat: number; lng: number; city: string | null; street: string | null };
+      const joined = (Array.isArray(e.discovery_venues) ? e.discovery_venues[0] : e.discovery_venues) as
+        { name: string; lat: number; lng: number; city: string | null; street: string | null } | null;
+      // Whichever knows where this is: the venue we found, or the row itself.
+      const venue = joined ?? (e.venue_name || e.lat != null
+        ? { name: String(e.venue_name ?? ''), lat: Number(e.lat), lng: Number(e.lng), city: e.city ?? null, street: null }
+        : null);
       return {
-        id: `harvest_${e.id}`,
+        id: `${e.source || 'harvest'}_${e.id}`,
         title: e.title,
         meta: [e.when_text, venue?.name].filter(Boolean).join(' · '),
         emoji: kindFor(e.interest).emoji,
@@ -179,13 +190,24 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
         url: e.booking_url,
         date: e.starts_on || null,
         venue: venue?.name || null,
-        source: 'harvest',
+        // What actually found it. A cached ticketed gig is a Ticketmaster
+        // finding that happens to have been stored; calling it 'harvest'
+        // would make the health table and the logs lie about where Discover
+        // gets its results.
+        source: (e.source && e.source !== 'harvest' ? e.source : 'harvest') as Finding['source'],
         because: becauseOf(seeker, e.interest),
-        lat: venue?.lat ?? null,
-        lng: venue?.lng ?? null,
+        lat: Number.isFinite(venue?.lat as number) ? (venue?.lat as number) : null,
+        lng: Number.isFinite(venue?.lng as number) ? (venue?.lng as number) : null,
       };
     })
-    .filter(f => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid));
+    // Near them, now that the box cannot be a condition of the join. A row
+    // that cannot say where it is does not get to claim it is nearby.
+    .filter(f => {
+      if (f.lat == null || f.lng == null) return false;
+      return Math.abs(f.lat - seeker.lat) <= dLat && Math.abs(f.lng - seeker.lng) <= dLng;
+    })
+    .filter(f => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid))
+    .slice(0, 40);
 
   return { source: 'harvest', status: 'ok', findings };
 }
@@ -226,4 +248,53 @@ export async function noteArea(db: SupabaseClient, seeker: Seeker): Promise<void
     // Never fail a screen over bookkeeping for a background job.
     console.error('[discover/cache] could not note the area', e);
   }
+}
+
+// ─── Keeping what a ticketed source told us ─────────────────────────────
+// Ticketmaster answers every time Discover is opened, which is a request per
+// visit for a list that changes daily at most. Storing what came back means
+// the lane keeps answering when the API is slow, rate-limited or down —
+// which is the difference between a quiet week and a city that looks dead.
+//
+// Only possible since sql/discovery-events-sources-2026-09-18.sql: these
+// rows have a venue's name and no venue of ours, and venue_id was NOT NULL.
+const CACHE_DAYS = 2;
+
+export async function rememberEvents(
+  db: SupabaseClient,
+  findings: Finding[],
+  interestFor: (f: Finding) => string,
+): Promise<number> {
+  // Only what can be identified again. The unique rule for a non-harvest row
+  // is (source, external_id); without an id of its own a row would be written
+  // afresh on every visit and the table would grow without bound.
+  const rows = findings
+    .filter(f => f.source !== 'harvest' && f.id && f.lat != null && f.lng != null)
+    .map(f => ({
+      source: f.source,
+      external_id: String(f.id),
+      title: f.title,
+      starts_on: f.date || null,
+      when_text: f.meta || null,
+      price_text: f.price || null,
+      booking_url: f.url,
+      interest: interestFor(f),
+      venue_name: f.venue || null,
+      lat: f.lat,
+      lng: f.lng,
+      city: null,
+      found_at: new Date().toISOString(),
+      stale_after: new Date(Date.now() + CACHE_DAYS * 86400_000).toISOString(),
+    }));
+  if (!rows.length) return 0;
+
+  const { error } = await db.from('discovery_events').upsert(rows, { onConflict: 'source,external_id' });
+  if (error) {
+    // Never fatal, and never surfaced. Discover has already answered from the
+    // live call by the time this runs; failing to keep a copy is a slower
+    // tomorrow, not a broken today.
+    console.error('[discover/cache] could not remember events', error.message);
+    return 0;
+  }
+  return rows.length;
 }
