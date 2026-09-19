@@ -3241,7 +3241,10 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
   const isLast=qStep===totalSteps-1;
   const canNext=isDateStep
     ?(isNight?!!startDate:(startDate&&endDate&&nights>0))
-    :(quizQ?.optional||(quizQ?.multi?(answers[quizQ?.id]||[]).length>0:!!answers[quizQ?.id]));
+    // `free` as well as `optional`, matching the taste quiz: a question with
+    // nothing to pick from cannot be answered by picking, and a free one
+    // that was ever made required would otherwise trap somebody on it.
+    :(quizQ?.optional||quizQ?.free||(quizQ?.multi?(answers[quizQ?.id]||[]).length>0:!!answers[quizQ?.id]));
 
   const handleGenerate=()=>{
     // Merge custom inputs into answers
