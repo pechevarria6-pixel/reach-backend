@@ -38,6 +38,11 @@ type Lane = {
 async function probe(
   provider: string, lane: string, keyName: string | null, url: string | null,
   init?: RequestInit,
+  // What a given status means for THIS provider, where the general reading
+  // would be wrong. Yelp answers 403 to a perfectly good key when the
+  // account is not in the beta that endpoint needs, and "key rejected" sends
+  // somebody off to rotate a credential that was never the problem.
+  meaning?: Record<number, { status: Lane['status']; detail: string }>,
 ): Promise<Lane> {
   const key = keyName ? process.env[keyName] : undefined;
   const keyState: Lane['key'] = !keyName ? 'not required' : key ? 'set' : 'MISSING';
@@ -60,6 +65,8 @@ async function probe(
     // so it is never included. 400 counts as a rejection when a key was sent:
     // Resend answers an invalid key that way, and reading it as "bad request"
     // hid a production mailer that had stopped working.
+    const known = meaning?.[res.status];
+    if (known) return { provider, lane, key: keyState, status: known.status, ms, detail: known.detail };
     const rejected = keyName && [400, 401, 403].includes(res.status);
     return {
       provider, lane, key: keyState, status: 'refused', ms,
@@ -394,7 +401,8 @@ export async function GET(req: NextRequest) {
     // single "Yelp: ok" hid a lane that has never once returned anything.
     probe('Yelp (events)', 'discovery', 'YELP_API_KEY',
       `https://api.yelp.com/v3/events?latitude=35.17&longitude=-79.39&radius=40000&limit=1&start_date=${Math.floor(Date.now() / 1000)}`,
-      { headers: { Authorization: `Bearer ${process.env.YELP_API_KEY ?? ''}` } }),
+      { headers: { Authorization: `Bearer ${process.env.YELP_API_KEY ?? ''}` } },
+      { 403: { status: 'dormant', detail: 'needs Yelp\'s developer beta — join it on the Manage App page' } }),
 
     // ── Booking ────────────────────────────────────────────────────────
     probe('LiteAPI (hotels)', 'booking', 'LITEAPI_KEY',
