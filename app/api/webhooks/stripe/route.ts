@@ -33,21 +33,37 @@ export async function POST(req: NextRequest) {
       // app. Booking is still nobody's but a member's decision — a webhook
       // must not spend their money unprompted — but the moment now arrives.
       if (intent.metadata.kind === 'reach_contribution') {
-        await supabase.from('contributions')
+        // Stripe has taken the money. If this write fails the contribution
+        // stays 'pending', the group reads as short, and somebody pays a
+        // second time for a share they have already paid. Logged, not
+        // thrown: the webhook must answer 200 or Stripe retries for days,
+        // and the funds-flow path is not being changed here.
+        const { error: markPaid } = await supabase.from('contributions')
           .update({ status: 'succeeded', updated_at: new Date().toISOString() })
           .eq('stripe_payment_intent', intent.id);
+        if (markPaid) {
+          console.error('[stripe webhook] MONEY TAKEN BUT NOT RECORDED', {
+            intent: intent.id, plan: intent.metadata.plan_id, code: markPaid.code,
+          });
+        }
         await announceIfFunded(supabase, intent.metadata.plan_id);
         break;
       }
 
-      await supabase.from('payments').update({ status: 'succeeded', stripe_charge_id: intent.latest_charge as string, mfa_verified: intent.metadata.mfa_required === 'true' }).eq('stripe_payment_intent_id', intent.id);
+      const { error: paid } = await supabase.from('payments').update({ status: 'succeeded', stripe_charge_id: intent.latest_charge as string, mfa_verified: intent.metadata.mfa_required === 'true' }).eq('stripe_payment_intent_id', intent.id);
+      if (paid) {
+        console.error('[stripe webhook] MONEY TAKEN BUT NOT RECORDED', {
+          intent: intent.id, plan: intent.metadata.plan_id, code: paid.code,
+        });
+      }
 
       // Check if all travelers have paid and mark plan booked
       const { data: payments } = await supabase.from('payments').select('user_id').eq('plan_id', intent.metadata.plan_id).eq('status', 'succeeded');
       const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', (await supabase.from('plans').select('group_id').eq('id', intent.metadata.plan_id).single()).data?.group_id);
 
       if (payments && members && payments.length >= members.length) {
-        await supabase.from('plans').update({ status: 'booked', booked_at: new Date().toISOString() }).eq('id', intent.metadata.plan_id);
+        const { error: booked } = await supabase.from('plans').update({ status: 'booked', booked_at: new Date().toISOString() }).eq('id', intent.metadata.plan_id);
+        if (booked) console.error('[stripe webhook] everyone paid but the plan is not marked booked', { plan: intent.metadata.plan_id, code: booked.code });
       }
 
       // Send receipt
@@ -62,13 +78,17 @@ export async function POST(req: NextRequest) {
       const intent = event.data.object as Stripe.PaymentIntent;
 
       if (intent.metadata.kind === 'reach_contribution') {
-        await supabase.from('contributions')
+        const { error: contribFailed } = await supabase.from('contributions')
           .update({ status: 'failed', updated_at: new Date().toISOString() })
           .eq('stripe_payment_intent', intent.id);
+        if (contribFailed) console.error('[stripe webhook] could not record a failed contribution', { intent: intent.id, code: contribFailed.code });
         break;
       }
 
-      await supabase.from('payments').update({ status: 'failed', failure_reason: intent.last_payment_error?.message }).eq('stripe_payment_intent_id', intent.id);
+      const { error: failed } = await supabase.from('payments').update({ status: 'failed', failure_reason: intent.last_payment_error?.message }).eq('stripe_payment_intent_id', intent.id);
+      // A payment left reading 'pending' after it failed is one nobody knows
+      // to retry.
+      if (failed) console.error('[stripe webhook] could not record a failed payment', { intent: intent.id, code: failed.code });
       break;
     }
     case 'charge.refunded': {

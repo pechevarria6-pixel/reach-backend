@@ -90,8 +90,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to create group' }, { status: 500 });
   }
 
-  // Add creator as admin
-  await supabase.from('group_members').insert({ group_id: group.id, user_id: user.id, role: 'admin' });
+  // Add creator as admin. If this does not land, they have made a group they
+  // are not in — it will not appear on their own screen, and nobody else can
+  // be added to it either, because adding members is admin-only.
+  const { error: adminErr } = await supabase
+    .from('group_members').insert({ group_id: group.id, user_id: user.id, role: 'admin' });
+  if (adminErr) {
+    console.error('[groups POST] creator not added as admin', { group: group.id, code: adminErr.code });
+    return NextResponse.json({ error: 'Failed to create group' }, { status: 500 });
+  }
 
   // Add additional members if provided. The creator is already an admin, so
   // including them again would violate the (group_id, user_id) unique
@@ -116,9 +123,12 @@ export async function POST(req: NextRequest) {
       .map(e => knownByEmail.get(e))
       .filter((id): id is string => !!id && id !== user.id && !extras.includes(id));
     if (directIds.length) {
-      await supabase.from('group_members').insert(
+      const { error: directErr } = await supabase.from('group_members').insert(
         directIds.map(uid => ({ group_id: group.id, user_id: uid, role: 'member' }))
       );
+      // Named by email, has an account, and silently not added: they never
+      // hear about the trip and nobody is told they are missing.
+      if (directErr) console.error('[groups POST] could not add known members', { group: group.id, code: directErr.code });
     }
 
     const toInvite = emails.filter(e => !knownByEmail.has(e));

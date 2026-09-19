@@ -69,11 +69,15 @@ export async function POST(_req: NextRequest, { params }: { params: { token: str
     }
   }
 
-  await ctx.db.from('group_invites').update({
+  // They are in the group either way — that insert above is the part that
+  // matters and it is checked. An invite left reading 'pending' is a link
+  // that still works after it has been used, which is worth knowing about.
+  const { error: notClosed } = await ctx.db.from('group_invites').update({
     status: 'accepted',
     accepted_at: new Date().toISOString(),
     accepted_by: ctx.user.id,
   }).eq('id', invite.id);
+  if (notClosed) console.error('[invite accept] invite still open after use', { invite: invite.id, code: notClosed.code });
 
   return NextResponse.json({ joined: true, groupId: invite.group_id });
 }

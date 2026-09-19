@@ -96,11 +96,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         const driftCents = fresh.priceCents - booking.price_cents;
         const driftPct = driftCents / booking.price_cents;
         if (driftCents > 2500 || driftPct > 0.05) {
-          await db.from('bookings').update({
+          // If this does not stick, the next approval compares against the
+          // old price and the rise passes through unnoticed — which is the
+          // whole thing this guard exists to catch.
+          const { error: drifted } = await db.from('bookings').update({
             price_cents: fresh.priceCents,
             detail: `${booking.detail} · price rose $${(driftCents / 100).toFixed(2)} since proposal`,
             updated_at: new Date().toISOString(),
           }).eq('id', params.id);
+          if (drifted) console.error('[approve] could not record a price rise', { bookingId: params.id, code: drifted.code });
           return NextResponse.json({
             error: 'Price changed since proposal — re-approve to accept',
             oldPriceCents: booking.price_cents,
@@ -195,11 +199,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // A booking that fails at the provider is the single most expensive thing
     // to debug after the fact, and it left no trace at all.
     console.error('[approve] provider execution failed', { bookingId: params.id, msg });
-    await db.from('bookings').update({
+    // A booking that failed and does not say so reads as still awaiting
+    // approval, so somebody approves it again and the provider is asked to
+    // book the same thing twice.
+    const { error: notMarked } = await db.from('bookings').update({
       status: 'failed', error: msg,
       approved_by: ctx.user.id, approved_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', params.id);
+    if (notMarked) console.error('[approve] a failed booking could not be marked failed', { bookingId: params.id, code: notMarked.code });
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 }
