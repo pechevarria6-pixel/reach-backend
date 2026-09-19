@@ -27,6 +27,9 @@ const CreatePlanSchema = z.object({
   // purpose: the quiz's questions are a product decision that changes, and a
   // schema pinned to today's would reject tomorrow's answers.
   trip_answers: z.record(z.unknown()).nullish(),
+  // The lines the model wrote about what this option does for whom. Shown on
+  // the card they chose from, and worth keeping on the screen they return to.
+  why_chosen: z.array(z.string()).nullish(),
   // A trip somebody is taking alone waits for nobody.
   solo_mode: z.boolean().nullish(),
 });
@@ -55,7 +58,12 @@ export async function POST(req: NextRequest) {
     .from('group_members').select('role').eq('group_id', body.group_id).eq('user_id', user.id).single();
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  const { data: plan, error } = await supabase.from('plans').insert({
+  // Built once and inserted twice if need be. why_chosen and solo_mode arrive
+  // in migrations, and PostgREST fails the WHOLE insert on a column it does
+  // not know — so a migration that had not been run yet would stop anybody
+  // creating a trip at all, to keep a line of explanatory text. The trip
+  // matters more than the sentence about it.
+  const row: Record<string, unknown> = {
     group_id: body.group_id,
     title: body.title,
     type: body.type,
@@ -71,8 +79,23 @@ export async function POST(req: NextRequest) {
     dealbreakers: body.dealbreakers || [],
     vote_options: body.vote_options || [],
     solo_mode: body.solo_mode === true,
+    why_chosen: body.why_chosen?.length ? body.why_chosen : null,
     created_by: user.id,
-  }).select().single();
+  };
+
+  const first = await supabase.from('plans').insert(row).select().single();
+  // "Could not find the 'x' column" — drop the ones a migration adds and go
+  // again, rather than losing the plan.
+  const unknownColumn = /could not find the '([a-z_]+)' column|column "?([a-z_]+)"? .*does not exist/i
+    .exec(first.error?.message || '');
+  let retry = null;
+  if (first.error && unknownColumn) {
+    const name = unknownColumn[1] || unknownColumn[2];
+    console.error('[plans POST] retrying without a column this database does not have yet', { column: name });
+    delete row[name];
+    retry = await supabase.from('plans').insert(row).select().single();
+  }
+  const { data: plan, error } = retry ?? first;
 
   if (error || !plan) {
     console.error('[plans POST] insert failed', error);

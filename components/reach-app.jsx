@@ -4227,6 +4227,25 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     <div style={{display:"inline-block",background:C.s3,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.t2,marginTop:8}}>
                       {trip.vibe}
                     </div>
+                    {/* What this option does about what somebody actually
+                        asked for, by name. The model has been writing these
+                        all along and no screen showed them, so the answer to
+                        "why is this here" stayed in the database. A person
+                        who reads their own words back knows they were
+                        listened to; a generic "great for your group" is what
+                        every other travel site says. */}
+                    {(trip.used_suggestions||[]).length>0&&(
+                      <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+                        <div style={{fontSize:10.5,color:C.t3,textTransform:"uppercase",
+                          letterSpacing:".06em",marginBottom:6}}>Because you said</div>
+                        {trip.used_suggestions.slice(0,3).map((line,i)=>(
+                          <div key={i} style={{display:"flex",gap:7,marginBottom:4}}>
+                            <span style={{color:C.accentText,flexShrink:0,fontSize:12}}>›</span>
+                            <span style={{fontSize:12,color:C.t2,lineHeight:1.5}}>{line}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Cost breakdown */}
@@ -5452,6 +5471,23 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
               ))}
             </div>
+            {/* Why this trip, in the group's own words. It was on the card
+                they chose from and then disappeared the moment they chose —
+                so the one screen everybody comes back to said nothing about
+                why the trip is what it is. */}
+            {(plan.aiData?.used_suggestions||[]).length>0&&(
+              <div style={{padding:"0 20px 14px"}}>
+                <div className="sl" style={{marginBottom:10}}>Why this trip</div>
+                <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
+                  {plan.aiData.used_suggestions.slice(0,4).map((line,i)=>(
+                    <div key={i} style={{display:"flex",gap:8,marginBottom:i<Math.min(3,plan.aiData.used_suggestions.length-1)?8:0}}>
+                      <span style={{color:C.accentText,flexShrink:0,fontSize:13}}>›</span>
+                      <span style={{fontSize:13,color:C.t2,lineHeight:1.55}}>{line}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div style={{padding:"0 20px 14px"}}>
               <div className="sl" style={{marginBottom:10}}>Who's coming</div>
               {plan.participants.map(uid=>{const u=um[uid];return u?(
@@ -7479,6 +7515,9 @@ export default function ReachApp({realUser,onSignOut}={}){
     accommodation:p.accommodation,
     vibe:p.vibe,
     destStyle:p.destination_style,
+    // Why this trip, as the group was shown when they chose it. Without
+    // reading it back, the reasons survived until the first reload.
+    aiData:p.why_chosen?.length?{used_suggestions:p.why_chosen}:null,
     dealbreakers:p.dealbreakers||[],
   });
 
@@ -7622,6 +7661,7 @@ export default function ReachApp({realUser,onSignOut}={}){
           // makes readiness about this trip rather than a quiz done once.
           goal_blurb:plan.goalBlurb||null,
           trip_answers:plan.tripAnswers||null,
+          why_chosen:plan.aiData?.used_suggestions||null,
           solo_mode:plan.soloMode===true,
         }),
       });
