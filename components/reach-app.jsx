@@ -5235,6 +5235,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         }),
       });
       const d=await res.json().catch(()=>({}));
+      // 409 is not a failure. It is the trip waiting for somebody, and the
+      // server says who — "Marco hasn't said what they want from this trip
+      // yet". Treating it as an error would put "couldn't build the plan" on
+      // screen when nothing is broken and there is something to do about it.
+      if(res.status===409){toast(d.error||"Waiting on the rest of the group");setBuilding(false);return;}
       if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan");
       const rows=itineraryRows(d.itinerary);
       if(!rows.length)throw new Error("Nothing came back — try again");

@@ -6,6 +6,7 @@ import {
   parseModelJSON, textOf, normalizeTrips, dropFillerDays,
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote } from '@/lib/generation-rules';
+import { planReadiness } from '@/lib/plan-readiness';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -220,6 +221,46 @@ quoting it were the same as planning around it.\n`
     // Only for a saved plan: detailTripId is the plan's id, and a local one
     // has no rows to find.
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(detailTripId));
+
+    // Nobody's itinerary gets written before everybody has had their say.
+    //
+    // This is a stronger rule than the one on voting, and it is the one that
+    // matters: an itinerary is the plan. Building it from half the group's
+    // answers and topping it up later would mean the people who answered
+    // first shape the week, and whoever was slow gets an afterthought bolted
+    // onto a trip already decided. Waiting costs a day; the alternative
+    // costs somebody their holiday.
+    //
+    // It also means an itinerary does not need rebuilding when a late answer
+    // arrives, because a late answer cannot arrive.
+    if (isUuid) {
+      const { data: planRow } = await supabase
+        .from('plans').select('group_id, solo_mode').eq('id', detailTripId).maybeSingle();
+      if (planRow?.group_id) {
+        try {
+          const readiness = await planReadiness(
+            supabase, String(detailTripId), String(planRow.group_id),
+            planRow.solo_mode === true,
+          );
+          if (!readiness.allReady) {
+            const waiting = readiness.waitingOn;
+            return NextResponse.json({
+              error: waiting.length === 1
+                ? `${waiting[0]} hasn't said what they want from this trip yet. The plan gets written once everyone has.`
+                : `${waiting.slice(0, -1).join(', ')} and ${waiting[waiting.length - 1]} haven't said what they want from this trip yet. The plan gets written once everyone has.`,
+              waitingOn: waiting,
+            }, { status: 409 });
+          }
+        } catch {
+          console.error('[generate] could not check who has answered', { plan: detailTripId });
+          return NextResponse.json(
+            { error: 'We could not check who has answered yet — try again in a moment.' },
+            { status: 503 },
+          );
+        }
+      }
+    }
+
     let wantedBlock = '';
     const tripVetoes: string[] = [];
     if (isUuid) {
