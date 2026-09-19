@@ -13,7 +13,7 @@
 // message or an exception, so they never travel through one.
 
 /** What an airline requires, in the order a person would fill it in. */
-export const REQUIRED = ['legal name', 'date of birth', 'gender'] as const;
+export const REQUIRED = ['legal name', 'date of birth', 'gender', 'phone number'] as const;
 
 export type Gender = 'female' | 'male' | 'x' | 'unspecified';
 
@@ -31,6 +31,12 @@ export interface Essentials {
   lastName?: string | null;
   dateOfBirth?: string | null;   // YYYY-MM-DD
   gender?: string | null;
+  /**
+   * The airline's requirement, not ours. A real Duffel order came back
+   * "Field 'phone_number' can't be blank" — it is how the carrier reaches
+   * somebody when a flight moves, and no ticket is issued without one.
+   */
+  phone?: string | null;
   knownTravelerNumber?: string | null;
   homeAirport?: string | null;
   seatPreference?: string | null;
@@ -74,8 +80,14 @@ export function missingFor(e: Essentials | null | undefined, today = new Date())
   if (!first || !last) missing.push('legal name');
   if (!validBirthDate(e?.dateOfBirth, today)) missing.push('date of birth');
   const gender = (e?.gender ?? '').trim().toLowerCase();
-  // 'unspecified' is a stored answer but not a bookable one.
-  if (!gender || gender === 'unspecified' || !GENDERS.includes(gender as Gender)) missing.push('gender');
+  // 'unspecified' is a stored answer, and not one an automated booking can
+  // carry — see duffelGender. It is still counted as answered here: that
+  // booking goes to a person rather than failing, so somebody who has told
+  // us is not left looking at an unfinished form for ever.
+  if (!gender || !GENDERS.includes(gender as Gender)) missing.push('gender');
+  // Seven digits is not a validation of anything much; it is enough to catch
+  // a half-typed number, and the airline will reject a wrong one anyway.
+  if (String(e?.phone ?? '').replace(/\D/g, '').length < 7) missing.push('phone number');
   return missing;
 }
 

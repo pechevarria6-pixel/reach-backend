@@ -57,7 +57,7 @@ export function withoutTravelerDetails<T extends { travelers?: unknown[] }>(item
 export async function groupReadiness(db: SupabaseClient, groupId: string): Promise<GroupReadiness> {
   const full = await db
     .from('group_members')
-    .select('user_id, users(id, name, first_name, last_name, date_of_birth, gender)')
+    .select('user_id, users(id, name, first_name, last_name, date_of_birth, gender, phone)')
     .eq('group_id', groupId);
 
   // gender arrives in sql/travel-essentials-2026-09-18.sql. Until it is run,
@@ -67,7 +67,7 @@ export async function groupReadiness(db: SupabaseClient, groupId: string): Promi
   const fallback = full.error && /gender/.test(full.error.message || '')
     ? await db
       .from('group_members')
-      .select('user_id, users(id, name, first_name, last_name, date_of_birth)')
+      .select('user_id, users(id, name, first_name, last_name, date_of_birth, phone)')
       .eq('group_id', groupId)
     : null;
 
@@ -89,6 +89,7 @@ export async function groupReadiness(db: SupabaseClient, groupId: string): Promi
       lastName: u.last_name as string | null,
       dateOfBirth: u.date_of_birth as string | null,
       gender: u.gender as string | null,
+      phone: u.phone as string | null,
     });
   });
 

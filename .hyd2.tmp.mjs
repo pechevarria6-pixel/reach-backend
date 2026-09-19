@@ -1,0 +1,13 @@
+import { chromium } from '@playwright/test';
+const b = await chromium.launch();
+const ctx = await b.newContext({ storageState: 'playwright/.auth/session.json', viewport:{width:390,height:844} });
+const page = await ctx.newPage();
+const errs=[];
+page.on('console', m => { const t=m.text(); if(/hydrat|did not match|Text content/i.test(t)) errs.push(t.slice(0,300)); });
+page.on('pageerror', e => errs.push('PAGEERROR '+e.message.slice(0,150)));
+await page.goto('https://www.alcanzar.io/home', { waitUntil:'networkidle' });
+await page.waitForTimeout(4000);
+const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
+console.log('data-theme after load:', theme);
+console.log('errors:', errs.length);
+console.log(errs.slice(0,2).join('\n'));

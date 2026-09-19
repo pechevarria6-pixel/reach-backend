@@ -72,7 +72,11 @@ export interface DuffelPassenger {
   gender: 'm' | 'f';
   title: 'mr' | 'ms';
   email: string;
-  phone_number?: string;
+  // Required, not optional. A real order came back "Field 'phone_number'
+  // can't be blank", which the type said was fine to omit — so every flight
+  // booking failed for everybody, and the only reason it was noticed is that
+  // a test of the X-marker path happened to book a male passenger first.
+  phone_number: string;
 }
 
 /**
@@ -83,7 +87,7 @@ export interface DuffelPassenger {
  * it — so that booking belongs with a person, not on an error screen. The
  * others are blanks on a form, and telling somebody which one is useful.
  */
-export type PassengerProblem = 'name' | 'dob' | 'gender' | 'email';
+export type PassengerProblem = 'name' | 'dob' | 'gender' | 'email' | 'phone';
 
 export type PassengerResult =
   | { ok: true; passenger: DuffelPassenger }
@@ -124,6 +128,9 @@ export function toDuffelPassenger(
   }
   const email = (who.email ?? '').trim();
   if (!email) return { ok: false, why: `${displayName} has no email address`, problem: 'email' };
+  // The airline will not take an order without one.
+  const phone = String(who.phone ?? '').trim();
+  if (!phone) return { ok: false, why: `${displayName} has no phone number saved`, problem: 'phone' };
 
   return {
     ok: true,
@@ -135,7 +142,7 @@ export function toDuffelPassenger(
       gender,
       title,
       email,
-      ...(who.phone ? { phone_number: String(who.phone).trim() } : {}),
+      phone_number: phone,
     },
   };
 }

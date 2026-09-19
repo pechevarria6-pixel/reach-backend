@@ -12,6 +12,9 @@ const COMPLETE = {
   lastName: 'Raman',
   dateOfBirth: '1991-04-02',
   gender: 'female',
+  // The airline's requirement: a real order came back "Field 'phone_number'
+  // can't be blank", so a record without one is not a complete record.
+  phone: '+1 555 123 4567',
   knownTravelerNumber: 'TT1234567',
   homeAirport: 'RDU',
 };
@@ -21,18 +24,25 @@ test('a complete record is ready', () => {
   assert.deepEqual(missingFor(COMPLETE, TODAY), []);
 });
 
-test('an empty record needs all three', () => {
-  assert.deepEqual(missingFor(null, TODAY), ['legal name', 'date of birth', 'gender']);
+test('an empty record needs all four', () => {
+  assert.deepEqual(missingFor(null, TODAY), ['legal name', 'date of birth', 'gender', 'phone number']);
+});
+
+test('no phone is not ready, however complete the rest is', () => {
+  assert.deepEqual(missingFor({ ...COMPLETE, phone: null }, TODAY), ['phone number']);
+  // Half a number is nobody's number.
+  assert.deepEqual(missingFor({ ...COMPLETE, phone: '555' }, TODAY), ['phone number']);
 });
 
 test('half a name is not a name — a ticket carries both', () => {
   assert.deepEqual(missingFor({ ...COMPLETE, lastName: '  ' }, TODAY), ['legal name']);
 });
 
-test('"unspecified" is stored but cannot be ticketed', () => {
-  // Someone may decline to say; the airline still will not sell on it, and
-  // pretending otherwise would fail at the worst possible moment.
-  assert.deepEqual(missingFor({ ...COMPLETE, gender: 'unspecified' }, TODAY), ['gender']);
+test('declining to say is an answer, and it is not a blank form', () => {
+  // It cannot go through automatic booking — see duffelGender — but that
+  // booking is made by a person rather than failed, so somebody who has told
+  // us where they stand is not left staring at an unfinished form for ever.
+  assert.deepEqual(missingFor({ ...COMPLETE, gender: 'unspecified' }, TODAY), []);
 });
 
 test('x is a real passport marker and is accepted', () => {
@@ -65,7 +75,7 @@ test('readiness carries status and never a value', () => {
 test('readiness names what is missing, not what was given', () => {
   const r = readinessOf('u2', 'Marco', { firstName: 'Marco', lastName: 'Diaz' }, TODAY);
   assert.equal(r.ready, false);
-  assert.deepEqual(r.missing, ['date of birth', 'gender']);
+  assert.deepEqual(r.missing, ['date of birth', 'gender', 'phone number']);
 });
 
 test('the group is told who to ask, by name', () => {

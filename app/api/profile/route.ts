@@ -110,6 +110,8 @@ export async function GET() {
       firstName: row.first_name ?? null,
       lastName: row.last_name ?? null,
       dateOfBirth: row.date_of_birth ?? null,
+      // The airline's requirement — no order is accepted without one.
+      phone: row.phone ?? null,
       // Undefined means the migration has not run, which the screen shows
       // differently from an unanswered question.
       gender: 'gender' in row ? (row.gender ?? null) : undefined,
@@ -122,6 +124,7 @@ export async function GET() {
         lastName: row.last_name,
         dateOfBirth: row.date_of_birth,
         gender: row.gender,
+        phone: row.phone,
       }),
     },
     preferences: {
@@ -172,6 +175,9 @@ const Schema = z.object({
     .refine(v => validBirthDate(v), 'A date of birth looks like 1991-04-02, and is in the past')
     .nullable().optional(),
   gender: z.enum(GENDERS as [string, ...string[]]).nullable().optional(),
+  // Loosely checked on purpose: numbers are written a dozen ways and the
+  // airline rejects a wrong one anyway. This only catches a half-typed one.
+  phone: z.string().trim().min(7).max(32).nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest) {
@@ -198,7 +204,7 @@ export async function PATCH(req: NextRequest) {
     ['seat', 'seat_preference'], ['dietary', 'dietary_needs'], ['climate', 'climate_preference'],
     ['homeAirport', 'home_airport'], ['homeCity', 'home_city'],
     ['firstName', 'first_name'], ['lastName', 'last_name'],
-    ['dateOfBirth', 'date_of_birth'], ['gender', 'gender'],
+    ['dateOfBirth', 'date_of_birth'], ['gender', 'gender'], ['phone', 'phone'],
   ] as const) {
     const value = parsed.data[key];
     if (value !== undefined) updates[column] = value || null;

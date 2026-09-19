@@ -1,0 +1,85 @@
+{
+  "cookies": [
+    {
+      "name": "__client",
+      "value": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ImNsaWVudF8zSlNyb3FSaWcxaDBXRFB3V0tsMnFIUExnY3MiLCJyb3RhdGluZ190b2tlbiI6ImZieDZnZWxuZXB0cHZ5NW9iZDNrcThueW9tN29qeXpuMWJueWVlenYifQ.KJwmm8w7Qm7qMZ_5KvZaiReeT7kfIEr-9W_7XWhQNwGMfjU-V2rNc0XrVCaDPcGgmft3rGUo1Sb1m1On6ulywfU0XjRN3FBbIvPkUaWfD7u2pIMOFvUGcApq6NeBPtNdBDQTdUt1I5CddEzAcUEQHiktsBKzHyq0OWhnfMHvbybyloNbt_YwbY7ka78HQw2-Gc1WC-Gnf4nL8qiEZvsX-VAtI1epqsUKeo4ybQ4CrjaELrsGfeOVNO9sbS3kUoZolyjk9J1IiFjZz2f595uH8GeiSzDUbvvUWhZm1EDH309j6pSM5BjYdo8hD9Bayw0T8IBL4L9SNERPO78cxQ5L8Q",
+      "domain": ".clerk.alcanzar.io",
+      "path": "/",
+      "expires": 1824225529.114002,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__client_uat",
+      "value": "0",
+      "domain": ".alcanzar.io",
+      "path": "/",
+      "expires": 1824225948.149297,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__client_uat_6LLf1Aq7",
+      "value": "0",
+      "domain": ".alcanzar.io",
+      "path": "/",
+      "expires": 1824225948.149397,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_cfuvid",
+      "value": "EdwObsT48lBhstXy9CWVSMsi85.d_xuEIlg27xFZCA8-1789665487.4695249-1.0.1.1-CYrR7oI9C.gGKsBF1vLPvJ0JGRCbv3VZy99UNPOZlRw",
+      "domain": ".clerk.alcanzar.io",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "__Host-GAPS",
+      "value": "1:iF1U68fwZiDN4sGU0Godf0x6F30dpA:2mwf-5MBVt_NGN8I",
+      "domain": "accounts.google.com",
+      "path": "/",
+      "expires": 1824225621.569423,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "OTZ",
+      "value": "8789360_72_76_104100_72_446760",
+      "domain": "accounts.google.com",
+      "path": "/",
+      "expires": 1792257623,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "NID",
+      "value": "CuoBCAESnAEBp2sxrv7boP6N1ck1M-n0AViadxTdwWdaSmchTYJFdOAeRjlcVorkF2PtVU0IaVOeUNILOGWooZudMr95NyHZL8vOKcJGCZiJV4RBOs9Xpy1TFp-PK-2vpvDRNGFDrvYC9c3NltEDpNchJLkspksq2fpqSk1scIbGtWWSCy432oU7Inyg_nEEbYrM_w45nwPJnOS7CMwBthAH480oATJFAQ4r3hEx4HJelYkQkwtr59QGofE1ROBqzOIhjY4Oc4xsMkAHnF1F8OqzGefeFIHHWqFysS58yGg7ce6kpe8wuBn-UWgP",
+      "domain": ".google.com",
+      "path": "/",
+      "expires": 1805476823.686455,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://www.alcanzar.io",
+      "localStorage": [
+        {
+          "name": "__clerk_environment",
+          "value": "{\"value\":{\"object\":\"environment\",\"auth_config\":{\"claimed_at\":null,\"id\":\"\",\"object\":\"auth_config\",\"reverification\":true,\"single_session_mode\":true,\"session_minter\":true},\"display_config\":{\"object\":\"display_config\",\"after_create_organization_url\":\"https://www.alcanzar.io\",\"after_join_waitlist_url\":\"https://www.alcanzar.io\",\"after_leave_organization_url\":\"https://www.alcanzar.io\",\"after_sign_in_url\":\"https://www.alcanzar.io\",\"after_sign_out_all_url\":\"https://accounts.alcanzar.io/sign-in\",\"after_sign_out_one_url\":\"https://accounts.alcanzar.io/sign-in/choose\",\"after_sign_up_url\":\"https://www.alcanzar.io\",\"after_switch_session_url\":\"https://www.alcanzar.io\",\"application_name\":\"Reach\",\"branded\":true,\"captcha_heartbeat\":false,\"captcha_oauth_bypass\":[],\"captcha_provider\":\"turnstile\",\"captcha_public_key_invisible\":\"0x4AAAAAAAFV93qQdS0ycilX\",\"captcha_public_key\":\"0x4AAAAAAAWXJGBD7bONzLBd\",\"captcha_widget_type\":\"smart\",\"clerk_js_version\":\"6\",\"create_organization_url\":\"https://accounts.alcanzar.io/create-organization\",\"favicon_image_url\":\"\",\"google_one_tap_client_id\":\"915353184159-nufov7c2iekn8mr71s3h7jku0v0bgcoi.apps.googleusercontent.com\",\"home_url\":\"https://www.alcanzar.io\",\"id\":\"display_config_3HC5Y8okuzBq813EjjgAcggewnB\",\"instance_environment_type\":\"production\",\"logo_image_url\":\"\",\"organization_profile_url\":\"https://accounts.alcanzar.io/organization\",\"preferred_sign_in_strategy\":\"password\",\"privacy_policy_url\":\"\",\"show_devmode_warning\":false,\"sign_in_url\":\"https://accounts.alcanzar.io/sign-in\",\"sign_up_url\":\"https://accounts.alcanzar.io/sign-up\",\"support_email\":\"\",\"terms_url\":\"\",\"theme\":{\"buttons\":{\"font_color\":\"#ffffff\",\"font_family\":\"\\\"Source Sans Pro\\\", sans-serif\",\"font_weight\":\"600\"},\"general\":{\"color\":\"#6c47ff\",\"padding\":\"1em\",\"box_shadow\":\"0 2px 8px rgba(0, 0, 0, 0.2)\",\"font_color\":\"#151515\",\"font_family\":\"\\\"Source Sans Pro\\\", sans-serif\",\"border_radius\":\"0.5em\",\"background_color\":\"#ffffff\",\"label_font_weight\":\"600\"},\"accounts\":{\"background_color\":\"#ffffff\"}},\"user_profile_url\":\"https://accounts.alcanzar.io/user\",\"waitlist_url\":\"https://accounts.alcanzar.io/waitlist\"},\"id\":\"\",\"maintenance_mode\":false,\"client_debug_mode\":false,\"partitioned_cookies\":false,\"organization_settings\":{\"actions\":{\"admin_delete\":true},\"domains\":{\"enabled\":false,\"enrollment_modes\":[],\"default_role\":\"\"},\"enabled\":false,\"max_allowed_memberships\":5},\"user_settings\":{\"actions\":{\"delete_self\":true,\"create_organization\":true,\"create_organizations_limit\":null},\"attributes\":{\"email_address\":{\"enabled\":true,\"required\":true,\"used_for_first_factor\":true,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[\"email_code\"],\"verify_at_sign_up\":true,\"immutable\":false,\"name\":\"email_address\"},\"phone_number\":{\"enabled\":false,\"required\":false,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"phone_number\"},\"username\":{\"enabled\":true,\"required\":true,\"used_for_first_factor\":true,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"username\"},\"web3_wallet\":{\"enabled\":false,\"required\":false,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"web3_wallet\"},\"first_name\":{\"enabled\":true,\"required\":false,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"first_name\"},\"last_name\":{\"enabled\":true,\"required\":false,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"last_name\"},\"password\":{\"enabled\":true,\"required\":true,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"password\"},\"authenticator_app\":{\"enabled\":false,\"required\":false,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"authenticator_app\"},\"ticket\":{\"enabled\":true,\"required\":false,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"ticket\"},\"backup_code\":{\"enabled\":false,\"required\":false,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"backup_code\"},\"passkey\":{\"enabled\":false,\"required\":false,\"used_for_first_factor\":false,\"first_factors\":[],\"used_for_second_factor\":false,\"second_factors\":[],\"verifications\":[],\"verify_at_sign_up\":false,\"immutable\":false,\"name\":\"passkey\"}},\"passkey_settings\":{\"allow_autofill\":true,\"show_sign_in_button\":true,\"satisfies_second_factor\":true},\"password_settings\":{\"disable_hibp\":false,\"disable_password_reverification\":false,\"min_length\":8,\"max_length\":72,\"require_special_char\":false,\"require_numbers\":false,\"require_uppercase\":false,\"require_lowercase\":false,\"show_zxcvbn\":true,\"min_zxcvbn_strength\":2,\"enforce_hibp_on_sign_in\":true,\"allowed_special_characters\":\"!\\\"#$%&'()*+,-./:;<=>?@[]^_`{|}~\"},\"saml\":{\"enabled\":false},\"sign_in\":{\"second_factor\":{\"required\":false}},\"sign_up\":{\"captcha_enabled\":true,\"captcha_widget_type\":\"smart\",\"custom_action_required\":false,\"progressive\":true,\"mode\":\"public\",\"legal_consent_enabled\":false,\"mfa\":{\"required\":false}},\"social\":{\"oauth_google\":{\"enabled\":true,\"required\":false,\"authenticatable\":true,\"block_email_subaddresses\":true,\"strategy\":\"oauth_google\",\"not_selectable\":false,\"deprecated\":false,\"name\":\"Google\",\"logo_url\":\"https://img.clerk.com/static/google.png\"}}},\"commerce_settings\":{\"billing\":{\"stripe_publishable_key\":null,\"organization\":{\"enabled\":false,\"has_paid_plans\":false},\"user\":{\"enabled\":false,\"has_paid_plans\":false}}},\"api_keys_settings\":{\"user_api_keys_enabled\":false,\"orgs_api_keys_enabled\":false},\"protect_config\":{\"object\":\"protect_config\",\"id\":\"\"}},\"exp\":1789752347936}"
+        }
+      ]
+    }
+  ]
+}

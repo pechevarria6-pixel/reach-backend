@@ -6776,6 +6776,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
     const firstDraft=docDraft.__fFirst!==undefined?docDraft.__fFirst:(e.firstName??"");
     const dobDraft=docDraft.__dob!==undefined?docDraft.__dob:(e.dateOfBirth??"");
     const genDraft=docDraft.__gender!==undefined?docDraft.__gender:(e.gender??"");
+    const phoneDraft=docDraft.__phone!==undefined?docDraft.__phone:(e.phone??"");
     const dobValid=!dobDraft||/^\d{4}-\d{2}-\d{2}$/.test(dobDraft);
     const GENDERS=[
       {v:"female",label:"Female"},
@@ -6792,13 +6793,14 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         if(docDraft.__last!==undefined)body.lastName=lastDraft.trim()||null;
         if(docDraft.__dob!==undefined)body.dateOfBirth=dobDraft.trim()||null;
         if(docDraft.__gender!==undefined)body.gender=genDraft||null;
+        if(docDraft.__phone!==undefined)body.phone=phoneDraft.trim()||null;
         if(!Object.keys(body).length){setBusy(null);return;}
         const r=await fetch("/api/profile",{
           method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),
         });
         const d=await r.json().catch(()=>({}));
         if(!r.ok)throw new Error(d.error||"Couldn't save that");
-        setDocDraft(x=>({...x,__fFirst:undefined,__last:undefined,__dob:undefined,__gender:undefined}));
+        setDocDraft(x=>({...x,__fFirst:undefined,__last:undefined,__dob:undefined,__gender:undefined,__phone:undefined}));
         toast("Saved");await load();
         if(body.firstName!==undefined)onIdentityChange?.();
       }catch(err){toast(err.message);}
@@ -6841,6 +6843,17 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         </div>
 
         <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
+          <div className="sl" style={{marginBottom:8}}>Phone number</div>
+          <input aria-label="Phone number" className="inp" type="tel" value={phoneDraft}
+            placeholder="+1 555 123 4567"
+            onChange={ev=>setDocDraft(x=>({...x,__phone:ev.target.value}))}/>
+          <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
+            The airline's requirement, not ours — it is how they reach you when a
+            flight moves. No ticket is issued without one.
+          </div>
+        </div>
+
+        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
           <div className="sl" style={{marginBottom:8}}>Gender on your ID</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {GENDERS.map(g=>(
@@ -6852,8 +6865,10 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           </div>
           <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
             Airlines carry the marker printed on your passport or licence, which is
-            not always how you'd describe yourself. "Rather not say" is stored, but
-            no airline will ticket on it.
+            not always how you'd describe yourself. If yours is X, or you'd rather
+            not say, we book that flight with the airline directly — automatic
+            booking only carries male or female and we won't put the wrong one on
+            your ticket.
           </div>
           {e.gender===undefined&&(
             <div style={{marginTop:10,padding:"10px 12px",background:C.amberDim,border:`1px solid ${C.amber}`,borderRadius:12,fontSize:12,color:C.t1,lineHeight:1.5}}>
