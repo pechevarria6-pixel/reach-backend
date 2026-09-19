@@ -5627,12 +5627,18 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 <div style={{fontSize:13,color:C.t2,marginBottom:20,lineHeight:1.55}}>
                   {loadFailed
                     ?"Your days may already be saved. Check your connection and reopen this plan."
-                    :`Give us twenty seconds and we'll write the whole ${plan.title} plan — where to eat, what it costs, which places only take cash. Or do it yourself, if that's the fun bit for you.`}
+                    :!votingOpen&&prefs
+                      // Promising twenty seconds and then refusing is the
+                      // worst version of this screen. The plan is not
+                      // written until everyone has said what they want, so
+                      // say that here rather than after the tap.
+                      ?`${prefs.waiting||"We're waiting on the rest of the group"} We write the days once everyone's in, so nobody's trip is planned around half the answers.`
+                      :`Give us twenty seconds and we'll write the whole ${plan.title} plan — where to eat, what it costs, which places only take cash. Or do it yourself, if that's the fun bit for you.`}
                 </div>
                 {!loadFailed&&(
                   <>
-                    <button className="bp" disabled={building} onClick={buildItinerary} style={{marginBottom:10}}>
-                      {building?"Building your days…":"✨ Plan my days for me"}
+                    <button className="bp" disabled={building||(!votingOpen&&!!prefs)} onClick={buildItinerary} style={{marginBottom:10}}>
+                      {building?"Building your days…":(!votingOpen&&prefs)?"Waiting on the group":"✨ Plan my days for me"}
                     </button>
                     <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>I'll do it myself</button>
                   </>
