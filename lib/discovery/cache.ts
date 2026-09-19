@@ -151,13 +151,29 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   // Left join, and the row describes itself when there is nothing to join to.
   // The bounding box then has to be applied here rather than in the query,
   // because it can no longer be expressed against a joined table alone.
-  const { data, error } = await db
-    .from('discovery_events')
-    .select('id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues(name, lat, lng, city, street)')
-    .in('interest', asStored(keys))
-    // A harvest that failed must not leave last month's classes standing.
-    .gt('stale_after', new Date().toISOString())
-    .limit(120);
+  const COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues(name, lat, lng, city, street)';
+  const fresh = new Date().toISOString();
+
+  // Two questions, because the two kinds of row are filed differently.
+  //
+  // A harvested class is found BECAUSE somebody is into pottery, so it is
+  // filed under that interest and only shown to people who asked for it.
+  //
+  // A ticketed event is not. It came back from a search for what is on near
+  // this point, filed under the provider's own word for it — "sports",
+  // "Arts & Theatre" — which is a vocabulary the reader does not share. Gated
+  // on the seeker's interests it would be stored where nobody looks, which is
+  // exactly what happened: twenty rows written and none ever read. Its gates
+  // are the ones it was found by — near here, and not stale.
+  const [harvested, external] = await Promise.all([
+    db.from('discovery_events').select(COLUMNS)
+      .eq('source', 'harvest').in('interest', asStored(keys)).gt('stale_after', fresh).limit(60),
+    db.from('discovery_events').select(COLUMNS)
+      .neq('source', 'harvest').gt('stale_after', fresh).limit(60),
+  ]);
+
+  const error = harvested.error ?? external.error;
+  const data = [...(harvested.data ?? []), ...(external.data ?? [])];
 
   if (error) {
     console.error('[discover/cache] could not read events', error.message);
