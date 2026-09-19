@@ -95,7 +95,11 @@ export async function GET(req: NextRequest) {
   // Keep what the ticketed sources said, so the lane still answers when the
   // API is slow or down. After the results are already in hand: this is a
   // slower tomorrow if it fails, never a broken today.
-  const live = results.flatMap(r => r.findings).filter(f => f.source === 'ticketmaster');
+  // From the live lane itself, not from everything that calls itself a
+  // ticketed finding. Cached rows now report their true source, so reading
+  // the merged list fed the cache its own output: each visit stored what the
+  // previous visit stored, under a fresh id, and the table multiplied.
+  const live = results.find(r => r.source === 'ticketmaster')?.findings ?? [];
   if (live.length) {
     // The interest a cached row is filed under has to be one the reader asks
     // for, or it is stored where nobody will look. The category the source
@@ -111,7 +115,18 @@ export async function GET(req: NextRequest) {
   // then rotated within bands so the page is not identical to yesterday's.
   // The seed is the local day and the person: two people in the same town see
   // different orders, and each of them sees a different one tomorrow.
-  const ranked = rank(results.flatMap(r => r.findings), seeker.interests);
+  // The same event can arrive twice — once from the live lane, once from the
+  // copy we kept of it — and they are different rows with different ids.
+  // Matched on what it actually is: the thing, where, and when.
+  const seen = new Set<string>();
+  const merged = results.flatMap(r => r.findings).filter(f => {
+    const key = `${f.title}|${f.venue ?? ''}|${f.date ?? ''}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const ranked = rank(merged, seeker.interests);
   const varied = rotateDaily(ranked, seedOf(dayWhere(lng), ctx.user.id));
   // Then nearest ring first. Banded rather than sorted by exact yards, and
   // last of the three steps so it governs: Discover is a list of what is on
