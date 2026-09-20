@@ -335,8 +335,18 @@ up and finds out the hard way:
   against sources that record it, so an empty string costs nobody anything
   and a wrong guess strands somebody at a till.
 
-Never write "placeholder", "TBD" or any other filler. insider_tip is the thing
-a regular knows — which door, which seat, when to arrive.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
+Never write "placeholder", "TBD" or any other filler.
+
+insider_tip is what a place is like, not what a business does. Weather,
+crowds, terrain, light, parking, how long things take, what to bring — all
+good, and being wrong about them costs an hour.
+
+Never state a named business's opening hours, prices, cover charge, payment,
+booking policy, or what it will do for you. "Milt's is cash-only and has no
+ATM inside", "Woody's charges a cover after 9pm", "go right at open (5pm)" —
+those read as fact, and being wrong about them costs somebody their evening.
+You have not rung these places and neither have we. Write about the desert,
+the queue and the light instead, or leave it empty.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
 
 ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
@@ -364,8 +374,18 @@ short honest itinerary beats a long one with holes in it.
 Write one entry for each of the ${nights} days.
 
 Be specific: real venue names, real neighbourhoods. Make it feel like a local
-planned it, not a guidebook. insider_tip is the thing a visitor would only
-know on a second trip.
+planned it, not a guidebook.
+
+insider_tip is what a place is like, not what a business does. Weather,
+crowds, terrain, light, parking, how long things take, what to bring — all
+good, and being wrong about them costs an hour.
+
+Never state a named business's opening hours, prices, cover charge, payment,
+booking policy, or what it will do for you. "Milt's is cash-only and has no
+ATM inside", "Woody's charges a cover after 9pm", "go right at open (5pm)" —
+those read as fact, and being wrong about them costs somebody their evening.
+You have not rung these places and neither have we. Write about the desert,
+the queue and the light instead, or leave it empty.
 
 Every slot needs its practical details, because the point of this is that
 nobody arrives somewhere and finds out the hard way:

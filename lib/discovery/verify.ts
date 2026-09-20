@@ -20,7 +20,8 @@
 // when nothing does, and never dress an inference as a fact.
 
 import { boundingBox } from './osm.ts';
-import { adviceFor, type Advice } from './wikivoyage.ts';
+import { adviceFor, attributedNote, type Advice } from './wikivoyage.ts';
+import { claimsIn } from './claims.ts';
 
 export interface VenueFacts {
   /** The name as the source spells it, which may differ from the itinerary. */
@@ -307,5 +308,46 @@ export function tally(checked: Checked[]) {
     unchecked: checked.filter(c => c.verification.status === 'unchecked').length,
     withPayment: checked.filter(c => c.payment).length,
     withAdvice: checked.filter(c => c.advice).length,
+  };
+}
+
+// ─── The line under the item ────────────────────────────────────────────
+
+
+export interface Tip {
+  /** What the item should show. Null means show nothing. */
+  subtitle: string | null;
+  /** The generated tip, when it was a claim we could not stand behind. */
+  unverified: string | null;
+  /** Which kinds of claim it made, for review. */
+  claims: string | null;
+}
+
+/**
+ * What an item is allowed to say underneath itself.
+ *
+ * Three outcomes, and the order matters. A tip that asserts nothing about a
+ * named business is advice and stays as written. A tip that does assert
+ * something is set aside, and if a real traveller has written about the same
+ * place their words take its place, credited to them. If nobody has, the
+ * item shows nothing — which is plainer than what was there, and true.
+ */
+export function tipFor(
+  subtitle: string | null | undefined,
+  advice: Advice | null,
+  ignore: Set<string> = new Set(),
+): Tip {
+  const text = String(subtitle || '').trim();
+  const sourced = advice ? attributedNote(advice) : null;
+
+  if (!text) return { subtitle: sourced, unverified: null, claims: null };
+
+  const claims = claimsIn(text, ignore);
+  if (!claims.length) return { subtitle: text, unverified: null, claims: null };
+
+  return {
+    subtitle: sourced,
+    unverified: text,
+    claims: [...new Set(claims.map(c => c.kind))].join(','),
   };
 }

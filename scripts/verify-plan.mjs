@@ -2,7 +2,7 @@
 // first real verification pass can be watched rather than trusted.
 import dotenv from 'dotenv'; dotenv.config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
-import { checkAll, tally } from '../lib/discovery/verify.ts';
+import { checkAll, tally, tipFor, terms } from '../lib/discovery/verify.ts';
 import { attributedNote } from '../lib/discovery/wikivoyage.ts';
 import { locatePlan } from '../lib/discovery/geocode.ts';
 
@@ -23,6 +23,7 @@ const { data: rows } = await db.from('itinerary_items')
   .select('id, title, subtitle').eq('plan_id', planId).order('created_at', { ascending: true }).limit(60);
 
 const said = rows.map(r => [r.title, r.subtitle].filter(Boolean).join(' · '));
+const townWords = new Set(terms(where.name));
 const checked = await checkAll(said, where);
 
 for (let i = 0; i < rows.length; i++) {
@@ -45,6 +46,7 @@ let stored = 0, failed = 0;
 for (let i = 0; i < rows.length; i++) {
   const c = checked[i];
   const f = c.verification.status === 'confirmed' ? c.verification.facts : null;
+  const tip = tipFor(rows[i].subtitle, c.advice, townWords);
   const { error } = await db.from('itinerary_items').update({
     verified_at: now,
     verified_status: c.verification.status,
@@ -54,6 +56,9 @@ for (let i = 0; i < rows.length; i++) {
     venue_website: f?.website ?? null,
     venue_note: c.advice ? attributedNote(c.advice) : null,
     venue_note_credit: c.advice?.credit.url ?? null,
+    subtitle: tip.subtitle,
+    subtitle_unverified: tip.unverified,
+    subtitle_claims: tip.claims,
     payment_note: c.payment,
   }).eq('id', rows[i].id);
   if (error) { console.log('  write failed', rows[i].id, error.message); failed++; continue; }

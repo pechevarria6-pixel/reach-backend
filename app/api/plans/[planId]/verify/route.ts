@@ -13,7 +13,7 @@
 // is waiting for must not be held hostage to a donated server's afternoon.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { checkAll, tally } from '@/lib/discovery/verify';
+import { checkAll, tally, tipFor, terms } from '@/lib/discovery/verify';
 import { attributedNote } from '@/lib/discovery/wikivoyage';
 import { locatePlan } from '@/lib/discovery/geocode';
 
@@ -87,6 +87,7 @@ export async function POST(
   // detail. Both are read, because "Milt's" appears in one or the other.
   const said = rows.map(r => [r.title, r.subtitle].filter(Boolean).join(' · '));
 
+  const townWords = new Set(terms(place.name));
   const checked = await checkAll(said, place);
   const now = new Date().toISOString();
 
@@ -94,6 +95,7 @@ export async function POST(
   for (let i = 0; i < rows.length; i++) {
     const c = checked[i];
     const confirmed = c.verification.status === 'confirmed' ? c.verification.facts : null;
+    const tip = tipFor(rows[i].subtitle, c.advice, townWords);
 
     const { error: wrote } = await db
       .from('itinerary_items')
@@ -106,6 +108,11 @@ export async function POST(
         venue_website: confirmed?.website ?? null,
         venue_note: c.advice ? attributedNote(c.advice) : null,
         venue_note_credit: c.advice?.credit.url ?? null,
+        // A tip that claimed something about a named business is set aside
+        // and replaced by a traveller's own words where there are any.
+        subtitle: tip.subtitle,
+        subtitle_unverified: tip.unverified,
+        subtitle_claims: tip.claims,
         // Only ever what a source records. Null is the common answer and the
         // correct one: of Moab's four confirmed venues, not one carries
         // payment data anywhere we can read.
