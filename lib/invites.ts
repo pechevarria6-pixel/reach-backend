@@ -48,9 +48,14 @@ export async function claimInvitesFor(
   const stale = invites.filter(i => new Date(i.expires_at).getTime() <= now);
 
   if (stale.length) {
-    await db.from('group_invites')
+    // Tidying, deliberately unchecked in effect: the invite has expired
+    // whether or not the row says so, because the expiry is a date and not a
+    // status. Said out loud anyway, so a table that has stopped accepting
+    // writes is visible before something that matters hits it.
+    const { error: expired } = await db.from('group_invites')
       .update({ status: 'expired' })
       .in('id', stale.map(i => i.id));
+    if (expired) console.error('[invites] could not mark expired invites', { count: stale.length, code: expired.code });
   }
 
   for (const invite of live) {
@@ -77,9 +82,12 @@ export async function claimInvitesFor(
       result.joined.push(invite.group_id);
     }
 
-    await db.from('group_invites')
+    // They are in the group by now. An invite left unmarked can be redeemed
+    // again, which is how one link adds somebody twice.
+    const { error: accepted } = await db.from('group_invites')
       .update({ status: 'accepted', accepted_at: new Date().toISOString(), accepted_by: userId })
       .eq('id', invite.id);
+    if (accepted) console.error('[invites] joined the group but could not mark the invite used', { invite: invite.id, code: accepted.code });
   }
 
   return result;

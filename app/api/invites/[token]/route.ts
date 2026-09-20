@@ -49,7 +49,8 @@ export async function POST(_req: NextRequest, { params }: { params: { token: str
     return NextResponse.json({ error: `This invite was already ${invite.status}` }, { status: 409 });
   }
   if (new Date(invite.expires_at).getTime() <= Date.now()) {
-    await ctx.db.from('group_invites').update({ status: 'expired' }).eq('id', invite.id);
+    const { error: expired } = await ctx.db.from('group_invites').update({ status: 'expired' }).eq('id', invite.id);
+    if (expired) console.error('[invites] could not mark an invite expired', { invite: invite.id, code: expired.code });
     return NextResponse.json({ error: 'This invite has expired' }, { status: 409 });
   }
 

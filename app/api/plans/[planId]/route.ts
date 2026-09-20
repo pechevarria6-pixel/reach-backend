@@ -211,6 +211,14 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  await supabase.from('plans').delete().eq('id', params.planId);
+  // Checked, because a delete that fails and reports success is how a plan
+  // stays on one screen and vanishes from another. It also leaves the plan's
+  // bookings behind, pointing at a row that no longer exists and reachable
+  // from nothing — there is one such booking in this database already.
+  const { error: removed } = await supabase.from('plans').delete().eq('id', params.planId);
+  if (removed) {
+    console.error('[plans] could not delete the plan', { plan: params.planId, code: removed.code });
+    return NextResponse.json({ error: "We couldn't delete that just now" }, { status: 500 });
+  }
   return NextResponse.json({ success: true });
 }

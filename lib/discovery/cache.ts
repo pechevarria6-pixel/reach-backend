@@ -259,6 +259,9 @@ export async function noteArea(db: SupabaseClient, seeker: Seeker): Promise<void
       // Union, not replace: one person who only likes cinema must not narrow
       // the sweep for everybody else in the city.
       const merged = [...new Set([...(existing.interests || []).map((i: string) => kindFor(i).key), ...interests])];
+      // Bookkeeping for a background job: deliberately unchecked, because a
+      // note about where somebody looked must never fail the screen they are
+      // looking at. The sweep comes round again regardless.
       await db.from('discovery_areas').update({
         interests: merged,
         asked_count: (existing.asked_count || 0) + 1,
@@ -267,6 +270,9 @@ export async function noteArea(db: SupabaseClient, seeker: Seeker): Promise<void
       }).eq('id', existing.id);
       return;
     }
+    // Bookkeeping for a background job: deliberately unchecked, because a
+    // note about where somebody looked must never fail the screen they are
+    // looking at. The sweep comes round again regardless.
     await db.from('discovery_areas').insert({
       lat: area.lat, lng: area.lng, city: seeker.city || null, interests,
     });

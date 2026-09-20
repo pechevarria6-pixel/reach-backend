@@ -21,7 +21,14 @@ export async function GET() {
     supabase.from('audit_logs').select('action, created_at').eq('user_id', user.id).limit(100),
   ]);
 
-  await supabase.from('audit_logs').insert({ user_id: user.id, action: 'data_export_requested', resource: 'users', resource_id: user.id, success: true });
+  // An audit trail that loses entries silently is how nine plans once
+
+  // vanished with nothing to read afterwards. Never fails the request; it
+
+  // does have to leave a mark.
+
+  const { error: audit } = await supabase.from('audit_logs').insert({ user_id: user.id, action: 'data_export_requested', resource: 'users', resource_id: user.id, success: true });
+  if (audit) console.error('[audit] could not record data_export_requested', { code: audit.code });
 
   const export_data = {
     export_date: new Date().toISOString(),
@@ -52,11 +59,30 @@ export async function DELETE(req: NextRequest) {
 
   const deletionDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-  await supabase.from('deletion_requests').insert({ user_id: user.id, clerk_id: clerkId, email: user.email, scheduled_for: deletionDate.toISOString() });
-  await supabase.from('users').update({ deletion_requested_at: new Date().toISOString(), deletion_scheduled_at: deletionDate.toISOString() }).eq('id', user.id);
+  // Somebody asking to be deleted has to be able to rely on the answer. An
+  // insert that failed silently here told them it was scheduled when nothing
+  // had been recorded, and nothing would ever come to collect it.
+  const { error: requested } = await supabase.from('deletion_requests')
+    .insert({ user_id: user.id, clerk_id: clerkId, email: user.email, scheduled_for: deletionDate.toISOString() });
+  if (requested) {
+    console.error('[user/data] could not record a deletion request', { user: user.id, code: requested.code });
+    return NextResponse.json({ error: "We couldn't schedule that — please try again" }, { status: 500 });
+  }
+
+  const { error: marked } = await supabase.from('users')
+    .update({ deletion_requested_at: new Date().toISOString(), deletion_scheduled_at: deletionDate.toISOString() })
+    .eq('id', user.id);
+  if (marked) {
+    console.error('[user/data] deletion requested but the account was not marked', { user: user.id, code: marked.code });
+    return NextResponse.json({ error: "We couldn't schedule that — please try again" }, { status: 500 });
+  }
 
   if (user.stripe_customer_id) {
-    try { await stripe.customers.del(user.stripe_customer_id); } catch {}
+    // Said out loud rather than swallowed: a customer record left behind at
+    // Stripe after somebody asked to be deleted is the sort of thing that has
+    // to be findable later.
+    try { await stripe.customers.del(user.stripe_customer_id); }
+    catch (e) { console.error('[user/data] could not delete the Stripe customer', { user: user.id, error: e instanceof Error ? e.message : 'unknown' }); }
   }
 
   await sendDeletionConfirmation(user.email, deletionDate.toLocaleDateString());

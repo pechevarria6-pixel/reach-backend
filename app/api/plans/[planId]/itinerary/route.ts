@@ -67,8 +67,17 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
     .from('group_members').select('role').eq('group_id', plan.group_id).eq('user_id', user.id).single();
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-  // Delete all existing items and replace with new ones
-  await supabase.from('itinerary_items').delete().eq('plan_id', params.planId);
+  // Delete all existing items and replace with new ones.
+  //
+  // Checked, because the insert below is what puts them back: a delete that
+  // succeeds followed by an insert that fails is an itinerary wiped, and a
+  // delete that fails followed by an insert that works is every day twice.
+  // Neither said anything.
+  const { error: cleared } = await supabase.from('itinerary_items').delete().eq('plan_id', params.planId);
+  if (cleared) {
+    console.error('[itinerary] could not clear the old days', { plan: params.planId, code: cleared.code });
+    return NextResponse.json({ error: "We couldn't save those days just now" }, { status: 500 });
+  }
 
   if (items && items.length > 0) {
     const rows = items.map((item: any, idx: number) => ({

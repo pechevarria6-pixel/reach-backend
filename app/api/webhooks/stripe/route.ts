@@ -173,7 +173,15 @@ async function announceIfFunded(
     // Already announced, or already past this point.
     if (plan.status === 'approved' || plan.status === 'booked') return;
 
-    await supabase.from('plans').update({ status: 'approved' }).eq('id', planId);
+    // The money is in. A plan that does not hear about it sits unapproved
+    // with every share collected, and the announcement below would then tell
+    // the group their trip was on when nothing had changed. Loud, and it
+    // stops here rather than sending that message.
+    const { error: approved } = await supabase.from('plans').update({ status: 'approved' }).eq('id', planId);
+    if (approved) {
+      console.error('[webhooks/stripe] funded but could not approve the plan', { plan: planId, code: approved.code });
+      return;
+    }
 
     const { data: group } = await supabase
       .from('groups').select('name').eq('id', plan.group_id).single();

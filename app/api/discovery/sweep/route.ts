@@ -159,6 +159,9 @@ export async function GET(req: NextRequest) {
       const status = writeFailed || storedNothing
         ? (wroteAny ? 'partial' : 'write_failed')
         : (all.length ? 'partial' : 'error');
+      // Bookkeeping for a background job: deliberately unchecked, because a
+      // note about where somebody looked must never fail the screen they are
+      // looking at. The sweep comes round again regardless.
       await db.from('discovery_areas').update({
         sweep_status: status,
         sweep_detail: detail ?? (writeFailed || storedNothing ? 'venues could not be written' : null),

@@ -75,7 +75,8 @@ export async function GET() {
     if (dbUser.email !== email) refresh.email = email;
     if (realName && !dbUser.first_name && dbUser.name !== realName) refresh.name = realName;
     if (Object.keys(refresh).length) {
-      await supabase.from('users').update(refresh).eq('clerk_id', clerkId);
+      const { error: refreshed } = await supabase.from('users').update(refresh).eq('clerk_id', clerkId);
+      if (refreshed) console.error('[me] could not refresh the profile from Clerk', { code: refreshed.code });
     }
   }
 

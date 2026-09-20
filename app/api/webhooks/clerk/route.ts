@@ -75,7 +75,8 @@ export async function POST(req: NextRequest) {
           name: name || undefined,
           metadata: { clerk_id: data.id, supabase_id: newUser.id },
         });
-        await supabase.from('users').update({ stripe_customer_id: customer.id }).eq('id', newUser.id);
+        const { error: linked } = await supabase.from('users').update({ stripe_customer_id: customer.id }).eq('id', newUser.id);
+        if (linked) console.error('[webhooks/clerk] created a Stripe customer but could not save the id', { user: newUser.id, code: linked.code });
       } catch (e) {
         console.error('Stripe customer creation failed:', e);
       }
@@ -85,11 +86,24 @@ export async function POST(req: NextRequest) {
   if (type === 'user.updated') {
     const email = data.email_addresses?.[0]?.email_address || '';
     const name = [data.first_name, data.last_name].filter(Boolean).join(' ');
-    await supabase.from('users').update({
-      email,
-      name: name || null,
-      avatar_url: data.image_url || null,
-    }).eq('clerk_id', data.id);
+
+    // Only what Clerk actually sent.
+    //
+    // This wrote `name: name || null` on every update, so an event carrying
+    // no first or last name erased the name we had — and Clerk has no name
+    // for anybody who signed up through Apple's private relay, which is how
+    // the home screen ended up greeting somebody as "there". The same for the
+    // avatar: an update about an email address is not a statement that the
+    // picture is gone.
+    const changes: Record<string, string> = {};
+    if (email) changes.email = email;
+    if (name) changes.name = name;
+    if (data.image_url) changes.avatar_url = data.image_url;
+
+    if (Object.keys(changes).length) {
+      const { error: updated } = await supabase.from('users').update(changes).eq('clerk_id', data.id);
+      if (updated) console.error('[webhooks/clerk] could not apply a profile update', { code: updated.code });
+    }
   }
 
   if (type === 'user.deleted') {
@@ -97,12 +111,17 @@ export async function POST(req: NextRequest) {
       .from('users').select('id, email, stripe_customer_id').eq('clerk_id', data.id).single();
     if (user) {
       const deletionDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-      await supabase.from('users').update({
+      const { error: scheduled } = await supabase.from('users').update({
         deletion_requested_at: new Date().toISOString(),
         deletion_scheduled_at: deletionDate.toISOString(),
       }).eq('id', user.id);
+      // Somebody deleted their account at Clerk. If this does not land, the
+      // record here is never scheduled for removal and nothing will come
+      // back to ask — so Stripe's retry is worth provoking.
+      if (scheduled) console.error('[webhooks/clerk] account deleted at Clerk but not scheduled here', { user: user.id, code: scheduled.code });
       if (user.stripe_customer_id) {
-        try { await stripe.customers.del(user.stripe_customer_id); } catch {}
+        try { await stripe.customers.del(user.stripe_customer_id); }
+        catch (e) { console.error('[webhooks/clerk] could not delete the Stripe customer', { user: user.id, error: e instanceof Error ? e.message : 'unknown' }); }
       }
     }
   }

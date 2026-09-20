@@ -48,7 +48,8 @@ export async function POST(req: NextRequest) {
       metadata: { clerk_id: ctx.user.clerk_id, supabase_user_id: user.id },
     });
     customerId = customer.id;
-    await supabase.from('users').update({ stripe_customer_id: customerId }).eq('id', user.id);
+    const { error: linked } = await supabase.from('users').update({ stripe_customer_id: customerId }).eq('id', user.id);
+    if (linked) console.error('[payments] created a Stripe customer but could not save the id — the next payment will make another', { user: user.id, code: linked.code });
   }
 
   // This charged the entire plan budget to whoever called it, so a four-person
@@ -79,17 +80,28 @@ export async function POST(req: NextRequest) {
   });
 
   // Record pending payment
-  await supabase.from('payments').insert({
+  const { error: logged } = await supabase.from('payments').insert({
     plan_id: body.plan_id, user_id: user.id,
     stripe_payment_intent_id: intent.id,
     amount_cents: amountCents, currency: 'usd',
     status: 'pending', split_method: body.split_method,
   });
+  // The intent exists at Stripe either way. Without this row nothing here
+  // knows the payment was ever started, so the webhook that confirms it will
+  // have nothing to update — loud, because the money is already in flight.
+  if (logged) console.error('[payments] a Stripe intent exists with no payment row', { intent: intent.id, code: logged.code });
 
-  await supabase.from('audit_logs').insert({
+  // An audit trail that loses entries silently is how nine plans once
+
+  // vanished with nothing to read afterwards. Never fails the request; it
+
+  // does have to leave a mark.
+
+  const { error: audit } = await supabase.from('audit_logs').insert({
     user_id: user.id, action: 'payment_initiated', resource: 'payments', success: true,
     metadata: { stripe_pi: intent.id, amount_cents: amountCents, plan_id: body.plan_id },
   });
+  if (audit) console.error('[audit] could not record payment_initiated', { code: audit.code });
 
   // Return client_secret — browser uses this with Stripe.js
   return NextResponse.json({ client_secret: intent.client_secret, payment_intent_id: intent.id, requires_mfa: requiresMFA });

@@ -145,7 +145,11 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     }
   }
 
-  await ctx.db.from('group_members')
+  const { error: removed } = await ctx.db.from('group_members')
     .delete().eq('group_id', params.id).eq('user_id', targetUserId);
+  if (removed) {
+    console.error('[groups] could not remove the member', { group: params.id, code: removed.code });
+    return NextResponse.json({ error: "We couldn't remove them just now" }, { status: 500 });
+  }
   return NextResponse.json({ success: true });
 }

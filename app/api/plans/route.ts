@@ -121,7 +121,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  await supabase.from('audit_logs').insert({ user_id: user.id, action: 'plan_created', resource: 'plans', resource_id: plan.id, success: true });
+  // An audit trail that loses entries silently is how nine plans once
+
+  // vanished with nothing to read afterwards. Never fails the request; it
+
+  // does have to leave a mark.
+
+  const { error: audit } = await supabase.from('audit_logs').insert({ user_id: user.id, action: 'plan_created', resource: 'plans', resource_id: plan.id, success: true });
+  if (audit) console.error('[audit] could not record plan_created', { code: audit.code });
 
   return NextResponse.json({ plan }, { status: 201 });
 }

@@ -76,6 +76,10 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
     .from('group_members').select('role').eq('group_id', params.id).eq('user_id', user.id).single();
   if (!membership || membership.role !== 'admin') return NextResponse.json({ error: 'Forbidden — admin only' }, { status: 403 });
 
-  await supabase.from('groups').delete().eq('id', params.id);
+  const { error: removed } = await supabase.from('groups').delete().eq('id', params.id);
+  if (removed) {
+    console.error('[groups] could not delete the group', { group: params.id, code: removed.code });
+    return NextResponse.json({ error: "We couldn't delete that just now" }, { status: 500 });
+  }
   return NextResponse.json({ success: true });
 }
