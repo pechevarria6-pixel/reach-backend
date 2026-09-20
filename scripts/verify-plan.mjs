@@ -16,15 +16,16 @@ if (!plan) { console.log('no such plan'); process.exit(1); }
 
 const where = await locatePlan(plan);
 console.log(`${plan.title} — ${plan.destination_city}`);
-console.log(`located: ${where ? `${where.name} ${where.lat.toFixed(4)},${where.lng.toFixed(4)}` : 'NOT FOUND'}\n`);
-if (!where) process.exit(1);
+console.log(`located: ${where ? `${where.name} ${where.lat.toFixed(4)},${where.lng.toFixed(4)}` : 'nowhere we can search — tips are still dealt with'}\n`);
 
 const { data: rows } = await db.from('itinerary_items')
   .select('id, title, subtitle').eq('plan_id', planId).order('created_at', { ascending: true }).limit(60);
 
 const said = rows.map(r => [r.title, r.subtitle].filter(Boolean).join(' · '));
-const townWords = new Set(terms(where.name));
-const checked = await checkAll(said, where);
+const townWords = new Set(terms(where?.name ?? ''));
+const checked = where
+  ? await checkAll(said, where)
+  : said.map(t => ({ said: t, verification: { status: 'unchecked', reason: 'no location' }, advice: null, payment: null }));
 
 for (let i = 0; i < rows.length; i++) {
   const c = checked[i];

@@ -48,13 +48,17 @@ export async function POST(
   // first. Without a point there is no box to search, and a box over the
   // wrong town would confirm the wrong venues — which is worse than not
   // checking at all, because it would report that we had.
+  //
+  // A trip we cannot place is not a trip we can do nothing for, and this
+  // used to return 409 and stop. Reading a tip and seeing that it asserts a
+  // cover charge needs no map at all, so an unplaceable trip kept every
+  // invented claim it had — and it is precisely the trip whose claims will
+  // never be checked by anything. Six such items were sitting in this
+  // database saying what time a jazz set starts.
+  //
+  // So the two passes are separate now. Claims are dealt with either way;
+  // venues are confirmed when there is somewhere to confirm them against.
   const where = await locatePlan(plan);
-  if (!where) {
-    return NextResponse.json(
-      { error: 'We could not place this trip on the map, so there is nothing we can check against yet.' },
-      { status: 409 },
-    );
-  }
 
   const { data: items, error: itemsErr } = await db
     .from('itinerary_items')
@@ -82,13 +86,21 @@ export async function POST(
 
   // The map's own name for the town, because it is what Wikivoyage titles
   // its page with and what the search box is centred on.
-  const place = { name: where.name, lat: where.lat, lng: where.lng };
+  const place = where ? { name: where.name, lat: where.lat, lng: where.lng } : null;
   // The title is what names the venue; the subtitle often repeats it with the
   // detail. Both are read, because "Milt's" appears in one or the other.
   const said = rows.map(r => [r.title, r.subtitle].filter(Boolean).join(' · '));
 
-  const townWords = new Set(terms(place.name));
-  const checked = await checkAll(said, place);
+  const townWords = new Set(terms(place?.name ?? ''));
+  // With nowhere to search, every item is honestly unchecked — never absent.
+  const checked = place
+    ? await checkAll(said, place)
+    : said.map(s => ({
+        said: s,
+        verification: { status: 'unchecked' as const, reason: 'we could not place this trip on the map' },
+        advice: null,
+        payment: null,
+      }));
   const now = new Date().toISOString();
 
   let stored = 0;
@@ -135,6 +147,8 @@ export async function POST(
   return NextResponse.json({
     checked: rows.length,
     stored,
+    // Said plainly rather than as an error: the tips were still dealt with.
+    located: where ? where.name : null,
     ...tally(checked),
     // Said out loud in the response because it is the point of the whole
     // exercise: confirming a venue exists is not confirming how it takes
