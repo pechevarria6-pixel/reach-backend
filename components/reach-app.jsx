@@ -3496,6 +3496,23 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   // Friday to the next. Nothing here is carried over from a previous plan.
   const nightQuestions=[
     {
+      // The same open question the trip flow opens with, and for the same
+      // reason: everything after it is a list, and a list cannot say "Tim's
+      // fortieth, he hates clubs, somewhere we can actually talk".
+      //
+      // It is here as much for the step arithmetic as for the answer. The
+      // date step sits straight after the blurb, so a question set without
+      // one puts the dates at index 0 instead of index 1 — and choosing "A
+      // night out" while standing on the date step then moved that step out
+      // from under the person and dropped them on the next question, past
+      // the date fields they had not filled in yet. Both sets open the same
+      // way, so switching between them changes nothing underfoot.
+      id:"goalBlurb",icon:"💭",free:true,optional:true,
+      title:"What's this night about?",
+      sub:"The most useful thing you can tell us. Who it's for and what you're after — \"Tim's 40th, he hates clubs, somewhere we can actually talk\". Everything after this is a list; this is the bit that isn't.",
+      placeholder:"Tim's 40th, somewhere we can actually hear each other…",
+    },
+    {
       id:"nightWhere",icon:"📍",
       title:"Where should it be?",
       sub:"Roughly the part of town, not an address.",
@@ -3575,8 +3592,12 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   // word counts — a question skipped wrongly is an answer nobody gave, which
   // is worse than one extra tap.
   const goalSaysType=goalAnswersTripType(answers.goalBlurb);
+  // Both sets are filtered the same way, so the two have the same shape and
+  // the date step lands at the same index in either. Filtering one and not
+  // the other is how choosing "A night out" moved the date step out from
+  // under somebody mid-flow.
   const asked=isNight
-    ?nightQuestions
+    ?nightQuestions.filter(q=>!isCarried(q))
     :questions.filter(q=>!isCarried(q)&&!(q.id==="tripType"&&goalSaysType));
 
   // Where the date step sits: straight after "What's this trip about?".

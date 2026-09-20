@@ -46,3 +46,26 @@ test('the date index is where the date step actually is', () => {
 test('no questions at all still asks for dates', () => {
   assert.deepEqual(stepsFor([]).map(s => s.kind), ['dates']);
 });
+
+test('switching what you are planning does not move the step you are on', () => {
+  // The night out and the trip ask different questions, and the screen
+  // switches between the two sets while somebody is standing on the date
+  // step — the mode is chosen there. When only one set opened with the
+  // blurb, the dates sat at index 1 for a trip and index 0 for a night out,
+  // so choosing "A night out" moved that step out from under the person and
+  // dropped them on the next question, past date fields they had not filled
+  // in. Both sets open the same way now.
+  const trip  = [{ id: 'goalBlurb' }, { id: 'tripType' }, { id: 'budget' }];
+  const night = [{ id: 'goalBlurb' }, { id: 'nightWhere' }, { id: 'nightKind' }];
+  assert.equal(dateStepIndex(trip), dateStepIndex(night),
+    'the dates have to be the same screen number in both, or switching teleports you');
+  assert.equal(dateStepIndex(trip), 1);
+});
+
+test('and still holds when the blurb is already known', () => {
+  // Carried over from a previous plan, it is dropped from both sets rather
+  // than one, so the shapes stay in step with each other.
+  const trip  = [{ id: 'tripType' }, { id: 'budget' }];
+  const night = [{ id: 'nightWhere' }, { id: 'nightKind' }];
+  assert.equal(dateStepIndex(trip), dateStepIndex(night));
+});
