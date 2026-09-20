@@ -3279,7 +3279,78 @@ const KNOWN_LABELS={
 // ─── TRIP PLANNING QUIZ ───────────────────────────────────────────────────────
 // Completely separate from the onboarding quiz.
 // This fuels the AI trip generator with trip-specific preferences.
-function TripQuiz({group,userLocation,departure,setPlaceOverride,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known}){
+// ─── Where you are flying from, changed where you noticed it was wrong ──
+// The departure city and airport lived only in Profile, and the trip quiz is
+// exactly where somebody sees that it is wrong: they are reading "Departing
+// from Pittsburgh (RDU)" while planning a trip. Sending them to Profile to
+// fix it threw away every answer they had given, so in practice it stayed
+// wrong — this one had said Pittsburgh with a Raleigh airport for months.
+//
+// The airport follows the city when it is left empty, and overrides it when
+// it is not, because living in one place and flying from another is ordinary.
+function DepartureLine({departure,saveDeparture}){
+  const [editing,setEditing]=useState(false);
+  const [city,setCity]=useState("");
+  const [air,setAir]=useState("");
+  const [busy,setBusy]=useState(false);
+
+  const open=()=>{
+    setCity(departure?.city||"");
+    setAir(departure?.derived?"":(departure?.airport||""));
+    setEditing(true);
+  };
+
+  const airValid=!air.trim()||/^[A-Za-z]{3}$/.test(air.trim());
+  const willUse=air.trim()?air.trim().toUpperCase():airportForCity(city);
+
+  return editing?(
+    <div style={{marginTop:10,padding:"12px 14px",background:C.s2,
+      border:`1px solid ${C.border}`,borderRadius:14,textAlign:"left"}}>
+      <div style={{fontSize:12.5,color:C.t2,marginBottom:8,lineHeight:1.5}}>
+        Where do you fly from? Every flight price on this trip starts here.
+      </div>
+      <input className="inp" autoFocus value={city} placeholder="Raleigh, North Carolina"
+        onChange={e=>setCity(e.target.value)}/>
+      <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+        <input aria-label="Departure airport" className="inp" value={air} placeholder={airportForCity(city)||"RDU"}
+          maxLength={3} style={{width:96,textTransform:"uppercase",fontWeight:600,letterSpacing:".08em"}}
+          onChange={e=>setAir(e.target.value)}/>
+        <div style={{fontSize:11.5,color:C.t3,lineHeight:1.4,flex:1}}>
+          {air.trim()
+            ?"Using the airport you typed."
+            :airportForCity(city)
+              ?`Leave empty and we'll use ${airportForCity(city)}.`
+              :"We don't know an airport for that city — type one."}
+        </div>
+      </div>
+      {!airValid&&(
+        <div style={{fontSize:12,color:C.red,marginTop:8}}>
+          An airport code is three letters, like SFO or JFK.
+        </div>
+      )}
+      <div style={{display:"flex",gap:8,marginTop:10}}>
+        <button className="bp" style={{flex:1}} disabled={busy||!airValid||!willUse}
+          onClick={async()=>{
+            setBusy(true);
+            const ok=await saveDeparture?.({city,airport:air});
+            setBusy(false);
+            if(ok)setEditing(false);
+          }}>
+          {busy?"Saving…":"Save"}
+        </button>
+        <button className="bs" style={{flex:1}} onClick={()=>setEditing(false)}>Cancel</button>
+      </div>
+    </div>
+  ):(
+    <div {...pressable} onClick={saveDeparture?open:undefined}
+      style={{fontSize:14,color:C.t2,cursor:saveDeparture?"pointer":"default"}}>
+      {`Departing from ${departure?.city||"your location"}${departure?.airport?" ("+departure.airport+")":""}`}
+      {saveDeparture?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap"}}>{" · change ▾"}</span>:null}
+    </div>
+  );
+}
+
+function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known}){
   const [qStep,setQStep]=useState(0);
   const [startDate,setStartDate]=useState(known?.startDate||"");
   const [endDate,setEndDate]=useState(known?.endDate||"");
@@ -3599,11 +3670,11 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,toast,error,onG
               <PlaceLine userLocation={userLocation} setPlaceOverride={setPlaceOverride}
                 toast={toast} prefix="Out around" fallback="Out near you"
                 hint="Where's the night out? This sticks until you clear it."/>
+            ):mode==="trip"?(
+              <DepartureLine departure={departure} saveDeparture={saveDeparture}/>
             ):(
               <div style={{fontSize:14,color:C.t2}}>
-                {mode==="trip"
-                  ?`Departing from ${departure?.city||"your location"}${departure?.airport?" ("+departure.airport+")":""}`
-                  :"A night out is one evening. A trip is days away."}
+                A night out is one evening. A trip is days away.
               </div>
             )}
           </div>
@@ -3857,7 +3928,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,toast,error,onG
 }
 
 
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,savePlanToServer,saveItineraryToServer}){
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
   // it is what the person filled in a moment ago on the way here.
@@ -4309,6 +4380,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             group={group}
             userLocation={userLocation}
             setPlaceOverride={setPlaceOverride}
+            saveDeparture={saveDeparture}
             toast={toast}
             error={error}
             allComplete={allComplete}
@@ -7718,6 +7790,32 @@ export default function ReachApp({realUser,onSignOut}={}){
   // reading Pittsburgh and RDU at once and the trip screen showed both.
   const departure=departureFrom(user?.homeCity,user?.homeAirport,userLocation);
 
+  /**
+   * Change where you fly from, from wherever you happen to be standing.
+   *
+   * This lived only in Profile, and the trip quiz is exactly where somebody
+   * notices it is wrong — they are looking at "Departing from Pittsburgh"
+   * while planning. Sending them to Profile to fix it threw away everything
+   * they had filled in, so in practice nobody fixed it.
+   */
+  const saveDeparture=async({city,airport})=>{
+    try{
+      const r=await fetch("/api/profile",{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({homeCity:city?.trim()||null,homeAirport:airport?.trim()||null}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't save that");
+      await syncUser();
+      showToast("Departing from "+(city?.trim()||"wherever you are"));
+      return true;
+    }catch(e){
+      console.error("[departure] could not save",e);
+      showToast(e.message||"Couldn't save that");
+      return false;
+    }
+  };
+
   // ── Load real data from Supabase via API ──────────────────
   // The route guard means this component only ever renders for a signed-in
   // user, so there is no stage to wait for: load on mount.
@@ -8399,7 +8497,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   };
 
   const cur=stack[stack.length-1];
-  const cp={onBack:pop,replace,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,setPlaceOverride,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
+  const cp={onBack:pop,replace,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,setPlaceOverride,saveDeparture,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
 
   const renderSub=()=>{
     if(!cur)return null;
