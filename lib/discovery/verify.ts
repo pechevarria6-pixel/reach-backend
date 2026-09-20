@@ -72,34 +72,61 @@ export function terms(name: string): string[] {
 }
 
 /**
+ * Lowercased, stripped of punctuation, single-spaced, space-padded.
+ *
+ * The possessive goes first and separately. Removing apostrophes wholesale
+ * turns "Desert Bistro's counter" into "desert bistros", which no longer
+ * contains "desert bistro", so a restaurant the map knows about — with a
+ * phone number — came back unconfirmed on the strength of one letter.
+ * An itinerary writes venue names possessively all the time.
+ */
+export function normalise(text: string): string {
+  const stripped = String(text || '')
+    .toLowerCase()
+    .replace(/['’]s\b/g, ' ')        // "Desert Bistro's" → "desert bistro"
+    .replace(/['’]/g, '')            // "Milt's" → "milts", once the above is done
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  return ` ${stripped} `;
+}
+
+/**
  * Is this the place the itinerary meant?
  *
- * An itinerary writes "Dinner at the bar at Antica Forma for wood-fired
- * pizza" and the map says "Antica Forma". The distinctive words have to
- * match — one shared common word is not a match, which is the mistake this
- * codebase already made once with activity products and will not make again.
+ * The source's name has to appear in the sentence as a phrase. Counting
+ * shared words was tried first and confirmed the wrong venues, on real data,
+ * repeatedly:
+ *
+ *   "Moab Giants dinosaur tracks museum"        matched  Moab Museum
+ *   "Sunrise at Dead Horse Point State Park"    matched  Potash Road Petroglyphs
+ *   "Dinner at El Charro Loco, patio seating"   matched  Milt's Stop & Eat
+ *
+ * Every one of those shared enough words to pass and named somewhere else.
+ * Moab Giants and the Moab Museum are two different institutions, and an
+ * itinerary that sends somebody to one with the other's phone number is
+ * worse than an itinerary that says nothing.
+ *
+ * Phrase containment only ever fails the other way. "a solo shake at Milt's"
+ * will not confirm "Milt's Stop & Eat", so a real venue goes unconfirmed and
+ * the screen says nothing about it — which is the safe direction, and the
+ * only direction this is allowed to be wrong in.
  */
 export function isSamePlace(
   itineraryText: string,
   sourceName: string,
   /**
    * Words that prove nothing here — the town's own name, most of all. Moab
-   * has a Moab Museum, a Moab Brewery and a great many other Moabs, and
-   * without this the sentence "Cool off at the Moab Museum" matched a map
-   * feature called simply "Moab" and the check reported a confirmed venue.
-   * A false confirmation is worse than no check: it is this app telling
-   * somebody we looked, when what we found was the town they are standing in.
+   * has a Moab Museum, a Moab Brewery and a great many other Moabs.
    */
   ignore: Set<string> = new Set(),
 ): boolean {
-  const source = terms(sourceName).filter(w => !ignore.has(w));
-  if (!source.length) return false;
-  const said = new Set(terms(itineraryText));
-  const hits = source.filter(w => said.has(w)).length;
-  // Every distinctive word of the source's name, for a one-word name;
-  // otherwise at least two, so "Peace Tree Juice Cafe" cannot match on
-  // "peace" alone.
-  return source.length === 1 ? hits === 1 : hits >= 2;
+  const name = normalise(sourceName);
+  const distinctive = name.trim().split(' ').filter(w => w && !ignore.has(w));
+  // A name that is nothing but the town's own name identifies nothing.
+  if (!distinctive.length) return false;
+  // Two letters is not a name to search on.
+  if (name.trim().length < 3) return false;
+  return normalise(itineraryText).includes(name);
 }
 
 /** What OSM records, in the shape the app reads. */

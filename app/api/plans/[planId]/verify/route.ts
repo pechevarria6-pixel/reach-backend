@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { checkAll, tally } from '@/lib/discovery/verify';
 import { attributedNote } from '@/lib/discovery/wikivoyage';
-import { locate } from '@/lib/discovery/geocode';
+import { locatePlan } from '@/lib/discovery/geocode';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -34,7 +34,7 @@ export async function POST(
 
   const { data: plan, error: planErr } = await db
     .from('plans')
-    .select('id, destination_city, destination_country')
+    .select('id, title, destination_city, destination_country')
     .eq('id', planId)
     .maybeSingle();
 
@@ -48,7 +48,7 @@ export async function POST(
   // first. Without a point there is no box to search, and a box over the
   // wrong town would confirm the wrong venues — which is worse than not
   // checking at all, because it would report that we had.
-  const where = await locate(plan.destination_city, plan.destination_country);
+  const where = await locatePlan(plan);
   if (!where) {
     return NextResponse.json(
       { error: 'We could not place this trip on the map, so there is nothing we can check against yet.' },

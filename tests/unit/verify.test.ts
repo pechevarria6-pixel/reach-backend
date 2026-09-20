@@ -8,22 +8,39 @@ import { fields, plain, listingsFrom, attributedNote } from '../../lib/discovery
 // ─── What counts as having found somewhere ──────────────────────────────
 
 test('the town’s own name is never evidence of a venue in that town', () => {
-  // This shipped wrong for one run and is the reason the ignore set exists.
-  // "Cool off at the Moab Museum" matched a map feature named simply "Moab",
-  // and the check reported REAL against a venue nothing had confirmed — a
-  // false confirmation, which is worse than no check at all, because it is
-  // Reach saying it looked.
-  assert.equal(isSamePlace('Cool off at the Moab Museum', 'Moab'), true,
-    'without the ignore set it matches — that is the bug being guarded');
+  // Moab has a Moab Museum, a Moab Brewery and a great many other Moabs.
   assert.equal(isSamePlace('Cool off at the Moab Museum', 'Moab', new Set(['moab'])), false);
 });
 
-test('one shared ordinary word is not a match', () => {
-  assert.equal(isSamePlace('Smoothies at Peace Tree Juice Cafe', 'Peace Plaza Hotel'), false);
+test('the name has to be there as a phrase, not as scattered words', () => {
+  // Every one of these is a false confirmation the word-counting matcher
+  // produced on the real Moab itinerary, against the real map. Each one
+  // named somewhere else and would have carried the wrong venue's phone
+  // number onto somebody's evening.
+  const moab = new Set(['moab']);
+  assert.equal(isSamePlace('Moab Giants dinosaur tracks museum and outdoor trail', 'Moab Museum', moab), false,
+    'Moab Giants and the Moab Museum are two different institutions');
+  assert.equal(isSamePlace('Sunrise at Dead Horse Point State Park · Dead Horse Point and Potash Road', 'Potash Road Petroglyphs', moab), false);
+  assert.equal(isSamePlace('Dinner at El Charro Loco, patio bar seating · Milt’s is cash-only', 'Milt’s Stop & Eat', moab), false);
 });
 
-test('two distinctive words are', () => {
+test('a name that is present as a phrase is a match', () => {
   assert.equal(isSamePlace('Dinner at the bar at Antica Forma for pizza', 'Antica Forma'), true);
+  assert.equal(isSamePlace('grab a counter seat for a late lunch at Love Muffin Cafe', 'Love Muffin Cafe'), true);
+});
+
+test('a possessive still names the place it possesses', () => {
+  // Stripping apostrophes wholesale turned "Desert Bistro's counter" into
+  // "desert bistros", which does not contain "desert bistro" — so a mapped
+  // restaurant with a phone number came back unconfirmed over one letter.
+  assert.equal(isSamePlace('Final seafood dinner at Desert Bistro’s counter', 'Desert Bistro'), true);
+});
+
+test('unconfirmed is the safe direction, and the only one it errs in', () => {
+  // "a solo shake at Milt's" will not confirm "Milt's Stop & Eat". That is a
+  // real venue going unconfirmed, the screen says nothing about it, and
+  // nobody is misled. Phrase matching is allowed to be wrong only this way.
+  assert.equal(isSamePlace('then a solo shake at Milt’s', 'Milt’s Stop & Eat'), false);
 });
 
 test('the words an itinerary wraps a venue in are not part of its name', () => {
@@ -109,7 +126,7 @@ const MOAB = { name: 'Moab', lat: 38.5733, lng: -109.5498 };
 
 test('a venue on the map is confirmed, one that is not is not', async () => {
   const checked = await checkAll(
-    ['Burgers at Milt’s', 'Tacos at El Charro Loco'],
+    ['Burgers at Milt’s Stop & Eat', 'Tacos at El Charro Loco'],
     MOAB,
     fakeFetch([{ name: "Milt's Stop & Eat", amenity: 'fast_food', phone: '+1-435-259-7424' }]),
   );
@@ -121,7 +138,7 @@ test('a map that does not answer leaves everything unchecked, never absent', asy
   // The distinction the whole design rests on. Overpass 504s under load, and
   // a silent source must never read as "this restaurant does not exist".
   const dead = (async () => ({ ok: false, json: async () => ({}) })) as unknown as typeof fetch;
-  const [c] = await checkAll(['Burgers at Milt’s'], MOAB, dead);
+  const [c] = await checkAll(['Burgers at Milt’s Stop & Eat'], MOAB, dead);
   assert.equal(c.verification.status, 'unchecked');
   assert.notEqual(c.verification.status, 'not_found');
 });
@@ -131,7 +148,7 @@ test('a confirmed venue with no payment data yields no payment claim', async () 
   // and not one of them carries payment data anywhere we can read. So the
   // product may say the place is real and must stay silent on how it is paid.
   const [c] = await checkAll(
-    ['Burgers at Milt’s'],
+    ['Burgers at Milt’s Stop & Eat'],
     MOAB,
     fakeFetch([{ name: "Milt's Stop & Eat", amenity: 'fast_food' }]),
   );
@@ -153,7 +170,7 @@ test('a traveller’s note is carried through to the item it is about', async ()
 
 test('the tally counts what was actually established', async () => {
   const checked = await checkAll(
-    ['Burgers at Milt’s', 'Tacos at El Charro Loco'],
+    ['Burgers at Milt’s Stop & Eat', 'Tacos at El Charro Loco'],
     MOAB,
     fakeFetch([{ name: "Milt's Stop & Eat", amenity: 'fast_food' }]),
   );

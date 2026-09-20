@@ -17,11 +17,35 @@
 const API = 'https://nominatim.openstreetmap.org/search';
 const AGENT = 'Reach/1.0 (+https://www.alcanzar.io; hello@alcanzar.io)';
 
+/**
+ * Somewhere people live, which is the only kind of answer that is any use.
+ *
+ * A geocoder answers every question, and some of the questions are not
+ * places. Asked for "Test" — the title of a real plan in this database —
+ * Nominatim returns a canal in Dehestan-e Dudahak, Iran, with complete
+ * confidence. Accepting it would put the search box over rural Iran and then
+ * report which of the trip's restaurants had been confirmed against it.
+ *
+ * So an answer has to be a settlement or an administrative boundary before
+ * it is treated as the town somebody is going to. Everything else is read as
+ * not knowing, which is a state this app can handle.
+ */
+const SETTLEMENT: Record<string, Set<string>> = {
+  place: new Set(['city', 'town', 'village', 'hamlet', 'suburb', 'municipality', 'borough', 'quarter', 'neighbourhood']),
+  boundary: new Set(['administrative']),
+};
+
+function isSettlement(cls?: string, type?: string): boolean {
+  return Boolean(cls && type && SETTLEMENT[cls]?.has(type));
+}
+
 export interface Located {
   lat: number;
   lng: number;
   /** How the map names it, which is what gets searched and shown. */
   name: string;
+  /** The exact string that was geocoded, so a wrong box can be traced. */
+  from: string;
 }
 
 /**
@@ -52,9 +76,14 @@ export async function locate(
     } as RequestInit);
     if (!res.ok) return null;
 
-    const hits = await res.json() as { lat?: string; lon?: string; display_name?: string }[];
+    const hits = await res.json() as {
+      lat?: string; lon?: string; display_name?: string; class?: string; type?: string;
+    }[];
     const hit = Array.isArray(hits) ? hits[0] : null;
     if (!hit) return null;
+
+    // A canal is not a town. See SETTLEMENT above for why this is here.
+    if (!isSettlement(hit.class, hit.type)) return null;
 
     const lat = Number(hit.lat);
     const lng = Number(hit.lon);
@@ -64,10 +93,40 @@ export async function locate(
     // The first part of the display name is the town itself; the rest is the
     // county and country, which Wikivoyage does not title its pages with.
     const name = String(hit.display_name || town).split(',')[0].trim() || town;
-    return { lat, lng, name };
+    return { lat, lng, name, from: q };
   } catch {
     // Unreachable is not "no such town". The caller checks nothing rather
     // than checking the wrong place.
     return null;
   }
+}
+
+/**
+ * Where a plan is, from whatever the plan actually holds.
+ *
+ * destination_city is the right field and it is empty on every real trip in
+ * this database — both of them. It is populated on the E2E fixtures and on
+ * nothing else, because it was wired up after those trips were made, so a
+ * route that insisted on it would refuse to check exactly the itineraries
+ * worth checking.
+ *
+ * The title is the fallback and never the preference: "Moab, Utah, USA" is a
+ * perfectly good thing to hand a geocoder, and "Test" is not, which is what
+ * the settlement guard is for. Between them, a plan with a real destination
+ * resolves and a plan without one honestly does not.
+ */
+export async function locatePlan(
+  plan: { title?: string | null; destination_city?: string | null; destination_country?: string | null },
+  fetchImpl: typeof fetch = fetch,
+): Promise<Located | null> {
+  const city = String(plan.destination_city || '').trim();
+  if (city) {
+    const found = await locate(city, plan.destination_country, fetchImpl);
+    if (found) return found;
+  }
+
+  const title = String(plan.title || '').trim();
+  // A title that is also the city would just repeat the query above.
+  if (!title || title.toLowerCase() === city.toLowerCase()) return null;
+  return locate(title, null, fetchImpl);
 }
