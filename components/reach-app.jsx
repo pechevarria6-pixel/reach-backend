@@ -6217,7 +6217,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // for them — that is the point, their card's benefits only apply to a
   // reservation on their own account — so the answer has to come from them.
   const captureBooking=async(id,status)=>{
-    if(!id||capturing)return;
+    // A booking id always comes from the server — these rows are read back
+    // from /api/bookings — so anything that is not one is not a booking, and
+    // a local id would PATCH a row that does not exist.
+    if(!id||isTempId(id)||capturing)return;
     setCapturing(id);
     try{
       const r=await fetch(`/api/bookings/${id}`,{
