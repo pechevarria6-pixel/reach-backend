@@ -993,7 +993,11 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
   const filters=["All",...categories];
 
   const shown=filter==="All"?allItems:allItems.filter(e=>e.category===filter);
-  const emptyNote=loading?"Finding what's on near you…"
+  // Null while loading, not a second message. The spinner below already says
+  // "Finding things near you…", and this box said "Finding what's on near
+  // you…" directly underneath it — two ways of saying the same thing, at the
+  // same time, in slightly different words.
+  const emptyNote=loading?null
     :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
     :reason==="no_location"?"Allow location in your browser to see what's on near you."
     :reason==="provider_error"?"Couldn't reach the listings just now. Try again shortly."
