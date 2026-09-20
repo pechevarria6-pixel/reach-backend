@@ -88,26 +88,47 @@ export function osmRef(findingId: string): { type: string; id: number } | null {
 const websiteOf = (tags: Record<string, string> = {}) =>
   tags.website || tags['contact:website'] || tags.url || null;
 
-export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<SourceResult> {
-  // Only the kinds the map can answer. Nothing left is not an error: they
-  // have not told us anything the map knows about.
-  const interests = [...new Set(seeker.interests.slice(0, 6).map(i => kindFor(i).key))]
-    .filter(i => tagsFor(i).length);
-  if (!interests.length) return { source: 'osm', status: 'ok', findings: [] };
+/**
+ * The narrowest box a place has actually answered at.
+ *
+ * Held in memory only, and deliberately: it is an optimisation, not a fact
+ * about the world. A cold serverless instance simply starts wide again and
+ * finds out, which is correct — a city that was too dense last week may have
+ * a healthier mirror today.
+ */
+const ANSWERED_AT = new Map<string, number>();
 
-  // Fifteen miles, not twenty-five: nobody crosses a city for a class,
-  // and the wider box is what makes a dense city time out.
-  const box = boundingBox(seeker.lat, seeker.lng, 15);
-  // Let the server take as long as we are prepared to wait, and no longer.
-  const body = overpassQuery(interests, box, 15, Math.ceil(budgetMs / 1000));
+/** Rounded, so the same town is the same key however it was located. */
+function placeKey(at: { lat: number; lng: number }): string {
+  return `${at.lat.toFixed(1)},${at.lng.toFixed(1)}`;
+}
 
-  let json: any = null;
-  let lastDetail = 'no mirror answered';
+function worked(at: { lat: number; lng: number }): number | null {
+  return ANSWERED_AT.get(placeKey(at)) ?? null;
+}
+
+function remember(at: { lat: number; lng: number }, miles: number): void {
+  ANSWERED_AT.set(placeKey(at), miles);
+}
+
+function forget(at: { lat: number; lng: number }): void {
+  ANSWERED_AT.delete(placeKey(at));
+}
+
+/**
+ * One question, asked of each mirror in turn.
+ *
+ * A mirror under load does not refuse, it hangs. Without a deadline of our
+ * own, three mirrors in a row take longer than anybody will wait and longer
+ * than the function is allowed to run.
+ */
+async function askOverpass(
+  body: string,
+  budgetMs: number,
+  note: (detail: string) => void,
+): Promise<any | null> {
   for (const mirror of OVERPASS_MIRRORS) {
     try {
-      // A mirror under load does not refuse, it hangs. Without a deadline of
-      // our own, three mirrors in a row take longer than anybody will wait
-      // and longer than the function is allowed to run.
       const res = await fetch(mirror, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain', 'User-Agent': UA },
@@ -117,20 +138,78 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
         // opens Discover in the same city would be rude, and would get us
         // blocked. Six hours is plenty for a map.
         next: { revalidate: 21600 },
-      });
+      } as RequestInit);
       if (!res.ok) {
-        lastDetail = `${new URL(mirror).host} ${res.status}`;
+        note(`${new URL(mirror).host} ${res.status}`);
         console.error('[discover/osm] Overpass returned', res.status, 'from', new URL(mirror).host);
         continue;
       }
-      json = await res.json();
-      break;
+      return await res.json();
     } catch (e: unknown) {
-      lastDetail = e instanceof Error ? e.message : 'request failed';
-      console.error('[discover/osm] Overpass request failed at', new URL(mirror).host, lastDetail);
+      const detail = e instanceof Error ? e.message : 'request failed';
+      note(detail);
+      console.error('[discover/osm] Overpass request failed at', new URL(mirror).host, detail);
     }
   }
-  if (!json) return { source: 'osm', status: 'error', findings: [], detail: lastDetail };
+  return null;
+}
+
+export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<SourceResult> {
+  // Only the kinds the map can answer. Nothing left is not an error: they
+  // have not told us anything the map knows about.
+  const interests = [...new Set(seeker.interests.slice(0, 6).map(i => kindFor(i).key))]
+    .filter(i => tagsFor(i).length);
+  if (!interests.length) return { source: 'osm', status: 'ok', findings: [] };
+
+  // Widest first, shrinking until the map answers.
+  //
+  // Fifteen miles was already narrowed from twenty-five because "the wider
+  // box is what makes a dense city time out", and it is still too wide for a
+  // real city. Raleigh at fifteen miles never came back at all: every kind,
+  // every mirror, minutes of somebody else's donated capacity, nothing
+  // stored. The cache held thirty-nine venues and not one of them was in the
+  // city the owner actually lives in.
+  //
+  // The cost is in how much is inside the box rather than how far across it
+  // is, so there is no single right number. Measured on real places:
+  //
+  //   Moab (pop. 5,000)               5mi  54 places in 4.7s
+  //   Puerto Vallarta (pop. 200,000)  5mi  504 · 3mi 504 · 2mi 260 in 3.3s
+  //
+  // A near answer beats no answer: somebody in a city has more within two
+  // miles than somebody in a town has within fifteen, so shrinking costs
+  // them nothing and is the only way they get anything at all.
+  const RADII = [15, 8, 4, 2];
+
+  let json: any = null;
+  let lastDetail = 'no mirror answered';
+  // Start where this place last answered. A sweep asks the same city a dozen
+  // times — four kinds per question — and rediscovering that fifteen miles
+  // will not work costs seventy-five seconds of somebody else's donated
+  // capacity on every one of them. Remembered per place, not globally,
+  // because a town and a city do not have the same answer.
+  const start = Math.max(0, RADII.indexOf(worked(seeker) ?? RADII[0]));
+  let usedMiles = RADII[start];
+
+  for (const miles of RADII.slice(start)) {
+    usedMiles = miles;
+    const box = boundingBox(seeker.lat, seeker.lng, miles);
+    // Let the server take as long as we are prepared to wait, and no longer.
+    const body = overpassQuery(interests, box, 15, Math.ceil(budgetMs / 1000));
+    json = await askOverpass(body, budgetMs, d => { lastDetail = d; });
+    if (json) break;
+  }
+  if (!json) {
+    // Nothing worked even at the tightest box, so forget what we thought we
+    // knew: the next attempt should start wide again rather than inherit a
+    // radius that has just failed.
+    forget(seeker);
+    return { source: 'osm', status: 'error', findings: [], detail: lastDetail };
+  }
+  if (usedMiles !== RADII[0]) {
+    remember(seeker, usedMiles);
+    console.error('[discover/osm] answered only at', usedMiles, 'miles for', seeker.city || `${seeker.lat},${seeker.lng}`);
+  }
 
   // Which interest found it, so the card can say. An element can match more
   // than one; the first interest that claims it wins, which is the one they
