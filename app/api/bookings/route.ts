@@ -8,7 +8,7 @@ import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness, withoutTravelerDetails } from '@/lib/essentials-server';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
-import { kiwiFlights, viatorActivities, ticketmasterEvents, conciergeRestaurants } from '@/lib/booking/providers/rest';
+import { kiwiFlights, viatorActivities, ticketmasterEvents, tableReservations } from '@/lib/booking/providers/rest';
 import { duffelFlights } from '@/lib/booking/providers/flights.duffel';
 
 const PROVIDERS: Record<Vertical, BookingProvider> = {
@@ -20,7 +20,10 @@ const PROVIDERS: Record<Vertical, BookingProvider> = {
   flight: duffelFlights,
   activity: viatorActivities,
   event: ticketmasterEvents,
-  restaurant: conciergeRestaurants,
+  // The member books their own table, on the platform the restaurant uses
+  // and with their own card, so their card's dining benefits survive. No
+  // queue, and nothing waiting on Reach staff.
+  restaurant: tableReservations,
 };
 
 export async function POST(req: NextRequest) {

@@ -66,6 +66,12 @@ export interface BookingItemRequest {
     partySize: number;
     notes?: string;
     externalUrl?: string;  // OpenTable/Resy page if known
+    // Where this restaurant actually takes bookings, learned at harvest time
+    // rather than looked up while somebody waits. Absent means we do not
+    // know, which sends them to the phone rather than to a guess.
+    platform?: 'resy' | 'opentable' | 'tock' | 'none';
+    // For the places with no platform at all: the number you ring.
+    phone?: string | null;
   };
 }
 

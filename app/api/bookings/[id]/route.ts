@@ -1,8 +1,14 @@
-// ─── PATCH /api/bookings/[id] — concierge/ops fulfillment ────────────────
-// Ops (you, for now) confirms concierge tickets: body { status:
-// 'confirmed'|'failed'|'cancelled', providerRef?, detail? }. This is also
-// where a future OpenTable/Resy integration would report back — the
-// frontend only ever watches `status`.
+// ─── PATCH /api/bookings/[id] — how it actually went ────────────────────
+// Restaurants are booked by the member, on the platform the restaurant uses
+// and with their own card, so their card's dining benefits survive. Reach
+// hands them over and then has no way of knowing whether there was a table
+// — only they do. This is where they say: body { status:
+// 'confirmed'|'failed'|'cancelled', providerRef?, detail? }.
+//
+// It is also where a future Resy or OpenTable integration would report back,
+// and where the old ops queue used to confirm its own rows. The frontend
+// only ever watches `status`, so none of those callers can tell each other
+// apart, which is the point.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';

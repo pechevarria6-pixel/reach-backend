@@ -75,6 +75,7 @@ function asRequest(
   partySize: number,
   product: { productCode: string; title: string; priceCents: number | null } | null,
   flight: { from: string | null; to: string | null },
+  table: { platform?: string; url?: string | null; phone?: string | null } | null,
 ): (BookingItemRequest & { itineraryItemId: string; title: string }) | null {
   const vertical = BOOKABLE[item.type];
   if (!vertical) return null;
@@ -143,16 +144,25 @@ function asRequest(
     } as BookingItemRequest & { itineraryItemId: string; title: string };
   }
 
-  // Concierge: a person reads this and calls the restaurant.
+  // A table, booked by the member on the platform the restaurant uses.
   return {
     ...base,
     restaurant: {
       name: item.title,
       city,
       date: plan.start_date ?? '',
+      // scheduled_time holds prose on generated itineraries — "Day 3 ·
+      // Evening" — which is not a time. The link builder refuses anything
+      // that is not a clock, so a bad value costs the prefill and nothing
+      // more.
       time: item.scheduled_time || '19:00',
       partySize,
       notes: item.subtitle ?? undefined,
+      // Where this restaurant actually takes bookings. Absent means we do
+      // not know, and the member gets the phone number rather than a guess.
+      platform: (table?.platform as 'resy' | 'opentable' | 'tock' | 'none') ?? 'none',
+      externalUrl: table?.url ?? undefined,
+      phone: table?.phone ?? null,
     },
   } as BookingItemRequest & { itineraryItemId: string; title: string };
 }
@@ -290,8 +300,35 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       }
     }
 
+    // Where this restaurant takes bookings, if the harvest has learned it.
+    // Looked up here rather than when somebody taps: a third party in the
+    // critical path of a screen a person is waiting on is a third party that
+    // decides how fast the screen is.
+    let table: { platform?: string; url?: string | null; phone?: string | null } | null = null;
+    if (item.type === 'restaurant') {
+      const { data: venue, error: venueError } = await ctx.db
+        .from('discovery_venues')
+        .select('reservation_platform, reservation_url, phone')
+        .ilike('name', item.title.trim())
+        .limit(1)
+        .maybeSingle();
+      // A column that does not exist yet means the migration is pending, and
+      // every restaurant falls to the phone lane — which is the honest
+      // degraded state, not an error.
+      if (venueError && !/reservation_platform|phone|schema cache/i.test(venueError.message || '')) {
+        console.error('[bookable] could not read the venue', { code: venueError.code });
+      }
+      if (venue) {
+        table = {
+          platform: venue.reservation_platform ?? 'none',
+          url: venue.reservation_url ?? null,
+          phone: venue.phone ?? null,
+        };
+      }
+    }
+
     const request = asRequest(item, plan, ids, city, countryCode, partySize, product,
-      { from: flightFrom, to: flightTo });
+      { from: flightFrom, to: flightTo }, table);
     if (request) requests.push(request);
     else skipped.push({
       title: item.title,

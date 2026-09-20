@@ -2350,7 +2350,19 @@ const PROVIDER_NAME={
   viator:"Viator",
   liteapi:"the hotel",
   kiwi:"Kiwi",
+  duffel:"the airline",
+  resy:"Resy",
+  opentable:"OpenTable",
+  tock:"Tock",
   concierge:"Reach",
+};
+
+// Why the member books the table rather than Reach: their card's dining
+// benefits only apply to a reservation made on their own account. Advisory,
+// from a fixed list — nobody's card is read to decide this.
+const PLATFORM_PERK={
+  resy:"American Express cards unlock Resy tables at some restaurants.",
+  opentable:"Chase Sapphire cards unlock OpenTable Exclusive Tables at some restaurants.",
 };
 
 // How a booking happens, in words. Nothing here is an enum somebody reads:
@@ -6128,6 +6140,34 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   const [retryable,setRetryable]=useState(true);
   // Lines of the itinerary that did not become bookings, and why.
   const [unbooked,setUnbooked]=useState([]);
+  // Who has been sent off to a booking platform this visit, so the app can
+  // ask how it went without nagging about rows they have not touched.
+  const [handedOver,setHandedOver]=useState({});
+  const [capturing,setCapturing]=useState(null);
+
+  // Only the member knows whether there was a table. Reach never books it
+  // for them — that is the point, their card's benefits only apply to a
+  // reservation on their own account — so the answer has to come from them.
+  const captureBooking=async(id,status)=>{
+    if(!id||capturing)return;
+    setCapturing(id);
+    try{
+      const r=await fetch(`/api/bookings/${id}`,{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({status}),
+      });
+      if(!r.ok){
+        const d=await r.json().catch(()=>({}));
+        throw new Error(d.error||"Couldn't save that");
+      }
+      setBookings(bs=>(bs||[]).map(b=>b.id===id?{...b,status}:b));
+      toast(status==="confirmed"?"Nice — that's on the trip":"Noted — we'll leave it open");
+    }catch(e){
+      console.error("[checkout] could not record the reservation",e);
+      toast(e.message);
+    }
+    setCapturing(null);
+  };
   // message, and whether trying again could cost money.
   const fail=(message,{retry=false}={})=>{setMsg(message);setRetryable(retry);setPhase("error");};
   const [payReady,setPayReady]=useState(false);
@@ -6371,7 +6411,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // different dinners into one.
   const checkout=checkoutState(bookings||[]);
   const lines=(checkout.rows.length?checkout.rows.map(b=>({
-    icon:vIcon[b.vertical]||"\u2728", l:itemTitle(b),
+    id:b.id, icon:vIcon[b.vertical]||"\u2728", l:itemTitle(b),
     // The provider's own note when it left one. A seat being booked by hand
     // because automatic booking will not carry somebody's passport marker
     // deserves that sentence, not "we'll handle this one for you" — the
@@ -6570,12 +6610,42 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
           {it.st?chip(BOOKING_STATE[it.st]?.label||"Not booked",BOOKING_STATE[it.st]?.tone||"plain"):null}
           {it.href?(
             <a href={it.href} target="_blank" rel="noopener noreferrer"
+              onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
               style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
-              Finish on {PROVIDER_NAME[it.provider]||"their site"} →
+              {it.provider==="resy"||it.provider==="opentable"||it.provider==="tock"
+                ?`Reserve on ${PROVIDER_NAME[it.provider]} →`
+                :`Finish on ${PROVIDER_NAME[it.provider]||"their site"} →`}
             </a>
           ):null}
         </div>))}
       </div>
+      {/* Only the person who booked it knows whether there was a table, so
+          the app asks them rather than guessing from a click. Shown once
+          they have been handed over, and for anything already waiting. */}
+      {lines.filter(it=>it.href&&(handedOver[it.id]||it.st==="redirected")&&it.st!=="confirmed").map(it=>(
+        <div key={`cap-${it.id}`} style={{margin:"0 4px 12px",padding:"12px 14px",background:C.s2,
+          border:`1px solid ${C.border}`,borderRadius:14}}>
+          <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:2}}>{it.l}</div>
+          {PLATFORM_PERK[it.provider]&&(
+            <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:8}}>
+              {PLATFORM_PERK[it.provider]}
+            </div>
+          )}
+          <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:10}}>
+            Did you get the table?
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button className="bs" style={{flex:1,color:C.green,borderColor:C.green}}
+              disabled={capturing===it.id} onClick={()=>captureBooking(it.id,"confirmed")}>
+              {capturing===it.id?"…":"Booked it ✓"}
+            </button>
+            <button className="bs" style={{flex:1}}
+              disabled={capturing===it.id} onClick={()=>captureBooking(it.id,"failed")}>
+              Couldn't book
+            </button>
+          </div>
+        </div>
+      ))}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
         <span style={{fontSize:14,color:C.t2}}>{participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`}</span>
         {/* A figure here while the button is disabled is the screen saying

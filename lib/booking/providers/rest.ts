@@ -1,5 +1,6 @@
 // ─── Remaining four verticals in one module ──────────────────────────────
 import { BookingProvider, BookingItemRequest, BookingItemResult, isConfigured } from '../types';
+import { reservationUrl, type Platform } from '../reservations';
 
 // ═══ FLIGHTS — Kiwi.com Tequila (native) ═════════════════════════════════
 // Apply at tequila.kiwi.com (approval is typically days, not months).
@@ -194,45 +195,63 @@ export const ticketmasterEvents: BookingProvider = {
  * destination stored left "Desert Bistro, " with a comma and nothing after
  * it on somebody's checkout screen.
  */
-function conciergeLabel(r: { name: string; city?: string }): string {
+function tableLabel(r: { name: string; city?: string }): string {
   const name = (r.name || '').trim() || 'Reservation';
   const city = (r.city || '').trim();
   return city ? `${name}, ${city}` : name;
 }
 
-export const conciergeRestaurants: BookingProvider = {
+export const tableReservations: BookingProvider = {
   vertical: 'restaurant',
-  name: 'concierge',
+  name: 'redirect',
 
-  // `detail` is the line a person reads on their checkout screen, so it is
-  // the name of the place and nothing else. It used to be the whole request
-  // concatenated, which on a real trip produced:
+  // Reach does not take the table. The member does, on their own account and
+  // their own card, because that is where their card's dining benefits live:
+  // Amex opens doors on Resy, Chase on OpenTable. A reservation made by us on
+  // our card throws all of that away, and a queue of requests waiting on a
+  // person here is slower than the two taps it takes them.
   //
-  //   Reservation request: Seafood dinner at Desert Bistro,  · 2026-09-17
-  //   Day 3 · Evening · party of 2 · "Mesa Arch at sunrise means a crowd…"
+  // This replaces the concierge queue. Nothing waits on Reach staff.
   //
-  // — a stray comma where the city was missing, a date the itinerary stored
-  // as prose rather than a time, and a tip about a sunrise hike quoted
-  // underneath a dinner booking. Everything ops needs is already on the row
-  // in request_payload; none of it belongs in the title.
+  // `detail` is the line a person reads, so it is the name of the place and
+  // nothing else. It used to be the whole request concatenated, which on a
+  // real trip produced a dinner captioned with a tip about a sunrise hike.
   async quote(req): Promise<BookingItemResult> {
     const r = req.restaurant!;
+    const platform = (r.platform ?? 'none') as Platform;
+    const url = reservationUrl(platform, {
+      name: r.name, city: r.city, date: r.date, time: r.time,
+      partySize: r.partySize, knownUrl: r.externalUrl,
+    });
+
     return {
-      vertical: 'restaurant', mode: 'concierge', status: 'quoted', provider: 'concierge',
-      detail: conciergeLabel(r),
-      redirectUrl: r.externalUrl,
+      vertical: 'restaurant',
+      // A table is held, not sold: nothing is charged today, so this must not
+      // land in the group's funding target. Tock deposits are the exception
+      // and are settled in the ledger, not collected up front.
+      mode: 'redirect',
+      status: 'quoted',
+      provider: url ? platform : 'none',
+      detail: tableLabel(r),
+      redirectUrl: url ?? undefined,
+      priceCents: 0,
+      raw: { platform, date: r.date, time: r.time, partySize: r.partySize, phone: r.phone ?? null },
     };
   },
 
+  // Nothing is "booked" by us. The row is created so the trip knows the table
+  // is wanted, and it sits waiting for the member to say they got it.
   async book(req): Promise<BookingItemResult> {
-    const r = req.restaurant!;
+    const quoted = await this.quote(req);
     return {
-      vertical: 'restaurant', mode: 'concierge', status: 'pending', provider: 'concierge',
-      providerRef: `CNC-${Date.now().toString(36).toUpperCase()}`,
-      detail: conciergeLabel(r),
-      redirectUrl: r.externalUrl,
-      // The context the concierge actually rings with, kept off the screen.
-      raw: { date: r.date, time: r.time, partySize: r.partySize, notes: r.notes ?? null },
+      ...quoted,
+      // Handed over, not confirmed. Only the person who booked it can say
+      // whether there was a table, and there is a button for exactly that.
+      status: quoted.redirectUrl ? 'redirected' : 'pending',
+      providerRef: `RES-${Date.now().toString(36).toUpperCase()}`,
     };
   },
 };
+
+/** Kept so old rows written by the retired queue still resolve. */
+export const conciergeRestaurants = tableReservations;
