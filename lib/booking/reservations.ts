@@ -163,3 +163,172 @@ export function phoneFromHtml(html: string | null | undefined): string | null {
   const cleaned = tel[1].replace(/[^\d+]/g, '');
   return cleaned.length >= 7 ? cleaned : null;
 }
+
+
+// ─── How a restaurant takes a booking, if it takes one at all ───────────
+// "No third-party platform" is not the same as "no reservations", and the
+// first version of this treated them as one thing: every restaurant without
+// a Resy link was offered as "Call to book", which is a guess about a place
+// that may not take bookings at all.
+//
+// Read off real pages in Southern Pines, Raleigh and Moab before this was
+// written. What they actually say:
+//
+//   Valenti's       "For Reservations … join waitlist"  → a waitlist, not a table
+//   Poole's Diner   a "Reservations" nav link → their page, which is OpenTable
+//   Desert Bistro   "Make a Reservation" → their page, which is Tock
+//   Casa Santa Ana  a telephone number and online ordering, nothing else
+//
+// The last of those is the common case and the honest answer for it is the
+// number, not a claim about whether they hold tables.
+export type ReservationMethod =
+  | 'third_party'   // Resy, OpenTable, Tock — book on that platform
+  | 'own_form'      // their own booking page
+  | 'waitlist'      // you join a queue on the day, you do not hold a table
+  | 'phone'         // they say reservations and give a number
+  | 'walk_in'       // they say plainly that they do not take bookings
+  | 'unknown';      // nothing on the page settles it
+
+export interface ReservationFinding {
+  method: ReservationMethod;
+  platform: Platform;
+  /** Where to go: the platform, their form, or the waitlist. */
+  url: string | null;
+  phone: string | null;
+}
+
+/** Said plainly enough to be believed. */
+const NO_BOOKINGS = /(we (do not|don't) (take|accept) reservations|no reservations (are )?(taken|accepted)|walk[- ]?ins? only|first[- ]come,? first[- ]served)/i;
+const WAITLIST = /(join (the )?waitlist|waitlist only|add your name)/i;
+/** A link to their own booking page — by its address or by its words. */
+const OWN_FORM = /href=["']([^"']*\/(reservations?|reserve|book[a-z-]*|bookings?)[^"']*)["']/i;
+/**
+ * The page pairing a booking with a telephone, in so many words. The earlier
+ * version accepted a number anywhere on a page that said "reservation"
+ * anywhere else, which is two facts sitting near each other rather than one
+ * fact. "Call 910-555-0100 for reservations" is the claim; a number in a
+ * footer under a page that mentions a reservation policy is not.
+ */
+const PHONE_BOOKING = /(for reservations[^.<]{0,40}?(call|ring|phone|telephone)|(call|ring|phone|telephone)[^.<]{0,40}?(for|to (make|book))[^.<]{0,20}?(a )?reservation|reservations?[:\s]{1,4}(\+?[\d()\-.\s]{9,})|to (book|reserve)[^.<]{0,30}?(call|phone))/i;
+
+/** A link to their own booking page, which is worth following. */
+const FOLLOW_FORM = /href=["']([^"']*\/(reservations?|reserve|book[a-z-]*|bookings?)[^"']*)["']/i;
+
+/**
+ * Everything needed to get a table here, or the honest absence of it.
+ *
+ * Order matters and is not arbitrary. A link to Resy is proof and outranks
+ * everything. A waitlist comes next because a page can say "For Reservations:
+ * join waitlist" — as Valenti's does — and reading that as a booking form
+ * would send somebody expecting a held table to a queue. An explicit refusal
+ * beats an inference. A number with reservation language beside it is a phone
+ * booking; a number on its own is just a number, and saying "call to book"
+ * about a place that may not take bookings is the guess this exists to stop.
+ */
+export function reservationFromHtml(html: string | null | undefined): ReservationFinding {
+  const text = String(html ?? '');
+  const phone = phoneFromHtml(text);
+  if (!text) return { method: 'unknown', platform: 'none', url: null, phone };
+
+  const third = platformFromHtml(text);
+  if (third.platform !== 'none') {
+    return { method: 'third_party', platform: third.platform, url: third.url, phone };
+  }
+
+  if (WAITLIST.test(text)) return { method: 'waitlist', platform: 'none', url: null, phone };
+  if (NO_BOOKINGS.test(text)) return { method: 'walk_in', platform: 'none', url: null, phone };
+
+  const form = OWN_FORM.exec(text);
+  if (form) {
+    return { method: 'own_form', platform: 'none', url: form[1].replace(/&amp;/g, '&'), phone };
+  }
+
+  if (phone && PHONE_BOOKING.test(text)) return { method: 'phone', platform: 'none', url: null, phone };
+
+  // Nothing here settles it. That is not an answer to hand a traveller —
+  // "call to book" about a place that may not take bookings is exactly the
+  // guess this module exists to refuse. It is recorded as unresolved so Reach
+  // goes and finds out, and the screen says nothing until it has.
+  return { method: 'unknown', platform: 'none', url: null, phone };
+}
+
+/**
+ * Whether a finding is something to act on, or something to go and settle.
+ *
+ * The line: proof on the page, versus two facts near each other. Only the
+ * first reaches a traveller.
+ */
+export function isCertain(finding: ReservationFinding): boolean {
+  return finding.method !== 'unknown';
+}
+
+/** Where a page points for its own booking, so the crawl can follow it. */
+export function bookingPageLink(html: string | null | undefined, base: string): string | null {
+  const m = FOLLOW_FORM.exec(String(html ?? ''));
+  if (!m) return null;
+  try {
+    return new URL(m[1].replace(/&amp;/g, '&'), base).toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Settling it, rather than inferring it.
+ *
+ * A restaurant's front page often says only "Reservations" and links
+ * elsewhere — Poole's Diner does, and that link is where the OpenTable widget
+ * actually lives. Reading the front page alone would have called that an own
+ * form when it is OpenTable, so the booking page is fetched too and the
+ * stronger answer wins. One extra request per restaurant, once, on a
+ * schedule; never while somebody is waiting.
+ */
+export async function resolveReservation(
+  website: string,
+  read: (url: string) => Promise<string | null>,
+): Promise<ReservationFinding> {
+  const home = await read(website);
+  const first = reservationFromHtml(home);
+  // A platform link on the front page is already proof.
+  if (first.method === 'third_party') return first;
+
+  const link = bookingPageLink(home, website);
+  if (!link) return first;
+
+  const page = await read(link);
+  if (!page) return first;
+
+  const second = reservationFromHtml(page);
+  if (second.method === 'third_party') return { ...second, phone: second.phone ?? first.phone };
+  // Their own page, confirmed by having one — the link is where to send them.
+  if (first.method === 'own_form' || second.method === 'own_form') {
+    return { method: 'own_form', platform: 'none', url: link, phone: first.phone ?? second.phone };
+  }
+  if (second.method !== 'unknown') return { ...second, phone: second.phone ?? first.phone };
+  return first;
+}
+
+/** What the button says, for each way in. */
+export function methodLabel(method: ReservationMethod, platform: Platform): string {
+  if (method === 'third_party' && platform !== 'none') return `Reserve on ${PLATFORM_NAME[platform]}`;
+  if (method === 'own_form') return 'Book on their site';
+  if (method === 'waitlist') return 'Join their waitlist';
+  if (method === 'phone') return 'Call to book';
+  if (method === 'walk_in') return 'Just turn up';
+  return 'See their page';
+}
+
+/** The sentence under it, which is where the honesty lives. */
+export function methodNote(method: ReservationMethod, phone: string | null): string {
+  switch (method) {
+    case 'third_party': return 'You book it on their platform, with your own card.';
+    case 'own_form': return 'They take bookings on their own site.';
+    case 'waitlist': return 'They hold no tables — you put your name down on the day.';
+    case 'phone': return phone ? `They book by phone: ${phone}` : 'They book by telephone.';
+    case 'walk_in': return 'They do not take bookings — turn up and wait for a table.';
+    // Deliberately not "call to book": we do not know that they take
+    // bookings, and saying so would hand somebody our uncertainty to resolve
+    // at the door. Reach settles this and the line changes when it has.
+    default: return 'We are checking how this one takes bookings.';
+  }
+}

@@ -14,7 +14,7 @@
 // Protected by CRON_SECRET, like the sweep and the health checks.
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { platformFromHtml, phoneFromHtml } from '@/lib/booking/reservations';
+import { resolveReservation, isCertain } from '@/lib/booking/reservations';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -65,34 +65,44 @@ export async function GET(req: NextRequest) {
   const found: Record<string, number> = {};
   let unreachable = 0;
 
-  for (const venue of venues ?? []) {
-    let html = '';
+  // One reader, used for the front page and for the booking page it links to.
+  const read = async (url: string): Promise<string | null> => {
     try {
-      const res = await fetch(venue.website as string, {
+      const res = await fetch(url, {
         redirect: 'follow',
         signal: AbortSignal.timeout(TIMEOUT_MS),
         // Somebody should be able to see who is reading their page.
         headers: { 'User-Agent': 'Reach (hello@alcanzar.io)' },
       });
-      if (res.ok) html = await res.text();
-      else unreachable += 1;
+      return res.ok ? await res.text() : null;
     } catch {
-      // A site that is down today is not a restaurant without a platform, so
-      // it is left null and asked again on the next run.
+      return null;
+    }
+  };
+
+  for (const venue of venues ?? []) {
+    // The front page often says only "Reservations" and links elsewhere, and
+    // that second page is where the widget lives. Reading one page would call
+    // Poole's Diner an own form when it is OpenTable.
+    const finding = await resolveReservation(venue.website as string, read);
+
+    // A site that is down today is not a restaurant we have learned about, so
+    // it is left unanswered and asked again on the next run.
+    if (!isCertain(finding) && !finding.phone) {
       unreachable += 1;
       continue;
     }
-    if (!html) continue;
 
-    const { platform, url } = platformFromHtml(html);
-    const phone = platform === 'none' ? phoneFromHtml(html) : null;
-
+    // Only a settled answer is stored as one. An unresolved restaurant keeps
+    // a null platform so this run picks it up again, and the number is kept
+    // either way because it is a fact even when the method is not.
     const { error: wrote } = await db
       .from('discovery_venues')
       .update({
-        reservation_platform: platform,
-        reservation_url: url,
-        ...(phone ? { phone } : {}),
+        ...(isCertain(finding)
+          ? { reservation_platform: finding.platform, reservation_method: finding.method, reservation_url: finding.url }
+          : {}),
+        ...(finding.phone ? { phone: finding.phone } : {}),
       })
       .eq('id', venue.id);
 
@@ -100,7 +110,7 @@ export async function GET(req: NextRequest) {
       console.error('[discovery/platforms] could not store what we found', { venue: venue.id, code: wrote.code });
       continue;
     }
-    found[platform] = (found[platform] ?? 0) + 1;
+    found[finding.method] = (found[finding.method] ?? 0) + 1;
   }
 
   return NextResponse.json({
@@ -109,6 +119,8 @@ export async function GET(req: NextRequest) {
     unreachable,
     // Not an error: a town of family restaurants genuinely has no platform
     // between them, and the phone number is the right answer there.
-    note: 'none means they take bookings some other way — the app shows their phone number',
+    // "unknown" is not a result to show anybody. It is a restaurant Reach has
+    // not settled yet, and it stays in the queue until it has.
+    note: 'unknown means we have not settled how this one takes bookings — it is asked again, never guessed at',
   });
 }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   reservationUrl, reserveLabel, usableTime, usableParty, chargesUpfront,
   platformFromHtml, phoneFromHtml,
+  reservationFromHtml, resolveReservation, isCertain, methodNote,
 } from '../../lib/booking/reservations.ts';
 
 test('a time is a time, and "Day 3 · Evening" is not', () => {
@@ -88,4 +89,63 @@ test('no platform is the right answer for a place you telephone', () => {
 test('a telephone link is picked up for the places with no platform', () => {
   assert.equal(phoneFromHtml('<a href="tel:+1 (910) 555-0100">Call</a>'), '+19105550100');
   assert.equal(phoneFromHtml('<p>no link here</p>'), null);
+});
+
+// ─── Certainty, not inference ───────────────────────────────────────────
+test('a page that pairs a number with booking is a phone booking', () => {
+  const yes = reservationFromHtml('<p>For reservations, call <a href="tel:9102451105">910-245-1105</a></p>');
+  assert.equal(yes.method, 'phone');
+  assert.equal(yes.phone, '9102451105');
+});
+
+test('a number and the word "reservation" in different places is not proof', () => {
+  // Two facts near each other are not one fact. Saying "call to book" here
+  // would hand somebody our uncertainty to resolve at the door.
+  const maybe = reservationFromHtml(
+    '<nav>About</nav><p>Our reservation policy is under review.</p><footer><a href="tel:9102451105">Call us</a></footer>');
+  assert.equal(maybe.method, 'unknown');
+  assert.equal(maybe.phone, '9102451105', 'the number is still kept, it is just not a claim');
+  assert.equal(isCertain(maybe), false);
+});
+
+test('a waitlist is not a reservation', () => {
+  // Verbatim shape from Valenti's in Southern Pines. Reading this as a
+  // booking form would send somebody expecting a held table to a queue.
+  const v = reservationFromHtml('<p>For Reservations Sanford location: <a href="/waitlist">join waitlist</a></p>');
+  assert.equal(v.method, 'waitlist');
+  assert.match(methodNote('waitlist', null), /no tables/);
+});
+
+test('a place that says it takes none is believed', () => {
+  for (const said of ['We do not take reservations', 'Walk-ins only', 'first come, first served']) {
+    assert.equal(reservationFromHtml(`<p>${said}</p>`).method, 'walk_in', said);
+  }
+});
+
+test('the front page links to the booking page, which is followed', async () => {
+  // Poole's Diner shape: the front page says only "Reservations" and links
+  // out; the OpenTable widget lives on that second page. Reading the front
+  // page alone would call this their own form when it is OpenTable.
+  const pages: Record<string, string> = {
+    'https://example-diner.com/': '<a href="/reservations">Reservations</a>',
+    'https://example-diner.com/reservations': '<iframe src="https://www.opentable.com/r/example"></iframe>',
+  };
+  const found = await resolveReservation('https://example-diner.com/', async u => pages[u] ?? null);
+  assert.equal(found.method, 'third_party');
+  assert.equal(found.platform, 'opentable');
+});
+
+test('a booking page with a form of their own stays their own', async () => {
+  const pages: Record<string, string> = {
+    'https://example-trattoria.com/': '<a href="/book-a-table">Book a table</a>',
+    'https://example-trattoria.com/book-a-table': '<form id="reserve">Party size</form>',
+  };
+  const found = await resolveReservation('https://example-trattoria.com/', async u => pages[u] ?? null);
+  assert.equal(found.method, 'own_form');
+  assert.equal(found.url, 'https://example-trattoria.com/book-a-table');
+});
+
+test('an unresolved restaurant says we are checking, never "call to book"', () => {
+  assert.match(methodNote('unknown', '9102451105'), /checking/i);
+  assert.doesNotMatch(methodNote('unknown', '9102451105'), /call to book/i);
 });
