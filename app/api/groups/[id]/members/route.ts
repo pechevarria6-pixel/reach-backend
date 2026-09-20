@@ -3,6 +3,7 @@
 //                                  no account yet
 // DELETE { userId }              → remove a member (admin, or yourself)
 import { NextRequest, NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { requireGroupMember, isFail } from '@/lib/auth';
 import { normalizeEmail, newInviteToken, INVITE_TTL_DAYS } from '@/lib/invites';
 import { sendGroupInvite } from '@/lib/email';
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // Email delivery is best-effort. The invite is already valid without it,
   // and the caller gets a link it can share by other means.
-  const base = process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+  const base = appUrl(req);
   const acceptUrl = `${base.replace(/\/$/, '')}/invite/${token}`;
   let emailed = false;
 

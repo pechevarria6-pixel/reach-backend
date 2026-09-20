@@ -8,6 +8,7 @@
 //
 // POST { kind: "vote" | "funding" } → emails members who have not yet acted
 import { NextRequest, NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { sendVoteNeeded, sendFundingNeeded, type SendResult } from '@/lib/email';
 import { planShares } from '@/lib/money';
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const { data: people } = await db
     .from('users').select('id, email').in('id', outstanding);
 
-  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.alcanzar.io').replace(/\/$/, '');
+  const base = appUrl(req);
   const url = `${base}/home`;
   // Each person's own share, the same figure checkout will charge them. This
   // used to quote the first person's even split of the budget to everybody,

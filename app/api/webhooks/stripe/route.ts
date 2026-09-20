@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { stripe } from '@/lib/stripe';
 import { createServerClient } from '@/lib/supabase';
 import { refundOutcome } from '@/lib/refunds';
@@ -182,7 +183,8 @@ async function announceIfFunded(
     if (!ids.length) return;
     const { data: people } = await supabase.from('users').select('email').in('id', ids);
 
-    const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.alcanzar.io').replace(/\/$/, '');
+    // No request to ask: Stripe called us, not the traveller.
+    const base = appUrl();
     for (const person of people || []) {
       if (!person.email) continue;
       await sendFullyFunded(person.email, {

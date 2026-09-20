@@ -8,6 +8,7 @@
 //   concierge lane (restaurants)         → ticket moves to 'pending' for ops
 // Body (optional): { note?: string }
 import { NextRequest, NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { BookingItemRequest, BookingProvider, Vertical } from '@/lib/booking/types';
@@ -148,7 +149,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         db.from('plans').select('title').eq('id', booking.plan_id).maybeSingle(),
       ]);
       if (person?.email) {
-        const base = process.env.NEXT_PUBLIC_APP_URL || 'https://www.alcanzar.io';
+        const base = appUrl(req);
         // Best-effort: a mail failure must not turn a successful booking into
         // an error the caller has to interpret.
         const mail = await sendBookingConfirmation(person.email, {

@@ -5,6 +5,7 @@
 //
 // POST { everyone?: boolean }  → just you, or the whole group
 import { NextRequest, NextResponse } from 'next/server';
+import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { sendItinerary } from '@/lib/email';
 import { formatDates } from '@/lib/dates';
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   if (everyone) recipients = await groupMemberIds(db, plan.group_id);
   const { data: people } = await db.from('users').select('id, email').in('id', recipients);
 
-  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.alcanzar.io').replace(/\/$/, '');
+  const base = appUrl(req);
   const dates = formatDates(plan.start_date, plan.end_date);
 
   let sent = 0;
