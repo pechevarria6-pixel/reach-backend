@@ -5886,8 +5886,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               const money=c=>`$${Math.round((c||0)/100).toLocaleString()}`;
               // Flights and beds are itinerary items like anything else, so
               // this reads from one place and survives a reload.
+              // `sub` is never a description of the item. itineraryRows puts
+              // the day's title on the morning slot and the day's insider tip
+              // on the evening one, so a seafood dinner was captioned "Mesa
+              // Arch at sunrise means a crowd of photographers…" — a tip
+              // about a different thing entirely, printed as if it described
+              // the line being charged for. When it happens is the useful
+              // fact on a cost line anyway.
               const fixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0)
-                .map(i=>({l:i.title,d:i.sub||i.time,c:i.cost_cents}));
+                .map(i=>({l:i.title,d:i.time,c:i.cost_cents}));
               // Everything you pay for yourself, as it happens.
               const variable=items.filter(i=>i.booking_mode!=="reach"&&i.cost_cents>0)
                 .map(i=>({l:i.title,d:i.time,c:i.cost_cents,pay:i.payment_note}));
@@ -6042,7 +6049,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
               <span style={{fontSize:20}}>{tIc[item.type]||"📌"}</span>
               <div>
                 <div style={{fontSize:14,fontWeight:500,color:C.t1}}>{item.title}</div>
-                <div style={{fontSize:12,color:C.t2}}>{item.time}{item.sub?` · ${item.sub}`:""}</div>
+                <div style={{fontSize:12,color:C.t2}}>{item.time}</div>
                 {item.conf&&<div style={{fontSize:11,color:C.green,marginTop:2}}>✓ {item.conf}</div>}
               </div>
             </div>
