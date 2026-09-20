@@ -76,10 +76,47 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
     .from('group_members').select('role').eq('group_id', params.id).eq('user_id', user.id).single();
   if (!membership || membership.role !== 'admin') return NextResponse.json({ error: 'Forbidden — admin only' }, { status: 403 });
 
+  // A group takes its trips with it, and a trip can be holding a real
+  // reservation. Deleting the group does not un-book a hotel, so the same
+  // rule as deleting one trip: say what is booked and refuse, rather than
+  // leave somebody with a booking they can no longer see.
+  const { data: plans, error: plansErr } = await supabase
+    .from('plans').select('id, title').eq('group_id', params.id);
+  if (plansErr) {
+    console.error('[groups] could not read the group’s trips', { group: params.id, code: plansErr.code });
+    return NextResponse.json({ error: "We couldn't check this group's trips — nothing was deleted" }, { status: 500 });
+  }
+
+  const planIds = (plans ?? []).map(p => p.id);
+  if (planIds.length) {
+    const { data: held, error: heldErr } = await supabase
+      .from('bookings').select('id, status, plan_id')
+      .in('plan_id', planIds)
+      .in('status', ['confirmed', 'redirected', 'pending']);
+    if (heldErr) {
+      console.error('[groups] could not read what the trips are holding', { group: params.id, code: heldErr.code });
+      return NextResponse.json({ error: "We couldn't check this group's bookings — nothing was deleted" }, { status: 500 });
+    }
+    if (held?.length) {
+      const titles = [...new Set(held.map(b => (plans ?? []).find(p => p.id === b.plan_id)?.title).filter(Boolean))];
+      return NextResponse.json({
+        error: 'This group has trips with things still booked. Cancel those first and the group will delete cleanly.',
+        holding: titles,
+      }, { status: 409 });
+    }
+  }
+
   const { error: removed } = await supabase.from('groups').delete().eq('id', params.id);
   if (removed) {
     console.error('[groups] could not delete the group', { group: params.id, code: removed.code });
     return NextResponse.json({ error: "We couldn't delete that just now" }, { status: 500 });
   }
-  return NextResponse.json({ success: true });
+
+  const { error: audit } = await supabase.from('audit_logs').insert({
+    user_id: user.id, action: 'group_deleted', resource: 'groups', resource_id: params.id, success: true,
+    metadata: { plans_removed: planIds.length },
+  });
+  if (audit) console.error('[audit] could not record group_deleted', { group: params.id, code: audit.code });
+
+  return NextResponse.json({ success: true, plansRemoved: planIds.length });
 }

@@ -7,6 +7,7 @@ import {
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote } from '@/lib/generation-rules';
 import { planReadiness } from '@/lib/plan-readiness';
+import { allowance, tooOften } from '@/lib/rate-limit';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -125,6 +126,26 @@ export async function POST(req: NextRequest) {
   const ctx = await requireGroupMember(groupId);
   if (isFail(ctx)) return ctx.error;
   const supabase = ctx.db;
+
+  // Two model calls a go, and real money each time. Nothing stopped one
+  // account doing this in a loop — a stuck retry, a leaning finger — and the
+  // first anybody would know is the bill. Counted in the database, because a
+  // counter in a module variable is per-instance and resets whenever a new
+  // serverless instance starts, which is not a limit.
+  const rate = await allowance(supabase, ctx.user.id, 'trip_generated');
+  if (!rate.allowed) {
+    console.error('[generate] rate limited', { user: ctx.user.id, used: rate.used });
+    return NextResponse.json({ error: tooOften(rate) }, { status: 429 });
+  }
+
+  // Written before the work, not after: a generation that times out or
+  // crashes still cost the money it cost, and a limit that only counts the
+  // successes is a limit a failing loop walks straight through.
+  const { error: counted } = await supabase.from('audit_logs').insert({
+    user_id: ctx.user.id, action: 'trip_generated', resource: 'groups', resource_id: groupId, success: true,
+    metadata: { mode, nights: null },
+  });
+  if (counted) console.error('[audit] could not record trip_generated — this one is not counted', { code: counted.code });
 
   // trip_summary arrives in sql/plan-preferences-2026-09-18.sql. Naming a
   // column that does not exist fails the entire select, and this select is

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { toDateOrNull } from '@/lib/dates';
+import { tidyLegacy } from '@/lib/checkout';
 import { impactOfDateChange, describeImpact, needsConfirmation, stillWorksFor } from '@/lib/date-change';
 import { z } from 'zod';
 
@@ -211,14 +212,62 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // Checked, because a delete that fails and reports success is how a plan
-  // stays on one screen and vanishes from another. It also leaves the plan's
-  // bookings behind, pointing at a row that no longer exists and reachable
-  // from nothing — there is one such booking in this database already.
+  // ── What the plan is holding ──────────────────────────────────────────
+  // Deleting a trip used to take its bookings with it in the sense that
+  // nothing looked at them again: the rows stayed, pointing at a plan that
+  // no longer existed, reachable from no screen and impossible to approve or
+  // cancel. There is one such row in this database — a table at Poole's
+  // Diner, stuck awaiting approval against a plan that is gone.
+  //
+  // A row is the lesser problem. A confirmed hotel or a table somebody holds
+  // on their own account is a real thing in the world, and deleting the trip
+  // does not un-book it. So a plan that is holding one says so and refuses,
+  // rather than quietly leaving somebody with a reservation they no longer
+  // have any way to see.
+  const { data: held, error: readErr } = await supabase
+    .from('bookings')
+    .select('id, status, vertical, detail')
+    .eq('plan_id', params.planId)
+    .not('status', 'in', '("failed","cancelled")');
+
+  if (readErr) {
+    console.error('[plans] could not read what this plan is holding', { plan: params.planId, code: readErr.code });
+    return NextResponse.json({ error: "We couldn't check this trip's bookings — nothing was deleted" }, { status: 500 });
+  }
+
+  const real = (held ?? []).filter(b => ['confirmed', 'redirected', 'pending'].includes(String(b.status)));
+  if (real.length) {
+    return NextResponse.json({
+      error: 'This trip still has something booked. Cancel those first and the trip will delete cleanly.',
+      holding: real.map(b => ({ what: tidyLegacy(String(b.detail ?? '')) || String(b.vertical), status: b.status })),
+    }, { status: 409 });
+  }
+
+  // Quotes and proposals are not things in the world, so they go with the
+  // plan — but as cancelled rows rather than as rows nobody can reach.
+  const loose = (held ?? []).map(b => b.id);
+  if (loose.length) {
+    const { error: cancelled } = await supabase.from('bookings')
+      .update({ status: 'cancelled' }).in('id', loose);
+    if (cancelled) {
+      console.error('[plans] could not cancel this plan’s quotes', { plan: params.planId, code: cancelled.code });
+      return NextResponse.json({ error: "We couldn't tidy this trip's quotes — nothing was deleted" }, { status: 500 });
+    }
+  }
+
   const { error: removed } = await supabase.from('plans').delete().eq('id', params.planId);
   if (removed) {
     console.error('[plans] could not delete the plan', { plan: params.planId, code: removed.code });
     return NextResponse.json({ error: "We couldn't delete that just now" }, { status: 500 });
   }
-  return NextResponse.json({ success: true });
+
+  // Nine plans once vanished with nothing to read afterwards. This is what
+  // makes the next disappearance answerable.
+  const { error: audit } = await supabase.from('audit_logs').insert({
+    user_id: user.id, action: 'plan_deleted', resource: 'plans', resource_id: params.planId, success: true,
+    metadata: { group_id: plan.group_id, cancelled_quotes: loose.length },
+  });
+  if (audit) console.error('[audit] could not record plan_deleted', { plan: params.planId, code: audit.code });
+
+  return NextResponse.json({ success: true, cancelledQuotes: loose.length });
 }
