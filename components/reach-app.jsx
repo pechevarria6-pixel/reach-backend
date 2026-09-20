@@ -5297,6 +5297,62 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     setSkipping(null);
   };
 
+  // Submitting a set of ranges, whatever produced them. The append behaviour
+  // lives in saveMyDates; this is the plumbing both it and the flexible
+  // button share.
+  const submitRanges=async(ranges,note)=>{
+    if(savingDates)return;
+    if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+    setSavingDates(true);
+    try{
+      const r=await fetch(`/api/plans/${planId}/availability`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ranges}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Those dates didn't save — try again");
+      await loadDates();
+      if(note)toast(note);
+    }catch(e){
+      console.error("[planDetail] saving dates failed",e);
+      toast(e.message);
+    }
+    setSavingDates(false);
+  };
+
+  // Somebody with no constraints should not have to invent a range to say so.
+  // Four months is wide enough to overlap anybody and short enough that the
+  // overlap maths stays about this trip.
+  const sayImFlexible=async()=>{
+    const from=new Date();
+    const to=new Date(Date.now()+120*86400000);
+    await submitRanges([{start:from.toISOString().slice(0,10),end:to.toISOString().slice(0,10)}],
+      "Noted — you're easy either way");
+  };
+
+  // Append-only was wrong the moment somebody typed a date wrong: there was
+  // no way to take it back, and the overlap kept using it for ever.
+  const clearMyDates=async()=>{
+    if(!dates?.mine?.length||savingDates)return;
+    if(isTempId(planId))return;
+    setSavingDates(true);
+    try{
+      // Its own verb: POST refuses an empty list on purpose, so that an
+      // accidental empty submission cannot wipe what somebody entered.
+      const r=await fetch(`/api/plans/${planId}/availability`,{method:"DELETE"});
+      if(!r.ok){
+        const d=await r.json().catch(()=>({}));
+        throw new Error(d.error||"Couldn't clear those — try again");
+      }
+      await loadDates();
+      toast("Cleared — tell us again when you know");
+    }catch(e){
+      console.error("[planDetail] clearing dates failed",e);
+      toast(e.message);
+    }
+    setSavingDates(false);
+  };
+
   const saveMyDates=async()=>{
     if(savingDates||!myFrom||!myTo||myTo<myFrom)return;
     if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
@@ -5680,13 +5736,44 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     <input aria-label="Dates that work for you, from" type="date" className="inp" value={myFrom} onChange={e=>setMyFrom(e.target.value)} style={{flex:1,minWidth:0,color:C.t1}}/>
                     <input aria-label="Dates that work for you, to" type="date" className="inp" value={myTo} min={myFrom||undefined} onChange={e=>setMyTo(e.target.value)} style={{flex:1,minWidth:0,color:C.t1}}/>
                   </div>
-                  <button className="bs" style={{marginTop:10}} disabled={savingDates||!myFrom||!myTo||myTo<myFrom} onClick={saveMyDates}>
-                    {savingDates?"Saving…":"These dates work for me"}
-                  </button>
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <button className="bs" style={{flex:2}} disabled={savingDates||!myFrom||!myTo||myTo<myFrom} onClick={saveMyDates}>
+                      {savingDates?"Saving…":"These dates work for me"}
+                    </button>
+                    {/* Somebody with no constraints should not have to invent
+                        a range in order to say so. */}
+                    <button className="bs" style={{flex:1}} disabled={savingDates} onClick={sayImFlexible}>
+                      I'm flexible
+                    </button>
+                  </div>
                   <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
                     {dates.mine?.length?`You said ${dates.mine.map(x=>formatDates(x.start,x.end)).join(", ")}. `:""}
                     {`${dates.respondents} of ${dates.members} have answered.`}
+                    {dates.mine?.length?(
+                      <span {...pressable} onClick={clearMyDates}
+                        style={{color:C.accentText,cursor:"pointer",marginLeft:6,fontWeight:600}}>
+                        Clear mine
+                      </span>
+                    ):null}
                   </div>
+                  {/* The other stretches that nearly work, and who each one
+                      leaves out. A count tells somebody the shape of the
+                      problem; a name tells them who to go and ask. */}
+                  {(dates.bestWindows||[]).slice(1,3).length>0&&(
+                    <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                      <div style={{fontSize:10.5,color:C.t3,textTransform:"uppercase",
+                        letterSpacing:".06em",marginBottom:6}}>Also possible</div>
+                      {(dates.bestWindows||[]).slice(1,3).map((w,i)=>{
+                        const out=(w.missing||[]).map(id=>um[id]?.name?.split(" ")[0]).filter(Boolean);
+                        return(
+                          <div key={i} style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:4}}>
+                            {formatDates(w.start,w.end)} — works for {w.count} of {dates.members}
+                            {out.length?` · ${out.join(" and ")} can't make it`:""}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

@@ -43,10 +43,18 @@ export async function GET(req: NextRequest, { params }: { params: { planId: stri
     .filter(r => memberIds.includes(r.user_id))
     .map(r => ({ userId: String(r.user_id), start: String(r.start_date), end: String(r.end_date) }));
 
+  // Who a window leaves out, not only how many. "Works for 4 of 6" tells
+  // somebody the shape of the problem; "Sam and Ana can't make it" tells them
+  // who to go and ask, which is the thing they can actually do.
+  const windows = bestWindows(ranges, nights).map(w => ({
+    ...w,
+    missing: memberIds.filter(id => !w.available.includes(id)),
+  }));
+
   return NextResponse.json({
     ready: true,
     nights,
-    bestWindows: bestWindows(ranges, nights),
+    bestWindows: windows,
     respondents: new Set(ranges.map(r => r.userId)).size,
     members: memberIds.length,
     mine: ranges.filter(r => r.userId === ctx.user.id).map(({ start, end }) => ({ start, end })),
@@ -99,4 +107,31 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   }
 
   return NextResponse.json({ ok: true, saved: ranges.length });
+}
+
+// ─── DELETE — taking back what you said ─────────────────────────────────
+// Submitting is append-only, which is right for somebody adding a second
+// weekend that works and wrong the moment they typed a date incorrectly:
+// there was no way to withdraw it, and the overlap went on using it.
+//
+// Its own verb rather than an empty list, because POST deliberately refuses
+// zero ranges — an accidental empty submission should not silently erase
+// what somebody carefully entered.
+export async function DELETE(_req: NextRequest, { params }: { params: { planId: string } }) {
+  const ctx = await requirePlanMember(params.planId);
+  if (isFail(ctx)) return ctx.error;
+
+  // Only ever your own. When you can go is yours to say and yours to unsay.
+  const { error } = await ctx.db
+    .from('availability_windows')
+    .delete()
+    .eq('plan_id', params.planId)
+    .eq('user_id', ctx.user.id);
+
+  if (error) {
+    if (error.code === NO_TABLE) return NextResponse.json({ cleared: true });
+    console.error('[availability] could not clear dates', { planId: params.planId, code: error.code });
+    return NextResponse.json({ error: 'Could not clear those dates' }, { status: 500 });
+  }
+  return NextResponse.json({ cleared: true });
 }
