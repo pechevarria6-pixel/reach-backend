@@ -7,7 +7,7 @@ import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthL
 import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle } from "@/lib/checkout";
 import { visibleCategories } from "@/lib/discovery/category";
-import { goalAnswersTripType, tripTypesFromGoal } from "@/lib/goal";
+import { answersFromGoal, summarise } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 
@@ -3591,14 +3591,53 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   // asked next what sort of trip they want. They said. Only an unmistakable
   // word counts — a question skipped wrongly is an answer nobody gave, which
   // is worse than one extra tap.
-  const goalSaysType=goalAnswersTripType(answers.goalBlurb);
+  // Everything the opening answer already settles. Somebody who wrote "no
+  // clubs, dinner and live music downtown" has answered three of the lists
+  // that follow, and being asked them again reads as not having listened.
+  //
+  // Questions that take one answer are named so only the first clear match
+  // is taken for those: offering somebody two paces would be answering a
+  // question nobody asked.
+  const fromGoal=answersFromGoal(answers.goalBlurb,["pace","nightWhere","nightEnergy"]);
+  const settledByGoal=new Set(Object.keys(fromGoal.answers));
   // Both sets are filtered the same way, so the two have the same shape and
   // the date step lands at the same index in either. Filtering one and not
   // the other is how choosing "A night out" moved the date step out from
   // under somebody mid-flow.
-  const asked=isNight
-    ?nightQuestions.filter(q=>!isCarried(q))
-    :questions.filter(q=>!isCarried(q)&&!(q.id==="tripType"&&goalSaysType));
+  // Both sets are filtered the same way, so the two have the same shape and
+  // the date step lands at the same index in either. Filtering one and not
+  // the other is how choosing "A night out" moved the date step out from
+  // under somebody mid-flow.
+  //
+  // The absolute nos are never skipped, only pre-filled. "No clubs" is one
+  // hard no and somebody usually has others, so that list is still offered
+  // with what they already said ticked.
+  const skip=(q)=>isCarried(q)||(settledByGoal.has(q.id)&&q.id!=="noWayJose");
+
+  /** What an option is called, for saying back what we read. */
+  const labelOf=(qid,oid)=>{
+    for(const q of [...questions,...nightQuestions]){
+      const o=q.options?.find(x=>x.id===oid);
+      if(o)return (o.l||oid).toLowerCase();
+    }
+    return String(oid);
+  };
+  // Said out loud rather than assumed. Skipping a question quietly is how
+  // somebody ends up with a plan built on something they never said, and the
+  // answer to that is not to skip less but to show what was read.
+  const goalLine=summarise(fromGoal,labelOf);
+
+  // A hard no they wrote is ticked on the list rather than only applied
+  // behind the scenes, so the screen and the plan agree about what was heard.
+  useEffect(()=>{
+    if(!fromGoal.noWay.length)return;
+    setAnswers(a=>{
+      const have=Array.isArray(a.noWayJose)?a.noWayJose:[];
+      const add=fromGoal.noWay.filter(n=>!have.includes(n));
+      return add.length?{...a,noWayJose:[...have,...add]}:a;
+    });
+  },[fromGoal.noWay.join("|")]);
+  const asked=(isNight?nightQuestions:questions).filter(q=>!skip(q));
 
   // Where the date step sits: straight after "What's this trip about?".
   //
@@ -3637,11 +3676,20 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
     // highest choices reached the server as no budget at all and it fell back
     // to the cheapest bucket among the group's stored ranges. Picking a bigger
     // budget made the trips cheaper.
-    // The question was skipped because the goal answered it, so the answer
-    // comes from the goal rather than being lost.
-    if(!(merged.tripType||[]).length){
-      const fromGoal=tripTypesFromGoal(merged.goalBlurb);
-      if(fromGoal.length)merged.tripType=fromGoal;
+    // A question skipped because the opening answer settled it still has to
+    // arrive answered. Only where nothing was picked, so a question that was
+    // asked and answered always wins over what was read from the sentence.
+    const read=answersFromGoal(merged.goalBlurb,["pace","nightWhere","nightEnergy"]);
+    Object.entries(read.answers).forEach(([id,picked])=>{
+      const have=merged[id];
+      const empty=Array.isArray(have)?!have.length:!have;
+      if(!empty)return;
+      // Single-answer questions hold a string; the rest hold a list.
+      merged[id]=["pace","nightWhere","nightEnergy"].includes(id)?picked[0]:picked;
+    });
+    if(read.noWay.length){
+      const have=Array.isArray(merged.noWayJose)?merged.noWayJose:[];
+      merged.noWayJose=[...new Set([...have,...read.noWay])];
     }
     const typed=parseInt(String(budgetCustom).replace(/[^0-9]/g,""));
     const budgetNum=Number.isFinite(typed)&&typed>0
@@ -3696,6 +3744,17 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
             ):(
               <div style={{fontSize:14,color:C.t2}}>
                 A night out is one evening. A trip is days away.
+              </div>
+            )}
+            {/* What the opening answer already settled, named rather than
+                taken quietly. The questions it covers are not asked again,
+                and somebody should be able to see why one they expected did
+                not appear — and that we did not invent it. */}
+            {goalLine&&(
+              <div style={{marginTop:10,padding:"8px 12px",background:C.s2,
+                border:`1px solid ${C.border}`,borderRadius:12,fontSize:12,
+                color:C.t2,lineHeight:1.5,textAlign:"left"}}>
+                From what you said: {goalLine}. We won't ask again.
               </div>
             )}
           </div>
