@@ -36,6 +36,11 @@ let found = 0;
 for (const f of files) {
   fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
     const code = line.replace(/\/\/.*$/, '');
+    // A block comment is a comment too. This only stripped `//`, so a comment
+    // explaining the very rule it enforces tripped it — which is a checker
+    // that is wrong about itself.
+    const trimmed = code.trim();
+    if (trimmed.startsWith('*') || trimmed.startsWith('/*')) return;
     if (MACHINERY.test(code)) return;
     // Only sentences: several words, in quotes, that a person could read.
     const strings = code.match(/["'`][^"'`]{12,}["'`]/g) || [];
