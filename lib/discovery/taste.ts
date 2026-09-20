@@ -151,6 +151,29 @@ export const EVERYDAY = [
 ];
 
 const MAX_PERSONAL = 10;
+/**
+ * Slots kept for food, whatever else somebody likes.
+ *
+ * Cuisines are added last on purpose — what you are into says more about a
+ * Saturday than what you eat — but last plus a cap of ten means they were
+ * cut first, and a profile with ten activities on it asked for no
+ * restaurants at all. Ever. Not on one screen: the area then records what it
+ * was asked for, the nightly sweep looks for exactly that, and a city's
+ * cache fills up with galleries and no dinner.
+ *
+ * Measured on the owner's own profile — nine cuisines saved, thirteen
+ * activities, and every cuisine dropped before the request was sent:
+ *
+ *   interests: cooking, pottery, live music, dancing, outdoors, comedy,
+ *              breweries, wine tasting, museums, markets
+ *   browse:    art & galleries
+ *   restaurants: none
+ *
+ * Half of what this app does is dinner.
+ */
+const FOOD_SLOTS = 3;
+
+const isFood = (key: string) => key.endsWith(' restaurants');
 
 /**
  * Everything the quiz knows, as kinds of place to look for.
@@ -192,10 +215,16 @@ export function tasteFrom(profile: Profile | null | undefined): { interests: str
     if (k.key && allowed(k) && !interests.includes(k.key)) interests.push(k.key);
   }
 
-  const room = Math.max(2, EVERYDAY.length - interests.length);
+  // Trimmed to the cap with food held back from the cut, rather than
+  // trimmed off the end where the food happens to sit.
+  const food = interests.filter(isFood).slice(0, FOOD_SLOTS);
+  const rest = interests.filter(k => !isFood(k)).slice(0, Math.max(0, MAX_PERSONAL - food.length));
+  const kept = [...rest, ...food];
+
+  const room = Math.max(2, EVERYDAY.length - kept.length);
   const browse = EVERYDAY
-    .filter(key => !interests.includes(key) && allowed(kindFor(key)))
+    .filter(key => !kept.includes(key) && allowed(kindFor(key)))
     .slice(0, room);
 
-  return { interests: interests.slice(0, MAX_PERSONAL), browse };
+  return { interests: kept, browse };
 }

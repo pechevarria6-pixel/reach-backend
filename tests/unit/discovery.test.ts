@@ -310,3 +310,40 @@ test('something happening on a day comes before somewhere merely open', () => {
   const dated = make({ id: 'class', source: 'osm', because: 'pottery & crafts', date: '2026-10-09' });
   assert.equal(rank([open, dated], ['pottery & crafts'])[0].id, 'class');
 });
+
+test('food is not the first thing cut when somebody likes a lot of things', () => {
+  // Cuisines are added last on purpose — what you are into says more about a
+  // Saturday than what you eat — but last plus a cap of ten meant they were
+  // cut first. Measured on a real profile: nine cuisines saved, thirteen
+  // activities, and not one restaurant in the request. Ever. The area then
+  // records what it was asked for and the nightly sweep looks for exactly
+  // that, so a whole city's cache filled with galleries and no dinner.
+  const busy = tasteFrom({
+    favorite_activities: [
+      'Cooking', 'Pottery & crafts', 'Live music', 'Dancing', 'Outdoors', 'Comedy',
+      'Breweries', 'Wine tasting', 'Museums & history', 'Markets & food halls',
+      'Books & talks', 'Photography', 'Sport',
+    ],
+    cuisines: ['Italian', 'Japanese', 'Mexican', 'Seafood', 'Barbecue'],
+  } as never);
+  const asked = [...busy.interests, ...busy.browse];
+  const food = asked.filter(k => k.endsWith(' restaurants'));
+  assert.ok(food.length >= 1, 'somewhere to eat has to survive the cut');
+  assert.deepEqual(food, ['italian restaurants', 'japanese restaurants', 'mexican restaurants']);
+});
+
+test('reserving food slots does not blow past the cap', () => {
+  const busy = tasteFrom({
+    favorite_activities: ['Cooking', 'Pottery & crafts', 'Live music', 'Dancing',
+      'Outdoors', 'Comedy', 'Breweries', 'Wine tasting', 'Museums & history',
+      'Markets & food halls', 'Books & talks', 'Photography', 'Sport'],
+    cuisines: ['Italian', 'Japanese', 'Mexican'],
+  } as never);
+  assert.ok(busy.interests.length <= 10, `ten is the cap, got ${busy.interests.length}`);
+});
+
+test('somebody who named no cuisine is not given one', () => {
+  // The slots are held for food they actually chose, not filled with a guess.
+  const plain = tasteFrom({ favorite_activities: ['Comedy', 'Outdoors'] } as never);
+  assert.equal([...plain.interests, ...plain.browse].some(k => k.endsWith(' restaurants')), false);
+});
