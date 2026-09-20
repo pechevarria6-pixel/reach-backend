@@ -330,8 +330,10 @@ Every slot needs its practical details, because the point is that nobody turns
 up and finds out the hard way:
 - "booking": "reach" if it takes reservations, "ahead" if it must be booked
   direct, "walk_in" if you just turn up.
-- "payment": what they really take — "Cash only", "Cards, no Amex",
-  "Contactless everywhere". If somewhere is known for cash only, say so.
+- "payment": leave this an empty string unless you know it for this exact
+  place. Not what places like it usually take — this one. We check payment
+  against sources that record it, so an empty string costs nobody anything
+  and a wrong guess strands somebody at a till.
 
 Never write "placeholder", "TBD" or any other filler. insider_tip is the thing
 a regular knows — which door, which seat, when to arrive.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
@@ -371,13 +373,13 @@ nobody arrives somewhere and finds out the hard way:
   reserved through a booking system; "ahead" if it needs reserving but only
   direct — a tasting menu, a permit, a timed entry; "walk_in" if you just turn
   up.
-- "payment": what they actually take, in a few words. Be concrete and honest:
-  "Cash only", "Cards, no Amex", "Contactless everywhere", "Cash for the boat,
-  cards at the restaurant", "Free". If a place is known for being cash only,
-  say so — that is the single most useful thing on the whole line.
-
-Do not guess a card policy you are unsure of. "Cards usually accepted" is
-better than a confident wrong answer.
+- "payment": leave this as an empty string unless you know it for this exact
+  place, from that place — not from what restaurants of its kind usually do.
+  An empty string is the right answer almost every time, and it costs the
+  traveller nothing: we check payment against sources that record it and fill
+  it in ourselves.
+  A wrong "Cash only" strands somebody at a till, and a wrong "Cards" strands
+  them harder. Neither is worth a guess, so do not make one.
 
 "because" is the one thing on a slot that is about a person rather than a
 place: whose request this answers, in their own terms — "Peter asked for one

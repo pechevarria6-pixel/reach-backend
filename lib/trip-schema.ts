@@ -72,7 +72,18 @@ export const SlotSchema = z.object({
   booking: z.enum(['reach', 'ahead', 'walk_in']),
   // Free text because the real world is not an enum: "Cash only",
   // "Cards, no Amex", "Contactless everywhere", "Cash for the boat".
-  payment: z.string(),
+  //
+  // Nullable, and that is the whole point. This was a required string, so a
+  // model that did not know what a restaurant took still had to write
+  // something, and it wrote "Cash only at Milt's" in Reach's own voice with
+  // nothing behind it. Checked against the sources afterwards: the venue is
+  // real, and no source we hold records its payment at all.
+  //
+  // A required field cannot be answered honestly by a party that does not
+  // know the answer. So null is a permitted answer here, it means nobody has
+  // checked yet, and lib/discovery/verify.ts fills it in from a source that
+  // actually says — or leaves it empty, which the screen can live with.
+  payment: z.string().nullish(),
   // Whose wish this answers, when it answers one. "Peter asked for one big
   // night out." Nullish rather than optional: plenty of a good day is just a
   // good day, and a model with nothing to say should send null rather than
@@ -163,6 +174,10 @@ export const slot = {
     plan: str,
     cost: num,
     booking: { type: 'string', enum: ['reach', 'ahead', 'walk_in'] },
+    // Same bargain as `because` below: required on the wire, empty when the
+    // answer is not known. Empty means nobody has checked what this place
+    // takes — it does not mean cash, and it does not mean cards. Verified
+    // payment is filled in later from a source that actually records it.
     payment: str,
     // Required in the wire format so it cannot be quietly skipped, and
     // allowed to be empty: a day that answers nobody in particular should

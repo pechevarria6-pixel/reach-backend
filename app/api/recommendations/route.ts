@@ -80,9 +80,10 @@ For every suggestion:
 - "cost" is what one person actually spends, in whole dollars. Free is 0.
 - "booking" is "reach" if it can be reserved through a booking system, "ahead"
   if it needs booking direct, "walk_in" if you just turn up.
-- "payment" is what they really take, in a few words — "Cash only", "Cards, no
-  Amex", "Contactless everywhere". Say so when somewhere is known for cash
-  only; that is the thing nobody finds out until they are standing there.
+- "payment" is an empty string unless you know it for this exact place, from
+  that place rather than from what its kind usually does. Empty is the right
+  answer almost every time — we check it against sources that record it. A
+  wrong card policy is worse than a missing one.
 - "reason" is one sentence on why this group in particular.
 - "highlights" is three short specifics — a dish, a room, a support act.
 

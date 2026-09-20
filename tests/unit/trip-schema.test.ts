@@ -115,8 +115,26 @@ test('a free event costs zero, which is not the same as unknown', () => {
   assert.equal(out?.itinerary[0].morning.cost, 0);
 });
 
-test('a slot missing its payment note is rejected, not quietly dropped', () => {
-  const bad = { ...validDay, morning: { plan: 'Walk', cost: 0, booking: 'walk_in' } };
+test('a slot with no payment note is kept — not knowing is a real answer', () => {
+  // This test used to assert the opposite, and asserting the opposite is what
+  // made the product lie. Payment was a required string, so a model that did
+  // not know what a place took still had to write something, and it wrote
+  // "Cash only at Milt's" in Reach's own voice. Checked afterwards against
+  // the map and against Wikivoyage: Milt's is real, and no source we hold
+  // records its payment at all. Four of Moab's venues confirmed, zero
+  // payment policies confirmed.
+  //
+  // A required field cannot be answered honestly by someone who does not
+  // know the answer, so the absence is now allowed to travel as an absence.
+  const quiet = { ...validDay, morning: { plan: 'Walk the rim at first light', cost: 0, booking: 'walk_in' } };
+  const out = parseModelJSON(JSON.stringify({ itinerary: [quiet] }), ItinerarySchema, 'test');
+  assert.ok(out, 'a slot that declines to guess is still a slot');
+  assert.ok(!out?.itinerary[0].morning.payment, 'and it carries no payment claim');
+});
+
+test('a slot missing the plan itself is still rejected', () => {
+  // Letting payment be absent is not letting anything be absent.
+  const bad = { ...validDay, morning: { cost: 0, booking: 'walk_in', payment: '' } };
   assert.equal(parseModelJSON(JSON.stringify({ itinerary: [bad] }), ItinerarySchema, 'test'), null);
 });
 
