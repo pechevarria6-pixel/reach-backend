@@ -871,7 +871,7 @@ function BuildingItinerary({destination,nights,onCancel}){
 }
 
 // ─── DISCOVER ────────────────────────────────────────────────────────────────
-function DiscoverScreen({push,groups,toast,user,userLocation}){
+function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   const [filter,setFilter]=useState("All");
   const [localRecs,setLocalRecs]=useState([]);
   const [loading,setLoading]=useState(false);
@@ -1012,7 +1012,35 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
   const city=userLocation?.city||userLocation?.formatted;
   // Where this came from, because on a trip they are different places and
   // "near you" would be a claim we cannot make.
-  const placePrefix=userLocation?.source==="home"?"Based on your home city,":"Based on your location in";
+  // Choosing a place by name. Geocoded through the same service the app
+  // already uses to name the place you are in, so the two agree.
+  const [pickingPlace,setPickingPlace]=useState(false);
+  const [placeQuery,setPlaceQuery]=useState("");
+  const [placeHits,setPlaceHits]=useState([]);
+  const [searchingPlace,setSearchingPlace]=useState(false);
+
+  const searchPlaces=async(q)=>{
+    const term=(q||"").trim();
+    if(term.length<3){setPlaceHits([]);return;}
+    setSearchingPlace(true);
+    try{
+      const r=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=6&q="+encodeURIComponent(term));
+      if(!r.ok)throw new Error(String(r.status));
+      const hits=await r.json();
+      setPlaceHits((Array.isArray(hits)?hits:[]).map(h=>({
+        label:h.display_name,
+        lat:Number(h.lat), lng:Number(h.lon),
+      })).filter(h=>Number.isFinite(h.lat)&&Number.isFinite(h.lng)));
+    }catch(e){
+      console.error("[discover] place search failed",e);
+      toast("Couldn't search for that just now");
+    }
+    setSearchingPlace(false);
+  };
+
+  const placePrefix=userLocation?.source==="override"?"Showing"
+    :userLocation?.source==="home"?"Based on your home city,"
+    :"Based on your location in";
   // Said once, under the filters, only when there is genuinely little here.
   // Not an error and not an apology: the sweep runs nightly and this fills in.
   const learningNote=!loading&&thin&&allItems.length>0
@@ -1023,9 +1051,49 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 10px"}}>
         <div className="pt">Discover</div>
-        <div style={{fontSize:13,color:C.t2,marginTop:2}}>
+        {/* Tappable, because the app being wrong about where somebody is has
+            happened twice — Aberdeen shown Pittsburgh, and before that San
+            Francisco. Detection can be wrong; this is how you say so, and
+            what you say here is not overridden by GPS afterwards. */}
+        <div {...pressable} onClick={()=>setPickingPlace(true)}
+          style={{fontSize:13,color:C.t2,marginTop:2,cursor:setPlaceOverride?"pointer":"default"}}>
           {city?placePrefix+" "+city:"Curated for you"}
+          {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600}}>change ▾</span>:null}
         </div>
+        {pickingPlace&&setPlaceOverride&&(
+          <div style={{marginTop:10,padding:"12px 14px",background:C.s2,
+            border:`1px solid ${C.border}`,borderRadius:14}}>
+            <div style={{fontSize:12.5,color:C.t2,marginBottom:8,lineHeight:1.5}}>
+              Where should we look? This sticks until you clear it.
+            </div>
+            <input className="inp" autoFocus value={placeQuery} placeholder="Aberdeen, Scotland"
+              onChange={e=>{setPlaceQuery(e.target.value);searchPlaces(e.target.value);}}/>
+            {searchingPlace&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
+            {placeHits.map((h,i)=>(
+              <div key={i} {...pressable}
+                onClick={()=>{
+                  setPlaceOverride({lat:h.lat,lng:h.lng,city:h.label.split(",")[0].trim(),formatted:h.label.split(",")[0].trim()});
+                  setPickingPlace(false);setPlaceQuery("");setPlaceHits([]);
+                  toast("Showing "+h.label.split(",")[0].trim());
+                }}
+                style={{padding:"9px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,
+                  color:C.t1,cursor:"pointer",lineHeight:1.4}}>
+                {h.label}
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              {userLocation?.source==="override"&&(
+                <button className="bs" style={{flex:1}}
+                  onClick={()=>{setPlaceOverride(null);setPickingPlace(false);toast("Back to where you are");}}>
+                  Use my location
+                </button>
+              )}
+              <button className="bs" style={{flex:1}} onClick={()=>{setPickingPlace(false);setPlaceHits([]);}}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         {!userLocation&&(
           <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
             onClick={()=>toast("Enable location in your browser for local picks")}>
@@ -7527,8 +7595,73 @@ export default function ReachApp({realUser,onSignOut}={}){
     return ()=>clearTimeout(t);
   },[]);
 
+  // Coming back to the app after travelling should not still show last
+  // week's city. Re-checked when the tab is focused, and acted on only when
+  // the device says you have actually moved — roughly 25km, far enough that
+  // it is a different place and not GPS drift on a sofa. A place you chose
+  // yourself is never overridden by this.
+  useEffect(()=>{
+    if(typeof window==="undefined")return;
+    const milesBetween=(a,b,c,d)=>{
+      const R=3958.8,r=x=>x*Math.PI/180;
+      const dLat=r(c-a),dLng=r(d-b);
+      const h=Math.sin(dLat/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(dLng/2)**2;
+      return 2*R*Math.asin(Math.min(1,Math.sqrt(h)));
+    };
+    const onFocus=()=>{
+      if(readOverride())return;                       // their choice stands
+      if(!navigator?.geolocation)return;
+      navigator.geolocation.getCurrentPosition(pos=>{
+        const {latitude:lat,longitude:lng}=pos.coords;
+        setUserLocation(prev=>{
+          if(!prev)return prev;                        // the first load handles this
+          const moved=milesBetween(prev.lat,prev.lng,lat,lng);
+          if(moved<15)return prev;                     // ~25km
+          // Somewhere else. Resolve it properly rather than patching the
+          // coordinates and leaving the old city name on screen.
+          getLocation();
+          return prev;
+        });
+      },()=>{},{timeout:8000,maximumAge:0});
+    };
+    window.addEventListener("focus",onFocus);
+    return ()=>window.removeEventListener("focus",onFocus);
+  },[]);
+
+  // ── Where we think you are ────────────────────────────────────────────
+  // In order: what you told us, then what the device says, then the city on
+  // your profile, then we ask. Never a hardcoded city — a trip planned from
+  // Aberdeen came back with nights out in Pittsburgh, and before that San
+  // Francisco, because something downstream had a default.
+  //
+  // What you told us wins outright and keeps winning. Somebody who sets this
+  // is correcting us, and a correction that GPS quietly overrides on the next
+  // load is not a correction.
+  const PLACE_OVERRIDE="reach_place_override";
+
+  const readOverride=()=>{
+    try{
+      const raw=localStorage.getItem(PLACE_OVERRIDE);
+      if(!raw)return null;
+      const v=JSON.parse(raw);
+      return Number.isFinite(v?.lat)&&Number.isFinite(v?.lng)?v:null;
+    }catch(e){ return null; }
+  };
+
+  const setPlaceOverride=(place)=>{
+    try{
+      if(place)localStorage.setItem(PLACE_OVERRIDE,JSON.stringify(place));
+      else localStorage.removeItem(PLACE_OVERRIDE);
+    }catch(e){ /* a private window still gets the rest of the session */ }
+    if(place)setUserLocation({...place,source:"override"});
+    else{ setUserLocation(null); getLocation(); }
+  };
+
   const getLocation=()=>{
-    if(typeof navigator==="undefined"||!navigator.geolocation)return;
+    // A place you chose beats anything we can detect, every time.
+    const chosen=readOverride();
+    if(chosen){ setUserLocation({...chosen,source:"override"}); return; }
+    if(typeof navigator==="undefined"||!navigator.geolocation){ useHomeCity(); return; }
     navigator.geolocation.getCurrentPosition(
       async function(pos){
         try{
@@ -7542,11 +7675,11 @@ export default function ReachApp({realUser,onSignOut}={}){
             const state=geo.address?.state_code||"";
             // Find nearest major airport (simplified - use city)
             const airport=getNearestAirport(city,state);
-            setUserLocation({lat,lng,city,state,airport,formatted:city+(state?", "+state:"")});
+            setUserLocation({lat,lng,city,state,airport,formatted:city+(state?", "+state:""),source:"device"});
           }else{
-            setUserLocation({lat,lng,city:"Your location",airport:null});
+            setUserLocation({lat,lng,city:"Your location",airport:null,source:"device"});
           }
-        }catch(e){setUserLocation({lat:pos.coords.latitude,lng:pos.coords.longitude,city:"Your location",airport:null});}
+        }catch(e){setUserLocation({lat:pos.coords.latitude,lng:pos.coords.longitude,city:"Your location",airport:null,source:"device"});}
       },
       // Denied, or the device simply cannot say. Somebody who has told us
       // where they live should not then be asked where they are: the order
@@ -8069,7 +8202,7 @@ export default function ReachApp({realUser,onSignOut}={}){
               ):(
                 <div className="sc">
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
-                  {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure}/>}
+                  {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure} setPlaceOverride={setPlaceOverride}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading}/>}
                   {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push}/>}
                 </div>
