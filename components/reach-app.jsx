@@ -6863,6 +6863,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     // said so with nothing to tap: "Finish on their site" and no site. The
     // provider hands the address back on the booking; this is it.
     href:b.redirect_url||null, provider:b.provider||null,
+    // A number somebody can ring. Most restaurants are not on Resy or
+    // OpenTable, and for those the screen offered a status and nothing to
+    // do — a table the app said it wanted and gave you no way to get. The
+    // phone is the answer for those, and it is the one we have most often.
+    phone:b.response_payload?.phone||null,
   })):[
     // Nothing is priced yet, so there is nothing to itemise. This used to list
     // flights, accommodation and activities at 34, 40 and 26 per cent of the
@@ -7057,13 +7062,21 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
                 ?`Reserve on ${PROVIDER_NAME[it.provider]} →`
                 :`Finish on ${PROVIDER_NAME[it.provider]||"their site"} →`}
             </a>
+          ):it.phone?(
+            // No platform, but a telephone. Ringing is how most restaurants
+            // take a table, and a tap dials it on the device this is on.
+            <a href={`tel:${String(it.phone).replace(/[^0-9+]/g,"")}`}
+              onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
+              style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
+              Call to reserve →
+            </a>
           ):null}
         </div>))}
       </div>
       {/* Only the person who booked it knows whether there was a table, so
           the app asks them rather than guessing from a click. Shown once
           they have been handed over, and for anything already waiting. */}
-      {lines.filter(it=>it.href&&(handedOver[it.id]||it.st==="redirected")&&it.st!=="confirmed").map(it=>(
+      {lines.filter(it=>(it.href||it.phone)&&(handedOver[it.id]||it.st==="redirected")&&it.st!=="confirmed").map(it=>(
         <div key={`cap-${it.id}`} style={{margin:"0 4px 12px",padding:"12px 14px",background:C.s2,
           border:`1px solid ${C.border}`,borderRadius:14}}>
           <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:2}}>{it.l}</div>

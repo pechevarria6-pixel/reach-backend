@@ -37,10 +37,25 @@ export async function POST(req: NextRequest) {
   if (isFail(ctx)) return ctx.error;
 
   const dryRun = body.dryRun === true;      // quote-only pass for the review screen
-  // Default flow is now PROPOSE: quote every item and store it as
-  // awaiting_approval. Nothing books until POST /api/bookings/[id]/approve.
-  // Pass executeNow: true to skip approval (e.g. solo trips).
-  const executeNow = body.executeNow === true;
+
+  // Default flow is PROPOSE: quote every item and store it as awaiting the
+  // group's approval. Nothing books until POST /api/bookings/[id]/approve.
+  //
+  // Except when there is no group. A solo trip put everything in that queue
+  // too and told the one person on it that it was waiting on the others —
+  // there are no others, and nothing was ever going to arrive to release it.
+  // This was meant to be handled by the caller passing executeNow, and no
+  // caller ever did, so it is decided here where the plan is already loaded
+  // and the answer cannot be forgotten.
+  //
+  // Solo by the flag or by arithmetic: a group of one is a group of one
+  // whether or not the plan was created through the solo flow.
+  const { count: heads } = await ctx.db
+    .from('group_members')
+    .select('user_id', { count: 'exact', head: true })
+    .eq('group_id', ctx.plan.group_id as string);
+  const alone = (ctx.plan as { solo_mode?: boolean }).solo_mode === true || (heads ?? 0) <= 1;
+  const executeNow = body.executeNow === true || alone;
   const results: BookingItemResult[] = [];
 
   // No airline issues a ticket without a legal name, a date of birth and a
@@ -89,7 +104,7 @@ export async function POST(req: NextRequest) {
       results.push(result);
 
       if (!dryRun) {
-        await ctx.db.from('bookings').insert({
+        const { error: wrote } = await ctx.db.from('bookings').insert({
           plan_id: body.planId,
           group_id: ctx.plan.group_id,
           booked_by: ctx.user.id,
@@ -108,6 +123,18 @@ export async function POST(req: NextRequest) {
           response_payload: result.raw || null,
           error: result.error || null,
         });
+
+        // Checked, because a booking that was quoted and not stored is a
+        // booking nobody can act on, and returning the quote anyway tells the
+        // screen it worked. This route reported success on every write
+        // regardless of whether one happened.
+        if (wrote) {
+          console.error('[bookings] quoted but could not store', {
+            planId: body.planId, vertical: result.vertical, code: wrote.code,
+          });
+          result.status = 'failed' as BookingItemResult['status'];
+          result.error = "We priced this but couldn't save it — try again in a moment";
+        }
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Provider error';

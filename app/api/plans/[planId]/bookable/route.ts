@@ -60,6 +60,10 @@ type Item = {
   scheduled_time: string | null;
   cost_cents: number;
   booking_mode?: string | null;
+  /** The venue's own name and number, from the verification pass. Null until
+   *  it has run, which is why both are optional and neither is relied on. */
+  venue_name?: string | null;
+  venue_phone?: string | null;
 };
 
 /**
@@ -178,7 +182,12 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const { data: items, error: itemsError } = await ctx.db
     .from('itinerary_items')
-    .select('id, type, title, subtitle, scheduled_time, cost_cents, booking_mode')
+    // venue_name and venue_phone arrive from the verification pass. They are
+    // the only place a venue's actual name is written down: `title` is a
+    // sentence somebody reads — "Dinner at the bar counter at Vinny's Italian
+    // Grill in the Warehouse District" — and matching a venue list against
+    // that found nothing, ever.
+    .select('id, type, title, subtitle, scheduled_time, cost_cents, booking_mode, venue_name, venue_phone')
     .eq('plan_id', params.planId)
     .order('sort_order');
   if (itemsError) {
@@ -306,23 +315,37 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     // decides how fast the screen is.
     let table: { platform?: string; url?: string | null; phone?: string | null } | null = null;
     if (item.type === 'restaurant') {
-      const { data: venue, error: venueError } = await ctx.db
-        .from('discovery_venues')
-        .select('reservation_platform, reservation_url, phone')
-        .ilike('name', item.title.trim())
-        .limit(1)
-        .maybeSingle();
+      // The venue's own name, as a source spells it, not the sentence the
+      // itinerary wrote around it. This looked up `item.title` — the whole
+      // line — against a list of venue names, so it matched nothing on any
+      // real itinerary and every restaurant fell through with no platform
+      // and no phone number, which is what "provider: none" meant.
+      const venueName = (item.venue_name || '').trim();
+      const { data: venue, error: venueError } = venueName
+        ? await ctx.db
+            .from('discovery_venues')
+            .select('reservation_platform, reservation_url, phone')
+            .ilike('name', venueName)
+            .limit(1)
+            .maybeSingle()
+        : { data: null, error: null };
       // A column that does not exist yet means the migration is pending, and
       // every restaurant falls to the phone lane — which is the honest
       // degraded state, not an error.
       if (venueError && !/reservation_platform|phone|schema cache/i.test(venueError.message || '')) {
         console.error('[bookable] could not read the venue', { code: venueError.code });
       }
-      if (venue) {
+      // A number somebody can ring is a real answer, and it is the one we
+      // have most often: the map records phone numbers for venues nobody has
+      // worked out a booking platform for. Kept even when the venue is not in
+      // our own list at all, so the screen can offer a call rather than
+      // nothing.
+      const phone = venue?.phone ?? item.venue_phone ?? null;
+      if (venue || phone) {
         table = {
-          platform: venue.reservation_platform ?? 'none',
-          url: venue.reservation_url ?? null,
-          phone: venue.phone ?? null,
+          platform: venue?.reservation_platform ?? 'none',
+          url: venue?.reservation_url ?? null,
+          phone,
         };
       }
     }
