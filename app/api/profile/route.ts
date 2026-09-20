@@ -59,11 +59,20 @@ export async function GET() {
 
   // Cards live at Stripe, never here. Import lazily so a missing Stripe key
   // degrades this one section instead of failing the whole request.
+  //
+  // Timed on production at about a second, nearly all of it this call — and
+  // every row on the screen waits for it to say anything at all. A card list
+  // is worth a second when somebody opens the payment section; it is not
+  // worth making them watch the rest of their profile arrive behind it, so
+  // it gives up early and the section asks again if it has to.
   let cards: any[] = [];
   if (row.stripe_customer_id) {
     try {
       const { stripe } = await import('@/lib/stripe');
-      const list = await stripe.paymentMethods.list({ customer: row.stripe_customer_id, type: 'card', limit: 10 });
+      const list = await stripe.paymentMethods.list(
+        { customer: row.stripe_customer_id, type: 'card', limit: 10 },
+        { timeout: 2500, maxNetworkRetries: 0 },
+      );
       cards = list.data.map(pm => ({
         id: pm.id,
         brand: pm.card?.brand ?? 'card',

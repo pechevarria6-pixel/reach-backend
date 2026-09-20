@@ -7097,6 +7097,16 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
   // function decides whether a group is told this person is holding up a
   // flight — two opinions about that would show one thing and book another.
   const ess=data?.essentials;
+  // The profile takes about a second to arrive — it asks Stripe for the
+  // cards — and for that second every row below was stating something as
+  // fact from data it did not have: "Not set yet" over a name that is set,
+  // "No card saved yet" over a card that exists, and worst of all "Ready to
+  // be ticketed" to somebody who has not filled anything in. An empty
+  // optional chain is falsy, so absence read as a confident negative.
+  //
+  // Until the answer is here, these say nothing at all.
+  const settled=!!data||loadErr;
+  const until=(value)=>settled?value:"…";
   const connected=(data?.connected||[]).filter(a=>a.status==="connected");
   return(
     <div style={{padding:"12px 0 0"}}>
@@ -7128,7 +7138,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
 
       <div style={{padding:"0 20px 6px"}}><span className="sl">You</span></div>
       <Row icon="🙋" title="Name and home airport"
-        sub={[data?.identity?.firstName||null,data?.home?.airport||null].filter(Boolean).join(" · ")||"Not set yet"}
+        sub={until([data?.identity?.firstName||null,data?.home?.airport||null].filter(Boolean).join(" · ")||"Not set yet")}
         right={<Ic.ChevR/>} onClick={()=>setSection("you")}/>
       {/* The answers behind every suggestion. Somewhere to revise them, not
           just a one-off at sign-up — what you are into in March is not what
@@ -7144,21 +7154,23 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           travel documents because a passport number is optional and these
           are not. */}
       <Row icon="🎟️" title="Flying details"
-        sub={ess?.missing?.length
+        sub={until(ess?.missing?.length
           ?`Still needed: ${ess.missing.join(", ")}`
-          :"Ready to be ticketed"}
+          :"Ready to be ticketed")}
         right={<>
-          <span style={{fontSize:12,fontWeight:600,marginRight:8,
-            color:ess?.missing?.length?C.amber:C.green}}>
-            {ess?.missing?.length?"Incomplete":"Ready"}
-          </span>
+          {settled&&(
+            <span style={{fontSize:12,fontWeight:600,marginRight:8,
+              color:ess?.missing?.length?C.amber:C.green}}>
+              {ess?.missing?.length?"Incomplete":"Ready"}
+            </span>
+          )}
           <Ic.ChevR/>
         </>} onClick={()=>setSection("flying")}/>
       <Row icon="🛂" title="Travel documents"
-        sub={docCount?`${docCount} saved · encrypted`:"Passport, PreCheck, Global Entry"}
+        sub={until(docCount?`${docCount} saved · encrypted`:"Passport, PreCheck, Global Entry")}
         right={<Ic.ChevR/>} onClick={()=>setSection("documents")}/>
       <Row icon="🎫" title="Loyalty programmes"
-        sub={data?.loyalty?.length?`${data.loyalty.length} saved`:"None yet"}
+        sub={until(data?.loyalty?.length?`${data.loyalty.length} saved`:"None yet")}
         right={<Ic.ChevR/>} onClick={()=>setSection("loyalty")}/>
       {connected.length>0&&(
         <Row icon="🔗" title="Connected accounts"
@@ -7167,7 +7179,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
 
       <div style={{padding:"16px 20px 6px"}}><span className="sl">Money</span></div>
       <Row icon="💳" title="Payment"
-        sub={data?.cards?.length?`${data.cards.length} card${data.cards.length===1?"":"s"} on file`:"No card saved yet"}
+        sub={until(data?.cards?.length?`${data.cards.length} card${data.cards.length===1?"":"s"} on file`:"No card saved yet")}
         right={<Ic.ChevR/>} onClick={()=>setSection("payment")}/>
 
       <div style={{padding:"16px 20px 6px"}}><span className="sl">Appearance</span></div>
