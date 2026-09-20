@@ -8,6 +8,8 @@ import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle } from "@/lib/checkout";
 import { visibleCategories } from "@/lib/discovery/category";
 import { goalAnswersTripType, tripTypesFromGoal } from "@/lib/goal";
+import { stepsFor } from "@/lib/quiz-steps";
+import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -871,6 +873,88 @@ function BuildingItinerary({destination,nights,onCancel}){
 }
 
 // ─── DISCOVER ────────────────────────────────────────────────────────────────
+// ─── Saying where you actually are ──────────────────────────────────────
+// The app being wrong about somebody's location has happened twice —
+// Aberdeen shown Pittsburgh, and before that San Francisco — so every screen
+// that plans around a place has to let the person correct it, and the
+// correction has to stick. Detection can be wrong; this is how you say so.
+//
+// Shared by Discover and by the night out, which are the two screens whose
+// whole answer depends on where you are standing. A trip is different: it
+// departs from where you live, which is a profile setting and not a GPS
+// reading.
+function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
+  const [picking,setPicking]=useState(false);
+  const [query,setQuery]=useState("");
+  const [hits,setHits]=useState([]);
+  const [searching,setSearching]=useState(false);
+
+  const city=userLocation?.city||userLocation?.formatted;
+
+  const search=async(q)=>{
+    const term=(q||"").trim();
+    if(term.length<3){setHits([]);return;}
+    setSearching(true);
+    try{
+      const r=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=6&q="+encodeURIComponent(term));
+      if(!r.ok)throw new Error(String(r.status));
+      const found=await r.json();
+      setHits((Array.isArray(found)?found:[]).map(h=>({
+        label:h.display_name, lat:Number(h.lat), lng:Number(h.lon),
+      })).filter(h=>Number.isFinite(h.lat)&&Number.isFinite(h.lng)));
+    }catch(e){
+      console.error("[place] search failed",e);
+      toast&&toast("Couldn't search for that just now");
+    }
+    setSearching(false);
+  };
+
+  return(
+    <>
+      <div {...pressable} onClick={()=>setPicking(true)}
+        style={{fontSize:13,color:C.t2,marginTop:2,cursor:setPlaceOverride?"pointer":"default"}}>
+        {city?prefix+" "+city:fallback}
+        {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap"}}>{" · change ▾"}</span>:null}
+      </div>
+      {picking&&setPlaceOverride&&(
+        <div style={{marginTop:10,padding:"12px 14px",background:C.s2,
+          border:`1px solid ${C.border}`,borderRadius:14,textAlign:"left"}}>
+          <div style={{fontSize:12.5,color:C.t2,marginBottom:8,lineHeight:1.5}}>
+            {hint||"Where should we look? This sticks until you clear it."}
+          </div>
+          <input className="inp" autoFocus value={query} placeholder="Aberdeen, Scotland"
+            onChange={e=>{setQuery(e.target.value);search(e.target.value);}}/>
+          {searching&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
+          {hits.map((h,i)=>(
+            <div key={i} {...pressable}
+              onClick={()=>{
+                const label=h.label.split(",")[0].trim();
+                setPlaceOverride({lat:h.lat,lng:h.lng,city:label,formatted:label});
+                setPicking(false);setQuery("");setHits([]);
+                toast&&toast("Showing "+label);
+              }}
+              style={{padding:"9px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,
+                color:C.t1,cursor:"pointer",lineHeight:1.4}}>
+              {h.label}
+            </div>
+          ))}
+          <div style={{display:"flex",gap:8,marginTop:10}}>
+            {userLocation?.source==="override"&&(
+              <button className="bs" style={{flex:1}}
+                onClick={()=>{setPlaceOverride(null);setPicking(false);toast&&toast("Back to where you are");}}>
+                Use my location
+              </button>
+            )}
+            <button className="bs" style={{flex:1}} onClick={()=>{setPicking(false);setHits([]);}}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   const [filter,setFilter]=useState("All");
   const [localRecs,setLocalRecs]=useState([]);
@@ -1051,49 +1135,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 10px"}}>
         <div className="pt">Discover</div>
-        {/* Tappable, because the app being wrong about where somebody is has
-            happened twice — Aberdeen shown Pittsburgh, and before that San
-            Francisco. Detection can be wrong; this is how you say so, and
-            what you say here is not overridden by GPS afterwards. */}
-        <div {...pressable} onClick={()=>setPickingPlace(true)}
-          style={{fontSize:13,color:C.t2,marginTop:2,cursor:setPlaceOverride?"pointer":"default"}}>
-          {city?placePrefix+" "+city:"Curated for you"}
-          {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap"}}>{" · change ▾"}</span>:null}
-        </div>
-        {pickingPlace&&setPlaceOverride&&(
-          <div style={{marginTop:10,padding:"12px 14px",background:C.s2,
-            border:`1px solid ${C.border}`,borderRadius:14}}>
-            <div style={{fontSize:12.5,color:C.t2,marginBottom:8,lineHeight:1.5}}>
-              Where should we look? This sticks until you clear it.
-            </div>
-            <input className="inp" autoFocus value={placeQuery} placeholder="Aberdeen, Scotland"
-              onChange={e=>{setPlaceQuery(e.target.value);searchPlaces(e.target.value);}}/>
-            {searchingPlace&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
-            {placeHits.map((h,i)=>(
-              <div key={i} {...pressable}
-                onClick={()=>{
-                  setPlaceOverride({lat:h.lat,lng:h.lng,city:h.label.split(",")[0].trim(),formatted:h.label.split(",")[0].trim()});
-                  setPickingPlace(false);setPlaceQuery("");setPlaceHits([]);
-                  toast("Showing "+h.label.split(",")[0].trim());
-                }}
-                style={{padding:"9px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,
-                  color:C.t1,cursor:"pointer",lineHeight:1.4}}>
-                {h.label}
-              </div>
-            ))}
-            <div style={{display:"flex",gap:8,marginTop:10}}>
-              {userLocation?.source==="override"&&(
-                <button className="bs" style={{flex:1}}
-                  onClick={()=>{setPlaceOverride(null);setPickingPlace(false);toast("Back to where you are");}}>
-                  Use my location
-                </button>
-              )}
-              <button className="bs" style={{flex:1}} onClick={()=>{setPickingPlace(false);setPlaceHits([]);}}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
+        <PlaceLine userLocation={userLocation} setPlaceOverride={setPlaceOverride}
+          toast={toast} prefix={placePrefix} fallback="Curated for you"/>
         {!userLocation&&(
           <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
             onClick={()=>toast("Enable location in your browser for local picks")}>
@@ -3236,7 +3279,7 @@ const KNOWN_LABELS={
 // ─── TRIP PLANNING QUIZ ───────────────────────────────────────────────────────
 // Completely separate from the onboarding quiz.
 // This fuels the AI trip generator with trip-specific preferences.
-function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known}){
+function TripQuiz({group,userLocation,departure,setPlaceOverride,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known}){
   const [qStep,setQStep]=useState(0);
   const [startDate,setStartDate]=useState(known?.startDate||"");
   const [endDate,setEndDate]=useState(known?.endDate||"");
@@ -3465,9 +3508,23 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
     ?nightQuestions
     :questions.filter(q=>!isCarried(q)&&!(q.id==="tripType"&&goalSaysType));
 
-  const isDateStep=qStep===0;
-  const quizQ=asked[qStep-1];
-  const totalSteps=asked.length+1;
+  // Where the date step sits: straight after "What's this trip about?".
+  //
+  // It used to be first, so the first thing anybody was asked for was a
+  // fortnight of calendar before they had said a word about what the trip
+  // was — and the one open question, the only part that is not a list, came
+  // after it. Somebody who knows they want a ski week for Kyle's fortieth
+  // should be able to say so before being asked to pin down which Tuesday.
+  //
+  // Placed relative to the blurb rather than hardcoded to 1, because the
+  // blurb is carried over when it is already known, and then it is not
+  // asked at all and the dates lead. The arithmetic lives in lib/quiz-steps
+  // and is tested there: its failure is showing a question twice or losing
+  // one, and nothing throws when it does.
+  const steps=stepsFor(asked);
+  const isDateStep=steps[qStep]?.kind==="dates";
+  const quizQ=steps[qStep]?.question;
+  const totalSteps=steps.length;
   const isLast=qStep===totalSteps-1;
   const canNext=isDateStep
     ?(isNight?!!startDate:(startDate&&endDate&&nights>0))
@@ -3532,13 +3589,23 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
             <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1,marginBottom:6}}>
               {isNight?"When's the night out?":mode==="trip"?"When are you going?":"What are we planning?"}
             </div>
-            <div style={{fontSize:14,color:C.t2}}>
-              {isNight
-                ?`Out around ${departure?.city||"you"} — home the same night`
-                :mode==="trip"
+            {/* A night out is where you are standing tonight, so it reads the
+                live location and can be corrected exactly as Discover can —
+                the two screens whose whole answer is "near here".
+                A trip is not that: it departs from where you live, which is
+                a profile setting rather than a GPS reading, and somebody
+                planning from a hotel room is still flying home from home. */}
+            {isNight?(
+              <PlaceLine userLocation={userLocation} setPlaceOverride={setPlaceOverride}
+                toast={toast} prefix="Out around" fallback="Out near you"
+                hint="Where's the night out? This sticks until you clear it."/>
+            ):(
+              <div style={{fontSize:14,color:C.t2}}>
+                {mode==="trip"
                   ?`Departing from ${departure?.city||"your location"}${departure?.airport?" ("+departure.airport+")":""}`
                   :"A night out is one evening. A trip is days away."}
-            </div>
+              </div>
+            )}
           </div>
           {/* Shown on whichever step you land back on, not only the date step,
               and carrying the server's own words. It used to append "check
@@ -3790,7 +3857,7 @@ function TripQuiz({group,userLocation,departure,error,onGenerate,allComplete,com
 }
 
 
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,savePlanToServer,saveItineraryToServer}){
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,savePlanToServer,saveItineraryToServer}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
   // it is what the person filled in a moment ago on the way here.
@@ -4241,6 +4308,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             departure={departure}
             group={group}
             userLocation={userLocation}
+            setPlaceOverride={setPlaceOverride}
+            toast={toast}
             error={error}
             allComplete={allComplete}
             completedCount={completedCount}
@@ -7079,6 +7148,30 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
               An airport code is three letters, like SFO or JFK.
             </div>
           )}
+          {/* Two fields that describe one thing were let to disagree, and
+              nothing noticed: a profile here read Pittsburgh and RDU at once
+              — 350 miles apart — and the trip screen showed both for months.
+              Said out loud rather than fixed silently, because living in one
+              place and flying from another is ordinary and this is somebody
+              else's business to settle. */}
+          {(()=>{ const m=airValid&&airportMismatch(cityDraft,airDraft); return m?(
+            <div style={{marginTop:10,padding:"10px 12px",background:C.amberDim,
+              border:`1px solid ${C.amber}`,borderRadius:12,fontSize:12,color:C.t1,lineHeight:1.5}}>
+              {m.city}'s airport is {m.expected}, and you have {m.saved} set. If you fly from
+              {" "}{m.saved} that's fine — otherwise:
+              <button className="bs" style={{marginTop:8,width:"100%"}}
+                onClick={()=>setDocDraft(x=>({...x,__air:m.expected}))}>
+                Use {m.expected} instead
+              </button>
+            </div>
+          ):null; })()}
+          {/* Nothing chosen: say what it will use, so it is not a surprise
+              on the trip screen later. */}
+          {airValid&&!airDraft.trim()&&airportForCity(cityDraft)&&(
+            <div style={{fontSize:11.5,color:C.t2,marginTop:8,lineHeight:1.5}}>
+              Leave this empty and we'll use {airportForCity(cityDraft)} from your home city.
+            </div>
+          )}
           <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
             Every flight estimate departs from here. Without it the app guesses from your
             browser's location, which is wrong whenever you plan a trip from somewhere
@@ -7620,10 +7713,10 @@ export default function ReachApp({realUser,onSignOut}={}){
   // What the person set in Profile wins over the browser's guess. The guess
   // comes from a fixed table of ~50 US cities and is null for everywhere else,
   // and it describes where they are right now rather than where they fly from.
-  const departure={
-    airport:user?.homeAirport||userLocation?.airport||null,
-    city:user?.homeCity||userLocation?.formatted||userLocation?.city||null,
-  };
+  // The airport follows the home city unless somebody has chosen otherwise.
+  // It used to be a second independent field, which is how a profile ended up
+  // reading Pittsburgh and RDU at once and the trip screen showed both.
+  const departure=departureFrom(user?.homeCity,user?.homeAirport,userLocation);
 
   // ── Load real data from Supabase via API ──────────────────
   // The route guard means this component only ever renders for a signed-in
@@ -8286,7 +8379,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   };
 
   const cur=stack[stack.length-1];
-  const cp={onBack:pop,replace,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
+  const cp={onBack:pop,replace,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,setPlaceOverride,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
 
   const renderSub=()=>{
     if(!cur)return null;
