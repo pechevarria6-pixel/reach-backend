@@ -1078,10 +1078,16 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   // between "Sports" and "Wine tasting". Ticketmaster sends that word for an
   // unclassified event. Guarded at the source too; guarded here as well
   // because any provider can send one and a nameless tab is a dead end.
-  const categories=visibleCategories(allItems);
+  // Filtered before anything counts it, so "23 places nearby" is the number
+  // of places you would actually be shown rather than the number we found.
+  // Hiding at render time only would have left the count, the filters and
+  // the "still learning your area" note all describing a different screen.
+  const visible=allItems.filter(e=>!hidden.has(`${String(e.source||"unknown").toLowerCase()}:${e.id}`));
+
+  const categories=visibleCategories(visible);
   const filters=["All",...categories];
 
-  const shown=filter==="All"?allItems:allItems.filter(e=>e.category===filter);
+  const shown=filter==="All"?visible:visible.filter(e=>e.category===filter);
   // Null while loading, not a second message. The spinner below already says
   // "Finding things near you…", and this box said "Finding what's on near
   // you…" directly underneath it — two ways of saying the same thing, at the
@@ -1090,7 +1096,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
     :reason==="no_location"?"Allow location in your browser to see what's on near you."
     :reason==="provider_error"?"Couldn't reach the listings just now. Try again shortly."
-    :allItems.length===0?"Nothing close by just yet. Reach looks again every night."
+    :visible.length===0?"Nothing close by just yet. Reach looks again every night."
     :null;
 
   const city=userLocation?.city||userLocation?.formatted;
@@ -1098,6 +1104,64 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   // "near you" would be a claim we cannot make.
   // Choosing a place by name. Geocoded through the same service the app
   // already uses to name the place you are in, so the two agree.
+  // Places this person has ruled on. Loaded once; the server decides what
+  // stays hidden, so Discover and trip generation hide the same things
+  // rather than each having its own opinion.
+  const [hidden,setHidden]=useState(()=>new Set());
+  const [asking,setAsking]=useState(null);     // the card whose × is open
+  const [undo,setUndo]=useState(null);         // {ref,title} for the toast
+
+  useEffect(()=>{(async()=>{
+    try{
+      const r=await fetch("/api/recommendations/feedback");
+      if(!r.ok)return;                         // nothing hidden is the old behaviour
+      const d=await r.json();
+      setHidden(new Set(d.hidden||[]));
+    }catch(e){ console.error("[discover] could not read what you've ruled out",e); }
+  })();},[]);
+
+  /** The stable name for a card, whichever source found it. */
+  const refOfExp=(exp)=>`${String(exp.source||"unknown").toLowerCase()}:${exp.id}`;
+
+  const rule=async(exp,verdict)=>{
+    const ref=refOfExp(exp);
+    // Gone from the screen straight away. A dismissal that waits for a round
+    // trip reads as a button that did not work.
+    setHidden(h=>new Set([...h,ref]));
+    setAsking(null);
+    setUndo({ref,title:exp.title});
+    try{
+      const r=await fetch("/api/recommendations/feedback",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({itemRef:ref,verdict,vertical:exp.category||"unknown",title:exp.title}),
+      });
+      if(!r.ok){
+        const d=await r.json().catch(()=>({}));
+        // Put it back rather than leave the screen saying something the
+        // server does not know.
+        setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
+        setUndo(null);
+        toast(d.error||"Couldn't save that");
+      }
+    }catch(e){
+      console.error("[discover] could not save that",e);
+      setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
+      setUndo(null);
+      toast("Couldn't save that");
+    }
+  };
+
+  const undoRule=async()=>{
+    if(!undo)return;
+    const {ref}=undo;
+    setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
+    setUndo(null);
+    try{
+      const r=await fetch(`/api/recommendations/feedback?itemRef=${encodeURIComponent(ref)}`,{method:"DELETE"});
+      if(!r.ok)toast("Couldn't undo that");
+    }catch(e){ console.error("[discover] could not undo",e); toast("Couldn't undo that"); }
+  };
+
   const [pickingPlace,setPickingPlace]=useState(false);
   const [placeQuery,setPlaceQuery]=useState("");
   const [placeHits,setPlaceHits]=useState([]);
@@ -1127,8 +1191,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     :"Based on your location in";
   // Said once, under the filters, only when there is genuinely little here.
   // Not an error and not an apology: the sweep runs nightly and this fills in.
-  const learningNote=!loading&&thin&&allItems.length>0
-    ?`We're still learning ${city||"your area"} — ${allItems.length} ${allItems.length===1?"place":"places"} so far, and more each night.`
+  const learningNote=!loading&&thin&&visible.length>0
+    ?`We're still learning ${city||"your area"} — ${visible.length} ${visible.length===1?"place":"places"} so far, and more each night.`
     :null;
 
   return(
@@ -1233,13 +1297,59 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
       )}
 
       {/* Main cards */}
+      {/* Undo, because a dismissal is only as safe as the way back from a
+          mistap. The row is deleted rather than reversed, so the place is
+          offered again exactly as though nothing had been said. */}
+      {undo&&(
+        <div style={{margin:"0 20px 12px",padding:"11px 14px",background:C.s2,
+          border:`1px solid ${C.border}`,borderRadius:14,display:"flex",
+          alignItems:"center",gap:10}}>
+          <div style={{flex:1,fontSize:12.5,color:C.t2,lineHeight:1.4}}>
+            We won't suggest {undo.title} again.
+          </div>
+          <button onClick={undoRule}
+            style={{border:"none",background:"none",fontSize:12.5,fontWeight:700,
+              color:C.accentText,cursor:"pointer",whiteSpace:"nowrap"}}>
+            Undo
+          </button>
+        </div>
+      )}
       {shown.map(exp=>(
         /* Named, so it can be found. These were anonymous divs, which is why
            the end-to-end test for "clicking a card opens the detail view"
            matched nothing and passed without ever clicking one. */
         <div key={exp.id} className="exp-card" style={{margin:"0 20px 14px",borderRadius:20,overflow:"hidden",
-          border:"1px solid "+C.border,cursor:"pointer"}}
+          border:"1px solid "+C.border,cursor:"pointer",position:"relative"}}
           onClick={()=>push("expDetail",{exp,groups})}>
+          {/* Two answers, not one hide. "Already done it" is a positive
+              signal — they went, and a restaurant can come round again —
+              while "Not for me" is a refusal that never does. One button
+              would have lost the difference between a place somebody loved
+              and one they would not go to at gunpoint. */}
+          <button aria-label={`Hide ${exp.title}`}
+            onClick={e=>{e.stopPropagation();setAsking(a=>a===exp.id?null:exp.id);}}
+            style={{position:"absolute",top:10,right:10,zIndex:3,width:30,height:30,
+              borderRadius:15,border:"none",background:"rgba(0,0,0,.45)",color:"white",
+              fontSize:15,lineHeight:1,cursor:"pointer",display:"flex",
+              alignItems:"center",justifyContent:"center"}}>×</button>
+          {asking===exp.id&&(
+            <div onClick={e=>e.stopPropagation()}
+              style={{position:"absolute",top:46,right:10,zIndex:4,background:C.s1,
+                border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",
+                minWidth:170,boxShadow:"0 8px 24px rgba(0,0,0,.18)"}}>
+              <button onClick={()=>rule(exp,"done")}
+                style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",
+                  border:"none",background:"none",fontSize:13,color:C.t1,cursor:"pointer"}}>
+                Already done it
+              </button>
+              <button onClick={()=>rule(exp,"not_interested")}
+                style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",
+                  borderTop:`1px solid ${C.border}`,border:"none",background:"none",
+                  fontSize:13,color:C.t1,cursor:"pointer"}}>
+                Not for me
+              </button>
+            </div>
+          )}
           <div style={{height:175,background:exp.bg,position:"relative"}}>
             <div style={{position:"absolute",inset:0,
               background:"linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.85))",
