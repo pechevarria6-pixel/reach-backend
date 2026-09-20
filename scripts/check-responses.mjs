@@ -56,7 +56,14 @@ for (const file of [...new Set(files)]) {
     const checksOk = /\.ok\b|\.status\b|res\.ok|r\.ok|\bcr\.ok\b/.test(window);
     const bound = awaited && /^\s*(const|let|var)\s/.test(lines[line - 1] ?? '');
 
-    if (!checksOk) {
+    // A sentence above saying this one is on purpose, same bargain as
+    // check:writes. Instrumentation is the real case: a track() call that
+    // blocked a response, or failed one, would cost more than every number
+    // it will ever produce.
+    const why = lines.slice(Math.max(0, line - 5), line - 1).join('\n');
+    const deliberate = /deliberately unchecked|fire-and-forget|never awaited|must never/i.test(why);
+
+    if (!checksOk && !deliberate) {
       const snippet = (lines[line - 1] || '').trim().slice(0, 78);
       problems.push({ file, line, snippet, bound: !!bound });
     }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { toDateOrNull } from '@/lib/dates';
 import { z } from 'zod';
+import { track } from '@/lib/track';
 
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),

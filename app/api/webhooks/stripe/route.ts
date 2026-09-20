@@ -5,6 +5,7 @@ import { createServerClient } from '@/lib/supabase';
 import { refundOutcome } from '@/lib/refunds';
 import { sendPaymentReceipt, sendFullyFunded } from '@/lib/email';
 import Stripe from 'stripe';
+import { track } from '@/lib/track';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -47,6 +48,12 @@ export async function POST(req: NextRequest) {
             intent: intent.id, plan: intent.metadata.plan_id, code: markPaid.code,
           });
         }
+        // Emitted here rather than from the screen: a contribution succeeded
+        // when Stripe says so, not when a browser believes it did.
+        void track(supabase, 'contribution_succeeded', {
+          planId: intent.metadata.plan_id ?? null,
+          props: { amount_cents: Number(intent.amount_received || intent.amount || 0) },
+        });
         await announceIfFunded(supabase, intent.metadata.plan_id);
         break;
       }
@@ -180,6 +187,11 @@ async function announceIfFunded(
     if (!plan) return;
     // Already announced, or already past this point.
     if (plan.status === 'approved' || plan.status === 'booked') return;
+
+    void track(supabase, 'plan_fully_funded', {
+      groupId: String(plan.group_id), planId,
+      props: { collected_cents: collectedCents, target_cents: targetCents },
+    });
 
     // The money is in. A plan that does not hear about it sits unapproved
     // with every share collected, and the announcement below would then tell

@@ -51,6 +51,15 @@ export default function InvitePage({ params }: { params: { token: string } }) {
         const body = await r.json().catch(() => null);
         if (!r.ok) throw new Error(body?.error || 'That invite could not be found.');
         setInvite(body);
+        // The first step of the growth loop, and the only one that happens
+        // before anybody has an account — so it cannot come from the server
+        // knowing who did it. Never awaited: an invitation must render
+        // whether or not this lands.
+        void fetch('/api/track', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'invite_link_opened', groupId: body?.groupId ?? body?.group_id ?? null }),
+        }).catch(() => {});
       })
       .catch(e => setError(e.message));
   }, [params.token]);

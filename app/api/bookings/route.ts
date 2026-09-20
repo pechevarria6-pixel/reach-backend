@@ -10,6 +10,7 @@ import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
 import { kiwiFlights, viatorActivities, ticketmasterEvents, tableReservations } from '@/lib/booking/providers/rest';
 import { duffelFlights } from '@/lib/booking/providers/flights.duffel';
+import { track } from '@/lib/track';
 
 const PROVIDERS: Record<Vertical, BookingProvider> = {
   hotel: liteApiHotels,
@@ -25,6 +26,22 @@ const PROVIDERS: Record<Vertical, BookingProvider> = {
   // queue, and nothing waiting on Reach staff.
   restaurant: tableReservations,
 };
+
+/**
+ * What kind of failure, never the sentence.
+ *
+ * A provider's message carries names, references and sometimes a whole
+ * request — none of which belongs in a table people build charts from.
+ */
+function classOfError(error?: string): string {
+  const e = String(error ?? '').toLowerCase();
+  if (/phone|date of birth|gender|passenger|traveller|traveler/.test(e)) return 'missing_traveller_details';
+  if (/expired|no longer available|sold out/.test(e)) return 'offer_expired';
+  if (/key|credential|unauthor/.test(e)) return 'provider_credentials';
+  if (/timeout|timed out|network/.test(e)) return 'provider_timeout';
+  if (/price|amount/.test(e)) return 'price_changed';
+  return 'other';
+}
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -128,6 +145,20 @@ export async function POST(req: NextRequest) {
         // booking nobody can act on, and returning the quote anyway tells the
         // screen it worked. This route reported success on every write
         // regardless of whether one happened.
+        if (!wrote) {
+          // Money always travels, so GMV is summable from events alone.
+          void track(ctx.db, result.status === 'failed' ? 'booking_failed' : 'booking_created', {
+            userId: ctx.user.id, groupId: String(ctx.plan.group_id), planId: body.planId,
+            props: {
+              vertical: String(result.vertical),
+              provider: String(result.provider ?? 'none'),
+              mode: String(result.mode ?? 'native'),
+              price_cents: Number(result.priceCents || 0),
+              ...(result.status === 'failed' ? { why: classOfError(result.error) } : {}),
+            },
+          });
+        }
+
         if (wrote) {
           console.error('[bookings] quoted but could not store', {
             planId: body.planId, vertical: result.vertical, code: wrote.code,

@@ -4,6 +4,7 @@ import { toDateOrNull } from '@/lib/dates';
 import { tidyLegacy } from '@/lib/checkout';
 import { impactOfDateChange, describeImpact, needsConfirmation, stillWorksFor } from '@/lib/date-change';
 import { z } from 'zod';
+import { track } from '@/lib/track';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -260,6 +261,11 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     console.error('[plans] could not delete the plan', { plan: params.planId, code: removed.code });
     return NextResponse.json({ error: "We couldn't delete that just now" }, { status: 500 });
   }
+
+  void track(supabase, 'plan_deleted', {
+    userId: user.id, groupId: String(plan.group_id), planId: params.planId,
+    props: { cancelled_quotes: loose.length },
+  });
 
   // Nine plans once vanished with nothing to read afterwards. This is what
   // makes the next disappearance answerable.

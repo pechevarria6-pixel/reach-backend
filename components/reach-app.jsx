@@ -1086,6 +1086,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({itemRef:ref,verdict,vertical:exp.category||"unknown",title:exp.title}),
       });
+      void fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({name:"recommendation_dismissed",
+          props:{reason:verdict==="done"?"done":"not_for_me",kind:String(exp.category||"unknown").slice(0,40)}})}).catch(()=>{});
       if(!r.ok){
         const d=await r.json().catch(()=>({}));
         // Put it back rather than leave the screen saying something the
@@ -3234,6 +3237,11 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
       // only the optional ones would be sent back here for ever. Having been
       // through it counts, whatever they chose to say.
       try{ localStorage.setItem(QUIZ_DONE,"1"); }catch(e){}
+      // What somebody is into is the thing every recommendation is built
+      // from, so finishing it is a funnel step in its own right.
+      // Never awaited: instrumentation must not delay or fail a save.
+      void fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({name:"quiz_completed"})}).catch(()=>{});
       if(onSaved)onSaved();
     }catch(e){
       console.error("[taste] save failed",e);
@@ -3831,6 +3839,12 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
     const budgetNum=Number.isFinite(typed)&&typed>0
       ? typed
       : (parseInt(merged.budget)||null);
+    // Everything they told us about this trip is in. The properties carry
+    // shape only — how long, how many, what kind — never a word of what
+    // they wrote. Never awaited: this must not delay generating a trip.
+    void fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:"trip_input_submitted",groupId:group?.id||null,
+        props:{nights:isNight?1:nights,kind:isNight?"night":"trip",solo:!!isSolo}})}).catch(()=>{});
     onGenerate(
       {start:startDate,end:isNight?startDate:endDate},
       budgetNum,

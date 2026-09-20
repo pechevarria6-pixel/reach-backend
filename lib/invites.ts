@@ -5,6 +5,10 @@
 // is in the group.
 import crypto from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+// Relative, with the extension: the @/ alias does not resolve under node's
+// test runner, and neither does an extensionless relative path — this file
+// has tests, and a module they cannot load is a module without them.
+import { track } from './track.ts';
 
 export const INVITE_TTL_DAYS = 30;
 
@@ -81,6 +85,11 @@ export async function claimInvitesFor(
       }
       result.joined.push(invite.group_id);
     }
+
+    // Somebody arrived through an invitation and is now in the group. This
+    // is the first half of the loop; the second is whether they ever make a
+    // trip of their own, which v_organizer_conversion answers.
+    void track(db, 'invite_signup', { userId, groupId: invite.group_id });
 
     // They are in the group by now. An invite left unmarked can be redeemed
     // again, which is how one link adds somebody twice.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { planReadiness, waitingSentence } from '@/lib/plan-readiness';
+import { track } from '@/lib/track';
 
 // POST /api/plans/[id]/vote — cast a vote
 //
@@ -60,8 +61,17 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     .from('votes').select('id').eq('plan_id', params.planId).eq('user_id', user.id).single();
   if (existingVote) return NextResponse.json({ error: 'You have already voted' }, { status: 409 });
 
-  const { data: vote } = await supabase
+  const { data: vote, error: cast } = await supabase
     .from('votes').insert({ plan_id: params.planId, user_id: user.id, option }).select().single();
+  if (cast) {
+    console.error('[vote] could not record the vote', { plan: params.planId, code: cast.code });
+    return NextResponse.json({ error: "We couldn't record that vote just now" }, { status: 500 });
+  }
+
+  // No veto column in this schema, so the property says only that a vote was
+  // cast. Inventing a field the table does not have would be a number
+  // somebody later builds a chart on.
+  void track(supabase, 'vote_cast', { userId: user.id, planId: params.planId });
 
   return NextResponse.json({ vote }, { status: 201 });
 }

@@ -12,6 +12,7 @@ import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { planShares } from '@/lib/money';
 import { planSkips } from '@/lib/participation';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { track } from '@/lib/track';
 
 async function fundingStatus(
   db: SupabaseClient, planId: string, groupId: string, userId: string, budgetCents: number
@@ -256,6 +257,10 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       { status: configProblem ? 503 : 502 },
     );
   }
+
+  void track(ctx.db, 'funding_started', {
+    userId: ctx.user.id, groupId: String(ctx.plan.group_id), planId: params.planId,
+  });
 
   const { data, error } = await ctx.db.from('contributions').insert({
     plan_id: params.planId,

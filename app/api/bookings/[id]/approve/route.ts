@@ -15,6 +15,7 @@ import { BookingItemRequest, BookingProvider, Vertical } from '@/lib/booking/typ
 import { sendBookingConfirmation } from '@/lib/email';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
 import { kiwiFlights, viatorActivities, ticketmasterEvents, conciergeRestaurants } from '@/lib/booking/providers/rest';
+import { track } from '@/lib/track';
 
 const supabase = createServerClient;
 
@@ -106,6 +107,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             updated_at: new Date().toISOString(),
           }).eq('id', params.id);
           if (drifted) console.error('[approve] could not record a price rise', { bookingId: params.id, code: drifted.code });
+          void track(db, 'quote_drift', {
+            userId: ctx.user.id, planId: String(booking.plan_id),
+            props: {
+              delta_cents: driftCents,
+              vertical: String(booking.vertical),
+              provider: String(booking.provider ?? 'none'),
+            },
+          });
+
           return NextResponse.json({
             error: 'Price changed since proposal — re-approve to accept',
             oldPriceCents: booking.price_cents,
@@ -117,8 +127,24 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     } catch { /* quote refresh is best-effort; proceed on failure */ }
   }
 
+  void track(db, 'booking_approved', {
+    userId: ctx.user.id, planId: String(booking.plan_id),
+    props: { vertical: String(booking.vertical), price_cents: Number(booking.price_cents || 0) },
+  });
+
   try {
     const result = await provider.book(request);
+    void track(db, result.status === 'failed' ? 'booking_failed' : 'booking_confirmed', {
+      userId: ctx.user.id, planId: String(booking.plan_id),
+      props: {
+        vertical: String(result.vertical),
+        provider: String(result.provider ?? 'none'),
+        // The status matters as much as the fact: `redirected` is handed
+        // over, not booked, and a funnel that conflates them overstates.
+        outcome: String(result.status),
+        price_cents: Number(result.priceCents || booking.price_cents || 0),
+      },
+    });
     const { data: updated, error: updErr } = await db
       .from('bookings')
       .update({
