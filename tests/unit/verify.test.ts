@@ -101,9 +101,11 @@ test('a listing is read with its contact details and its opinion', () => {
   assert.equal(a.credit.source, 'wikivoyage');
 });
 
-test('an opinion is always attributed to whoever holds it', () => {
-  const [a] = listingsFrom('{{eat|name=X|content=Order the tortellone.}}', 'Moab');
-  assert.match(attributedNote(a) as string, /— a traveller on Wikivoyage$/);
+test('an opinion is attributed to whoever holds it, and to what it is about', () => {
+  // The name matters as much as the credit: an itinerary line names several
+  // places and the note is about exactly one of them.
+  const [a] = listingsFrom("{{eat|name=La Santa|content=Popular dance club.}}", 'Moab');
+  assert.equal(attributedNote(a), 'La Santa: Popular dance club. — a traveller on Wikivoyage');
 });
 
 test('a listing with no name is not a listing', () => {
@@ -177,4 +179,17 @@ test('the tally counts what was actually established', async () => {
   assert.deepEqual(tally(checked), {
     named: 2, confirmed: 1, notFound: 1, unchecked: 0, withPayment: 0, withAdvice: 0,
   });
+});
+
+test('when a line names two places, the more specific one wins', () => {
+  // "Dinner at the raw bar of La Leche for seafood, then live music on the
+  // Malecón" matched whichever Wikivoyage happened to list first, and put a
+  // note about a twelve-block seafront promenade under somebody's dinner.
+  // The source's ordering ranks nothing.
+  const said = 'Dinner at the raw bar of La Leche for seafood, then live music on the Malecón';
+  const candidates = [{ name: 'Malecón' }, { name: 'La Leche' }];
+  const hits = candidates.filter(c => isSamePlace(said, c.name));
+  assert.equal(hits.length, 2, 'both are genuinely named in the line');
+  const best = hits.reduce((a, b) => (b.name.length > a.name.length ? b : a));
+  assert.equal(best.name, 'La Leche');
 });

@@ -204,5 +204,10 @@ export async function adviceFor(
 export function attributedNote(a: Advice, limit = 140): string | null {
   if (!a.note) return null;
   const note = a.note.length > limit ? `${a.note.slice(0, limit - 1).trimEnd()}…` : a.note;
-  return `${note} — a traveller on Wikivoyage`;
+  // Named, because an itinerary line names more than one place and the note
+  // is only ever about one of them. "Dinner at the raw bar of La Leche, then
+  // live music on the Malecón at La Santa" carried "popular dance club where
+  // the beats keep pulsing into the wee hours" with nothing to say which of
+  // the three it meant, and read as a description of the restaurant.
+  return `${a.name}: ${note} — a traveller on Wikivoyage`;
 }

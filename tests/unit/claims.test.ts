@@ -77,7 +77,7 @@ test('advice is left exactly as written', () => {
 
 test('a claim is set aside and a traveller’s words take its place', () => {
   const tip = tipFor('Milt’s is cash-only and has no ATM inside.', ADVICE, MOAB);
-  assert.match(tip.subtitle as string, /Order the Tortellone Alfredo\. — a traveller on Wikivoyage/);
+  assert.match(tip.subtitle as string, /Pasta Jay.s: Order the Tortellone/);
   assert.equal(tip.unverified, 'Milt’s is cash-only and has no ATM inside.');
   assert.match(tip.claims as string, /money/);
 });

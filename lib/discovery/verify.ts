@@ -171,8 +171,23 @@ const MIRRORS = [
   'https://overpass.private.coffee/api/interpreter',
 ];
 const UA = 'ReachVerify/1.0 (+https://www.alcanzar.io; hello@alcanzar.io)';
-/** Measured ceiling: above this Overpass returns 504 rather than an answer. */
-const SEARCH_MILES = 5;
+/**
+ * How wide to search, widest first, shrinking until the map answers.
+ *
+ * There is no single right radius, because the cost is in how much is inside
+ * the box rather than how big the box is. Measured on the two real trips:
+ *
+ *   Moab (pop. 5,000)              5mi  OK, 54 places, 4.7s
+ *   Puerto Vallarta (pop. 200,000) 5mi  504
+ *                                  3mi  504
+ *                                  2mi  OK, 260 places, 3.3s
+ *
+ * A fixed five miles checked Moab and silently checked nothing in Puerto
+ * Vallarta, run after run, which reads as "we could not reach the map" when
+ * the truth was "we asked for too much". Shrinking costs one extra request
+ * on a dense city and gets an answer where there was none.
+ */
+const SEARCH_MILES = [5, 3, 2];
 
 /**
  * Look a named place up on the map, near where the trip is.
@@ -218,8 +233,21 @@ async function nearbyPlaces(
   near: { lat: number; lng: number },
   fetchImpl: typeof fetch,
   budgetMs: number,
+): Promise<{ places: Record<string, string>[]; miles: number } | null> {
+  for (const miles of SEARCH_MILES) {
+    const found = await askMap(near, miles, fetchImpl, budgetMs);
+    if (found) return { places: found, miles };
+  }
+  return null;
+}
+
+async function askMap(
+  near: { lat: number; lng: number },
+  miles: number,
+  fetchImpl: typeof fetch,
+  budgetMs: number,
 ): Promise<Record<string, string>[] | null> {
-  const box = boundingBox(near.lat, near.lng, SEARCH_MILES);
+  const box = boundingBox(near.lat, near.lng, miles);
   const body = `[out:json][timeout:${Math.ceil(budgetMs / 1000)}];
 (
 ${KINDS.map(([k, v]) => `  nwr[${k}=${v}](${box});`).join('\n')}
@@ -245,6 +273,61 @@ out center 400;`;
     }
   }
   return null;
+}
+
+/**
+ * Of everything named in this sentence, the one the sentence is about.
+ *
+ * An itinerary line often names two or three places — "Dinner at the raw bar
+ * of La Leche for seafood, then live music on the Malecón at La Santa". All
+ * three are genuinely there, and only one of them is the dinner.
+ *
+ * Source order was tried first and gave that item the Malecón's write-up, a
+ * note about a twelve-block seafront promenade sitting under somebody's
+ * table. Longest name was tried next and picked LA SANTA over La Leche on a
+ * tie, which is a coin flip deciding whose phone number the item carries.
+ *
+ * Where the name appears is the thing that actually means something. A line
+ * is written about its first venue and then goes on to the evening: the
+ * dinner is at La Leche and the music is afterwards, and every one of these
+ * sentences is built that way. Earliest mention wins, and the longer name
+ * breaks a tie, so "La Leche" beats "Leche" at the same position.
+ */
+function bestMatch<T>(
+  said: string,
+  from: T[] | null,
+  nameOf: (item: T) => string,
+  ignore: Set<string>,
+): T | null {
+  if (!from?.length) return null;
+  const haystack = normalise(said);
+  let best: T | null = null;
+  let bestAt = Infinity;
+  let bestLen = 0;
+  for (const item of from) {
+    const name = nameOf(item);
+    if (!isSamePlace(said, name, ignore)) continue;
+    const at = haystack.indexOf(normalise(name));
+    if (at < 0) continue;
+    if (at < bestAt || (at === bestAt && name.length > bestLen)) {
+      best = item; bestAt = at; bestLen = name.length;
+    }
+  }
+  return best;
+}
+
+/** The same place under two spellings, whichever source is more generous. */
+function sameVenue<T>(
+  mapName: string,
+  from: T[] | null,
+  nameOf: (item: T) => string,
+  ignore: Set<string>,
+): T | null {
+  if (!from?.length) return null;
+  return from.find(item => {
+    const other = nameOf(item);
+    return isSamePlace(mapName, other, ignore) || isSamePlace(other, mapName, ignore);
+  }) ?? null;
 }
 
 export interface Checked {
@@ -273,22 +356,40 @@ export async function checkAll(
   const ignore = new Set(terms(place.name));
 
   // One page for the whole town, one map query for the whole itinerary.
-  const [{ advice }, mapped] = await Promise.all([
+  const [{ advice }, found] = await Promise.all([
     adviceFor(place.name, fetchImpl),
     nearbyPlaces(place, fetchImpl, budgetMs),
   ]);
+  const mapped = found?.places ?? null;
 
   return names.map((said): Checked => {
-    const written = advice.find(a => isSamePlace(said, a.name, ignore)) ?? null;
-
     // Null means the map never answered, which is not the same as the place
     // not being there, and must never be shown as though it were.
     const verification: Verification = mapped === null
       ? { status: 'unchecked', reason: 'no mirror answered' }
       : (() => {
-          const hit = mapped.find(t => isSamePlace(said, t.name, ignore));
+          const hit = bestMatch(said, mapped, t => t.name, ignore);
           return hit ? { status: 'confirmed', facts: factsFrom(hit) } : { status: 'not_found' };
         })();
+
+    // A traveller's note has to be about the place we identified, not about
+    // whichever place in the line Wikivoyage happens to cover. "Dinner at the
+    // raw bar of La Leche, then live music on the Malecón at La Santa"
+    // confirmed La Leche off the map and then carried La Santa's write-up —
+    // "popular dance club where the beats keep pulsing into the wee hours" —
+    // under somebody's seafood dinner.
+    //
+    // So once the map has named the venue, the note must be about that
+    // venue. Only when nothing was confirmed does the whole line get used,
+    // which is what gives the Malecón stroll the Malecón's own description.
+    //
+    // Matched both ways round, because two sources rarely spell a place
+    // identically: the map has "Piazzetta" and Wikivoyage has "La
+    // Piazzetta", and checking one direction only lost a good note about
+    // Naples-style pizza over a definite article.
+    const written = verification.status === 'confirmed'
+      ? sameVenue(verification.facts.name, advice, a => a.name, ignore)
+      : bestMatch(said, advice, a => a.name, ignore);
 
     // Only what a source records. The map's payment tags are entered by
     // somebody who looked. Anything else stays null, and the screen renders

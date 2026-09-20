@@ -34,7 +34,7 @@ for (let i = 0; i < rows.length; i++) {
   if (v.status === 'confirmed') {
     console.log(`         ${v.facts.name} | ${v.facts.phone || 'no phone'} | pay: ${c.payment || '—'}`);
   }
-  if (c.advice?.note) console.log(`         "${c.advice.note.slice(0, 66)}"`);
+  if (c.advice?.note) console.log(`         ${(attributedNote(c.advice)||"").slice(0, 88)}`);
 }
 
 console.log('\n', tally(checked));
