@@ -100,6 +100,95 @@ for (const fn of components) {
   }
 }
 
+// ─── Read before it is declared ──────────────────────────────────────────
+// A different failure with the same symptom. Discover crashed in production
+// with "Cannot access 'F' before initialization": the list of places
+// somebody had dismissed was read on line 1085 and declared on line 1110.
+//
+// The check above cannot see it — the name does resolve, just later — and
+// nothing else sees it either. It compiles, because ordering is legal to a
+// bundler and only wrong at run time. Type-check passes. Unit tests do not
+// render the component.
+//
+// Narrow on purpose: only a const or let read inside the initialiser of an
+// earlier const in the same component. Those run top to bottom, every time,
+// so this is a certainty rather than a suspicion. A reference from inside a
+// function stored for later — an effect, a click handler — is fine and is
+// not reported, because by the time it runs the declaration has happened.
+/** Walk a subtree but stop at nested functions — a different scope entirely. */
+function walkOwnScope(node, fn, parent = null) {
+  if (!node || typeof node.type !== 'string') return;
+  if (node !== parent && /Function/.test(node.type) && parent !== null) return;
+  fn(node, parent);
+  for (const key of Object.keys(node)) {
+    if (key === 'loc' || key === 'start' || key === 'end') continue;
+    const child = node[key];
+    if (Array.isArray(child)) { for (const c of child) if (c && typeof c.type === 'string') walkOwnScope(c, fn, node); }
+    else if (child && typeof child.type === 'string') walkOwnScope(child, fn, node);
+  }
+}
+
+/** Every function in the file, so nested ones are checked in their own right. */
+const scopesToCheck = [];
+for (const fn of components) {
+  walk(fn, (n) => { if (/Function/.test(n.type) && n.body) scopesToCheck.push({ owner: fn.id.name, node: n }); });
+  scopesToCheck.push({ owner: fn.id.name, node: fn });
+}
+
+const seen = new Set();
+for (const { owner, node: fn } of scopesToCheck) {
+  // Declarations at this level only. A `const plan` inside a sibling
+  // function is not this scope's `plan`, and treating it as one reported a
+  // function parameter as read-before-declared.
+  const declaredAt = new Map();
+  walkOwnScope(fn.body, (n) => {
+    if (n.type !== 'VariableDeclaration' || n.kind === 'var') return;
+    for (const d of n.declarations) {
+      const names = new Set();
+      bind(d.id, names);
+      for (const name of names) if (!declaredAt.has(name)) declaredAt.set(name, d.id.loc.start.line);
+    }
+  });
+  if (!declaredAt.size) continue;
+
+  walkOwnScope(fn.body, (n) => {
+    if (n.type !== 'VariableDeclarator' || !n.init) return;
+    const line = n.id.loc.start.line;
+
+    // `const f = () => x` is a function somebody calls later, so a name it
+    // mentions is not read now. `const y = list.filter(e => x)` is not: the
+    // arrow is an argument to a call that happens immediately, which is
+    // exactly the shape that took Discover down.
+    if (/Function/.test(n.init.type)) return;
+
+    // Names the initialiser binds for itself — an arrow's parameters, most
+    // often. `list.filter(b => b.status)` mentions `b`, and that `b` is the
+    // callback's own, not the `for (const b of ...)` fifty lines below it.
+    const ownNames = new Set();
+    walk(n.init, (fnNode) => {
+      if (!/Function/.test(fnNode.type)) return;
+      for (const param of fnNode.params) bind(param, ownNames);
+    });
+
+    walk(n.init, (ref, parent) => {
+      if (ref.type !== 'Identifier') return;
+      if (ownNames.has(ref.name)) return;
+      if (parent) {
+        if (parent.type === 'MemberExpression' && parent.property === ref && !parent.computed) return;
+        if (parent.type === 'Property' && parent.key === ref && !parent.computed) return;
+        if (/Function/.test(parent.type) && parent.params.includes(ref)) return;
+      }
+      const at = declaredAt.get(ref.name);
+      if (at !== undefined && at > line) {
+        const key = `${owner}:${ref.name}:${line}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        problems.push({ component: owner, name: `${ref.name} (declared on line ${at})`, line });
+      }
+    });
+  });
+}
+
 // JSX element names resolve like identifiers too
 if (problems.length) {
   console.log(`\n  ${problems.length} identifier(s) used without a declaration in scope:\n`);

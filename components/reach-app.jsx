@@ -1108,6 +1108,10 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
 
   const allItems=localRecs.map(e=>({
     id:"local_"+e.id,
+    // Which source found it. Dropped here, so every place somebody ruled on
+    // was filed under "unknown:" — the prefix exists to tell two sources'
+    // ids apart and cannot do that if nothing sets it.
+    source:e.source||null,
     title:e.title,
     sub:e.meta,
     emoji:e.emoji,
