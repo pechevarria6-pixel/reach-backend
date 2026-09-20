@@ -38,13 +38,16 @@ export type ClaimKind = 'money' | 'hours' | 'availability' | 'service' | 'named'
  * these reads as fact whoever it is about.
  */
 const CLAIMS: [ClaimKind, RegExp][] = [
-  ['money', /\b(cash[- ]only|cash only|takes? (only )?(cash|cards?)|no (cards?|amex|atm)|card[- ]only|atm|cover (charge|is|only)?|surcharge|no fee|small fee|a fee|the fee|charges? (a|you|only)|free refills?|byob|corkage|happy hour|prices? (are|drop)|cheaper|noticeably lower|deposit)\b/i],
+  ['money', /\b(cash[- ]only|cash only|takes? (only )?(cash|cards?)|no (cards?|amex|atm)|card[- ]only|atm|no cover|cover (charge|only|if|after)|surcharge|no fee|small fee|a fee|the fee|charges? (a|you|only)|free refills?|byob|corkage|happy hour|prices? (are|drop)|cheaper|noticeably lower|deposit)\b/i],
   // No bare clock times here on purpose. "start before 8am and bring more
   // water than you think" is advice about heat and had nothing to do with
   // anybody's opening hours, and matching `before \d+(am|pm)` stripped it.
   // The times that matter come attached to a policy, and the policy words
   // are what catch them: "charges a cover only after 9pm" is money already.
-  ['hours',  /\b(opens?|opening|closes?|closing|last (seating|orders?|call)|kitchen (shuts|closes)|right at open|open (until|till|late)|doors? (open|at))\b/i],
+  // "the open kitchen" is a room you can see into, not an opening time, and
+  // a bare `opens?` read it as a claim about a restaurant's hours. An hour
+  // has to be attached to something for this to be about hours at all.
+  ['hours',  /\b(opens? (at|early|late|from)|right at open|open (until|till|from)|closes? (at|early|late)|closing time|opening (time|hours)|last (seating|orders?|call)|kitchen (shuts|closes)|doors? (open|at))\b/i],
   ['availability', /\b(sells? out|sold out|books? up|fills? (up |fast)|book (at least |ahead|a week)|reserve ahead|walk[- ]ins?|waitlist|no reservations|queue|line up)\b/i],
   ['service', /\b(they'?ll|will (ship|hold|fire|store|deliver|let you)|offers?|provides?|lets? you|can arrange|ask [A-Z]|ask (for|them)|bring your own)\b/i],
   // Somewhere with a name, being described.
@@ -56,13 +59,19 @@ const CLAIMS: [ClaimKind, RegExp][] = [
   // river but the counter inside gets the same view" is about a restaurant's
   // dining room, and we have never been in it.
   //
-  // A possessive proper noun is how a tip says which business it means:
-  // Milt's, Woody's, Sabaku's, Tamarisk's, MARC's, Antica Forma's. It also
-  // catches Slickrock Trail's and Grand Junction's, which are a trail and a
-  // town rather than businesses — and those sentences turned out to be
-  // making operational claims too, so the over-reach costs nothing. The
-  // fallback is no tip, never a wrong one, so erring this way is free.
-  ['named', /\b[A-Z][\w&]*(?:['’]s)\s/],
+  // What follows the possessive is what separates naming a place from making
+  // a claim about it, and getting this wrong flagged fourteen ordinary item
+  // titles:
+  //
+  //   "dancing at Woody's Tavern"          Tavern is part of the name
+  //   "Lunch at Ren's Ramen House"         so is Ramen House
+  //   "Tamarisk's patio tables face..."    patio tables is a claim about it
+  //   "Woody's charges a cover..."         so is charges
+  //
+  // A capitalised word after the apostrophe belongs to the name. A lowercase
+  // one begins a description, and a description is something we would have
+  // had to go and see.
+  ['named', /\b[A-Z][\w&]*['’]s\s+[a-z]/],
 ];
 
 export interface TipClaim {

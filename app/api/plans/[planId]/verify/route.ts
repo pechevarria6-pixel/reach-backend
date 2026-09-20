@@ -13,7 +13,7 @@
 // is waiting for must not be held hostage to a donated server's afternoon.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { checkAll, tally, tipFor, terms } from '@/lib/discovery/verify';
+import { checkAll, tally, tipFor, terms, titleClaims } from '@/lib/discovery/verify';
 import { attributedNote } from '@/lib/discovery/wikivoyage';
 import { locatePlan } from '@/lib/discovery/geocode';
 
@@ -113,6 +113,8 @@ export async function POST(
         subtitle: tip.subtitle,
         subtitle_unverified: tip.unverified,
         subtitle_claims: tip.claims,
+        // Marked, never rewritten: the title is the plan.
+        title_claims: titleClaims(rows[i].title),
         // Only ever what a source records. Null is the common answer and the
         // correct one: of Moab's four confirmed venues, not one carries
         // payment data anywhere we can read.

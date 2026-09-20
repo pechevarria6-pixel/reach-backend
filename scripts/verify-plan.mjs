@@ -2,7 +2,7 @@
 // first real verification pass can be watched rather than trusted.
 import dotenv from 'dotenv'; dotenv.config({ path: '.env.local' });
 import { createClient } from '@supabase/supabase-js';
-import { checkAll, tally, tipFor, terms } from '../lib/discovery/verify.ts';
+import { checkAll, tally, tipFor, terms, titleClaims } from '../lib/discovery/verify.ts';
 import { attributedNote } from '../lib/discovery/wikivoyage.ts';
 import { locatePlan } from '../lib/discovery/geocode.ts';
 
@@ -59,6 +59,8 @@ for (let i = 0; i < rows.length; i++) {
     subtitle: tip.subtitle,
     subtitle_unverified: tip.unverified,
     subtitle_claims: tip.claims,
+    // Marked, never rewritten: the title is the plan.
+    title_claims: titleClaims(rows[i].title),
     payment_note: c.payment,
   }).eq('id', rows[i].id);
   if (error) { console.log('  write failed', rows[i].id, error.message); failed++; continue; }

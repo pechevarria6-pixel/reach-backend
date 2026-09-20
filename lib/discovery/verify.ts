@@ -351,3 +351,18 @@ export function tipFor(
     claims: [...new Set(claims.map(c => c.kind))].join(','),
   };
 }
+
+/**
+ * What an item's title asserts, when it asserts anything.
+ *
+ * Marked rather than replaced. A title is the plan itself — "Dinner at
+ * Trattoria Basilico, then a jazz trio set (no cover if you sit at the bar)"
+ * cannot be blanked without leaving an item with nothing on it at all. The
+ * parenthesis is still a claim about a door policy that nobody rang to ask
+ * about, so it is recorded and left where it is, to be looked at rather than
+ * quietly trusted.
+ */
+export function titleClaims(title: string | null | undefined, ignore: Set<string> = new Set()): string | null {
+  const found = claimsIn(String(title || ''), ignore);
+  return found.length ? [...new Set(found.map(c => c.kind))].join(',') : null;
+}

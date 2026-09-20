@@ -346,7 +346,11 @@ booking policy, or what it will do for you. "Milt's is cash-only and has no
 ATM inside", "Woody's charges a cover after 9pm", "go right at open (5pm)" —
 those read as fact, and being wrong about them costs somebody their evening.
 You have not rung these places and neither have we. Write about the desert,
-the queue and the light instead, or leave it empty.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
+the queue and the light instead, or leave it empty.
+The same rule covers the plan line itself. Name the place, describe the
+outing, do not slip in a policy: "no cover if you sit at the bar",
+"no reservations needed", "Sabaku's sister spot" — each asserts something
+about a business that would have to be checked, and none of them was.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
 
 ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
@@ -386,6 +390,10 @@ ATM inside", "Woody's charges a cover after 9pm", "go right at open (5pm)" —
 those read as fact, and being wrong about them costs somebody their evening.
 You have not rung these places and neither have we. Write about the desert,
 the queue and the light instead, or leave it empty.
+The same rule covers the plan line itself. Name the place, describe the
+outing, do not slip in a policy: "no cover if you sit at the bar",
+"no reservations needed", "Sabaku's sister spot" — each asserts something
+about a business that would have to be checked, and none of them was.
 
 Every slot needs its practical details, because the point of this is that
 nobody arrives somewhere and finds out the hard way:

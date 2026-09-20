@@ -27,7 +27,20 @@ alter table itinerary_items
   -- Which kinds of claim it was making, so the call can be reviewed rather
   -- than taken on trust — 'money', 'hours', 'availability', 'service',
   -- 'named'. Nothing decides anything from this; it is here to be read.
-  add column if not exists subtitle_claims text;
+  add column if not exists subtitle_claims text,
+  -- Titles make the same kind of claim and cannot be dealt with the same
+  -- way, because the title is the plan — blanking it would leave an item
+  -- with no line at all. Six of seventy-two assert something nobody checked:
+  --
+  --   "no cover if you sit at the bar"
+  --   "solo-friendly, no reservations needed"
+  --   "Italian dinner at Sabaku's sister spot"      (that Sabaku has one)
+  --   "a hands-on clay workshop at Galeria Pacifico's small studio"
+  --
+  -- So they are marked and left alone, to be looked at rather than trusted.
+  -- Generation has been told to stop writing them; this is for the ones
+  -- already here.
+  add column if not exists title_claims text;
 
 comment on column itinerary_items.subtitle_unverified is
   'A generated tip that asserted something about a named business. Set aside by the verification pass, never shown.';
