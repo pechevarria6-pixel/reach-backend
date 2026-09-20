@@ -1048,62 +1048,6 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   // Northern Lights, Nobu Malibu, a Beyoncé date in 2026 — which were the same
   // six for everyone, everywhere, and could not be bought. It also dropped the
   // booking url the API had already returned for every real event.
-  const allItems=localRecs.map(e=>({
-    id:"local_"+e.id,
-    title:e.title,
-    sub:e.meta,
-    emoji:e.emoji,
-    price:e.price||null,
-    dist:e.dist,
-    category:e.category||"Event",
-    // The link that actually sells the ticket.
-    url:e.url||null,
-    // The event's own date and venue. Dropping these is what made the detail
-    // screen ask for a date it had already been given.
-    date:e.date||null,
-    venue:e.venue||null,
-    tags:[e.category||"Event"],
-    // Why this one. A suggestion that says it came from something you told
-    // us reads as the app paying attention; the same card without it reads
-    // as an advert.
-    because:e.because||null,
-    provider:e.source||null,
-    bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
-    isLocal:true,
-  }));
-
-  // Filters come from what actually came back, so a filter can never be empty.
-  // filter(Boolean) kept the string "undefined", because a non-empty string
-  // is truthy — which is how a pill reading "Undefined" reached Discover
-  // between "Sports" and "Wine tasting". Ticketmaster sends that word for an
-  // unclassified event. Guarded at the source too; guarded here as well
-  // because any provider can send one and a nameless tab is a dead end.
-  // Filtered before anything counts it, so "23 places nearby" is the number
-  // of places you would actually be shown rather than the number we found.
-  // Hiding at render time only would have left the count, the filters and
-  // the "still learning your area" note all describing a different screen.
-  const visible=allItems.filter(e=>!hidden.has(`${String(e.source||"unknown").toLowerCase()}:${e.id}`));
-
-  const categories=visibleCategories(visible);
-  const filters=["All",...categories];
-
-  const shown=filter==="All"?visible:visible.filter(e=>e.category===filter);
-  // Null while loading, not a second message. The spinner below already says
-  // "Finding things near you…", and this box said "Finding what's on near
-  // you…" directly underneath it — two ways of saying the same thing, at the
-  // same time, in slightly different words.
-  const emptyNote=loading?null
-    :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
-    :reason==="no_location"?"Allow location in your browser to see what's on near you."
-    :reason==="provider_error"?"Couldn't reach the listings just now. Try again shortly."
-    :visible.length===0?"Nothing close by just yet. Reach looks again every night."
-    :null;
-
-  const city=userLocation?.city||userLocation?.formatted;
-  // Where this came from, because on a trip they are different places and
-  // "near you" would be a claim we cannot make.
-  // Choosing a place by name. Geocoded through the same service the app
-  // already uses to name the place you are in, so the two agree.
   // Places this person has ruled on. Loaded once; the server decides what
   // stays hidden, so Discover and trip generation hide the same things
   // rather than each having its own opinion.
@@ -1162,6 +1106,62 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     }catch(e){ console.error("[discover] could not undo",e); toast("Couldn't undo that"); }
   };
 
+  const allItems=localRecs.map(e=>({
+    id:"local_"+e.id,
+    title:e.title,
+    sub:e.meta,
+    emoji:e.emoji,
+    price:e.price||null,
+    dist:e.dist,
+    category:e.category||"Event",
+    // The link that actually sells the ticket.
+    url:e.url||null,
+    // The event's own date and venue. Dropping these is what made the detail
+    // screen ask for a date it had already been given.
+    date:e.date||null,
+    venue:e.venue||null,
+    tags:[e.category||"Event"],
+    // Why this one. A suggestion that says it came from something you told
+    // us reads as the app paying attention; the same card without it reads
+    // as an advert.
+    because:e.because||null,
+    provider:e.source||null,
+    bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
+    isLocal:true,
+  }));
+
+  // Filters come from what actually came back, so a filter can never be empty.
+  // filter(Boolean) kept the string "undefined", because a non-empty string
+  // is truthy — which is how a pill reading "Undefined" reached Discover
+  // between "Sports" and "Wine tasting". Ticketmaster sends that word for an
+  // unclassified event. Guarded at the source too; guarded here as well
+  // because any provider can send one and a nameless tab is a dead end.
+  // Filtered before anything counts it, so "23 places nearby" is the number
+  // of places you would actually be shown rather than the number we found.
+  // Hiding at render time only would have left the count, the filters and
+  // the "still learning your area" note all describing a different screen.
+  const visible=allItems.filter(e=>!hidden.has(`${String(e.source||"unknown").toLowerCase()}:${e.id}`));
+
+  const categories=visibleCategories(visible);
+  const filters=["All",...categories];
+
+  const shown=filter==="All"?visible:visible.filter(e=>e.category===filter);
+  // Null while loading, not a second message. The spinner below already says
+  // "Finding things near you…", and this box said "Finding what's on near
+  // you…" directly underneath it — two ways of saying the same thing, at the
+  // same time, in slightly different words.
+  const emptyNote=loading?null
+    :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
+    :reason==="no_location"?"Allow location in your browser to see what's on near you."
+    :reason==="provider_error"?"Couldn't reach the listings just now. Try again shortly."
+    :visible.length===0?"Nothing close by just yet. Reach looks again every night."
+    :null;
+
+  const city=userLocation?.city||userLocation?.formatted;
+  // Where this came from, because on a trip they are different places and
+  // "near you" would be a claim we cannot make.
+  // Choosing a place by name. Geocoded through the same service the app
+  // already uses to name the place you are in, so the two agree.
   const [pickingPlace,setPickingPlace]=useState(false);
   const [placeQuery,setPlaceQuery]=useState("");
   const [placeHits,setPlaceHits]=useState([]);
