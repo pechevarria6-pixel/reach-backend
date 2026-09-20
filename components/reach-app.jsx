@@ -1058,7 +1058,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
         <div {...pressable} onClick={()=>setPickingPlace(true)}
           style={{fontSize:13,color:C.t2,marginTop:2,cursor:setPlaceOverride?"pointer":"default"}}>
           {city?placePrefix+" "+city:"Curated for you"}
-          {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600}}>change ▾</span>:null}
+          {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap"}}>{" · change ▾"}</span>:null}
         </div>
         {pickingPlace&&setPlaceOverride&&(
           <div style={{marginTop:10,padding:"12px 14px",background:C.s2,
