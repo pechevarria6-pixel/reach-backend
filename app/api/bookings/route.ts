@@ -61,7 +61,9 @@ export async function POST(req: NextRequest) {
     }
     const provider = PROVIDERS[item.vertical];
     if (!provider) {
-      results.push({ vertical: item.vertical, mode: 'concierge', status: 'failed', provider: 'none', error: `Unknown vertical ${item.vertical}` });
+      // The enum is ours. "Unknown vertical activity" is not a sentence.
+      console.error('[bookings] no provider for vertical', { vertical: item.vertical });
+      results.push({ vertical: item.vertical, mode: 'concierge', status: 'failed', provider: 'none', error: "Reach can't book this kind of thing yet" });
       continue;
     }
     // Attach shared context

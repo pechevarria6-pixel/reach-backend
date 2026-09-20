@@ -2353,10 +2353,18 @@ const PROVIDER_NAME={
   concierge:"Reach",
 };
 
+// How a booking happens, in words. Nothing here is an enum somebody reads:
+// `mode` and `provider` are how this codebase talks to itself.
+const BOOKING_MODE={
+  native:"We book this for you",
+  redirect:"You book it — takes two taps",
+  concierge:"We'll sort this one out",
+};
+
 const BOOKING_STATE={
   confirmed:{label:"Booked ✓",tone:"green"},
   pending:{label:"We're on it",tone:"gold"},
-  awaiting_approval:{label:"Quoted",tone:"plain"},
+  awaiting_approval:{label:"Waiting for the group",tone:"plain"},
   redirected:{label:"Finish on their site",tone:"gold"},
   failed:{label:"Couldn't book",tone:"red"},
   cancelled:{label:"Cancelled",tone:"red"},
@@ -6368,8 +6376,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     // because automatic booking will not carry somebody's passport marker
     // deserves that sentence, not "we'll handle this one for you" — the
     // person it concerns is reading this screen.
-    d:b.response_payload?.note
-      ||(b.provider==="concierge"?"We'll handle this one for you":(b.mode==="redirect"?"Bought on the seller's own site":"")),
+    d:b.response_payload?.note||BOOKING_MODE[b.mode]||BOOKING_MODE[b.provider]||"",
     a:b.price_cents, st:b.status,
     // A redirected booking finishes somewhere else, and until now the screen
     // said so with nothing to tap: "Finish on their site" and no site. The

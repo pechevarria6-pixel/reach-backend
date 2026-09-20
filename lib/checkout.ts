@@ -179,8 +179,11 @@ export function checkoutState(rows: CheckoutRow[]): CheckoutState {
     totalCents,
     canPay,
     blockedCopy: canPay ? null : "We're still pricing this — check back soon.",
+    // "concierge" is our word for how we handle something, not a word anybody
+    // outside this codebase should have to read. It shipped to the checkout
+    // screen under the total and a founder saw it there.
     conciergeNote: conciergeCount
-      ? '+ concierge items priced after confirmation'
+      ? '+ a few things we price once they are confirmed'
       : null,
   };
 }

@@ -61,7 +61,7 @@ test('nothing priced means nobody can pay', () => {
   // The screenshot had this button live at $0.
   assert.equal(s.canPay, false);
   assert.equal(s.blockedCopy, "We're still pricing this — check back soon.");
-  assert.equal(s.conciergeNote, '+ concierge items priced after confirmation');
+  assert.equal(s.conciergeNote, '+ a few things we price once they are confirmed');
 });
 
 test('a priced trip pays, and concierge extras do not block it', () => {
@@ -73,7 +73,7 @@ test('a priced trip pays, and concierge extras do not block it', () => {
   assert.equal(s.canPay, true);
   assert.equal(s.blockedCopy, null);
   // Still said, because those dinners are happening and are not in the total.
-  assert.equal(s.conciergeNote, '+ concierge items priced after confirmation');
+  assert.equal(s.conciergeNote, '+ a few things we price once they are confirmed');
 });
 
 test('a charged row with no price stops the payment', () => {
@@ -163,5 +163,5 @@ test('a table somebody rings up about is still not a purchase', () => {
   ]);
   assert.equal(s.totalCents, 33401, 'the dinner is settled at the venue');
   assert.equal(s.canPay, true);
-  assert.equal(s.conciergeNote, '+ concierge items priced after confirmation');
+  assert.equal(s.conciergeNote, '+ a few things we price once they are confirmed');
 });
