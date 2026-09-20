@@ -45,7 +45,7 @@ export type CheckoutRow = {
  * than rewriting the rows means nobody's existing trip has its booking
  * history edited to make a screen look tidier.
  */
-function tidyLegacy(detail: string): string {
+export function tidyLegacy(detail: string): string {
   let text = detail.replace(/^Reservation request:\s*/i, '');
   const cut = text.indexOf(' · ');
   if (cut > 0) text = text.slice(0, cut);

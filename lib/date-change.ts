@@ -10,6 +10,10 @@
 // account can only be moved by them, on that platform, and the honest thing
 // is to say whose it is and ask.
 
+// Relative, with the extension: the @/ alias does not resolve under node's
+// test runner, and a module the tests cannot load is a module without tests.
+import { tidyLegacy } from './checkout.ts';
+
 export interface BookingLike {
   id?: string;
   vertical?: string | null;
@@ -60,7 +64,11 @@ const KIND: Record<string, string> = {
 /** The booking's own name for itself, for a sentence somebody reads. */
 function nameOf(booking: BookingLike): string {
   const d = booking.detail;
-  if (typeof d === 'string' && d.trim()) return d.trim().split(' · ')[0];
+  // The same tidier the checkout screen uses. Rows written by the retired
+  // queue hold the whole request in one string — "Reservation request: … ,  ·
+  // 2026-09-17 Day 3 · Evening · party of 2" — and splitting on the separator
+  // alone left the prefix and a trailing comma in a sentence somebody reads.
+  if (typeof d === 'string' && d.trim()) return tidyLegacy(d.trim());
   if (d && typeof d === 'object') {
     const o = d as { title?: unknown; name?: unknown };
     for (const v of [o.title, o.name]) if (typeof v === 'string' && v.trim()) return v.trim();

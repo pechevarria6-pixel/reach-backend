@@ -79,3 +79,11 @@ test('who the new dates still work for', () => {
 test('nobody has said when they are free, so nobody is counted out', () => {
   assert.deepEqual(stillWorksFor([], '2026-11-02', '2026-11-09'), { works: [], out: [] });
 });
+
+test('a row written by the retired queue still reads as a place', () => {
+  // Verbatim from production. Splitting on the separator alone left the
+  // prefix and a trailing comma in a sentence somebody reads.
+  const legacy = 'Reservation request: Seafood dinner at the chef’s counter at Desert Bistro,  · 2026-09-17 Day 3 · Evening · party of 2';
+  const [impact] = impactOfDateChange([{ id: 'l', status: 'pending', mode: 'concierge', detail: legacy }]);
+  assert.equal(impact.what, 'Seafood dinner at the chef’s counter at Desert Bistro');
+});
