@@ -7907,8 +7907,28 @@ export default function ReachApp({realUser,onSignOut}={}){
     const chosen=readOverride();
     if(chosen){ setUserLocation({...chosen,source:"override"}); return; }
     if(typeof navigator==="undefined"||!navigator.geolocation){ useHomeCity(); return; }
+
+    // A deadline of our own, because the browser's is not dependable.
+    //
+    // Measured on production with permission already granted:
+    // getCurrentPosition called back neither way — not success, not error —
+    // for forty-five seconds and counting, and the `timeout` option below
+    // did not fire either. So clearing a saved place left the app with no
+    // location at all and a line reading "Curated for you", indefinitely.
+    // Nothing was broken and nothing said so; it simply never finished.
+    //
+    // Whichever answers first wins, and the other is ignored. The chain has
+    // to terminate somewhere: where you are, then where you live, then ask.
+    let settled=false;
+    const answer=(fn)=>(...args)=>{ if(settled)return; settled=true; fn(...args); };
+    const giveUp=setTimeout(answer(()=>{
+      console.error("[location] the device never answered — falling back to your home city");
+      useHomeCity();
+    }),9000);
+    const done=(fn)=>answer((...args)=>{ clearTimeout(giveUp); fn(...args); });
+
     navigator.geolocation.getCurrentPosition(
-      async function(pos){
+      done(async function(pos){
         try{
           const lat=pos.coords.latitude;
           const lng=pos.coords.longitude;
@@ -7925,13 +7945,13 @@ export default function ReachApp({realUser,onSignOut}={}){
             setUserLocation({lat,lng,city:"Your location",airport:null,source:"device"});
           }
         }catch(e){setUserLocation({lat:pos.coords.latitude,lng:pos.coords.longitude,city:"Your location",airport:null,source:"device"});}
-      },
+      }),
       // Denied, or the device simply cannot say. Somebody who has told us
       // where they live should not then be asked where they are: the order
       // is where you are, then where you live, then ask. What never happens
       // is a silent default — that is how a trip planned from Aberdeen came
       // back with things to do in San Francisco.
-      function(err){ console.log("Location denied:",err.message); useHomeCity(); },
+      done(function(err){ console.log("Location denied:",err.message); useHomeCity(); }),
       {timeout:10000,enableHighAccuracy:false,maximumAge:600000}
     );
   };
