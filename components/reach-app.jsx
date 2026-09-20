@@ -5324,16 +5324,35 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     setSavingDates(false);
   };
 
+  // Moving the dates of a trip with bookings on it is not a field edit: a
+  // hotel is held for particular nights and a table exists at a particular
+  // hour. The server says what would be disturbed and waits; this is where
+  // the person reads that and decides.
+  const [dateChange,setDateChange]=useState(null);
+
+  const moveDates=async(start,end,{confirmed=false}={})=>{
+    if(savingDates)return;
+    setSavingDates(true);
+    const result=await updatePlanOnServer(planId,{
+      start_date:start,end_date:end,
+      ...(confirmed?{confirmDateChange:true}:{}),
+    });
+    setSavingDates(false);
+    if(result&&result.needsConfirmation){
+      setDateChange({...result,start,end});
+      return;
+    }
+    if(result!==false){
+      setDateChange(null);
+      if(refreshGroup)await refreshGroup(groupId);
+      toast(`Dates set: ${formatDates(start,end)}`);
+    }
+  };
+
   const applyBestDates=async()=>{
     const best=dates?.bestWindows?.[0];
-    if(!best||savingDates)return;
-    setSavingDates(true);
-    const ok=await updatePlanOnServer(planId,{start_date:best.start,end_date:best.end});
-    if(ok!==false){
-      if(refreshGroup)await refreshGroup(groupId);
-      toast(`Dates set: ${formatDates(best.start,best.end)}`);
-    }
-    setSavingDates(false);
+    if(!best)return;
+    await moveDates(best.start,best.end);
   };
 
   // Every plan made before the itinerary was persisted has no days, and there
@@ -5351,9 +5370,19 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       let startDate=plan.startDate||null,endDate=plan.endDate||null;
       const best=dates?.ready?dates.bestWindows?.[0]:null;
       if(best&&(best.start!==startDate||best.end!==endDate)){
+        const saved=await updatePlanOnServer(planId,{start_date:best.start,end_date:best.end});
+        // The server can answer "these dates would disturb things" instead of
+        // saving. That object is truthy, so treating it as success would have
+        // built the days for dates the plan does not have — the itinerary and
+        // the trip disagreeing from the moment it was written.
+        if(saved&&saved.needsConfirmation){
+          setDateChange({...saved,start:best.start,end:best.end});
+          setBuilding(false);
+          return;
+        }
+        if(saved===false){setBuilding(false);return;}
         startDate=best.start;endDate=best.end;
-        const saved=await updatePlanOnServer(planId,{start_date:startDate,end_date:endDate});
-        if(saved!==false&&refreshGroup)refreshGroup(groupId);
+        if(refreshGroup)refreshGroup(groupId);
       }
       const res=await fetch("/api/trips/generate",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -5918,6 +5947,39 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 }}>{nudging?"Sending…":"Give them a nudge"}</button>
               )}
             </div>
+            {/* What moving the dates would disturb, read before it happens
+                rather than discovered afterwards. Each line names who has to
+                act: a table booked on somebody's own account can only be
+                moved by them, on that platform. */}
+            {dateChange&&(
+              <div style={{margin:"0 0 12px",padding:"14px",background:C.amberDim,
+                border:`1px solid ${C.amber}`,borderRadius:14}}>
+                <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:6}}>
+                  Moving to {formatDates(dateChange.start,dateChange.end)}
+                </div>
+                {dateChange.outOf>0&&(
+                  <div style={{fontSize:12.5,color:C.t2,marginBottom:8}}>
+                    These dates work for {dateChange.worksFor} of {dateChange.outOf}.
+                  </div>
+                )}
+                {(dateChange.consequences||[]).map((line,i)=>(
+                  <div key={i} style={{display:"flex",gap:7,marginBottom:5}}>
+                    <span style={{color:C.amber,flexShrink:0,fontSize:12}}>•</span>
+                    <span style={{fontSize:12.5,color:C.t2,lineHeight:1.5}}>{line}</span>
+                  </div>
+                ))}
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  <button className="bp" style={{flex:1}} disabled={savingDates}
+                    onClick={()=>moveDates(dateChange.start,dateChange.end,{confirmed:true})}>
+                    {savingDates?"Moving…":"Move them anyway"}
+                  </button>
+                  <button className="bs" style={{flex:1}} disabled={savingDates}
+                    onClick={()=>setDateChange(null)}>
+                    Leave the dates
+                  </button>
+                </div>
+              </div>
+            )}
             {/* The person the group is waiting on sees the way to stop being
                 waited on, not just the fact of it. Shown to anybody who has
                 not answered for this trip, whether or not voting is open. */}
@@ -8014,6 +8076,13 @@ export default function ReachApp({realUser,onSignOut}={}){
       // everybody something that is not true.
       if(!res.ok){
         const err=await res.json().catch(()=>({}));
+        // 409 with consequences is not a rejection. It is the server saying
+        // what moving these dates would disturb — a table somebody booked on
+        // their own account, a hotel held for the old nights — and waiting to
+        // be told to go ahead. Handed back so the screen can ask.
+        if(res.status===409&&err.needsConfirmation){
+          return {needsConfirmation:true,...err};
+        }
         console.error("[plan] update rejected",res.status,err);
         showToast(err.error||"That change didn't save — try again");
         return false;
