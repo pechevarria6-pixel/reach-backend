@@ -5,7 +5,8 @@ import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthL
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
-import { checkoutState, itemTitle } from "@/lib/checkout";
+import { checkoutState, itemTitle, bookedClaim, bookedWording } from "@/lib/checkout";
+import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { answersFromGoal, summarise } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
@@ -6728,7 +6729,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     if(!id||isTempId(id)||capturing)return;
     setCapturing(id);
     try{
-      const r=await fetch(`/api/bookings/${id}`,{
+      const r=await fetchWithin(`/api/bookings/${id}`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({status}),
       });
@@ -6773,7 +6774,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       let bridge=null;
       if(!isTempId(planId)){
         try{
-          const br=await fetch(`/api/plans/${planId}/bookable`,{method:"POST"});
+          const br=await fetchWithin(`/api/plans/${planId}/bookable`,{method:"POST"},20000,"pricing your trip");
           bridge=br.ok?await br.json():null;
           if(!br.ok)console.error("[checkout] could not add the itinerary to the booking list",br.status);
         }catch(e){ console.error("[checkout] bridge failed",e); }
@@ -6817,7 +6818,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     (async()=>{
       setBusy(true);
       try{
-        const cr=await fetch(`/api/plans/${planId}/funding/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentIntentId:returnedIntent})});
+        const cr=await fetchWithin(`/api/plans/${planId}/funding/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentIntentId:returnedIntent})},15000,"recording your payment");
         if(cr.ok){ setBusy(false); await approveAll(false); return; }
         const err=await cr.json().catch(()=>({}));
         console.error("[checkout] returned payment not recorded",{planId,paymentIntentId:returnedIntent,redirectStatus,status:cr.status,err});
@@ -6842,7 +6843,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     if(isTempId(planId)){ toast("This trip is still saving — try again in a moment"); return; }
     setBusy(true);
     try{
-      const r=await fetch(`/api/plans/${planId}/funding`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});
+      const r=await fetchWithin(`/api/plans/${planId}/funding`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})},15000,"setting up your payment");
       const d=await r.json().catch(()=>({}));
       if(!r.ok||!d.clientSecret)throw new Error(d.error||"Couldn't start the payment \u2014 try again.");
       setClientSecret(d.clientSecret); setPhase("pay");
@@ -6877,7 +6878,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     };
     (async()=>{
       try{
-        const r=await fetch("/api/config/stripe");
+        const r=await fetchWithin("/api/config/stripe",{},8000,"Stripe");
         const d=await r.json().catch(()=>({}));
         if(cancelled)return;
         if(!r.ok||!d.publishableKey){ fail("Payments aren't switched on yet.",{retry:true}); return; }
@@ -6893,6 +6894,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     // that follows the money leaving someone's account.
     if(isTempId(planId)){ toast("This trip is still saving — try again in a moment"); return; }
     setBusy(true);
+    // Whether the money has left their account yet. Everything after Stripe
+    // confirms is recording and booking, and a failure past this point must
+    // never be worded as "payment didn't go through" — telling somebody that
+    // about a card that was charged is how they pay twice.
+    let taken=false;
     try{
       // Cards finish here without leaving the page. Klarna, Affirm and Cash App
       // Pay are switched on in Stripe and cannot: they send the payer to their
@@ -6901,12 +6907,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       const back=`${window.location.origin}/home?paid=${encodeURIComponent(planId)}&group=${encodeURIComponent(groupId||"")}`;
       const {error,paymentIntent}=await stripeRef.current.confirmPayment({elements:elementsRef.current,redirect:"if_required",confirmParams:{return_url:back}});
       if(error)throw new Error(error.message||"Payment didn't go through.");
+      taken=true;
       // Stripe has taken the money by this point. The response to this call
       // was never checked, so if recording the contribution failed the app
       // still walked on to "done" — card charged, nothing recorded, and the
       // person told they were finished. With live keys that is real money
       // going missing quietly.
-      const cr=await fetch(`/api/plans/${planId}/funding/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentIntentId:paymentIntent.id})});
+      const cr=await fetchWithin(`/api/plans/${planId}/funding/confirm`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paymentIntentId:paymentIntent.id})},15000,"recording your payment");
       if(!cr.ok){
         const err=await cr.json().catch(()=>({}));
         console.error("[checkout] payment taken but not recorded",{planId,paymentIntentId:paymentIntent.id,status:cr.status,err});
@@ -6916,14 +6923,26 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       }
       setBusy(false);
       await approveAll(false);
-    }catch(e){ toast(e.message||"Payment didn't go through."); setBusy(false); }
+    }catch(e){
+      setBusy(false);
+      // A call that never answered is not a payment that failed. Before
+      // Stripe confirms, nothing has been charged and saying so is a relief;
+      // after it, the money is gone and the only useful sentence names the
+      // reference and says not to pay again.
+      if(isTimeout(e)){
+        console.error("[checkout] a step stalled",{planId,taken,what:e.what});
+        fail(stalled(e.what,taken));
+        return;
+      }
+      toast(e.message||(taken?"Your payment went through — we had trouble finishing up.":"Payment didn't go through."));
+    }
   };
 
   const approveAll=async(acceptNewPrice)=>{
     setPhase("approving");
     let fresh=[];
     try{
-      const r=await fetch(`/api/bookings?planId=${planId}`);
+      const r=await fetchWithin(`/api/bookings?planId=${planId}`,{},12000,"reading your bookings");
       const j=await r.json();
       fresh=(j&&(j.bookings||j))||[];
     }catch(e){
@@ -6939,7 +6958,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     const failed=[];
     for(const b of waiting){
       try{
-        const r=await fetch(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(acceptNewPrice?{acceptNewPrice:true}:{})});
+        // The one that actually books. A provider that hangs here leaves somebody
+        // staring at "approving" with their money already collected, so it gets
+        // the longest deadline and still gets one.
+        const r=await fetchWithin(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(acceptNewPrice?{acceptNewPrice:true}:{})},45000,"the booking");
         if(r.status===402){ setPhase("waiting"); return; }
         if(r.status===409){ setPhase("priceUp"); return; }
         if(!r.ok){
@@ -6955,7 +6977,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     // The list fetched before approving says "Quoted" for everything, because
     // that is what it was. Read it again so the screen shows what happened.
     try{
-      const after=await fetch(`/api/bookings?planId=${planId}`);
+      const after=await fetchWithin(`/api/bookings?planId=${planId}`,{},12000,"reading your bookings");
       const aj=after.ok?await after.json():null;
       setBookings((aj&&(aj.bookings||aj))||fresh);
     }catch(e){ console.error("[checkout] could not re-read the bookings after approving",e); setBookings(fresh); }
@@ -6974,10 +6996,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // quoted. The first end-to-end run put "You're all booked!" above two lines
   // both reading "Quoted", because this counted rows rather than reading
   // them: everything that had a row at all was treated as booked.
-  const settledStates=["confirmed","redirected","pending"];
-  const bookedAnything=!!(bookings&&bookings.length)
-    &&bookings.every(b=>settledStates.includes(b.status))
-    &&bookings.some(b=>b.status==="confirmed"||b.status==="redirected");
+  // What this screen is allowed to claim, worked out from the rows in
+  // lib/checkout.ts and tested there. `redirected` used to count as booked;
+  // it means somebody was handed to Resy and went to get the table
+  // themselves, which is the one thing on this screen we are still asking
+  // them about.
+  const claim=bookedClaim(bookings);
+  const said=bookedWording(claim);
 
   // What may be shown, and whether anybody may pay. A production screenshot
   // had three rows all reading "restaurant" over a total of $0 with the
@@ -7089,10 +7114,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
             had just been charged. Money in is worth celebrating; it is simply
             not the same claim as a booking. */}
         <div style={{fontFamily:"var(--font-display)",fontSize:30,color:"white",marginBottom:6}}>
-          {bookedAnything?"You're all booked!":"Your share is in"}
+          {said.title}
         </div>
         <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>
-          {bookedAnything?"Powered by Stripe \u00B7 PCI-DSS compliant":"Nothing is booked yet \u2014 we'll confirm each one with you"}
+          {said.sub}
         </div>
       </div>
       <div style={{padding:"20px 20px 0"}}>

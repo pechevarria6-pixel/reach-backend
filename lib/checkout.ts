@@ -187,3 +187,56 @@ export function checkoutState(rows: CheckoutRow[]): CheckoutState {
       : null,
   };
 }
+
+// ─── What the success screen may claim ──────────────────────────────────
+// "You're all booked!" once sat above two lines both reading "Quoted",
+// because the screen counted rows rather than reading them. That was fixed
+// by requiring every row to be settled — and the fix still counted
+// `redirected` as booked.
+//
+// It is not. Redirected means Reach handed somebody to Resy or OpenTable
+// and they went off to get the table themselves. Whether there was a table
+// is known to exactly one person, and it is not us: there is a "did you get
+// it?" prompt on this very screen for precisely that reason. Saying "you're
+// all booked" over a row we are still asking about is the app claiming to
+// know something it has just admitted it does not.
+//
+// So the claim is narrowed to what a row can prove. Confirmed is a booking.
+// Everything else is honest about what it is.
+
+export type BookedClaim =
+  /** Every settled row came back confirmed. */
+  | 'all_booked'
+  /** Some confirmed, others still waiting on the person or the provider. */
+  | 'partly_booked'
+  /** Money is in, nothing is confirmed yet. */
+  | 'paid_only';
+
+const SETTLED = new Set(['confirmed', 'redirected', 'pending']);
+
+export function bookedClaim(rows: { status?: string | null }[] | null | undefined): BookedClaim {
+  const live = (rows ?? []).filter(r => SETTLED.has(String(r.status ?? '')));
+  if (!live.length) return 'paid_only';
+
+  const confirmed = live.filter(r => String(r.status) === 'confirmed');
+  if (!confirmed.length) return 'paid_only';
+  return confirmed.length === live.length ? 'all_booked' : 'partly_booked';
+}
+
+/** The headline and the line under it, per claim. */
+export function bookedWording(claim: BookedClaim): { title: string; sub: string } {
+  switch (claim) {
+    case 'all_booked':
+      return { title: "You're all booked!", sub: 'Powered by Stripe · PCI-DSS compliant' };
+    case 'partly_booked':
+      return {
+        title: "Some of it's booked",
+        sub: 'The rest is waiting on you or on the place — see below',
+      };
+    case 'paid_only':
+      return {
+        title: 'Your share is in',
+        sub: "Nothing is booked yet — we'll confirm each one with you",
+      };
+  }
+}
