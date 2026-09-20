@@ -58,7 +58,15 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Check if all travelers have paid and mark plan booked
+      // Check if all travelers have paid and mark plan booked.
+      //
+      // Reads `payments` deliberately: this whole branch is the legacy
+      // one-payment-per-traveller path, whose rows /api/payments writes and
+      // this handler updates. It is internally consistent and currently
+      // unused — nothing in the client calls /api/payments, and funding
+      // writes contributions instead, handled above and returned before
+      // reaching here. Left working rather than half-removed, so an intent
+      // that does arrive on the old path is still recorded.
       const { data: payments } = await supabase.from('payments').select('user_id').eq('plan_id', intent.metadata.plan_id).eq('status', 'succeeded');
       const { data: members } = await supabase.from('group_members').select('user_id').eq('group_id', (await supabase.from('plans').select('group_id').eq('id', intent.metadata.plan_id).single()).data?.group_id);
 

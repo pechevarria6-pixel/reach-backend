@@ -37,6 +37,10 @@ export async function POST(req: NextRequest) {
 
   // Prevent double charging
   const { data: existing } = await supabase
+    // Reads `payments` deliberately: this route owns that table. It is the
+    // legacy path, replaced by /api/plans/[id]/funding which writes
+    // contributions, and nothing in the client calls it. Kept coherent
+    // rather than half-removed.
     .from('payments').select('stripe_payment_intent_id, status').eq('plan_id', body.plan_id).eq('user_id', user.id).eq('status', 'succeeded').single();
   if (existing) return NextResponse.json({ error: 'Already paid' }, { status: 409 });
 

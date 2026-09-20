@@ -96,12 +96,35 @@ for (const file of files) {
   });
 }
 
+// ─── Reading a table nothing writes ─────────────────────────────────────
+// `payments` belongs to a payment path that was replaced by funding, which
+// writes `contributions`. The table holds zero rows and nothing in the
+// client calls /api/payments any more — but Profile and the GDPR export
+// still read it, so somebody who had paid $2,810 across five contributions
+// was shown an empty payment history and given an export with no record of
+// any of it.
+//
+// Reads are the failure. The two legacy writes are harmless and left alone;
+// reading the dead table is what shows somebody a lie about their own money.
+for (const file of files) {
+  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+    if (/^\s*(\/\/|\*)/.test(line)) return;
+    if (!/\.from\(\s*['\"]payments['\"]\s*\)\s*\.select\(/.test(line)) return;
+    // The legacy path may read its own table; it writes those rows. The
+    // sentence has to be there, as everywhere else in this file.
+    const why = readFileSync(file, 'utf8').split('\n').slice(Math.max(0, i - 8), i).join('\n');
+    if (/deliberately|legacy/i.test(why)) return;
+    problems.push({ file, line: i + 1, text: line.trim().slice(0, 72) });
+  });
+}
+
 console.log('');
 if (problems.length) {
   console.log(`  ${problems.length} problem(s):\n`);
   for (const p of problems) console.log(`  ${p.file}:${p.line}  ${p.text}`);
   console.log('\n  Read the error, or say on the line above why it does not matter.');
   console.log('  A Clerk id in an owner column: resolve through requireUser() and pass ctx.user.id.');
+  console.log("  A read of `payments`: money lives in `contributions` — that is what funding writes.");
   process.exit(1);
 }
 console.log(`  ✓ every write in ${files.length} files reads its result, and no Clerk id reaches an owner column\n`);

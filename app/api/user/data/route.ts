@@ -20,7 +20,10 @@ export async function GET() {
 
   const [groups, payments, votes, loyalty, auditLogs] = await Promise.all([
     supabase.from('group_members').select('groups(name, emoji)').eq('user_id', user.id),
-    supabase.from('payments').select('id, amount_cents, status, created_at').eq('user_id', user.id),
+    // Same correction as Profile: the funding flow writes contributions, so
+    // an export reading `payments` handed somebody a GDPR download with no
+    // record of money they had actually paid.
+    supabase.from('contributions').select('id, amount_cents, status, created_at, plan_id').eq('user_id', user.id),
     supabase.from('votes').select('plan_id, option, voted_at').eq('user_id', user.id),
     supabase.from('loyalty_programs').select('program_name, tier, points').eq('user_id', user.id),
     supabase.from('audit_logs').select('action, created_at').eq('user_id', user.id).limit(100),

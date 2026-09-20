@@ -37,12 +37,20 @@ export async function GET() {
   const { data: row } = await db.from('users').select('*').eq('id', user.id).single();
   if (!row) return NextResponse.json({ error: 'User not found' }, { status: 404 });
 
-  const [memberships, loyalty, connected, payments] = await Promise.all([
+  const [memberships, loyalty, connected, contributions] = await Promise.all([
     db.from('group_members').select('group_id').eq('user_id', user.id),
     db.from('loyalty_programs').select('id, program_name, tier, points').eq('user_id', user.id).order('created_at'),
     db.from('connected_accounts').select('provider, label, status, last_used_at').eq('user_id', user.id),
-    db.from('payments')
-      .select('id, amount_cents, currency, status, refund_amount_cents, created_at')
+    // `contributions`, not `payments`. The funding flow writes contributions
+    // and always has; `payments` belongs to a path that was replaced and
+    // holds zero rows, so this screen showed an empty payment history to
+    // somebody who had paid — twice, in this database.
+    //
+    // A refund is a status here rather than a partial amount: the webhook
+    // marks the whole contribution refunded, because a share is paid or it
+    // is not.
+    db.from('contributions')
+      .select('id, amount_cents, currency, status, created_at, plan_id')
       .eq('user_id', user.id).order('created_at', { ascending: false }).limit(10),
   ]);
 
@@ -95,7 +103,12 @@ export async function GET() {
     loyalty: loyalty.data || [],
     connected: connected.data || [],
     cards,
-    payments: payments.data || [],
+    payments: (contributions.data || []).map(c => ({
+      ...c,
+      // The screen reads this to show a refund; contributions record one as
+      // a status, so it is derived rather than invented.
+      refund_amount_cents: c.status === 'refunded' ? c.amount_cents : 0,
+    })),
     // Undefined rather than null means the column is not there yet, so the
     // screen can tell "not set" apart from "migration not run".
     home: {
