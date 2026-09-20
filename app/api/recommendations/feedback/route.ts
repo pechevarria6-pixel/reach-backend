@@ -8,7 +8,7 @@
 // would have lost the difference.
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
-import { hiddenFor, type Feedback, type Verdict } from '@/lib/recommendation-memory';
+import { hiddenFor, visitedIn, type Feedback, type Verdict } from '@/lib/recommendation-memory';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +29,7 @@ export async function GET() {
       // The migration has not been run. Nothing is hidden, which is exactly
       // how the screen behaved before any of this existed.
       console.error('[feedback] the table is not there yet — nothing is hidden');
-      return NextResponse.json({ feedback: [], hidden: [], available: false });
+      return NextResponse.json({ feedback: [], hidden: [], visited: [], available: false });
     }
     console.error('[feedback] could not read', { code: error.code });
     return NextResponse.json({ error: 'Could not read your preferences' }, { status: 500 });
@@ -46,10 +46,12 @@ export async function GET() {
     feedback: (data ?? []).map(r => ({
       itemRef: r.item_ref, vertical: r.vertical, verdict: r.verdict, title: r.title,
     })),
-    // Worked out on the server so every screen hides the same things: a
-    // refusal is permanent, somewhere they have been comes back only if it
-    // is the kind of place worth going to twice, and not for months.
+    // Worked out on the server so every screen agrees. Only a refusal hides
+    // anything — marking somewhere done is keeping track, not asking for it
+    // to go away.
     hidden: [...hiddenFor(feedback)],
+    // Places they have been, so a card can say so rather than vanish.
+    visited: [...visitedIn(feedback)],
     available: true,
   });
 }

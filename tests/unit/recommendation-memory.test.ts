@@ -1,32 +1,36 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  mayShow, hiddenFor, latestPerItem, groupVerdict, isRepeatable, refOf,
+  mayShow, hiddenFor, visitedIn, latestPerItem, groupVerdict, refOf,
 } from '../../lib/recommendation-memory.ts';
 
 const NOW = new Date('2026-09-20T12:00:00Z');
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86400000).toISOString();
 
 test('"not for me" is permanent — a refusal does not quietly expire', () => {
-  // There is no cooldown on a refusal. One that lapses is the app deciding
-  // it knows better than the person who said no.
+  // Hiding it is the whole reason somebody taps it, and a refusal that
+  // lapses is the app deciding it knows better than the person who said no.
   const f = { itemRef: 'osm:1', vertical: 'restaurant', verdict: 'not_interested' as const, at: daysAgo(3650) };
-  assert.equal(mayShow(f, NOW), false);
+  assert.equal(mayShow(f), false);
 });
 
-test('a landmark done once is done', () => {
-  // Somebody who has seen the Statue of Liberty has seen it. Offering it
-  // again next spring is the app not listening.
-  const f = { itemRef: 'osm:2', vertical: 'museum', verdict: 'done' as const, at: daysAgo(3650) };
-  assert.equal(isRepeatable('museum'), false);
-  assert.equal(mayShow(f, NOW), false);
+test('marking somewhere done never takes it away', () => {
+  // A record, not a refusal. The first version hid these and brought them
+  // back after four months for kinds it judged repeatable — which put the
+  // app in charge of deciding whether you might return to somewhere you had
+  // enjoyed, and got crafts wrong immediately.
+  for (const vertical of ['restaurant', 'museum', 'pottery & crafts', 'anything at all']) {
+    const f = { itemRef: 'osm:2', vertical, verdict: 'done' as const, at: daysAgo(1) };
+    assert.equal(mayShow(f), true, vertical);
+  }
 });
 
-test('a restaurant comes round again, but not next week', () => {
-  const recent = { itemRef: 'osm:3', vertical: 'restaurant', verdict: 'done' as const, at: daysAgo(10) };
-  const old = { itemRef: 'osm:3', vertical: 'restaurant', verdict: 'done' as const, at: daysAgo(200) };
-  assert.equal(mayShow(recent, NOW), false, 'ten days is not a gap');
-  assert.equal(mayShow(old, NOW), true, 'two hundred is');
+test('what you have been to is remembered, so a card can say so', () => {
+  const visited = visitedIn([
+    { itemRef: 'a', vertical: 'pottery & crafts', verdict: 'done', at: daysAgo(1) },
+    { itemRef: 'b', vertical: 'restaurant', verdict: 'not_interested', at: daysAgo(1) },
+  ]);
+  assert.deepEqual([...visited], ['a']);
 });
 
 test('the most recent verdict wins, whatever order the rows arrive in', () => {
@@ -40,15 +44,13 @@ test('the most recent verdict wins, whatever order the rows arrive in', () => {
   assert.equal(latestPerItem([...rows].reverse()).get('osm:4')?.verdict, 'not_interested');
 });
 
-test('what stays hidden is exactly what they ruled out', () => {
+test('only a refusal hides anything', () => {
   const hidden = hiddenFor([
     { itemRef: 'a', vertical: 'restaurant', verdict: 'not_interested', at: daysAgo(1) },
     { itemRef: 'b', vertical: 'museum', verdict: 'done', at: daysAgo(500) },
-    { itemRef: 'c', vertical: 'restaurant', verdict: 'done', at: daysAgo(500) },
-  ], NOW);
-  assert.ok(hidden.has('a'), 'refused');
-  assert.ok(hidden.has('b'), 'a museum they have been to');
-  assert.ok(!hidden.has('c'), 'a restaurant, long enough ago');
+    { itemRef: 'c', vertical: 'pottery & crafts', verdict: 'done', at: daysAgo(1) },
+  ]);
+  assert.deepEqual([...hidden], ['a'], 'everything else stays available');
 });
 
 // ─── What a group does with one person's history ────────────────────────
@@ -71,18 +73,14 @@ test('the organiser saying no rules it out', () => {
   assert.equal(call.note, null);
 });
 
-test('most of the group having been means the group has been', () => {
-  const been = ['u1', 'u2', 'u3', 'u4'].map(userId => ({ userId, verdict: 'done' as const }));
-  assert.equal(groupVerdict(been, 'org', 6).exclude, true);
-  assert.equal(groupVerdict(been.slice(0, 2), 'org', 6).exclude, false, 'two of six is not most');
-});
-
-test('a majority is of the group, not of those who happened to answer', () => {
-  // Two people answering "done" out of six is not a majority, even though it
-  // is both of the answers received.
-  const two = [{ userId: 'u1', verdict: 'done' as const }, { userId: 'u2', verdict: 'done' as const }];
-  assert.equal(groupVerdict(two, 'org', 6).exclude, false);
-  assert.equal(groupVerdict(two, 'org', 3).exclude, true, 'two of three is');
+test('a group that has all been somewhere may still be going back', () => {
+  // An earlier version read a majority as the group having collectively done
+  // it, and removed it. Five people who have all been somewhere they liked
+  // may well be going back together — that is a thing a group chooses.
+  const all = ['u1', 'u2', 'u3'].map(userId => ({ userId, verdict: 'done' as const }));
+  const call = groupVerdict(all, 'org', 3);
+  assert.equal(call.exclude, false);
+  assert.match(call.note as string, /all been here before/);
 });
 
 test('a member who would rather not is quoted, not overruled', () => {

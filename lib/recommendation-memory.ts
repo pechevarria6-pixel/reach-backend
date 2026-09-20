@@ -6,15 +6,19 @@
 // Two different sentences are being collected here, and they are not the
 // same and must not be treated the same:
 //
-//   "Already done it"  — a positive signal. They went. They may well go
-//                        again, and the fact they chose it says what they
-//                        like. A restaurant can come round again; the
-//                        Museum of Natural History cannot.
-//   "Not for me"       — a refusal. It never comes back, and it says
-//                        something about the category too.
+//   "Already done it"  — a record, not a refusal. They went. The place stays
+//                        on the screen with a note saying so, because a
+//                        pottery studio you liked is somewhere to go back to
+//                        and nobody taps "done" meaning "never again".
+//   "Not for me"       — a refusal. That one hides, permanently, because
+//                        hiding it is the whole reason somebody taps it.
 //
-// Collapsing those into one "hide" would lose the difference between a place
-// somebody loved and a place they would not go to at gunpoint.
+// The first version hid both, with 'done' coming back after four months for
+// kinds judged repeatable and never for the rest. That put the app in charge
+// of deciding whether you might want to return to a place you had enjoyed —
+// which is not a judgement it is in any position to make, and got crafts
+// wrong immediately. Everything stays available. What you have done is
+// yours to see, not a filter applied to you.
 
 export type Verdict = 'done' | 'not_interested';
 
@@ -27,40 +31,27 @@ export interface Feedback {
 }
 
 /**
- * Things worth doing more than once.
- *
- * A dinner is repeatable; a landmark is not. Somebody who has done the
- * Statue of Liberty has done it, and offering it again next spring is the
- * app not listening. Somewhere they ate and liked is a different matter
- * entirely, which is the whole reason 'done' is kept apart from 'not for me'.
- */
-const REPEATABLE = new Set(['restaurant', 'bar', 'cafe', 'night', 'nightlife', 'event', 'live music']);
-
-/** How long before somewhere they have been is worth offering again. */
-const COOLDOWN_DAYS = 120;
-
-export function isRepeatable(vertical: string): boolean {
-  return REPEATABLE.has(String(vertical || '').toLowerCase().trim());
-}
-
-/**
  * May this be shown to the person who ruled on it?
  *
- * 'not for me' is permanent — there is no cooldown on a refusal, and a
- * refusal that quietly expires is the app deciding it knows better.
+ * Everything stays except an outright refusal. Marking somewhere done is
+ * keeping track, not asking for it to go away, and a place you enjoyed is
+ * somewhere you might go back to — which is your call and not the app's.
  */
-export function mayShow(f: Feedback, now: Date = new Date()): boolean {
-  if (f.verdict === 'not_interested') return false;
-  if (!isRepeatable(f.vertical)) return false;
-  const days = (now.getTime() - new Date(f.at).getTime()) / 86400000;
-  return Number.isFinite(days) && days >= COOLDOWN_DAYS;
+export function mayShow(f: Feedback): boolean {
+  return f.verdict !== 'not_interested';
 }
 
-/** The refs to keep out of one person's Discover, given everything they said. */
-export function hiddenFor(feedback: Feedback[], now: Date = new Date()): Set<string> {
-  const latest = latestPerItem(feedback);
+/** The refs to keep out of one person's Discover — refusals, and only those. */
+export function hiddenFor(feedback: Feedback[]): Set<string> {
   const out = new Set<string>();
-  for (const f of latest.values()) if (!mayShow(f, now)) out.add(f.itemRef);
+  for (const f of latestPerItem(feedback).values()) if (!mayShow(f)) out.add(f.itemRef);
+  return out;
+}
+
+/** The refs they have been to, so the card can say so. */
+export function visitedIn(feedback: Feedback[]): Set<string> {
+  const out = new Set<string>();
+  for (const f of latestPerItem(feedback).values()) if (f.verdict === 'done') out.add(f.itemRef);
   return out;
 }
 
@@ -95,14 +86,18 @@ export interface GroupCall {
  * may not see it, and an app that silently removed it would be making that
  * call on their behalf.
  *
- * So: a refusal from the organiser rules it out, because they are the one
- * building the thing. A majority having been already means the group has
- * collectively done it. Anything less is a note beside the card, and the
- * group decides.
+ * Only an outright refusal from the organiser rules anything out, because
+ * they are the one building the thing and they said no. Everything else is
+ * a note beside the card, and the group decides — including most of them
+ * having been before, which an earlier version treated as the group having
+ * collectively done it. Five people who have all been to a place they liked
+ * may well be going back together; that is the sort of thing a group
+ * chooses, not something to be decided for them.
  */
 export function groupVerdict(
   verdicts: { userId: string; verdict: Verdict; name?: string }[],
   organiserId: string,
+  /** Only for the wording — nothing is excluded on a count any more. */
   groupSize: number,
 ): GroupCall {
   const rows = verdicts ?? [];
@@ -111,10 +106,6 @@ export function groupVerdict(
   }
 
   const done = rows.filter(v => v.verdict === 'done');
-  // More than half the group, not merely more than half of those who spoke.
-  if (groupSize > 0 && done.length * 2 > groupSize) {
-    return { exclude: true, note: null };
-  }
 
   // A refusal from somebody who is not the organiser still matters — it is
   // said out loud rather than acted on, because they have to come too.
@@ -131,11 +122,14 @@ export function groupVerdict(
 
   if (done.length) {
     const who = done.map(v => firstName(v.name)).filter(Boolean);
+    const all = groupSize > 0 && done.length >= groupSize;
     return {
       exclude: false,
-      note: who.length === 1
-        ? `${who[0]}'s been here — still worth it for the group?`
-        : `${who.length} of you have been here — still worth it for the group?`,
+      note: all
+        ? "You've all been here before — going back?"
+        : who.length === 1
+          ? `${who[0]}'s been here — still worth it for the group?`
+          : `${who.length} of you have been here — still worth it for the group?`,
     };
   }
 

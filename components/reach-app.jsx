@@ -1052,6 +1052,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   // stays hidden, so Discover and trip generation hide the same things
   // rather than each having its own opinion.
   const [hidden,setHidden]=useState(()=>new Set());
+  // Places they have been. Shown, not hidden — "already done it" is keeping
+  // track, and a studio somebody liked is somewhere to go back to.
+  const [visited,setVisited]=useState(()=>new Set());
   const [asking,setAsking]=useState(null);     // the card whose × is open
   const [undo,setUndo]=useState(null);         // {ref,title} for the toast
 
@@ -1061,6 +1064,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
       if(!r.ok)return;                         // nothing hidden is the old behaviour
       const d=await r.json();
       setHidden(new Set(d.hidden||[]));
+      setVisited(new Set(d.visited||[]));
     }catch(e){ console.error("[discover] could not read what you've ruled out",e); }
   })();},[]);
 
@@ -1071,9 +1075,11 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     const ref=refOfExp(exp);
     // Gone from the screen straight away. A dismissal that waits for a round
     // trip reads as a button that did not work.
-    setHidden(h=>new Set([...h,ref]));
+    // Only a refusal takes it off the screen. Done is a note on the card.
+    if(verdict==="not_interested")setHidden(h=>new Set([...h,ref]));
+    else setVisited(v=>new Set([...v,ref]));
     setAsking(null);
-    setUndo({ref,title:exp.title});
+    setUndo({ref,title:exp.title,verdict});
     try{
       const r=await fetch("/api/recommendations/feedback",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -1084,12 +1090,14 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
         // Put it back rather than leave the screen saying something the
         // server does not know.
         setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
+        setVisited(v=>{const n=new Set(v);n.delete(ref);return n;});
         setUndo(null);
         toast(d.error||"Couldn't save that");
       }
     }catch(e){
       console.error("[discover] could not save that",e);
       setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
+      setVisited(v=>{const n=new Set(v);n.delete(ref);return n;});
       setUndo(null);
       toast("Couldn't save that");
     }
@@ -1099,6 +1107,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     if(!undo)return;
     const {ref}=undo;
     setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
+    setVisited(v=>{const n=new Set(v);n.delete(ref);return n;});
     setUndo(null);
     try{
       const r=await fetch(`/api/recommendations/feedback?itemRef=${encodeURIComponent(ref)}`,{method:"DELETE"});
@@ -1309,7 +1318,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
           border:`1px solid ${C.border}`,borderRadius:14,display:"flex",
           alignItems:"center",gap:10}}>
           <div style={{flex:1,fontSize:12.5,color:C.t2,lineHeight:1.4}}>
-            We won't suggest {undo.title} again.
+            {undo.verdict==="done"
+              ?`${undo.title} is marked as one you've done.`
+              :`We won't suggest ${undo.title} again.`}
           </div>
           <button onClick={undoRule}
             style={{border:"none",background:"none",fontSize:12.5,fontWeight:700,
@@ -1330,6 +1341,16 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
               while "Not for me" is a refusal that never does. One button
               would have lost the difference between a place somebody loved
               and one they would not go to at gunpoint. */}
+          {/* Marked, not removed. Somewhere you have been stays on the screen
+              saying so, because a place you enjoyed is one you might go back
+              to and that is your call rather than the app's. */}
+          {visited.has(`${String(exp.source||"unknown").toLowerCase()}:${exp.id}`)&&(
+            <div style={{position:"absolute",top:12,left:12,zIndex:3,
+              padding:"4px 9px",borderRadius:11,background:"rgba(0,0,0,.55)",
+              color:"white",fontSize:11,fontWeight:700,letterSpacing:".02em"}}>
+              ✓ You've been
+            </div>
+          )}
           <button aria-label={`Hide ${exp.title}`}
             onClick={e=>{e.stopPropagation();setAsking(a=>a===exp.id?null:exp.id);}}
             style={{position:"absolute",top:10,right:10,zIndex:3,width:30,height:30,
