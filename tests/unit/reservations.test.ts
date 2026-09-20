@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   reservationUrl, reserveLabel, usableTime, usableParty, chargesUpfront,
+  platformFromHtml, phoneFromHtml,
 } from '../../lib/booking/reservations.ts';
 
 test('a time is a time, and "Day 3 · Evening" is not', () => {
@@ -61,4 +62,30 @@ test('only a prepaid booking is money the group owes now', () => {
   assert.equal(chargesUpfront('opentable', null), false);
   assert.equal(chargesUpfront('tock', 12000), true, 'a Tock deposit is paid at booking');
   assert.equal(chargesUpfront('tock', null), false);
+});
+
+test('a link to the platform is proof; the word is not', () => {
+  // "resy" appears inside "nursery" and in any sentence about a reservation
+  // policy. Only the domain counts.
+  assert.equal(platformFromHtml('<p>Our nursery has a reservation policy.</p>').platform, 'none');
+  assert.equal(platformFromHtml('<a href="https://resy.com/cities/ral/pooles">Book</a>').platform, 'resy');
+  assert.equal(platformFromHtml('<iframe src="https://www.opentable.com/r/pooles"></iframe>').platform, 'opentable');
+  assert.equal(platformFromHtml('<a href="https://www.exploretock.com/desertbistro">Reserve</a>').platform, 'tock');
+});
+
+test('the link they published is kept, because it beats one we build', () => {
+  const found = platformFromHtml('<a href="https://resy.com/cities/ral/pooles-diner">Book a table</a>');
+  assert.equal(found.url, 'https://resy.com/cities/ral/pooles-diner');
+});
+
+test('no platform is the right answer for a place you telephone', () => {
+  assert.deepEqual(platformFromHtml('<h1>Valenti\'s</h1><p>Call us on 910-555-0100</p>'),
+    { platform: 'none', url: null });
+  assert.deepEqual(platformFromHtml(''), { platform: 'none', url: null });
+  assert.deepEqual(platformFromHtml(null), { platform: 'none', url: null });
+});
+
+test('a telephone link is picked up for the places with no platform', () => {
+  assert.equal(phoneFromHtml('<a href="tel:+1 (910) 555-0100">Call</a>'), '+19105550100');
+  assert.equal(phoneFromHtml('<p>no link here</p>'), null);
 });

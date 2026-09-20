@@ -112,3 +112,54 @@ export function reserveLabel(platform: Platform): string {
 export function chargesUpfront(platform: Platform, priceCents?: number | null): boolean {
   return platform === 'tock' && !!priceCents && priceCents > 0;
 }
+
+// ─── Working out which platform, from the restaurant's own page ─────────
+// Google Places will tell you a restaurant is reservable. It will not tell
+// you where, which is the only part we need: "Reserve on Resy" for a place
+// that has never been on Resy is the lie this whole module exists to avoid.
+//
+// A restaurant's own site does say. They embed the widget or link the
+// button, and that link is proof rather than inference. Checked against real
+// pages before it was written: Poole's Diner reads opentable, Desert Bistro
+// in Moab reads tock, and two small-town restaurants read none — which is
+// the correct answer for places that take bookings by telephone.
+const PLATFORM_HOSTS: [Exclude<Platform, 'none'>, RegExp][] = [
+  ['resy', /resy\.com/i],
+  ['opentable', /opentable\.(com|co\.uk)/i],
+  ['tock', /exploretock\.com/i],
+];
+
+export interface PlatformFinding {
+  platform: Platform;
+  /** The booking page they linked, which always beats one we construct. */
+  url: string | null;
+}
+
+/**
+ * What a page says about where it takes bookings.
+ *
+ * Deliberately only looks for the platform's own domain. Matching the word
+ * "resy" anywhere would find it in "nursery" and in prose about somebody's
+ * reservation policy; a link to resy.com is a fact.
+ */
+export function platformFromHtml(html: string | null | undefined): PlatformFinding {
+  const text = String(html ?? '');
+  if (!text) return { platform: 'none', url: null };
+
+  for (const [platform, host] of PLATFORM_HOSTS) {
+    if (!host.test(text)) continue;
+    // The specific link, if one is sitting in an href.
+    const href = new RegExp(`https?://[^"'\\s<>]*${host.source}[^"'\\s<>]*`, 'i').exec(text);
+    return { platform, url: href ? href[0].replace(/&amp;/g, '&') : null };
+  }
+  return { platform: 'none', url: null };
+}
+
+/** The number somebody rings when there is no platform at all. */
+export function phoneFromHtml(html: string | null | undefined): string | null {
+  const text = String(html ?? '');
+  const tel = /href=["']tel:([+0-9()\-.\s]{7,})["']/i.exec(text);
+  if (!tel) return null;
+  const cleaned = tel[1].replace(/[^\d+]/g, '');
+  return cleaned.length >= 7 ? cleaned : null;
+}
