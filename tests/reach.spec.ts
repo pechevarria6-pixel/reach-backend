@@ -107,16 +107,21 @@ test.describe('3. Discover tab', () => {
   });
 
   test('Clicking a card opens detail view', async ({ page }) => {
-    await page.waitForTimeout(3000);
-    const cards = page.locator('.card');
-    const count = await cards.count();
-    if (count > 0) {
-      await cards.first().click();
-      await page.waitForTimeout(1000);
-      const hasBookNow = await page.locator('text=Book Now').isVisible({ timeout: 5000 }).catch(() => false);
-      const hasAddToGroup = await page.locator('text=Add to a Group Plan').isVisible({ timeout: 5000 }).catch(() => false);
-      expect(hasBookNow || hasAddToGroup).toBeTruthy();
-    }
+    // This looked for ".card", which Discover has never used — so it matched
+    // nothing, skipped its own assertion, and reported green for months. A
+    // test that cannot fail is worse than no test, because the suite says it
+    // is covered.
+    const cards = page.locator('.exp-card');
+    await expect(cards.first()).toBeVisible({ timeout: 25000 });
+
+    await cards.first().click();
+    // The detail view offers the two things you can do with a find: go to it,
+    // or put it in front of a group. The wording of the first depends on who
+    // owns the link — "Get tickets" for a ticketed event, "See their page"
+    // for a place you simply walk into.
+    await expect(
+      page.locator('text=/Get tickets|See their page|Put this in front of a group/i').first(),
+    ).toBeVisible({ timeout: 10000 });
   });
 });
 
@@ -210,10 +215,12 @@ test.describe('6. Trip quiz flow', () => {
     if (tabs[2]) await tabs[2].click();
     await page.waitForTimeout(1000);
 
-    // Look for a group to click
-    const cards = await page.locator('.card').all();
-    if (cards.length > 0) {
-      await cards[0].click();
+    // The account under test always has groups; if it does not, this test is
+    // not exercising navigation and should say so rather than pass quietly.
+    const cards = page.locator('.card');
+    await expect(cards.first()).toBeVisible({ timeout: 15000 });
+    {
+      await cards.first().click();
       await page.waitForTimeout(1000);
       // A group opens on its plans: the trips it already has, each with a way
       // in, and a way to start another. "Plan a Trip" was the old label.

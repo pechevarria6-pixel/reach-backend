@@ -1123,7 +1123,10 @@ function DiscoverScreen({push,groups,toast,user,userLocation}){
 
       {/* Main cards */}
       {shown.map(exp=>(
-        <div key={exp.id} style={{margin:"0 20px 14px",borderRadius:20,overflow:"hidden",
+        /* Named, so it can be found. These were anonymous divs, which is why
+           the end-to-end test for "clicking a card opens the detail view"
+           matched nothing and passed without ever clicking one. */
+        <div key={exp.id} className="exp-card" style={{margin:"0 20px 14px",borderRadius:20,overflow:"hidden",
           border:"1px solid "+C.border,cursor:"pointer"}}
           onClick={()=>push("expDetail",{exp,groups})}>
           <div style={{height:175,background:exp.bg,position:"relative"}}>
@@ -1382,21 +1385,33 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             confirmation happen on their site — the button says so rather than
             implying Reach takes the payment. The in-app form below is for
             restaurants, which Reach does handle. */}
-        {exp?.url?(
+        {exp?.url?(()=>{
+          // Whose link this is, said correctly. The condition used to be
+          // "has a url", so a wine bar found on Yelp — a place you walk into
+          // — was offered as "Get tickets", with "Tickets are sold by
+          // Ticketmaster" underneath. Nobody sells tickets to a wine bar,
+          // and sending somebody off expecting a checkout that does not
+          // exist is worse than saying nothing.
+          const ticketed=exp.provider==="ticketmaster";
+          const seller=ticketed?"Ticketmaster":null;
+          return(
           <>
             <button className="bp" style={{marginBottom:8,width:"100%",background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`}}
               onClick={()=>{
                 window.open(exp.url,"_blank","noopener,noreferrer");
                 setSentOff(true);
-                toast("Handing you over to Ticketmaster");
+                toast(seller?`Handing you over to ${seller}`:"Opening their page");
               }}>
-              🎟️ Get tickets
+              {ticketed?"🎟️ Get tickets":"🔗 See their page"}
             </button>
             <div style={{fontSize:11.5,color:C.t3,marginBottom:12,lineHeight:1.5,textAlign:"center"}}>
-              Tickets are sold by Ticketmaster. You'll pay and get your confirmation there.
+              {ticketed
+                ?"Tickets are sold by Ticketmaster. You'll pay and get your confirmation there."
+                :"Opens their own page. Hours and prices are theirs, not ours."}
             </div>
           </>
-        ):(
+          );
+        })():(
           <button className="bp" style={{marginBottom:10,width:"100%",background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`}}
             onClick={()=>setBooking(true)}>
             🎯 Book Now
