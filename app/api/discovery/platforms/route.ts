@@ -37,13 +37,19 @@ export async function GET(req: NextRequest) {
 
   const db = createServerClient();
 
-  // Only restaurants, only ones we have not asked about, only ones with a
-  // site to read. Re-running is cheap and never re-reads a page it has
-  // already understood.
+  // Only restaurants, only ones we have not settled, only ones with a site to
+  // read. Re-running is cheap and never re-reads a page it has understood.
+  //
+  // "Not settled" is two things, not one. A venue with no platform has never
+  // been asked. A venue with a platform but no method was asked before the
+  // method column existed, and recorded as having no third party without
+  // anybody working out what it does instead — six Aberdeen restaurants sat
+  // like that, showing "none" and offering nothing. Filtering on the platform
+  // alone meant they could never come round again.
   const { data: venues, error } = await db
     .from('discovery_venues')
-    .select('id, name, website, reservation_platform')
-    .is('reservation_platform', null)
+    .select('id, name, website, reservation_platform, reservation_method')
+    .or('reservation_platform.is.null,reservation_method.is.null')
     .not('website', 'is', null)
     .ilike('interest', '%restaurant%')
     .limit(PER_RUN);
