@@ -599,7 +599,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   const solo=g=>(g?.memberIds||[]).length<=1;
   const actions=[
     ...allPlans.filter(p=>p.status==="approved").map(p=>({
-      type:"book",rank:0,text:`${p.title} is ready to book`,sub:"Everyone's in — this is the last step",plan:p,cta:"Book →"})),
+      // "This is the last step" is a promise the next screen cannot always
+      // keep: a trip can be approved and still have nothing priced to
+      // charge for, in which case checkout correctly refuses and the person
+      // has been walked into a dead end by their own home screen. What is
+      // certainly true is that this is where booking happens.
+      type:"book",rank:0,text:`${p.title} is ready to book`,sub:"Everyone's in — let's see what we can get booked",plan:p,cta:"Book →"})),
     ...allPlans.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
       type:"vote",rank:1,text:`${p.group.name} is deciding on ${p.title}`,
       sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →"})),
@@ -6544,7 +6549,15 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
         <span style={{fontSize:14,color:C.t2}}>{participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`}</span>
-        <span style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>{fmt(myShareCents)}</span>
+        {/* A figure here while the button is disabled is the screen saying
+            "you owe $1,474" and "we're still pricing this" at once. The
+            server's funding target was zero and this still read $1,474,
+            because with nothing quoted the share falls back to the trip's
+            budget — an estimate, printed in the place a person reads as a
+            bill. Until there is something real to charge, no number. */}
+        <span style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>
+          {checkout.canPay?fmt(myShareCents):"—"}
+        </span>
       </div>
       {/* Priced separately from the total above, which is this member's
           share: concierge rows are real things being arranged whose cost is
