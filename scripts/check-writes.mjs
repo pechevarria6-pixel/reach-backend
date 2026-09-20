@@ -60,11 +60,48 @@ for (const file of files) {
   });
 }
 
+// ─── A Clerk id where this app's id belongs ─────────────────────────────
+// Clerk knows somebody as `user_2abc...`; every table here knows them as a
+// uuid. Both are strings, both truthy, so reaching for the wrong one does
+// not crash: a filter matches no row and reads as an empty account, an
+// insert writes a row belonging to nobody.
+//
+// /api/me returned `dbUser?.id || clerkId`, so a new account whose row was
+// not there yet handed the client a Clerk id as its own id.
+//
+// The columns that hold this app's id for a person, and never Clerk's.
+const OWNER_COLUMNS = '(user_id|created_by|booked_by|fulfilled_by|accepted_by|booked_by|organiser_id|organizer_id)';
+// `clerkId` and `clerk_id` say what they hold. `userId` does not — it is a
+// perfectly good name for this app's uuid, and is only Clerk's when it came
+// straight out of auth() unrenamed, which is checked per file below.
+const CLERK_VALUE = '(clerk[Ii]d|clerk_id)';
+const CLERK_MISUSE = [
+  // .eq('user_id', clerkId)
+  new RegExp(`\\.(eq|in|match)\\(\\s*['\"]${OWNER_COLUMNS}['\"]\\s*,\\s*${CLERK_VALUE}\\b`),
+  // { user_id: clerkId }
+  new RegExp(`${OWNER_COLUMNS}\\s*:\\s*${CLERK_VALUE}\\b`),
+  // id: dbUser?.id || clerkId
+  new RegExp(`\\b(id|user_id)\\s*:[^,;\\n]*\\|\\|\\s*${CLERK_VALUE}\\b`),
+];
+
+for (const file of files) {
+  readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+    if (/^\s*(\/\/|\*)/.test(line)) return;                 // a comment about it is fine
+    if (/clerk_id['\"]\s*,\s*clerk/i.test(line)) return;      // filtering the clerk_id column by a clerk id is correct
+    for (const re of CLERK_MISUSE) {
+      if (!re.test(line)) continue;
+      problems.push({ file, line: i + 1, text: line.trim().slice(0, 72) });
+      break;
+    }
+  });
+}
+
 console.log('');
 if (problems.length) {
-  console.log(`  ${problems.length} write(s) whose result is never read:\n`);
+  console.log(`  ${problems.length} problem(s):\n`);
   for (const p of problems) console.log(`  ${p.file}:${p.line}  ${p.text}`);
   console.log('\n  Read the error, or say on the line above why it does not matter.');
+  console.log('  A Clerk id in an owner column: resolve through requireUser() and pass ctx.user.id.');
   process.exit(1);
 }
-console.log(`  ✓ every write in ${files.length} files reads its result\n`);
+console.log(`  ✓ every write in ${files.length} files reads its result, and no Clerk id reaches an owner column\n`);

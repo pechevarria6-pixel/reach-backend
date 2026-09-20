@@ -101,7 +101,18 @@ export async function GET() {
 
   return NextResponse.json({
     joinedGroups,
-    id: dbUser?.id || clerkId,
+    // Null rather than the Clerk id.
+    //
+    // This read `dbUser?.id || clerkId`, so when the row was missing — the
+    // first moments of a new account, or a failed find-or-create — the app's
+    // id came back as `user_2abc...`. Both are strings and both are truthy,
+    // so nothing downstream noticed: a filter keyed on it matches no row and
+    // reads as an empty account, and an insert keyed on it writes a row
+    // belonging to nobody.
+    //
+    // Null is the honest answer to "which id is this person" when we do not
+    // have one yet, and it is the answer a caller can actually check.
+    id: dbUser?.id ?? null,
     clerkId,
     email,
     avatar: avatar_url,

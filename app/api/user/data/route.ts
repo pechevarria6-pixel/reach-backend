@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireUser, isFail } from '@/lib/auth';
 import { stripe } from '@/lib/stripe';
 import { sendDeletionConfirmation } from '@/lib/email';
 
 // GET — download all user data (GDPR Article 20)
 export async function GET() {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // One boundary. It resolves the Clerk id to this app's id once, so nothing
+  // below has to know there are two kinds of id for the same person.
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
-  const supabase = createServerClient();
-  const { data: user } = await supabase.from('users').select('*').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const supabase = ctx.db;
+  const { data: user, error: readUser } = await supabase
+    .from('users').select('*').eq('id', ctx.user.id).single();
+  if (readUser || !user) {
+    console.error('[user/data] could not read the account', { code: readUser?.code });
+    return NextResponse.json({ error: 'Could not read your account just now' }, { status: 500 });
+  }
 
   const [groups, payments, votes, loyalty, auditLogs] = await Promise.all([
     supabase.from('group_members').select('groups(name, emoji)').eq('user_id', user.id),
@@ -46,15 +51,20 @@ export async function GET() {
 
 // DELETE — request account deletion (GDPR Article 17)
 export async function DELETE(req: NextRequest) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
+  const clerkId = ctx.user.clerk_id;
 
   const body = await req.json();
   if (body.confirm !== 'DELETE') return NextResponse.json({ error: 'Must confirm with {"confirm":"DELETE"}' }, { status: 400 });
 
-  const supabase = createServerClient();
-  const { data: user } = await supabase.from('users').select('id, email, stripe_customer_id, deletion_requested_at').eq('clerk_id', clerkId).single();
-  if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+  const supabase = ctx.db;
+  const { data: user, error: readUser } = await supabase
+    .from('users').select('id, email, stripe_customer_id, deletion_requested_at').eq('id', ctx.user.id).single();
+  if (readUser || !user) {
+    console.error('[user/data] could not read the account', { code: readUser?.code });
+    return NextResponse.json({ error: 'Could not read your account just now' }, { status: 500 });
+  }
   if (user.deletion_requested_at) return NextResponse.json({ message: 'Deletion already scheduled', scheduled_at: user.deletion_requested_at });
 
   const deletionDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -92,20 +102,23 @@ export async function DELETE(req: NextRequest) {
 
 // PATCH — update user preferences (GDPR Article 16)
 export async function PATCH(req: NextRequest) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
   const body = await req.json();
   const allowed = ['name', 'seat_preference', 'dietary_needs', 'climate_preference', 'consent_personalized', 'consent_analytics', 'consent_marketing', 'consent_third_party', 'travel_style', 'trip_frequency', 'budget_range', 'favorite_activities', 'cuisines', 'music_genres', 'dining_vibe', 'drink_style', 'nightlife_style', 'concert_types', 'activity_vibe', 'no_way_jose', 'trip_summary'];
   const updates = Object.fromEntries(Object.entries(body).filter(([k]) => allowed.includes(k)));
   if (Object.keys(updates).length === 0) return NextResponse.json({ error: 'No valid fields' }, { status: 400 });
 
-  const supabase = createServerClient();
+  const supabase = ctx.db;
   // The error used to be discarded and this answered "Profile updated"
   // whatever happened. That is the taste quiz's save path — the answers the
   // whole app personalises from — so a failed write told somebody their
   // preferences were stored and they were not.
-  const { error } = await supabase.from('users').update(updates).eq('clerk_id', clerkId);
+  // By this app's id, not Clerk's. Both are strings and both are truthy, so
+  // reaching for the wrong one does not crash — it matches no row and reads
+  // as a save that worked.
+  const { error } = await supabase.from('users').update(updates).eq('id', ctx.user.id);
   if (error) {
     // Code and message only: `updates` is what this person just told us about
     // themselves, and error.details can quote the row straight back.

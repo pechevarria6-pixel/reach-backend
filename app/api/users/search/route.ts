@@ -10,12 +10,13 @@
 // email through POST /api/groups/[id]/members, which sends them an invite and
 // tells the caller nothing about whether that address already has an account.
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@clerk/nextjs/server';
-import { createServerClient } from '@/lib/supabase';
+import { requireUser, isFail } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
-  const { userId: clerkId } = auth();
-  if (!clerkId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Through the one boundary, so the Clerk id is turned into this app's id
+  // once and nothing downstream has to know there are two kinds.
+  const ctx = await requireUser();
+  if (isFail(ctx)) return ctx.error;
 
   const raw = req.nextUrl.searchParams.get('q') || '';
   // PostgREST parses .or() as an expression: an unescaped comma, paren, or
@@ -23,18 +24,13 @@ export async function GET(req: NextRequest) {
   const q = raw.trim().replace(/[,()\\%*]/g, '').slice(0, 60);
   if (q.length < 2) return NextResponse.json({ users: [] });
 
-  const supabase = createServerClient();
-  const { data: me, error: meError } = await supabase
-    .from('users').select('id').eq('clerk_id', clerkId).maybeSingle();
-  if (meError) {
-    console.error('[users/search] could not identify the caller', meError);
-    return NextResponse.json({ error: 'Could not search just now' }, { status: 500 });
-  }
-  if (!me) return NextResponse.json({ users: [] });
+  // requireUser has already found or made the row, so there is no "who?"
+  // case left to handle here.
+  const supabase = ctx.db;
 
   // The groups the caller is in, then everybody in those groups.
   const { data: mine, error: minesError } = await supabase
-    .from('group_members').select('group_id').eq('user_id', me.id);
+    .from('group_members').select('group_id').eq('user_id', ctx.user.id);
   if (minesError) {
     console.error('[users/search] could not read the caller\'s groups', minesError);
     return NextResponse.json({ error: 'Could not search just now' }, { status: 500 });
@@ -48,7 +44,7 @@ export async function GET(req: NextRequest) {
     console.error('[users/search] could not read group members', circleError);
     return NextResponse.json({ error: 'Could not search just now' }, { status: 500 });
   }
-  const ids = [...new Set((circle || []).map(r => r.user_id))].filter(id => id !== me.id);
+  const ids = [...new Set((circle || []).map(r => r.user_id))].filter(id => id !== ctx.user.id);
   if (!ids.length) return NextResponse.json({ users: [] });
 
   // Names only. An address is never part of the answer, so a match cannot be
