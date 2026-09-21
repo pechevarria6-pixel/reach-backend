@@ -60,6 +60,11 @@ test('nothing priced means nobody can pay', () => {
   assert.equal(s.totalCents, 0);
   // The screenshot had this button live at $0.
   assert.equal(s.canPay, false);
+  // Still "pricing", and rightly: these are tables somebody is arranging,
+  // and a price does arrive once they are confirmed. That is different from
+  // a plan where nothing is chargeable and nothing is being arranged, which
+  // waits for a quote that is never coming — see below.
+  assert.equal(s.nothingToCharge, false);
   assert.equal(s.blockedCopy, "We're still pricing this — check back soon.");
   assert.equal(s.conciergeNote, '+ a few things we price once they are confirmed');
 });
@@ -164,4 +169,36 @@ test('a table somebody rings up about is still not a purchase', () => {
   assert.equal(s.totalCents, 33401, 'the dinner is settled at the venue');
   assert.equal(s.canPay, true);
   assert.equal(s.conciergeNote, '+ a few things we price once they are confirmed');
+});
+
+// ─── A plan can be finished without Reach taking any money ──────────────
+
+test('nothing chargeable is not the same as nothing priced yet', () => {
+  // The concert case. The ticket is bought from the seller, the bar is a
+  // walk-in, and no quote is ever coming. This read "We're still pricing
+  // this — check back soon" over a permanently dead button.
+  const state = checkoutState([]);
+  assert.equal(state.nothingToCharge, true);
+  assert.equal(state.canPay, false);
+  assert.match(state.blockedCopy ?? '', /yours to book/);
+  assert.doesNotMatch(state.blockedCopy ?? '', /still pricing/);
+});
+
+test('something chargeable and unpriced still says we are pricing it', () => {
+  // The opposite case, where waiting IS the right answer.
+  const state = checkoutState([
+    { id: 'a', vertical: 'hotel', mode: 'native', status: 'quoted', price_cents: null },
+  ] as never);
+  assert.equal(state.nothingToCharge, false);
+  assert.equal(state.canPay, false);
+  assert.match(state.blockedCopy ?? '', /still pricing/);
+});
+
+test('a priced row still pays as before', () => {
+  const state = checkoutState([
+    { id: 'a', vertical: 'hotel', mode: 'native', status: 'quoted', price_cents: 12000 },
+  ] as never);
+  assert.equal(state.nothingToCharge, false);
+  assert.equal(state.canPay, true);
+  assert.equal(state.blockedCopy, null);
 });

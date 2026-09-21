@@ -1,13 +1,11 @@
 import { createServerClient } from './lib/supabase.ts';
 const db = createServerClient();
 const { data: plans } = await db.from('plans')
-  .select('id, title, type, destination_city, start_date, end_date, budget_cents, created_at')
-  .ilike('title', '%milk carton%');
+  .select('id, title, type, destination_city, destination_country, start_date, end_date, budget_cents, status, solo_mode, group_id')
+  .order('created_at', { ascending: false });
 for (const p of plans ?? []) {
-  console.log(`plan "${p.title}" type=${p.type} city=${p.destination_city ?? 'NULL'} ${p.start_date}→${p.end_date} budget=${p.budget_cents} created=${String(p.created_at).slice(0,16)}`);
-  const { data: items } = await db.from('itinerary_items')
-    .select('title, scheduled_time, booking_mode, cost_cents, created_at')
-    .eq('plan_id', p.id).order('sort_order');
-  console.log(`  ${items?.length} items, created ${String(items?.[0]?.created_at).slice(0,16)}`);
-  for (const i of (items ?? []).slice(0,3)) console.log(`   ${i.scheduled_time} · ${String(i.title).slice(0,60)} · ${i.booking_mode} · $${(i.cost_cents??0)/100}`);
+  const { count } = await db.from('itinerary_items').select('id',{count:'exact',head:true}).eq('plan_id', p.id);
+  const { data: pref } = await db.from('plan_preferences').select('summary_text').eq('plan_id', p.id).limit(1);
+  console.log(`${String(p.title).slice(0,30).padEnd(32)} ${String(p.type).padEnd(10)} city=${String(p.destination_city ?? 'NULL').padEnd(14)} ${p.start_date ?? '—'}→${p.end_date ?? '—'} $${(p.budget_cents??0)/100} items=${count} ${p.status}`);
+  if (pref?.[0]?.summary_text) console.log(`    goal: "${String(pref[0].summary_text).slice(0,70)}"`);
 }

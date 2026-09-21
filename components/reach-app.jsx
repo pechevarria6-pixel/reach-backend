@@ -7508,9 +7508,18 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       {checkout.conciergeNote?(
         <div style={{fontSize:12,color:C.t2,marginBottom:10,padding:"0 4px"}}>{checkout.conciergeNote}</div>
       ):null}
-      <button disabled={busy||!checkout.canPay} onClick={startPayment}
-        style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16,opacity:(busy||!checkout.canPay)?.6:1}}>
-        {busy?"One sec\u2026":"Looks good"}</button>
+      {/* Nothing for Reach to charge, and nothing coming. A concert whose
+          ticket is bought from the seller, an evening of walk-ins. This
+          button sat disabled for ever under "we're still pricing this", so
+          a plan already as finished as it would ever get looked permanently
+          unfinished. There is nothing to pay, so say so and let them go. */}
+      {checkout.nothingToCharge
+        ?<button onClick={onBack}
+          style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16}}>
+          Nothing to pay — take me to the plan</button>
+        :<button disabled={busy||!checkout.canPay} onClick={startPayment}
+          style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16,opacity:(busy||!checkout.canPay)?.6:1}}>
+          {busy?"One sec\u2026":"Looks good"}</button>}
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>
         {/* The button used to be live over a total of $0. Whatever else is
             true, nobody should be invited to pay for a trip we have not

@@ -151,6 +151,19 @@ export interface CheckoutState {
   blockedCopy: string | null;
   /** Set when something real is being arranged that has no price yet. */
   conciergeNote: string | null;
+  /**
+   * Nothing here is Reach's to charge for, and nothing ever will be.
+   *
+   * A concert where the ticket is bought from the seller, an evening of
+   * walk-ins, a day of things you turn up to: the total is nought and no
+   * quote is coming. That used to be indistinguishable from "we have not
+   * priced it yet", so the screen said "we're still pricing this — check
+   * back soon" for ever, over a button that could never switch on, on a
+   * plan that was already as finished as it was ever going to be.
+   *
+   * A plan can be complete without Reach taking any money.
+   */
+  nothingToCharge: boolean;
 }
 
 /**
@@ -174,11 +187,21 @@ export function checkoutState(rows: CheckoutRow[]): CheckoutState {
 
   const canPay = totalCents > 0 && unpricedCharged.length === 0;
 
+  // Nothing chargeable at all AND nothing being arranged, as opposed to
+  // something chargeable we have not priced yet. Waiting is the right
+  // answer to the second, and to a table somebody is still arranging, and
+  // never to the first.
+  const nothingToCharge = chargeable.length === 0 && conciergeCount === 0;
+
   return {
     rows: deduped,
     totalCents,
     canPay,
-    blockedCopy: canPay ? null : "We're still pricing this — check back soon.",
+    nothingToCharge,
+    blockedCopy: canPay ? null
+      : nothingToCharge
+        ? 'Nothing here for Reach to pay for — the tickets and tables are yours to book.'
+        : "We're still pricing this — check back soon.",
     // "concierge" is our word for how we handle something, not a word anybody
     // outside this codebase should have to read. It shipped to the checkout
     // screen under the total and a founder saw it there.
