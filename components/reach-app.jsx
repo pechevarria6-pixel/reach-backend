@@ -8153,6 +8153,16 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
 export default function ReachApp({realUser,onSignOut}={}){
   // Auth flow stages: splash → auth → permissions → biometric → privacy → app
   const [user,setUser]=useState(realUser??null);
+  // The freshest user, for callbacks that outlive the render that made them.
+  //
+  // getLocation() runs once on mount, and the deadline it sets fires nine
+  // seconds later — by which time syncUser() has long since returned. But
+  // the fallback it calls closed over `user` at mount, when it was still
+  // null, so it read no home city and returned silently. The chain that is
+  // meant to go "where you are, then where you live, then ask" stopped
+  // dead at the second step, every single time, on every fresh load.
+  const userRef=useRef(user);
+  useEffect(()=>{ userRef.current=user; },[user]);
   const [tab,setTab]=useState("home");
 
   // ── Theme ────────────────────────────────────────────────
@@ -8493,7 +8503,9 @@ export default function ReachApp({realUser,onSignOut}={}){
    * are different claims, and on a trip they are different places.
    */
   const useHomeCity=async()=>{
-    const city=user?.homeCity;
+    // Read through the ref, never the captured value — see userRef above.
+    const who=userRef.current;
+    const city=who?.homeCity;
     if(!city)return;                       // nothing to fall back to: ask.
     try{
       const res=await fetch("/api/geo?limit=1&q="+encodeURIComponent(city));
@@ -8502,7 +8514,7 @@ export default function ReachApp({realUser,onSignOut}={}){
       if(!hit)return;                      // an unrecognised city is not a point.
       const lat=Number(hit.lat), lng=Number(hit.lng);
       if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
-      setUserLocation({lat,lng,city,airport:user?.homeAirport||null,formatted:city,source:"home"});
+      setUserLocation({lat,lng,city,airport:who?.homeAirport||null,formatted:city,source:"home"});
     }catch(e){
       // No location rather than a wrong one. The screen asks, which is the
       // honest end of the chain.
