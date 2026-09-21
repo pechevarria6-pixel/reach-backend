@@ -2015,7 +2015,79 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
 }
 
 // ─── GROUPS LIST ─────────────────────────────────────────────────────────────
-function GroupsScreen({groups,um,push,loading}){
+/**
+ * A group row you can swipe to delete.
+ *
+ * Deleting a group takes its trips with it, so it asks twice: the swipe
+ * reveals the word, and the word has to be pressed before anything happens.
+ * The confirmation is in the row rather than a dialog over the screen —
+ * a sheet that covers what you are deleting is a sheet you can agree to
+ * without looking at it.
+ *
+ * Touch only for the gesture, with a visible control once it is open, so it
+ * works on a trackpad and to a screen reader as well as to a thumb.
+ */
+function SwipeToDelete({group,onDelete,children}){
+  const [dx,setDx]=useState(0);
+  const [asking,setAsking]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const start=useRef(null);
+  const WIDTH=96;                       // how far it opens
+
+  const onTouchStart=e=>{ start.current=e.touches[0].clientX; };
+  const onTouchMove=e=>{
+    if(start.current==null)return;
+    const moved=e.touches[0].clientX-start.current;
+    // Left only. A right-swipe on a list is the browser's back gesture on
+    // some platforms and not ours to take.
+    setDx(Math.max(-WIDTH,Math.min(0,moved)));
+  };
+  const onTouchEnd=()=>{
+    // Past a third of the way opens it; anything less snaps shut, so a
+    // scroll that drifted sideways does not leave a delete button sitting
+    // open under somebody's thumb.
+    setDx(d=>d<-WIDTH/3?-WIDTH:0);
+    start.current=null;
+  };
+
+  const confirm=async()=>{
+    setBusy(true);
+    const gone=await onDelete(group.id);
+    // On failure the row comes back rather than vanishing optimistically:
+    // the server refuses when a trip is holding a booking, and a row that
+    // disappeared and returned would read as a bug rather than a refusal.
+    setBusy(false);
+    if(!gone){ setAsking(false); setDx(0); }
+  };
+
+  return(
+    <div style={{position:"relative",margin:"0 20px 12px",overflow:"hidden",borderRadius:20}}>
+      {/* Behind the card. Only reachable once the row is open. */}
+      <div style={{position:"absolute",inset:0,display:"flex",justifyContent:"flex-end",alignItems:"stretch"}}>
+        {asking
+          ?<div style={{display:"flex",alignItems:"center",gap:8,padding:"0 14px",background:C.s1,width:"100%",justifyContent:"flex-end"}}>
+            <span style={{fontSize:12.5,color:C.t2,marginRight:"auto"}}>Delete {group.name} and its trips?</span>
+            <button onClick={()=>{setAsking(false);setDx(0);}} disabled={busy}
+              style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999}}>
+              Keep it</button>
+            <button onClick={confirm} disabled={busy}
+              style={{background:C.red,border:"none",color:"#fff",fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,opacity:busy?.6:1}}>
+              {busy?"…":"Delete"}</button>
+          </div>
+          :<button aria-label={`Delete ${group.name}`} onClick={()=>setAsking(true)}
+            style={{width:WIDTH,background:C.red,border:"none",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            Delete</button>}
+      </div>
+      <div style={{transform:`translateX(${asking?-9999:dx}px)`,transition:start.current==null?"transform .18s ease":"none",
+        visibility:asking?"hidden":"visible"}}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
   // Two different questions, and they want two different orders. "What is
   // next" is a date, and it belongs at the top where it can be answered at a
   // glance. "Which group was that" is a name, and a list you search by name
@@ -2144,7 +2216,8 @@ function GroupsScreen({groups,um,push,loading}){
       {named.map(g=>{
         const active=g.plans.filter(p=>p.status!=="completed");
         return(
-          <div key={g.id} className="card" style={{margin:"0 20px 12px",cursor:"pointer"}} {...pressable} onClick={()=>push("groupDetail",{groupId:g.id})}>
+          <SwipeToDelete key={g.id} group={g} onDelete={onDeleteGroup}>
+          <div className="card" style={{cursor:"pointer"}} {...pressable} onClick={()=>push("groupDetail",{groupId:g.id})}>
             <div style={{padding:16}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -2172,6 +2245,7 @@ function GroupsScreen({groups,um,push,loading}){
               )}
             </div>
           </div>
+          </SwipeToDelete>
         );
       })}
       <div style={{height:20}}/>
@@ -8766,6 +8840,21 @@ export default function ReachApp({realUser,onSignOut}={}){
     setStack([]);setTab("groups");
   };
 
+  /**
+   * The swipe row's version: the same delete, answering yes or no instead of
+   * throwing, so a refusal puts the row back rather than leaving a card
+   * mid-gesture. The server's own words are shown — it refuses when a trip
+   * is holding a live booking, and that reason is worth reading.
+   */
+  const deleteGroupFromList=async(groupId)=>{
+    try{ await deleteGroup(groupId); showToast("Group deleted"); return true; }
+    catch(e){
+      console.error("[groups] delete refused",e);
+      showToast(e?.message||"Couldn't delete that group — try again in a moment");
+      return false;
+    }
+  };
+
   const saveGroupToServer=async(group)=>{
     try{
       const isNew=!group.id||group.id.startsWith("g_local_");
@@ -9080,7 +9169,7 @@ export default function ReachApp({realUser,onSignOut}={}){
                 <div className="sc">
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure} setPlaceOverride={setPlaceOverride}/>}
-                  {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading}/>}
+                  {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading} onDeleteGroup={deleteGroupFromList}/>}
                   {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push}/>}
                 </div>
               )}
