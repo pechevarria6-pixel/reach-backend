@@ -275,7 +275,21 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     userId: ctx.user.id, groupId: String(ctx.plan.group_id), planId: params.planId,
   });
 
-  const { data, error } = await ctx.db.from('contributions').insert({
+  // One row per intent.
+  //
+  // Stripe's idempotency key above means a double-tap gets back the SAME
+  // payment intent rather than two — which stops the double charge and does
+  // not stop this insert running twice. Walked on production: two
+  // simultaneous requests produced one intent and two pending contributions
+  // against it. The webhook finds contributions by intent id, so a single
+  // payment of $918.81 would have been recorded twice, and a group's
+  // collected total would have said it was funded on half the money.
+  //
+  // Reading first is not enough for the same reason it was not enough for
+  // the intent — both requests read before either writes. The unique index
+  // is what settles it, and until the migration adding it has run, the
+  // duplicate is cleaned up here: same intent, same person, keep the first.
+  let { data, error } = await ctx.db.from('contributions').insert({
     plan_id: params.planId,
     group_id: ctx.plan.group_id,
     user_id: ctx.user.id,
@@ -283,6 +297,18 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     stripe_payment_intent: pi.id,
     status: 'pending',
   }).select().single();
+
+  // 23505: the index refused a second row for this intent. Not an error for
+  // anybody to see — it means the other half of a double-tap got there
+  // first, and that row is the one to hand back.
+  if (error && (error as { code?: string }).code === '23505') {
+    const existing = await ctx.db.from('contributions')
+      .select().eq('stripe_payment_intent', pi.id).eq('user_id', ctx.user.id).maybeSingle();
+    if (existing.data) {
+      console.log('[funding] a second contribution for one intent was refused — returning the first');
+      data = existing.data; error = null;
+    }
+  }
   if (error) {
     // Stripe now holds a PaymentIntent with no contribution behind it. The
     // webhook finds contributions by that intent id, so a payment made against
