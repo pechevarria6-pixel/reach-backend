@@ -92,6 +92,11 @@ export const SlotSchema = z.object({
   // The route resolves it against the list it handed over, and a slot whose
   // plan names a business it cannot resolve does not go out as written.
   place_ref: z.string().nullish(),
+  // Where the ticket is actually sold, and the venue selling it. Never
+  // written by the model — attached by the route from a listing we read, so
+  // it is a fact or it is absent.
+  ticket_url: z.string().nullish(),
+  venue: z.string().nullish(),
   // Whose wish this answers, when it answers one. "Peter asked for one big
   // night out." Nullish rather than optional: plenty of a good day is just a
   // good day, and a model with nothing to say should send null rather than

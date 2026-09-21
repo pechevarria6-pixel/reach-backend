@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { replaceItinerary, outcomeMessage } from '@/lib/itinerary-replace';
 
 const ItemSchema = z.object({
-  type: z.enum(['flight','hotel','activity','restaurant','transport']),
+  // 'event' was missing, so a concert could only ever be filed as an
+  // activity or a restaurant — and the thing that sells tickets is neither.
+  type: z.enum(['flight','hotel','activity','restaurant','transport','event']),
   title: z.string().min(1),
   subtitle: z.string().nullish(),
   booking_mode: z.enum(['reach','ahead','walk_in']).nullish(),
@@ -15,6 +17,8 @@ const ItemSchema = z.object({
   confirmation_number: z.string().nullish(),
   is_confirmed: z.boolean().nullish(),
   cost_cents: z.number().nullish(),
+  venue_website: z.string().url().max(500).nullish(),
+  venue_name: z.string().max(200).nullish(),
   sort_order: z.number().nullish(),
 });
 
@@ -85,6 +89,10 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
     booking_mode: item.booking_mode || null,
     payment_note: item.payment_note || null,
     because: item.because || null,
+    // Where the ticket is actually sold. Only ever set from a listing we
+    // read, never from prose, so it is a link that works or it is absent.
+    venue_website: item.venue_website || null,
+    venue_name: item.venue_name || null,
     sort_order: idx,
   }));
 

@@ -483,13 +483,20 @@ function itineraryRows(days,nightOut=false){
     // than split a total by fixed percentages. Falls back to the day's figure
     // spread across its slots for anything generated before per-event costs.
     const each=(sl)=>sl.cost!=null?Math.round(sl.cost*100):Math.round(cost/3);
+    // A slot carrying a ticket link IS the event, whichever part of the
+    // evening it landed in. Typed as one so it stops being filed as a
+    // restaurant, and carrying the page that actually sells the ticket —
+    // Reach cannot sell it, and handing somebody straight to who can is a
+    // complete answer rather than a "Reserve ahead" with nothing behind it.
+    const kind=(sl,fallback)=>sl.ticket_url?"event":fallback;
+    const ticket=(sl)=>sl.ticket_url?{venue_website:sl.ticket_url,venue_name:sl.venue||null}:{};
     return [
-      {time:label(day,0),title:m.plan,sub:day.title||"",type:nightOut?"restaurant":"activity",conf:null,filled:false,
-        cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null,because:m.because||null},
-      {time:label(day,1),title:a.plan,sub:"",type:"activity",conf:null,filled:false,
-        cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null,because:a.because||null},
-      {time:label(day,2),title:e.plan,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false,
-        cost_cents:each(e),booking_mode:e.booking||null,payment_note:e.payment||null,because:e.because||null},
+      {time:label(day,0),title:m.plan,sub:day.title||"",type:kind(m,nightOut?"restaurant":"activity"),conf:null,filled:false,
+        cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null,because:m.because||null,...ticket(m)},
+      {time:label(day,1),title:a.plan,sub:"",type:kind(a,"activity"),conf:null,filled:false,
+        cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null,because:a.because||null,...ticket(a)},
+      {time:label(day,2),title:e.plan,sub:day.insider_tip||"",type:kind(e,"restaurant"),conf:null,filled:false,
+        cost_cents:each(e),booking_mode:e.booking||null,payment_note:e.payment||null,because:e.because||null,...ticket(e)},
     ].filter(r=>r.title);
   });
 }
@@ -6463,6 +6470,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                               and cannot do.
                               A flight or a hotel is different: those it
                               genuinely books. */}
+                          {/* A ticketed event says what it is, not what to
+                              do — the button underneath is what to do, and
+                              "Reserve ahead" above a ticket link is two
+                              instructions for one action. */}
+                          {item.type==="event"&&item.venue_website
+                            ?<span className="pill pill-a">Ticketed — buy from the seller</span>
+                            :<>
                           {item.booking_mode==="reach"&&(
                             item.type==="restaurant"
                               ?<span className="pill pill-a">You book it — we'll show you how</span>
@@ -6471,6 +6485,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           {item.booking_mode==="ahead"&&(
                             <span className="pill pill-a">Reserve ahead</span>
                           )}
+                          </>}
                           {item.booking_mode==="walk_in"&&(
                             <span className="pill pill-m">Just turn up</span>
                           )}
@@ -6480,6 +6495,20 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           out. A number is a fact we hold; "call ahead" with no
                           number is our uncertainty handed to somebody to
                           resolve at the door, so it is not said. */}
+                      {/* A ticket is bought from whoever sells it. Reach
+                          cannot sell one, and the honest complete answer is
+                          to hand somebody straight to the page that can —
+                          not "Reserve ahead" with nothing behind it, which
+                          is what a concert used to get. The price is
+                          whatever the seller says; we do not restate it. */}
+                      {item.type==="event"&&item.venue_website&&(
+                        <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
+                          style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,
+                            background:C.accent,color:C.onAccent||"#2C0E18",fontSize:12.5,fontWeight:700,
+                            padding:"8px 14px",borderRadius:999,textDecoration:"none"}}>
+                          🎟️ Get tickets{item.venue_name?` · ${item.venue_name}`:""} →
+                        </a>
+                      )}
                       {item.type==="restaurant"&&item.venue_phone&&(
                         <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,color:C.t2}}>
                           <span style={{flexShrink:0}}>📞</span>

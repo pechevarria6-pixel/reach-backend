@@ -13,6 +13,7 @@ import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/d
 import { realPlacesAmong } from '@/lib/discovery/is-place';
 import { within } from '@/lib/deadline';
 import { locate } from '@/lib/discovery/geocode';
+import { normalise } from '@/lib/discovery/verify';
 import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
@@ -682,6 +683,37 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           day.insider_tip = wouldMangle(day.insider_tip, tip.removed) ? '' : tip.text;
         }
       }
+      // ── The ticket, carried through to something you can press ───────
+      // The listing gave us a venue, a date and the page that sells the
+      // tickets, and until now only the first two survived: the URL was
+      // read as a boolean and thrown away. So the evening said "See The
+      // Milk Carton Kids live at 9:30 CLUB" above a button reading "Reserve
+      // ahead", which is not a thing anybody can do. Reach cannot sell a
+      // ticket; it can hand somebody straight to the page that does, and
+      // that is a complete answer rather than a dead end.
+      //
+      // Attached to the slot that actually names the event rather than to a
+      // fixed position, because which slot holds it is the model's choice.
+      if (realEvent?.url) {
+        const marks = [realEvent.venue, realEvent.title].filter(Boolean).map(v => normalise(String(v)));
+        let attached = false;
+        for (const day of days) {
+          for (const slot of [day.evening, day.afternoon, day.morning, ...(day.daytime ?? [])]) {
+            if (!slot || attached) continue;
+            const here = normalise(slot.plan);
+            if (!marks.some(m => m && here.includes(m))) continue;
+            slot.ticket_url = realEvent.url;
+            slot.venue = realEvent.venue ?? null;
+            attached = true;
+          }
+        }
+        if (!attached) {
+          console.error('[trips itinerary] a real event was found but no slot names it', {
+            title: realEvent.title, venue: realEvent.venue,
+          });
+        }
+      }
+
       if (softened || stripped.size) {
         // Worth shouting about. A high count here means the menu was thin or
         // the rule is not landing, and both are fixable — but only if the
