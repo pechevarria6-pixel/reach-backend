@@ -3785,11 +3785,16 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
 
   /** What an option is called, for saying back what we read. */
   const labelOf=(qid,oid)=>{
+    // `custom:thai` is how the quiz stores something somebody typed rather
+    // than ticked. It is a storage shape, not a word, and it appeared on
+    // screen as "custom:thai" the first time a cuisine outside the six was
+    // recognised. Only the part after the colon is the answer.
+    const id=String(oid).startsWith("custom:")?String(oid).slice(7):String(oid);
     for(const q of [...questions,...nightQuestions]){
-      const o=q.options?.find(x=>x.id===oid);
-      if(o)return (o.l||oid).toLowerCase();
+      const o=q.options?.find(x=>x.id===id);
+      if(o)return (o.l||id).toLowerCase();
     }
-    return String(oid);
+    return id;
   };
   // Said out loud rather than assumed. Skipping a question quietly is how
   // somebody ends up with a plan built on something they never said, and the
@@ -5924,7 +5929,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         if(data.votes)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:data.votes,myVote:data.myVote}:p)}));
         if(data.myVote)setMyVote(data.myVote);
         // Update itinerary
-        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:data.itinerary.map(item=>({time:item.scheduled_time||"",title:item.title,sub:item.subtitle||"",type:item.type,conf:item.confirmation_number||null,filled:item.is_confirmed,cost_cents:item.cost_cents||0,booking_mode:item.booking_mode||null,payment_note:item.payment_note||null}))}:p)}));
+        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:data.itinerary.map(item=>({time:item.scheduled_time||"",title:item.title,sub:item.subtitle||"",type:item.type,conf:item.confirmation_number||null,filled:item.is_confirmed,cost_cents:item.cost_cents||0,booking_mode:item.booking_mode||null,payment_note:item.payment_note||null,
+          // The verified venue and its number. Reach does not take tables, so
+          // the useful thing on a restaurant row is how the person takes one
+          // themselves — and a number somebody can ring is the answer we
+          // have most often.
+          venue_name:item.venue_name||null,venue_phone:item.venue_phone||null}))}:p)}));
         setLoadFailed(false);
       }catch(e){
         // Swallowing this made the itinerary tab say "No itinerary yet" when
@@ -6332,8 +6342,19 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           details belong here rather than at the door. */}
                       {(item.booking_mode||item.payment_note)&&(
                         <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6}}>
+                          {/* Reach does not take a table. The member does, on
+                              their own account and their own card, because
+                              that is where their card's dining benefits live
+                              — Amex on Resy, Chase on OpenTable. A row that
+                              said "Reach will book this" over a restaurant
+                              was promising something the app has never done
+                              and cannot do.
+                              A flight or a hotel is different: those it
+                              genuinely books. */}
                           {item.booking_mode==="reach"&&(
-                            <span className="pill pill-p">Reach will book this</span>
+                            item.type==="restaurant"
+                              ?<span className="pill pill-a">You book it — we'll show you how</span>
+                              :<span className="pill pill-p">Reach will book this</span>
                           )}
                           {item.booking_mode==="ahead"&&(
                             <span className="pill pill-a">Reserve ahead</span>
@@ -6341,6 +6362,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           {item.booking_mode==="walk_in"&&(
                             <span className="pill pill-m">Just turn up</span>
                           )}
+                        </div>
+                      )}
+                      {/* How they take a table, where we have actually found
+                          out. A number is a fact we hold; "call ahead" with no
+                          number is our uncertainty handed to somebody to
+                          resolve at the door, so it is not said. */}
+                      {item.type==="restaurant"&&item.venue_phone&&(
+                        <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,color:C.t2}}>
+                          <span style={{flexShrink:0}}>📞</span>
+                          <span>
+                            {item.venue_name?`${item.venue_name} books by phone: `:"Books by phone: "}
+                            <a href={`tel:${String(item.venue_phone).replace(/[^0-9+]/g,"")}`}
+                              style={{color:C.accentText,fontWeight:600,textDecoration:"none"}}>
+                              {item.venue_phone}
+                            </a>
+                          </span>
                         </div>
                       )}
                       {/* A real payment note runs to a sentence — "cards at the

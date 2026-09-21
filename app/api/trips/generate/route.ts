@@ -367,6 +367,13 @@ Every slot needs its practical details, because the point is that nobody turns
 up and finds out the hard way:
 - "booking": "reach" if it takes reservations, "ahead" if it must be booked
   direct, "walk_in" if you just turn up.
+Never "reach" for a restaurant, a bar or anything with a table. Reach does
+not take tables: the member books their own, on their own account and their
+own card, because that is where their card's dining benefits live — Amex
+opens doors on Resy, Chase on OpenTable, and a reservation made by us on our
+card throws all of that away. A place that takes bookings is "ahead"; one
+that does not is "walk_in". Only a flight, a hotel or a ticketed tour is
+"reach".
 - "payment": leave this an empty string unless you know it for this exact
   place. Not what places like it usually take — this one. We check payment
   against sources that record it, so an empty string costs nobody anything
@@ -434,10 +441,17 @@ about a business that would have to be checked, and none of them was.
 
 Every slot needs its practical details, because the point of this is that
 nobody arrives somewhere and finds out the hard way:
-- "booking": "reach" if it is a hotel, flight, tour or restaurant that can be
-  reserved through a booking system; "ahead" if it needs reserving but only
-  direct — a tasting menu, a permit, a timed entry; "walk_in" if you just turn
+- "booking": "reach" if it is a hotel, flight or ticketed tour Reach can book
+  outright; "ahead" if it needs reserving but the person does it themselves —
+  a table, a tasting menu, a permit, a timed entry; "walk_in" if you just turn
   up.
+Never "reach" for a restaurant, a bar or anything with a table. Reach does
+not take tables: the member books their own, on their own account and their
+own card, because that is where their card's dining benefits live — Amex
+opens doors on Resy, Chase on OpenTable, and a reservation made by us on our
+card throws all of that away. A place that takes bookings is "ahead"; one
+that does not is "walk_in". Only a flight, a hotel or a ticketed tour is
+"reach".
 - "payment": leave this as an empty string unless you know it for this exact
   place, from that place — not from what restaurants of its kind usually do.
   An empty string is the right answer almost every time, and it costs the
