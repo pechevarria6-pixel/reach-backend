@@ -6015,32 +6015,28 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         startDate=best.start;endDate=best.end;
         if(refreshGroup)refreshGroup(groupId);
       }
+      // An evening, or a trip.
+      //
+      // A plan's type is trip, restaurant, concert or weekend, and only
+      // restaurant was checked — so a concert fell through to "trip", ran
+      // the full-day prompt, and answered one gig with four days of
+      // mornings and afternoons.
+      const oneEvening=plan?.type==="restaurant"||plan?.type==="concert";
+      // Where it is, separately from what it is called. A concert's title is
+      // the act's name, so sending that as the destination asked for a trip
+      // to "The Milk Carton Kids" — which is how a Washington gig came back
+      // full of Los Angeles.
+      const where=plan.destinationCity||null;
       const res=await fetch("/api/trips/generate",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          groupId,
-          startDate,
-          endDate,
-          detailTripId:planId,
-          // Which kind of plan this is. Left out, the server defaulted to a
-          // trip and ran the full-day prompt — so "Dinner and Live Jazz"
-          // came back as a pottery studio in the morning, lunch at an
-          // izakaya, and then dinner. The labels said Morning and Afternoon
-          // because the content genuinely was.
-          // Which kind of plan this is. A concert is one evening, and it
-          // was falling through to "trip" because only "restaurant" was
-          // listed — so a single gig was answered with a four-day itinerary.
-          mode:(plan?.type==="restaurant"||plan?.type==="concert")?"night":"trip",
-          // Where it is, separately from what it is called. A concert's
-          // title is the band's name, so sending it as the destination
-          // asked the generator to plan a trip to The Milk Carton Kids —
-          // which is how a gig in Washington came back full of Los Angeles.
-          location:plan.destinationCity||null,
+          groupId, startDate, endDate, detailTripId:planId,
+          mode:oneEvening?"night":"trip",
+          location:where,
           tripData:{
-            destination:plan.destinationCity||plan.title,
-            city:plan.destinationCity||null,
+            destination:where||plan.title, city:where,
             country_code:plan.destinationCountry||null,
-            vibe:plan.vibe||null,costs:null,
+            vibe:plan.vibe||null, costs:null,
           },
         }),
       });
@@ -6053,7 +6049,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan");
       // A restaurant-type plan is the night out. Labelled as an evening
       // rather than a day, same as the generate path.
-      const rows=itineraryRows(d.itinerary,plan?.type==="restaurant");
+      const rows=itineraryRows(d.itinerary,oneEvening);
       if(!rows.length)throw new Error("Nothing came back — try again");
       updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows}:x)}));
       const saved=await saveItineraryToServer(planId,rows);
