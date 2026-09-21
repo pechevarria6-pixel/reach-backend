@@ -23,12 +23,7 @@ const rows=(days:any[],n:boolean)=>{
   });
 };
 const PLANS=[
- {id:"3d686f65-f696-475f-abd7-bd46ff805bbc",g:"6d21d902-710a-4874-a16b-4548c021612b",t:"The Milk Carton Kids",c:"Washington",k:"US",s:"2026-09-21",e:"2026-09-21",n:true},
- {id:"3a23a47c-d897-4991-ac39-2406a4af1777",g:"53339e6d-301f-4cf3-b867-81b0fdfcd58e",t:"Downtown Raleigh Italian Evening",c:"Raleigh",k:"US",s:"2026-09-25",e:"2026-09-25",n:true},
- {id:"07778625-b64d-44ec-b465-ae4cc7460ced",g:"e233f44a-a5ed-41a2-a710-ada99e16b660",t:"Dinner and Live Jazz in the Warehouse District",c:"Raleigh",k:"US",s:"2026-09-20",e:"2026-09-20",n:true},
- {id:"4fbd6ac9-f396-4b5b-bea6-d34292fd4cb7",g:"2cdc3244-cc85-498f-8fc3-edc5d901582d",t:"Greek Dinner & Jazz at The Pit",c:"Raleigh",k:"US",s:"2026-09-26",e:"2026-09-26",n:true},
  {id:"30c78ed1-b351-4815-9107-a8ffed264348",g:"6d21d902-710a-4874-a16b-4548c021612b",t:"Puerto Vallarta, Mexico",c:"Puerto Vallarta",k:"MX",s:"2026-11-02",e:"2026-11-09",n:false},
- {id:"c2ae9ba4-a0d3-4173-8f2e-4fde0ae3244d",g:"6d21d902-710a-4874-a16b-4548c021612b",t:"Moab, Utah, USA",c:"Moab",k:"US",s:"2026-09-17",e:"2026-09-30",n:false},
 ];
 for (const P of PLANS) {
   let cookie=refresh();

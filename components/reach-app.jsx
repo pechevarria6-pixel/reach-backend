@@ -504,7 +504,12 @@ function itineraryRows(days,nightOut=false){
         cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null,because:m.because||null,...ticket(m)},
       {time:label(day,1),title:a.plan,sub:"",type:kind(a,"activity"),conf:null,filled:false,
         cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null,because:a.because||null,...ticket(a)},
-      {time:label(day,2),title:e.plan,sub:day.insider_tip||"",type:kind(e,"restaurant"),conf:null,filled:false,
+      // The tip belongs to the day and is printed under the last slot of
+      // it, so it read as a description of that slot: "the gallery is small
+      // enough to see properly in under an hour" sat beneath dinner at a
+      // restaurant. Marked, so it reads as a note about the day wherever
+      // it lands.
+      {time:label(day,2),title:e.plan,sub:day.insider_tip?`💡 ${day.insider_tip}`:"",type:kind(e,"restaurant"),conf:null,filled:false,
         cost_cents:each(e),booking_mode:e.booking||null,payment_note:e.payment||null,because:e.because||null,...ticket(e)},
     ].filter(r=>r.title);
   });
