@@ -624,9 +624,16 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       if (candidates.length) {
         const at = await locate(tripCity || destination, tripCountry ?? null).catch(() => null);
         if (at) {
+          // Scaled to the plan. Ten names in eight seconds is enough for an
+          // evening and not for a fortnight: a thirteen-day Moab itinerary
+          // ran out of budget and a street name was softened to "a local
+          // spot", leaving "walk the length of a local spot" on the screen.
+          // Still bounded — a check that cannot answer in time costs the
+          // traveller nothing and the fallback is what we did before.
+          const room = Math.min(40, Math.max(10, days.length * 3));
           geography = await within(
-            realPlacesAmong(candidates.slice(0, 10), { lat: at.lat, lng: at.lng }),
-            8000, 'checking the landmarks',
+            realPlacesAmong(candidates.slice(0, room), { lat: at.lat, lng: at.lng }),
+            Math.min(25000, 6000 + room * 700), 'checking the landmarks',
           ).catch(() => new Set<string>());
         }
         console.log('[trips itinerary] names nothing held vouched for', {

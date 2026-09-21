@@ -190,3 +190,10 @@ test('the article in front of a name goes with it', () => {
   assert.equal(text, 'A short walk to a local spot for a band.');
   assert.doesNotMatch(text, /The a local spot|The another nearby/);
 });
+
+test('a phrase about a place with extent is not softened into nonsense', () => {
+  // "Walk the length of Main Street" came out as "walk the length of a
+  // local spot". A venue has no length to walk.
+  assert.equal(wouldMangle('Walk the length of Main Street on your own.', ['Main Street']), true);
+  assert.equal(wouldMangle('Dinner at Main Street Grill afterwards.', ['Main Street Grill']), false);
+});

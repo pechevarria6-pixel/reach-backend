@@ -453,7 +453,16 @@ export function withoutUnverified(
  */
 export function wouldMangle(text: string, removed: string[]): boolean {
   const t = String(text || '').trimStart();
-  return removed.some(name => t.startsWith(name));
+  return removed.some(name => {
+    // The subject of the sentence.
+    if (t.startsWith(name)) return true;
+    // Or a phrase that only makes sense about a place with extent — a
+    // street, a trail, a district. "Walk the length of Main Street" became
+    // "walk the length of a local spot", which is not a sentence about
+    // anything. A venue has no length to walk and no far end to reach.
+    const before = t.slice(0, t.indexOf(name)).toLowerCase();
+    return /\b(the length of|the far end of|all the way along|the whole of)\s*$/.test(before);
+  });
 }
 
 // ─── What a town's scene actually is, counted rather than remembered ─────
