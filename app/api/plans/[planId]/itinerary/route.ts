@@ -82,7 +82,16 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
     subtitle: item.sub || item.subtitle || null,
     scheduled_time: item.time || item.scheduled_time || null,
     confirmation_number: item.conf || item.confirmation_number || null,
-    is_confirmed: !!(item.conf || item.confirmation_number),
+    // Confirmed is not the same as having a reference number for it.
+    //
+    // This read is_confirmed off whether a confirmation number existed, which
+    // is right for something Reach booked and wrong for a ticket bought from
+    // the seller: the traveller has it, the plan is that much more finished,
+    // and we hold no reference for it and should not invent one. An explicit
+    // flag wins where the client sends one.
+    is_confirmed: typeof item.filled === 'boolean'
+      ? item.filled
+      : !!(item.conf || item.confirmation_number),
     cost_cents: item.cost_cents || 0,
     // How you get in and what they take. Reach books what it can; for
     // everything else the traveller needs these before they arrive.

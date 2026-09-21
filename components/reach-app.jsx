@@ -6158,7 +6158,30 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // What Reach itself will put on a card, as opposed to what the traveller
   // pays at the door. Only the first belongs on a "book everything" button.
   const reachItems=(plan?.itinerary||[]).filter(i=>i.booking_mode==="reach");
+  // Things that have to be got, whether or not Reach is the one getting
+  // them. A ticket bought from the seller is still a thing standing between
+  // this plan and being ready, and counting only what Reach books meant a
+  // concert read "0/0 confirmed" — nothing to do, nothing done, nothing that
+  // could ever move. A plan you cannot finish is not a finished plan.
+  const ticketed=(plan?.itinerary||[]).filter(i=>i.type==="event"&&i.venue_website);
+  const mustGet=[...reachItems,...ticketed];
+  const gotAlready=mustGet.filter(i=>i.conf||i.filled).length;
   const reachBookable=reachItems.length;
+
+  /**
+   * "I have the tickets."
+   *
+   * Reach cannot sell a ticket and will not pretend it did. What it can do
+   * is stop asking once somebody has one — so this records that, and the
+   * plan moves. No confirmation number, because we do not hold one and a
+   * made-up reference is worse than none.
+   */
+  const markGot=async(row)=>{
+    const next=(plan.itinerary||[]).map(r=>r===row?{...r,filled:true}:r);
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:next}:p)}));
+    const ok=await saveItineraryToServer(planId,next);
+    if(ok===false)toast("Couldn't save that — try again in a moment");
+  };
   // The itinerary's own estimate, used only until there are real booking rows
   // to price against. Once there are, the server's figure wins: it is the one
   // a card is actually charged for, and two screens disagreeing about the
@@ -6427,13 +6450,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
                     <span style={{fontSize:13,color:C.t1}}>Confirmed</span>
                     <span style={{fontSize:13,color:C.green,fontWeight:600}}>
-                      {reachItems.filter(i=>i.conf).length}/{reachBookable}
+                      {gotAlready}/{mustGet.length}
                     </span>
                   </div>
-                  <div className="pb-t"><div className="pb-f" style={{width:`${(reachItems.filter(i=>i.conf).length/Math.max(reachBookable,1))*100}%`,background:C.green}}/></div>
-                  {plan.itinerary.length>reachBookable&&(
+                  <div className="pb-t"><div className="pb-f" style={{width:`${(gotAlready/Math.max(mustGet.length,1))*100}%`,background:C.green}}/></div>
+                  {plan.itinerary.length>mustGet.length&&(
                     <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
-                      The other {plan.itinerary.length-reachBookable} things on your days are yours to turn up to.
+                      The other {plan.itinerary.length-mustGet.length} things on your days are yours to turn up to.
                     </div>
                   )}
                 </div>
@@ -6593,12 +6616,29 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           is what a concert used to get. The price is
                           whatever the seller says; we do not restate it. */}
                       {item.type==="event"&&item.venue_website&&(
-                        <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
-                          style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,
-                            background:C.accent,color:C.onAccent||"#2C0E18",fontSize:12.5,fontWeight:700,
-                            padding:"8px 14px",borderRadius:999,textDecoration:"none"}}>
-                          🎟️ Get tickets{item.venue_name?` · ${item.venue_name}`:""} →
-                        </a>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,flexWrap:"wrap"}}>
+                          {item.filled
+                            ?<span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,
+                                fontWeight:600,color:C.green}}>
+                              ✓ Tickets sorted
+                            </span>
+                            :<>
+                              <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
+                                style={{display:"inline-flex",alignItems:"center",gap:6,
+                                  background:C.accent,color:C.onAccent,fontSize:12.5,fontWeight:700,
+                                  padding:"8px 14px",borderRadius:999,textDecoration:"none"}}>
+                                🎟️ Get tickets{item.venue_name?` · ${item.venue_name}`:""} →
+                              </a>
+                              {/* The other half of the handoff. Reach cannot
+                                  know somebody bought a ticket on a site it
+                                  does not run, so it asks — and once told,
+                                  stops asking and lets the plan finish. */}
+                              <button onClick={()=>markGot(item)}
+                                style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
+                                  fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+                                I've got them</button>
+                            </>}
+                        </div>
                       )}
                       {item.type==="restaurant"&&item.venue_phone&&(
                         <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,color:C.t2}}>
