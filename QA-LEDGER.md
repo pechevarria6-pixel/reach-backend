@@ -172,3 +172,62 @@ Screen walked and read, not just asserted: renders correctly in dark mode.
 Suite: 69/69 e2e (+2 new = 71), 475/475 unit.
 
 ---
+
+## Pass 3 — Flow B: Discover & location — 2026-09-21 13:3x UTC
+
+Walked: Discover with and without a saved place, geolocation behaviour,
+the whole location precedence chain. | Found: **P0 1** / **P1 1** / P2 1
+
+**Near-miss worth recording.** Discover read "Showing Pittsburgh · NEAR YOU
+IN PITTSBURGH" for an owner in North Carolina — the exact symptom this
+directive names in Flow B. It is **not a bug**: `reach_place_override` in
+localStorage is set to Pittsburgh, precedence is override > GPS > home as
+designed, and the screen says which it is using. I nearly filed a P0 on
+correct behaviour. Checked before filing; the override is the owner's and
+was restored afterwards.
+
+**Measured, and already handled:** `getCurrentPosition` with permission
+**granted** returns neither callback — not success, not error — past its own
+`timeout` option. Confirmed live at 20s+. The code already carries a 9s
+deadline of its own for exactly this, with a comment saying it was measured
+at "forty-five seconds and counting". Nothing to fix.
+
+**P0 — `/api/geo` sent every search to Null Island.** The route I added in
+Pass 1 read coordinates with `Number(searchParams.get('lat'))`. `Number(null)`
+is 0, `Number.isFinite(0)` is true, so a request carrying only `q` was read
+as a point at 0,0 and took the reverse branch. **Every search returned zero
+hits, always** — while reverse lookups worked perfectly, which is what made
+it look like a parsing fault rather than a routing one.
+
+`lib/discovery/where.ts` opens with a comment describing this exact failure
+in `/api/nearby`, and exports `whereFrom()` to prevent it. I read that file
+this morning and wrote the bug back into a new route beside it. Now it uses
+the helper. Fix: `cc80b10`, 4 regression tests on the routing decision, with
+the old reading run against them (`q=Raleigh` → `{lat:0,lng:0}`).
+
+Also added: an empty result is now logged. A 200 carrying nothing looked
+exactly like "no such place" and said nothing anywhere — that silence is how
+this hid behind a green deploy and a passing suite.
+
+**P1 — the home-city fallback could never fire on a fresh load.** Root cause
+of Discover telling somebody to "allow location in your browser" when they
+already have. `getLocation()` runs from a `useEffect` with empty deps, so it
+captures `useHomeCity` at mount, while `syncUser()` is still in flight and
+`user` is null. The 9s deadline fires and calls that captured function, which
+reads no home city and returns silently.
+
+So the deadline worked and what it handed over to had nothing to work with.
+The chain — where you are, then where you live, then ask — stopped dead at
+step two, every time, for everyone.
+
+Fix: `2f04715`, a ref holding the freshest user, read at call time. The
+airport beside it had the same staleness.
+
+**P2 — the empty state says the wrong thing.** "Allow location in your
+browser to see what's on near you" is shown when permission is *granted* and
+the device simply never answered. Denied and never-answered are different
+states and only one of them is the user's to fix. Not yet fixed; logged.
+
+Suite: 479/479 unit, 71/71 e2e.
+
+---

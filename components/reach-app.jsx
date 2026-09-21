@@ -1016,6 +1016,23 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
 }
 
 function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
+  // Whether the browser has actually been refused, or has simply never
+  // answered. Both leave us without a location and they are not the same
+  // thing: only one of them is the person's to fix, and telling somebody to
+  // allow a permission they have already allowed is the app being wrong
+  // about them in a way they cannot act on.
+  //
+  // Measured on production: with permission granted, getCurrentPosition
+  // returned neither callback for over twenty seconds, past its own timeout.
+  // That person was being told to allow location.
+  const [geoAllowed,setGeoAllowed]=useState(null);   // null = not yet known
+  useEffect(()=>{
+    let live=true;
+    navigator?.permissions?.query?.({name:"geolocation"})
+      .then(p=>{ if(live)setGeoAllowed(p.state==="granted"); })
+      .catch(()=>{});                                 // Safari, older browsers
+    return ()=>{ live=false; };
+  },[]);
   const [filter,setFilter]=useState("All");
   const [localRecs,setLocalRecs]=useState([]);
   const [loading,setLoading]=useState(false);
@@ -1231,7 +1248,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   // same time, in slightly different words.
   const emptyNote=loading?null
     :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
-    :reason==="no_location"?"Allow location in your browser to see what's on near you."
+    :reason==="no_location"?(geoAllowed
+        ? "Your device hasn't said where it is. Pick a place above and we'll look there."
+        : "Allow location in your browser to see what's on near you.")
     :reason==="provider_error"?"Couldn't reach the listings just now. Try again shortly."
     :visible.length===0?"Nothing close by just yet. Reach looks again every night."
     :null;
@@ -1285,8 +1304,10 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
           toast={toast} prefix={placePrefix} fallback="Curated for you"/>
         {!userLocation&&(
           <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
-            onClick={()=>toast("Enable location in your browser for local picks")}>
-            📍 Enable location for local recommendations
+            onClick={()=>toast(geoAllowed
+              ? "Your device hasn't answered. Tap \u201cchange\u201d to pick a place."
+              : "Enable location in your browser for local picks")}>
+            📍 {geoAllowed?"Your device hasn't said where it is — pick a place":"Enable location for local recommendations"}
           </div>
         )}
         {/* An invitation, not a gate. Everything below works without it. */}
