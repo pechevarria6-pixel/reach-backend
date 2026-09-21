@@ -58,10 +58,10 @@ const WANTS: Vocab = {
   nightFood: {
     italian: ['italian', 'pasta', 'pizza'],
     japanese: ['japanese', 'sushi', 'omakase', 'ramen'],
-    mexican: ['mexican', 'tacos', 'taqueria'],
+    mexican: ['mexican', 'tacos', 'taqueria', 'burritos'],
     steak: ['steak', 'steakhouse'],
-    seafood: ['seafood', 'oysters', 'fish'],
-    smallplates: ['small plates', 'tapas', 'sharing plates'],
+    seafood: ['seafood', 'oysters', 'fish', 'shellfish'],
+    smallplates: ['small plates', 'tapas', 'sharing plates', 'mezze'],
   },
   nightEnergy: {
     chilled: ['chilled', 'chill', 'quiet', 'relaxed', 'mellow', 'actually talk', 'can talk', 'hear each other'],
@@ -69,6 +69,68 @@ const WANTS: Vocab = {
     big: ['big one', 'big night', 'messy', 'blowout', 'go big'],
   },
 };
+
+/**
+ * Cuisines the lists do not offer, kept as what somebody actually said.
+ *
+ * "night out with my buddy who loves thai food" answered nothing, because
+ * the food question offers six cuisines and thai is not one of them. The
+ * question has a free-text box underneath it for exactly this, so a cuisine
+ * we recognise but cannot tick becomes the typed answer instead — which is
+ * what somebody would have written there themselves.
+ *
+ * `custom:` is the shape the quiz already uses for a typed answer, so
+ * nothing downstream needs to learn a new one.
+ */
+const OTHER_CUISINES: Record<string, string[]> = {
+  thai: ['thai'],
+  indian: ['indian', 'curry'],
+  chinese: ['chinese', 'dim sum', 'szechuan', 'sichuan'],
+  korean: ['korean', 'bbq korean', 'korean bbq'],
+  vietnamese: ['vietnamese', 'pho', 'banh mi'],
+  greek: ['greek', 'souvlaki'],
+  french: ['french', 'bistro'],
+  spanish: ['spanish', 'paella'],
+  'middle eastern': ['lebanese', 'turkish', 'middle eastern', 'falafel'],
+  caribbean: ['caribbean', 'jerk'],
+  ethiopian: ['ethiopian'],
+  american: ['burgers', 'barbecue', 'bbq', 'southern'],
+  vegetarian: ['vegetarian', 'veggie', 'vegan', 'plant based', 'plant-based'],
+};
+
+/**
+ * Which quiz this is, when the opening answer plainly says.
+ *
+ * "night out with my buddy" is somebody telling us it is one evening, and
+ * they were still asked to choose between a night out and a trip on the very
+ * next screen. Only unmistakable words count: "a night away" is a trip, and
+ * "trip" inside "tripping" is not a word at all.
+ */
+const MODE_WORDS: Record<string, string[]> = {
+  night: ['night out', 'a night out', 'evening out', 'dinner tonight', 'drinks tonight',
+          'tonight', 'this evening', 'a night', 'one night out', 'go out tonight'],
+  trip: ['trip', 'weekend away', 'getaway', 'holiday', 'vacation', 'week away',
+         'long weekend', 'days away', 'travel to', 'fly to'],
+};
+
+export function modeFromGoal(goal: string | null | undefined): 'night' | 'trip' | null {
+  const text = String(goal || '').toLowerCase().replace(/[’]/g, "'");
+  if (text.trim().length < 4) return null;
+
+  const at = (words: string[]) => words
+    .map(w => findPhrase(text, w))
+    .filter(i => i >= 0)
+    .sort((a, b) => a - b)[0] ?? -1;
+
+  const night = at(MODE_WORDS.night);
+  const trip = at(MODE_WORDS.trip);
+  if (night < 0 && trip < 0) return null;
+  if (night < 0) return 'trip';
+  if (trip < 0) return 'night';
+  // Both said. Whichever came first is what the sentence is about — "a night
+  // out before the trip" is a night out.
+  return night <= trip ? 'night' : 'trip';
+}
 
 /**
  * What a hard no becomes, per quiz.
@@ -164,6 +226,22 @@ export function answersFromGoal(
         if (!out.noWay.includes(option)) out.noWay.push(option);
         break;
       }
+    }
+  }
+
+  // A cuisine the list does not offer, said as the typed answer the question
+  // already accepts underneath its six options.
+  for (const [cuisine, phrases] of Object.entries(OTHER_CUISINES)) {
+    for (const phrase of phrases) {
+      const at = findPhrase(text, phrase);
+      if (at < 0 || isNegated(text, at)) continue;
+      const got = out.answers.nightFood ?? [];
+      const value = `custom:${cuisine}`;
+      if (!got.includes(value)) {
+        out.answers.nightFood = [...got, value];
+        out.because[`nightFood:${value}`] = phrase;
+      }
+      break;
     }
   }
 

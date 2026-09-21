@@ -8,7 +8,7 @@ import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle, bookedClaim, bookedWording } from "@/lib/checkout";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
-import { answersFromGoal, summarise } from "@/lib/goal";
+import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 
@@ -448,7 +448,20 @@ function isSoloGroup(g){return (g?.memberIds||[]).length<=1;}
 // Written once because two screens had their own copy and they disagreed: one
 // read day.tips, which the model never returns — the field is insider_tip — so
 // every second-visit tip was silently dropped.
-function itineraryRows(days){
+function itineraryRows(days,nightOut=false){
+  // A night out is one evening, not a day with an evening in it.
+  //
+  // The three slots are the shape the model answers in, and for a night out
+  // the prompt already asks it to use them as the parts of an evening:
+  // where you meet, the main event, what follows. This labelled them
+  // "Morning", "Afternoon" and "Evening" regardless, so somebody who asked
+  // for a night out with a friend was handed a full day and told the first
+  // thing happened in the morning.
+  const SLOTS=nightOut
+    ?["To start","The main event","After"]
+    :["Morning","Afternoon","Evening"];
+  const label=(day,i)=>nightOut?SLOTS[i]:`Day ${day.day} · ${SLOTS[i]}`;
+
   return (days||[]).flatMap(day=>{
     const cost=Math.round((day.cost_today||0)*100);
     // A slot is an object now: what it is, how you get in, and what they take.
@@ -460,11 +473,11 @@ function itineraryRows(days){
     // spread across its slots for anything generated before per-event costs.
     const each=(sl)=>sl.cost!=null?Math.round(sl.cost*100):Math.round(cost/3);
     return [
-      {time:`Day ${day.day} · Morning`,title:m.plan,sub:day.title||"",type:"activity",conf:null,filled:false,
+      {time:label(day,0),title:m.plan,sub:day.title||"",type:nightOut?"restaurant":"activity",conf:null,filled:false,
         cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null,because:m.because||null},
-      {time:`Day ${day.day} · Afternoon`,title:a.plan,sub:"",type:"activity",conf:null,filled:false,
+      {time:label(day,1),title:a.plan,sub:"",type:"activity",conf:null,filled:false,
         cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null,because:a.because||null},
-      {time:`Day ${day.day} · Evening`,title:e.plan,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false,
+      {time:label(day,2),title:e.plan,sub:day.insider_tip||"",type:"restaurant",conf:null,filled:false,
         cost_cents:each(e),booking_mode:e.booking||null,payment_note:e.payment||null,because:e.because||null},
     ].filter(r=>r.title);
   });
@@ -3744,6 +3757,18 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   // question nobody asked.
   const fromGoal=answersFromGoal(answers.goalBlurb,["pace","nightWhere","nightEnergy"]);
   const settledByGoal=new Set(Object.keys(fromGoal.answers));
+
+  // Which quiz this is, when they have already said. "night out with my
+  // buddy who loves thai food" is somebody telling us it is one evening, and
+  // they were still asked to choose between a night out and a trip on the
+  // very next screen.
+  //
+  // Set once, and only while nothing has been picked — tapping the other one
+  // afterwards must win, because a person correcting us is right.
+  const goalMode=modeFromGoal(answers.goalBlurb);
+  useEffect(()=>{
+    if(goalMode&&mode===null)setMode(goalMode);
+  },[goalMode,mode]);
   // Both sets are filtered the same way, so the two have the same shape and
   // the date step lands at the same index in either. Filtering one and not
   // the other is how choosing "A night out" moved the date step out from
@@ -3769,7 +3794,12 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   // Said out loud rather than assumed. Skipping a question quietly is how
   // somebody ends up with a plan built on something they never said, and the
   // answer to that is not to skip less but to show what was read.
-  const goalLine=summarise(fromGoal,labelOf);
+  const readBack=summarise(fromGoal,labelOf);
+  // The mode is named too. It is the one thing we act on before they reach a
+  // screen that shows it, so saying it is the difference between the quiz
+  // having listened and the quiz having guessed.
+  const goalLine=[goalMode?(goalMode==="night"?"a night out":"a trip"):null,readBack]
+    .filter(Boolean).join(" · ")||null;
 
   // A hard no they wrote is ticked on the list rather than only applied
   // behind the scenes, so the screen and the plan agree about what was heard.
@@ -4393,7 +4423,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         realId=await _sp2.catch(()=>null)||np.id;
         // No airfare and no hotel on an evening out.
         const rows=nightOut
-          ?itineraryRows(trip.itinerary)
+          ?itineraryRows(trip.itinerary,true)
           :[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows}:p)}));
         if(saveItineraryToServer)await saveItineraryToServer(realId,rows);
@@ -5828,7 +5858,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // screen when nothing is broken and there is something to do about it.
       if(res.status===409){toast(d.error||"Waiting on the rest of the group");setBuilding(false);return;}
       if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan");
-      const rows=itineraryRows(d.itinerary);
+      // A restaurant-type plan is the night out. Labelled as an evening
+      // rather than a day, same as the generate path.
+      const rows=itineraryRows(d.itinerary,plan?.type==="restaurant");
       if(!rows.length)throw new Error("Nothing came back — try again");
       updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows}:x)}));
       const saved=await saveItineraryToServer(planId,rows);

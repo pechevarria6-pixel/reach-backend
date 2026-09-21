@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   answersFromGoal, tripTypesFromGoal, goalAnswersTripType, isNegated, findPhrase, summarise,
+  modeFromGoal,
 } from '../../lib/goal.ts';
 
 // ─── What somebody does not want ────────────────────────────────────────
@@ -105,4 +106,51 @@ test('the summary names what was taken, so nothing is assumed silently', () => {
   const line = summarise(r, (_q, option) => option);
   assert.match(line as string, /dinner/);
   assert.match(line as string, /no big crowds/);
+});
+
+// ─── Which quiz this is ─────────────────────────────────────────────────
+
+test('a night out says so, and is not asked again', () => {
+  // The reported bug: "night out with my buddy who loves thai food for his
+  // birthday" answered nothing at all, and the very next screen asked
+  // whether this was a night out or a trip.
+  assert.equal(modeFromGoal('night out with my buddy who loves thai food for his birthday'), 'night');
+  assert.equal(modeFromGoal('dinner tonight, indian'), 'night');
+  assert.equal(modeFromGoal('drinks tonight'), 'night');
+});
+
+test('a trip says so too', () => {
+  assert.equal(modeFromGoal('ski trip with the boys in Aspen'), 'trip');
+  assert.equal(modeFromGoal('long weekend away somewhere warm'), 'trip');
+  assert.equal(modeFromGoal('a week away in July'), 'trip');
+});
+
+test('when both are said, the first one is what it is about', () => {
+  // "a night out before the trip" is a night out.
+  assert.equal(modeFromGoal('a night out before the trip'), 'night');
+  assert.equal(modeFromGoal('trip to Lisbon with a night out planned'), 'trip');
+});
+
+test('saying neither leaves it to be asked', () => {
+  // The safe direction: a question skipped wrongly is an answer nobody gave.
+  assert.equal(modeFromGoal("Tim's 40th, somewhere we can actually talk"), null);
+  assert.equal(modeFromGoal(''), null);
+  assert.equal(modeFromGoal('something nice'), null);
+});
+
+test('a cuisine the list does not offer becomes the typed answer', () => {
+  // The food question offers six cuisines and thai is not one of them. It
+  // has a free-text box underneath for exactly this, so a cuisine we
+  // recognise but cannot tick is written there instead.
+  const r = answersFromGoal('night out with my buddy who loves thai food');
+  assert.deepEqual(r.answers.nightFood, ['custom:thai']);
+});
+
+test('the six on the list are still ticked rather than typed', () => {
+  assert.deepEqual(answersFromGoal('sushi tonight').answers.nightFood, ['japanese']);
+});
+
+test('a cuisine somebody rules out is not ordered for them', () => {
+  const r = answersFromGoal('dinner tonight, no indian');
+  assert.ok(!(r.answers.nightFood ?? []).includes('custom:indian'));
 });
