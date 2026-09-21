@@ -751,6 +751,12 @@ you have made up; a day that is simply a good day is allowed to be one.`;
             slot.place_url = cited.url;
             slot.venue = slot.venue ?? cited.name;
           }
+          // What is on there, read off the venue's own page. Carried on the
+          // slot rather than left to the model to mention, because it is the
+          // most useful thing we hold about a place and it must not depend
+          // on whether the sentence happened to include it. If we do not
+          // tell somebody there is a quiz on Wednesday, they do not know.
+          if (cited?.whatsOn?.length) slot.whats_on = cited.whatsOn.slice(0, 2).join(' · ');
 
           const honest = bookingFor(slot.booking, cited, !!slot.ticket_url);
           if (honest !== slot.booking) {

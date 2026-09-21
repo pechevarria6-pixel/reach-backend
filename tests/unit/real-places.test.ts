@@ -218,3 +218,26 @@ test('a ticketed event is arranged, never booked by Reach', () => {
   assert.equal(bookingFor('reach', null, true), 'ahead');
   assert.equal(bookingFor('ahead', null, true), 'ahead');
 });
+
+test('what is on at a place goes in the menu, in the venue\'s own words', () => {
+  // Read off the venue's own page by the harvester. It existed, Discover
+  // used it, and the itinerary menu never looked — so a plan could name a
+  // brewery with no idea there was a quiz on.
+  const withNights: RealPlace = {
+    ...place('p1', 'Red Bear Brewing', 'brewery'),
+    whatsOn: ['Pub Trivia Night — every Wednesday Night at 7 PM'],
+  };
+  const menu = placeMenu([withNights]);
+  assert.match(menu, /Pub Trivia Night — every Wednesday Night at 7 PM/);
+  // And the model is told it may repeat it, because it is checkable.
+  assert.match(menu, /read off the venue/);
+});
+
+test('a place with nothing listed gets nothing invented for it', () => {
+  const menu = placeMenu([place('p1', 'Moab Diner')]);
+  // The venue block only — the rules below it carry an example with a
+  // bullet in, which is not a listing for anywhere.
+  const venues = menu.split('RULES')[0];
+  assert.doesNotMatch(venues, /·/);
+  assert.match(menu, /do not\s+invent one for a place that has none/);
+});

@@ -492,9 +492,14 @@ function itineraryRows(days,nightOut=false){
     // A ticket page for an event; the place's own site for everything
     // else. Both land in venue_website, because from the screen's point
     // of view they are the same thing: where you go to sort this out.
-    const ticket=(sl)=>sl.ticket_url
-      ?{venue_website:sl.ticket_url,venue_name:sl.venue||null}
-      :(sl.place_url?{venue_website:sl.place_url,venue_name:sl.venue||null}:{});
+    const ticket=(sl)=>({
+      ...(sl.ticket_url
+        ?{venue_website:sl.ticket_url,venue_name:sl.venue||null}
+        :(sl.place_url?{venue_website:sl.place_url,venue_name:sl.venue||null}:{})),
+      // What is on there, from the venue's own page. Always carried, never
+      // left to whether the sentence mentioned it.
+      ...(sl.whats_on?{venue_note:sl.whats_on}:{}),
+    });
     return [
       // The day's own title sits under its first slot, which reads as a
       // theme on a trip and as an echo on an evening: "An Evening with The
@@ -6652,6 +6657,26 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           not "Reserve ahead" with nothing behind it, which
                           is what a concert used to get. The price is
                           whatever the seller says; we do not restate it. */}
+                      {/* What is actually on there, in the venue's own
+                          words, read off their own page. This is the most
+                          useful thing we hold about a place — it is a real
+                          reason to be somewhere on a particular night — and
+                          it is shown rather than left to whether the
+                          sentence above happened to mention it. If we do not
+                          tell somebody there is a quiz on Wednesday, they
+                          do not know, and they cannot invite anybody to it. */}
+                      {item.venue_note&&(
+                        <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,color:C.t2}}>
+                          <span style={{flexShrink:0}}>🗓️</span>
+                          <span>
+                            {item.venue_note}
+                            {item.venue_note_credit&&(
+                              <a href={item.venue_note_credit} target="_blank" rel="noopener noreferrer"
+                                style={{color:C.accentText,marginLeft:6,textDecoration:"none"}}>source →</a>
+                            )}
+                          </span>
+                        </div>
+                      )}
                       {/* Anything we hold an address for gets a way in. A
                           ticket page for an event, the place's own site for
                           a table or a class — from here they are the same
@@ -8884,6 +8909,8 @@ export default function ReachApp({realUser,onSignOut}={}){
       venue_website:item.venue_website||null,
       venue_name:item.venue_name||null,
       venue_phone:item.venue_phone||null,
+      venue_note:item.venue_note||null,
+      venue_note_credit:item.venue_note_credit||null,
     })),
     votes:p.votes||{},
     options:p.vote_options||[],

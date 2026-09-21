@@ -28,6 +28,18 @@ export interface RealPlace {
   /** What the model cites. Short on purpose — it is typed back to us. */
   ref: string;
   name: string;
+  /**
+   * What is actually on here, in the venue's own words.
+   *
+   * "Pub Trivia Night, every Wednesday Night at 7 PM". Read off the venue's
+   * own page by the harvest job and stored against it — so it is a fact
+   * with a source, not a guess about what a pub is probably like.
+   *
+   * This existed and never reached a trip: the harvester wrote it, Discover
+   * read it, and the itinerary menu only ever looked at the venue table. So
+   * a plan could name a brewery and had no idea there was a quiz on.
+   */
+  whatsOn?: string[];
   /** "restaurant", "museum", "bar" — from the map's own tag, not guessed. */
   kind: string;
   /** The quiz's word for it — "mexican restaurants" — which is what the
@@ -146,7 +158,7 @@ export async function placesFor(
   const dLng = RADIUS_MILES / Math.max(1, 69 * Math.cos((at.lat * Math.PI) / 180));
   const { data, error } = await db
     .from('discovery_venues')
-    .select('name, kind, interest, website, city, street, lat, lng')
+    .select('id, name, kind, interest, website, city, street, lat, lng')
     .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
     .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng)
     .limit(400);
@@ -168,6 +180,7 @@ export async function placesFor(
     (data ?? [])
       .filter(v => v.name && canTurnUp(String(v.name), [String(v.kind || '')]))
       .map(v => ({
+        id: v.id,
         name: String(v.name),
         kind: String(v.kind || v.interest || 'place').replace(/_/g, ' ').trim() || 'place',
         interest: (v.interest as string | null) || null,
@@ -196,6 +209,33 @@ export async function placesFor(
     });
     if (places.length >= max) break;
   }
+  // What is on at those places, from their own pages.
+  if (places.length) {
+    const ids = new Map<string, RealPlace>();
+    for (const r of rows) {
+      const p = places.find(x => x.name === r.name);
+      if (p && r.id) ids.set(String(r.id), p);
+    }
+    if (ids.size) {
+      const { data: on, error: onErr } = await db
+        .from('discovery_events')
+        .select('venue_id, title, when_text, starts_on')
+        .in('venue_id', [...ids.keys()])
+        .limit(300);
+      if (onErr) {
+        console.error('[real-places] could not read what is on', { code: onErr.code });
+      } else {
+        for (const e of on ?? []) {
+          const p = ids.get(String(e.venue_id));
+          if (!p) continue;
+          const when = e.when_text || e.starts_on;
+          if (!when) continue;
+          (p.whatsOn ??= []).push(`${e.title} — ${when}`);
+        }
+      }
+    }
+  }
+
   return places;
 }
 
@@ -233,7 +273,13 @@ export function placeMenu(places: RealPlace[]): string {
   ];
   for (const [kind, list] of byKind) {
     lines.push(`${kind}:`);
-    for (const p of list) lines.push(`  [${p.ref}] ${p.name}`);
+    for (const p of list) {
+      lines.push(`  [${p.ref}] ${p.name}`);
+      // What is actually on there, read off the venue's own page. Their
+      // words, not ours — "every Wednesday Night at 7 PM" is the pub's own
+      // phrasing and is worth repeating exactly, because it is checkable.
+      for (const on of (p.whatsOn ?? []).slice(0, 3)) lines.push(`        · ${on}`);
+    }
     lines.push('');
   }
   lines.push(
@@ -247,7 +293,14 @@ export function placeMenu(places: RealPlace[]): string {
     '  place_ref to null and names nothing. That is a good answer.',
     '- Do not describe what a place is like inside, what it is known for,',
     '  what it costs, when it is open or how busy it gets. The list gives you',
-    '  a name and a kind. That is everything we know about it.',
+    '  a name, a kind, and sometimes what is on there. That is everything we',
+    '  know about it.',
+    '- Where a place has something listed under it — "· Pub Trivia Night —',
+    '  every Wednesday Night at 7 PM" — that is read off the venue\'s own',
+    '  page and you may say it, in those words. It is the most useful thing',
+    '  on this list: it is a real reason to be somewhere on a particular',
+    '  night. Do not change the day, the time or the name of it, and do not',
+    '  invent one for a place that has none.',
   );
   return lines.join('\n');
 }

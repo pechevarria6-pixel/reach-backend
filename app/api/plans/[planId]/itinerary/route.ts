@@ -102,6 +102,9 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
     // read, never from prose, so it is a link that works or it is absent.
     venue_website: item.venue_website || null,
     venue_name: item.venue_name || null,
+    // What is on at that place, in the venue's own words. Dropped here and
+    // it would show once after generating and never again.
+    venue_note: item.venue_note || null,
     sort_order: idx,
   }));
 
