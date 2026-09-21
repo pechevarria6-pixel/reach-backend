@@ -116,7 +116,9 @@ export async function POST(req: NextRequest) {
     // thing on the form, because it is the only part not picked from a list.
     goalBlurb = null,
   } = body;
-  const isNight = mode === 'night';
+  // `let`, because a saved plan can correct a caller that did not say — see
+  // the detail branch below.
+  let isNightPlan = mode === 'night';
   const fixedPlace = typeof location === 'string' && location.trim() ? location.trim() : null;
   const goal = typeof goalBlurb === 'string' && goalBlurb.trim() ? goalBlurb.trim().slice(0, 500) : null;
 
@@ -172,7 +174,8 @@ export async function POST(req: NextRequest) {
   // Travelling alone is a different trip, not a smaller one. The prompt used
   // to say "GROUP: 1 people" and then plan for a committee.
   const solo = groupSize <= 1;
-  const nights = isNight ? 1 : (startDate && endDate
+  // `let`, and recomputed if the saved plan turns out to be an evening.
+  let nights = isNightPlan ? 1 : (startDate && endDate
     ? Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000)
     : 5);
 
@@ -256,7 +259,20 @@ quoting it were the same as planning around it.\n`
     // arrives, because a late answer cannot arrive.
     if (isUuid) {
       const { data: planRow } = await supabase
-        .from('plans').select('group_id, solo_mode').eq('id', detailTripId).maybeSingle();
+        .from('plans').select('group_id, solo_mode, type').eq('id', detailTripId).maybeSingle();
+
+      // The plan already knows what it is, so a caller that forgets to say
+      // cannot get a full day for an evening. That is exactly what happened:
+      // the request omitted `mode`, this defaulted to a trip, and "Dinner
+      // and Live Jazz" came back as a pottery studio in the morning and
+      // lunch at an izakaya. The client says it now as well; this is so it
+      // does not matter if one ever stops.
+      if (planRow?.type === 'restaurant' && !isNightPlan) {
+        console.error('[generate] plan is an evening but the request did not say — using the evening prompt', { plan: detailTripId });
+        isNightPlan = true;
+        // An evening is one night, whatever dates were passed alongside it.
+        nights = 1;
+      }
       if (planRow?.group_id) {
         try {
           const readiness = await planReadiness(
@@ -321,7 +337,7 @@ about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
     const nightWhen = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = (nightPrefs.food || []).join(', ');
-    const prompt = isNight ? `Plan one evening out: ${destination}.
+    const prompt = isNightPlan ? `Plan one evening out: ${destination}.
 
 ${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
 ${nightWhen ? `When and where: ${nightWhen}` : ''}
@@ -489,7 +505,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
 
   // ── STAGE 1: Fast — just destinations + cost estimates, NO itinerary ───────
   const nightWhere = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
-  const prompt = isNight ? `You are Reach. Generate exactly 3 options for ONE NIGHT OUT near ${departureCity || 'the user'}. BE FAST — overviews and honest costs, no itinerary yet.
+  const prompt = isNightPlan ? `You are Reach. Generate exactly 3 options for ONE NIGHT OUT near ${departureCity || 'the user'}. BE FAST — overviews and honest costs, no itinerary yet.
 
 ${solo ? 'ONE PERSON, on their own.' : `GROUP: ${groupSize} people.`}
 WHEN: ${startDate || 'soon'}${nightPrefs.time ? ` around ${nightPrefs.time}` : ''}

@@ -5848,6 +5848,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           startDate,
           endDate,
           detailTripId:planId,
+          // Which kind of plan this is. Left out, the server defaulted to a
+          // trip and ran the full-day prompt — so "Dinner and Live Jazz"
+          // came back as a pottery studio in the morning, lunch at an
+          // izakaya, and then dinner. The labels said Morning and Afternoon
+          // because the content genuinely was.
+          mode:plan?.type==="restaurant"?"night":"trip",
           tripData:{destination:plan.title,vibe:plan.vibe||null,costs:null},
         }),
       });
