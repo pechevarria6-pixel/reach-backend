@@ -1,21 +1,6 @@
 import { createServerClient } from './lib/supabase.ts';
-import { writeFileSync } from 'node:fs';
 const db = createServerClient();
-const { data: items } = await db.from('itinerary_items').select('*');
-writeFileSync('/tmp/itinerary-backup-2026-09-21.json', JSON.stringify(items, null, 1));
-console.log(`backed up ${items?.length} itinerary items to /tmp/itinerary-backup-2026-09-21.json`);
-
-// The cities these plans are actually about, read from their own titles.
-const FIX: Record<string,{city:string;country:string}> = {
-  'Moab, Utah, USA': { city: 'Moab', country: 'US' },
-  'Puerto Vallarta, Mexico': { city: 'Puerto Vallarta', country: 'MX' },
-  'The Milk Carton Kids': { city: 'Washington', country: 'US' },
-};
-const { data: plans } = await db.from('plans').select('id, title, destination_city');
-for (const p of plans ?? []) {
-  const fix = FIX[p.title as string];
-  if (!fix || p.destination_city) continue;
-  const { error } = await db.from('plans')
-    .update({ destination_city: fix.city, destination_country: fix.country }).eq('id', p.id);
-  console.log(`${p.title}: city ← ${fix.city}, ${fix.country} ${error ? 'FAILED '+error.message : ''}`);
-}
+const KEEP = ['The Milk Carton Kids','Greek Dinner & Jazz at The Pit','Dinner and Live Jazz in the Warehouse District','Downtown Raleigh Italian Evening','Moab, Utah, USA','Puerto Vallarta, Mexico'];
+const { data } = await db.from('plans').select('id, group_id, title, type, destination_city, destination_country, start_date, end_date, vibe');
+const mine = (data ?? []).filter(p => KEEP.some(k => String(p.title).startsWith(k.slice(0,20))));
+console.log(JSON.stringify(mine.map(p=>({id:p.id,groupId:p.group_id,title:p.title,type:p.type,city:p.destination_city,country:p.destination_country,start:p.start_date,end:p.end_date,vibe:p.vibe}))));

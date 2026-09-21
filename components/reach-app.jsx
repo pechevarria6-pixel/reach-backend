@@ -6027,12 +6027,20 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // to "The Milk Carton Kids" — which is how a Washington gig came back
       // full of Los Angeles.
       const where=plan.destinationCity||null;
+      // What this plan is about, in the words somebody used.
+      //
+      // Nothing was sent, so the server had no act to look up and no reason
+      // to think there was one: rebuilding a concert produced a perfectly
+      // good evening in the right city with no concert in it. The title is
+      // the best thing we hold — for a gig it IS the act's name, which is
+      // exactly what the listing search needs.
+      const about=plan.goalBlurb||plan.title||null;
       const res=await fetch("/api/trips/generate",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
           groupId, startDate, endDate, detailTripId:planId,
           mode:oneEvening?"night":"trip",
-          location:where,
+          location:where, goalBlurb:about,
           tripData:{
             destination:where||plan.title, city:where,
             country_code:plan.destinationCountry||null,
