@@ -93,9 +93,36 @@ export async function GET(req: NextRequest) {
 
     // Only kinds the map can answer, each once, whatever capitalisation an
     // older row stored them under.
-    const kinds = [...new Set<string>((area.interests || []).map((i: string) => kindFor(i).key))]
-      .filter(k => tagsFor(k).length)
-      .slice(0, MAX_KINDS);
+    const wanted = [...new Set<string>((area.interests || []).map((i: string) => kindFor(i).key))]
+      .filter(k => tagsFor(k).length);
+
+    // What this area is already missing goes first.
+    //
+    // A minute is not enough for sixteen kinds — four Overpass calls at up to
+    // twenty-five seconds each — so a city with a long list gets through
+    // about two batches and stops. That is fine once and useless for ever:
+    // every run redid the SAME first two batches, so Puerto Vallarta sat at
+    // seven venues, all restaurants and a gallery, while its remaining
+    // fourteen kinds were never reached at all. "Ran out of time" was
+    // recorded truthfully each night and nothing changed.
+    //
+    // So each run starts with the kinds we hold nothing for here. The area
+    // fills its own gaps over a few nights instead of redoing its first
+    // slice, and no new column is needed to remember where it got to — the
+    // venue table already knows.
+    const { data: held, error: heldErr } = await db
+      .from('discovery_venues')
+      .select('interest')
+      .gte('lat', Number(area.lat) - 0.35).lte('lat', Number(area.lat) + 0.35)
+      .gte('lng', Number(area.lng) - 0.35).lte('lng', Number(area.lng) + 0.35);
+    if (heldErr) {
+      console.error('[discovery/sweep] could not read what this area already holds', { area: name, code: heldErr.code });
+    }
+    const covered = new Set((held ?? []).map(v => kindFor(String(v.interest)).key));
+    const kinds = [
+      ...wanted.filter(k => !covered.has(k)),
+      ...wanted.filter(k => covered.has(k)),
+    ].slice(0, MAX_KINDS);
 
     const findings: Finding[] = [];
     let failed = 0;
