@@ -133,8 +133,10 @@ test('"Reach will book this" survives only where Reach can book', () => {
   assert.equal(bookingFor('reach', diner), 'ahead');
   // Claimed with nothing resolved at all: the least checkable case there is.
   assert.equal(bookingFor('reach', null), 'ahead');
-  // A real listing with a page that sells tickets. Somebody checked.
-  assert.equal(bookingFor('reach', null, true), 'reach');
+  // A real listing with a page that sells tickets is the case we are most
+  // certain about — and still not one Reach books. The ticket is bought from
+  // whoever sells it, which is the whole point of the handoff.
+  assert.equal(bookingFor('reach', null, true), 'ahead');
 });
 
 test('the modes Reach never promised are left alone', () => {
@@ -202,6 +204,17 @@ test('a ticket exempts its own slot, not every slot in the plan', () => {
   // "Reach will book this" appeared over a restaurant table because the
   // exemption was asked of the plan ("does this trip have a gig?") instead
   // of the slot ("is this the gig?").
-  assert.equal(bookingFor('reach', null, true), 'reach');    // the gig
+  // Neither is a Reach booking — a ticket is bought from the seller — but
+  // they were reaching that answer by different routes, and only one of them
+  // was about this slot at all.
+  assert.equal(bookingFor('reach', null, true), 'ahead');    // the gig
   assert.equal(bookingFor('reach', null, false), 'ahead');   // dinner beside it
+});
+
+test('a ticketed event is arranged, never booked by Reach', () => {
+  // It counted as a Reach booking, so it appeared in "1 booking Reach
+  // handles" and in the total on the button that charges a card — for a
+  // ticket nobody here is selling.
+  assert.equal(bookingFor('reach', null, true), 'ahead');
+  assert.equal(bookingFor('ahead', null, true), 'ahead');
 });

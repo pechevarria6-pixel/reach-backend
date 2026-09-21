@@ -540,7 +540,12 @@ export function bookingFor(
   hasTicket = false,
 ): 'reach' | 'ahead' | 'walk_in' {
   if (claimed !== 'reach') return claimed === 'ahead' ? 'ahead' : 'walk_in';
-  if (hasTicket) return 'reach';
+  // A ticketed event is the one thing we are most certain about and still
+  // not something Reach books. The ticket is bought from whoever sells it —
+  // that is the whole point of the handoff — so counting it as a Reach
+  // booking put it in "1 booking Reach handles" and into the total on the
+  // button that charges a card. It is arranged, by them, with a link.
+  if (hasTicket) return 'ahead';
   if (place && BOOKABLE.test(`${place.kind} ${place.interest ?? ''}`)) return 'reach';
   // Claimed and unsupportable. "Reserve ahead" is the honest neighbour: it
   // tells somebody this needs arranging without promising we will do it.
