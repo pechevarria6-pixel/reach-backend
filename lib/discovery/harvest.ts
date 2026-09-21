@@ -240,17 +240,27 @@ const EVENTS_SCHEMA = {
 function extractionPrompt(venue: string, url: string, text: string): string {
   return `This is the text of ${url}, the website of ${venue}.
 
-List every class, course, workshop or event it says people can book.
+List everything this page says is ON there — classes, courses, workshops,
+and the regular nights people turn up to: live music, a quiz, a DJ, a
+weekly session.
+
+Booking is not the test. "Live music every Friday from 7" is exactly the
+kind of thing somebody plans an evening around, and it was being left out
+because nobody books a ticket for it. If the page says it happens, list it.
 
 Rules, in order of importance:
 - Only what this page actually states. Never infer, complete or tidy up.
-- If the page states no bookable classes, return an empty list. An empty
+- If the page states nothing that is on, return an empty list. An empty
   list is the right answer far more often than a plausible one.
+- A menu is not an event. A page of opening hours is not an event. Neither
+  is "we host private parties" — that is a service, not something on.
 - "starts_on" is an ISO date (YYYY-MM-DD) only when the page gives a
   specific date. For "Wednesdays, 7pm" there is no date: return "".
 - "when_text" is the page's own words about when it runs.
 - "price_text" is the page's own words about cost. If it gives none, return
-  "" rather than guessing. Never write "Free" unless it says free.
+  "" rather than guessing. Never write "Free" unless it says free — plenty
+  of regular nights have no cover and the page simply does not mention it,
+  and "Free" would be us saying so rather than them.
 
 Page text:
 
