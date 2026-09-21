@@ -388,3 +388,34 @@ test.describe('12. Theme', () => {
     ).not.toBe('rgba(0, 0, 0, 0)');
   });
 });
+
+test.describe('13. Not found', () => {
+  // Signed out on purpose: a stale link is most often opened by somebody who
+  // is not signed in, and that is exactly when a dead end is worst.
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test('A wrong address is a designed screen, not a dead end', async ({ page }) => {
+    const res = await page.goto(`${BASE_URL}/this-page-does-not-exist`);
+    expect(res?.status()).toBe(404);
+
+    // Next's built-in 404 says "This page could not be found" in black
+    // Helvetica on white, with no link anywhere. Every mistyped URL and
+    // every replaced invitation landed there.
+    await expect(page.locator('body')).not.toContainText('This page could not be found');
+    await expect(page.locator('h1')).toContainText(/isn.t here/i);
+
+    // The part that makes it not a dead end.
+    const home = page.getByRole('link', { name: /take me back/i });
+    await expect(home).toBeVisible();
+    await home.click();
+    await expect(page).toHaveURL(new RegExp(`^${BASE_URL}/(home|sign-in)?`));
+  });
+
+  test('The not-found screen paints a themed background, never transparent', async ({ page }) => {
+    await page.goto(`${BASE_URL}/this-page-does-not-exist`);
+    const bg = await page.locator('.nf-body').evaluate(el => getComputedStyle(el).backgroundColor);
+    // rgba(0,0,0,0) is the flash of white a dark-mode user sees.
+    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
+    expect(bg).not.toBe('transparent');
+  });
+});
