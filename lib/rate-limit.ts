@@ -24,6 +24,25 @@ export interface Allowance {
 export const PER_HOUR = 10;
 
 /**
+ * Rebuilding the days of a plan that already exists.
+ *
+ * Counted apart from creating new ones, because they are not the same act.
+ * Creating asks for three destinations nobody has chosen yet; rebuilding is
+ * somebody fixing a trip they already own, usually because the first answer
+ * was wrong — which is exactly the moment the app should not be telling them
+ * to come back in an hour.
+ *
+ * Measured against a real case: six existing plans needed rebuilding after a
+ * generator fix and the tenth call refused, with no way to finish without
+ * waiting out the window. The limit was protecting against a loop and
+ * catching a repair.
+ *
+ * Still bounded, and still its own budget, so a rebuild loop cannot eat the
+ * allowance for making a new trip and vice versa.
+ */
+export const REBUILDS_PER_HOUR = 30;
+
+/**
  * How many times this person has done this in the last hour.
  *
  * Fails open. A rate limiter that refuses because it could not read its own
@@ -75,4 +94,15 @@ export function tooOften(a: Allowance): string {
       : 'an hour';
   return `That's ${a.limit} trips planned in an hour — give it ${wait} and you can carry on. `
     + 'If something looked stuck rather than finished, tell us and we will look.';
+}
+
+/** The same, for somebody rebuilding days rather than making a new trip. */
+export function rebuiltTooOften(a: Allowance): string {
+  const wait = a.retryAfterMinutes <= 1
+    ? 'a minute'
+    : a.retryAfterMinutes < 60
+      ? `${a.retryAfterMinutes} minutes`
+      : 'an hour';
+  return `That's ${a.limit} rebuilds in an hour — give it ${wait} and you can carry on. `
+    + 'Your days are still here; nothing was lost.';
 }

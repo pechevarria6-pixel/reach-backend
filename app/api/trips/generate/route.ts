@@ -7,7 +7,7 @@ import {
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote } from '@/lib/generation-rules';
 import { planReadiness } from '@/lib/plan-readiness';
-import { allowance, tooOften } from '@/lib/rate-limit';
+import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
 import { realPlacesAmong } from '@/lib/discovery/is-place';
@@ -154,20 +154,35 @@ export async function POST(req: NextRequest) {
   // first anybody would know is the bill. Counted in the database, because a
   // counter in a module variable is per-instance and resets whenever a new
   // serverless instance starts, which is not a limit.
-  const rate = await allowance(supabase, ctx.user.id, 'trip_generated');
+  //
+  // Rebuilding the days of a plan that already exists is counted apart from
+  // creating new ones. They are not the same act: creating asks for three
+  // destinations nobody has chosen, while rebuilding is somebody fixing a
+  // trip they already own — usually because the first answer was wrong,
+  // which is precisely when the app should not be telling them to come back
+  // in an hour. Separate budgets, so neither can starve the other.
+  const rebuilding = !!detailTripId;
+  const action = rebuilding ? 'itinerary_rebuilt' : 'trip_generated';
+  const rate = await allowance(
+    supabase, ctx.user.id, action,
+    rebuilding ? REBUILDS_PER_HOUR : PER_HOUR,
+  );
   if (!rate.allowed) {
-    console.error('[generate] rate limited', { user: ctx.user.id, used: rate.used });
-    return NextResponse.json({ error: tooOften(rate) }, { status: 429 });
+    console.error('[generate] rate limited', { user: ctx.user.id, action, used: rate.used });
+    return NextResponse.json(
+      { error: rebuilding ? rebuiltTooOften(rate) : tooOften(rate) },
+      { status: 429 },
+    );
   }
 
   // Written before the work, not after: a generation that times out or
   // crashes still cost the money it cost, and a limit that only counts the
   // successes is a limit a failing loop walks straight through.
   const { error: counted } = await supabase.from('audit_logs').insert({
-    user_id: ctx.user.id, action: 'trip_generated', resource: 'groups', resource_id: groupId, success: true,
-    metadata: { mode, nights: null },
+    user_id: ctx.user.id, action, resource: 'groups', resource_id: groupId, success: true,
+    metadata: { mode, nights: null, plan: detailTripId ?? null },
   });
-  if (counted) console.error('[audit] could not record trip_generated — this one is not counted', { code: counted.code });
+  if (counted) console.error(`[audit] could not record ${action} — this one is not counted`, { code: counted.code });
 
   // trip_summary arrives in sql/plan-preferences-2026-09-18.sql. Naming a
   // column that does not exist fails the entire select, and this select is

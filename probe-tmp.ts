@@ -1,10 +1,9 @@
 import { createServerClient } from './lib/supabase.ts';
 const db = createServerClient();
-const since = new Date(Date.now()-3600_000).toISOString();
-const { data } = await db.from('audit_logs').select('created_at').eq('action','trip_generated').gte('created_at',since).order('created_at');
-const used = data?.length ?? 0;
-console.log(`allowance: ${used}/10`);
-if (used >= 10) {
-  const oldest = new Date(data![0].created_at as string).getTime();
-  console.log(`next slot in ${Math.max(0,Math.ceil((oldest+3600_000-Date.now())/60000))} min`);
-} else console.log(`${10-used} available now`);
+const { data } = await db.from('audit_logs').select('created_at').eq('action','trip_generated')
+  .gte('created_at', new Date(Date.now()-3600_000).toISOString()).order('created_at');
+console.log(`allowance ${data?.length ?? 0}/10`);
+console.log('last few:', (data??[]).slice(-4).map(d=>String(d.created_at).slice(11,19)).join(', '));
+const { data: it } = await db.from('itinerary_items').select('plan_id, created_at')
+  .gte('created_at', new Date(Date.now()-1800_000).toISOString());
+console.log(`itinerary items written in the last 30 min: ${it?.length ?? 0}`);
