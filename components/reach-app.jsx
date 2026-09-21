@@ -448,6 +448,17 @@ function isSoloGroup(g){return (g?.memberIds||[]).length<=1;}
 // Written once because two screens had their own copy and they disagreed: one
 // read day.tips, which the model never returns — the field is insider_tip — so
 // every second-visit tip was silently dropped.
+/** The day around an evening, offered rather than assumed. */
+function daytimeRows(days){
+  const slot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null,cost:null}:(v||{});
+  return (days||[]).flatMap(day=>(day.daytime||[]).map((raw,i)=>{
+    const d=slot(raw);
+    return {time:i===0?"Earlier that day":"Then",title:d.plan,sub:"",type:"activity",conf:null,filled:false,
+      cost_cents:d.cost!=null?Math.round(d.cost*100):0,booking_mode:d.booking||null,
+      payment_note:d.payment||null,because:d.because||null};
+  })).filter(r=>r.title);
+}
+
 function itineraryRows(days,nightOut=false){
   // A night out is one evening, not a day with an evening in it.
   //
@@ -3677,17 +3688,15 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
       sub:"The most useful thing you can tell us. Who it's for and what you're after — \"Tim's 40th, he hates clubs, somewhere we can actually talk\". Everything after this is a list; this is the bit that isn't.",
       placeholder:"Tim's 40th, somewhere we can actually hear each other…",
     },
-    {
-      id:"nightWhere",icon:"📍",
-      title:"Where should it be?",
-      sub:"Roughly the part of town, not an address.",
-      options:[
-        {id:"water",e:"🌊",l:"By the water"},
-        {id:"city",e:"🏙️",l:"In the city"},
-        {id:"local",e:"🏡",l:"Local and low-key"},
-        {id:"anywhere",e:"🎲",l:"Wherever's good"},
-      ],
-    },
+    // "Where should it be?" used to sit here — by the water, in the city,
+    // local and low-key. It is gone, because it was asking somebody to
+    // describe a place we already know: they are standing in it, or they
+    // named it in the first sentence, and what sort of room they want is
+    // what the energy and kind questions are for. Four options that mostly
+    // meant "you pick" is a tap that buys nothing.
+    //
+    // Still read from the blurb when somebody volunteers it — "drinks by the
+    // water" is a real preference — just never asked for.
     {
       id:"nightKind",icon:"🌃",
       title:"What kind of night?",
@@ -4435,10 +4444,15 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       if(trip.itinerary?.length){
         realId=await _sp2.catch(()=>null)||np.id;
         // No airfare and no hotel on an evening out.
+        // The evening is the plan. The day around it is an offer, kept off
+        // the itinerary until somebody asks for it — "let's make a day of
+        // it" — because a night out answered with a whole day is the app
+        // deciding how long somebody's evening is.
         const rows=nightOut
           ?itineraryRows(trip.itinerary,true)
           :[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
-        updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows}:p)}));
+        const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
+        updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
         if(saveItineraryToServer)await saveItineraryToServer(realId,rows);
         setBuildingItinerary(null);
         push("planDetail",{planId:realId,groupId});
@@ -6315,6 +6329,30 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               </div>
             ):(
               <>
+                {/* An evening is the plan; the day around it is an offer.
+                    Generation returns both and only the evening is on the
+                    itinerary, so somebody who wanted a drink with a friend
+                    gets a drink with a friend — and somebody who wants more
+                    can ask for it. Added once, then the button is gone,
+                    because after that it is simply their plan. */}
+                {(plan.dayOffer||[]).length>0&&(
+                  <div style={{padding:"0 20px 12px"}}>
+                    <button className="bs" onClick={()=>{
+                      const extra=plan.dayOffer||[];
+                      updateGroup(groupId,g=>({...g,plans:g.plans.map(pp=>pp.id===planId
+                        ?{...pp,itinerary:[...extra,...(pp.itinerary||[])],dayOffer:[]}:pp)}));
+                      if(saveItineraryToServer)saveItineraryToServer(planId,[...extra,...(plan.itinerary||[])]);
+                      toast("Added to your day");
+                    }}>
+                      ☀️ Let's make a day of it
+                    </button>
+                    <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.5}}>
+                      {(plan.dayOffer||[]).length} more{" "}
+                      {(plan.dayOffer||[]).length===1?"thing":"things"} nearby, earlier the same day —
+                      {" "}{(plan.dayOffer||[]).map(d=>String(d.title).split(/[,.]/)[0]).join(" · ")}
+                    </div>
+                  </div>
+                )}
                 {/* On the trip itself, the day you are having should not take
                     a scroll to find. Only shown while the trip is running —
                     there is no "today" on a plan for March. */}

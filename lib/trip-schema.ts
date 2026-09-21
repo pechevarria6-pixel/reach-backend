@@ -99,6 +99,18 @@ export const ItineraryDaySchema = z.object({
   evening: SlotSchema,
   cost_today: z.number(),
   insider_tip: z.string(),
+  /**
+   * What the day around it could be, for an evening only.
+   *
+   * A night out is one evening and was being answered with a whole day —
+   * pottery in the morning, lunch, then dinner — for somebody who asked for
+   * a drink with a friend. The evening is the answer; the day is an offer,
+   * kept apart so it can be shown behind "let's make a day of it" rather
+   * than assumed on somebody's behalf.
+   *
+   * Empty on a trip, where every day is already a day.
+   */
+  daytime: z.array(SlotSchema).optional().default([]),
 });
 
 export const ItinerarySchema = z.object({ itinerary: z.array(ItineraryDaySchema) });
@@ -197,9 +209,12 @@ export const ITINERARY_JSON_SCHEMA = {
         type: 'object',
         properties: {
           day: num, title: str, morning: slot, afternoon: slot,
+          // The offer, not the plan: what the day around an evening could
+          // be, shown only if somebody asks for it. Empty on a trip.
+          daytime: { type: 'array', items: slot },
           evening: slot, cost_today: num, insider_tip: str,
         },
-        required: ['day', 'title', 'morning', 'afternoon', 'evening', 'cost_today', 'insider_tip'],
+        required: ['day', 'title', 'morning', 'afternoon', 'evening', 'cost_today', 'insider_tip', 'daytime'],
         additionalProperties: false,
       },
     },

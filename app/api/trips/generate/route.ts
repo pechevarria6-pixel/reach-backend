@@ -348,6 +348,11 @@ about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
       }
     }
     const allVetoesHere = [...allVetoes, ...tripVetoes];
+    // The part of town is no longer asked for. It comes from where they
+    // are, or the city they named in the first sentence, and from what they
+    // want the room to be like — which is what energy and kind already say.
+    // Still used when somebody volunteered it: "drinks by the water" is a
+    // real preference, it just was not worth a question.
     const nightWhen = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = (nightPrefs.food || []).join(', ');
@@ -355,6 +360,10 @@ about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
 
 ${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
 ${nightWhen ? `When and where: ${nightWhen}` : ''}
+Keep it to one part of town — everything within a short walk or a single
+short ride of the first stop, because an evening that crosses a city is
+three journeys and a lot of standing about. Which part is yours to choose
+from where they are and what they are after; do not ask them to pick one.
 ${nightKind ? `What they want out of it: ${nightKind}` : ''}
 ${nightPrefs.energy ? `Energy: ${nightPrefs.energy}` : ''}
 Food tonight: ${nightFood || cuisines.slice(0, 4).join(', ') || 'varied'}
@@ -364,11 +373,17 @@ A good night out, in their words: ${nightlife.join(', ') || 'no preference'}
 Dietary (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
 ${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${wantedBlock}
 
-Return exactly one day. Use its three slots as the shape of an evening:
+Return exactly one day. Use its three slots as the shape of an EVENING — not
+a day. Nothing here happens before late afternoon:
 - "morning" is where they meet first — a bar for a drink, a walk, or the thing
   before the thing. If the evening genuinely starts at dinner, say so there.
 - "afternoon" is the main event: the game, the gig, the show, the booking.
 - "evening" is what follows: dinner, dessert, a last drink.
+
+Then "daytime": two things they could do earlier that same day if they decide
+to make a day of it. Nearby, and they must work as an afternoon on their own —
+somebody who only wanted a drink with a friend is never shown these. If the
+evening is the whole of it, return an empty list rather than padding.
 
 Real venues with real names, all within a short ride of each other, all open
 that evening. About $${effectiveBudget} a head across the whole night, and
