@@ -26,7 +26,7 @@ import { parseModelJSON, textOf } from '@/lib/trip-schema';
 import { anthropicOrNull, askForJSON } from '@/lib/anthropic';
 import {
   PlaybookSchema, PLAYBOOK_JSON_SCHEMA, researchPrompt, nameCorrection,
-  namedThings, expiresAt, startOfLocalDay, positiveInt,
+  namedThings, normaliseAllocation, expiresAt, startOfLocalDay, positiveInt,
 } from '@/lib/playbooks';
 
 export const dynamic = 'force-dynamic';
@@ -222,9 +222,27 @@ export async function GET(req: NextRequest) {
           continue;
         }
 
+        // Percentages and fractions are not the same number. The first real
+        // run produced two rows weighted as fractions and one as whole
+        // percentages, both satisfying z.number() and differing by a factor
+        // of a hundred — a budget multiplied by the second would arrive on a
+        // screen a hundred times too big, looking worked out.
+        //
+        // Where the unit is certain it is repaired, because losing a good
+        // playbook and a paid call over a unit slip helps nobody. Where it
+        // is not, the answer is refused rather than guessed at.
+        const allocation = normaliseAllocation(parsed.budget_allocation_hint);
+        if (!allocation) {
+          console.error('[cron/knowledge] budget weights make no sense', {
+            kind, got: parsed.budget_allocation_hint,
+          });
+          problem = `budget weights sum to neither 1 nor 100: ${JSON.stringify(parsed.budget_allocation_hint)}`;
+          continue;
+        }
+
         // The model is asked to echo the kind back; it is overwritten here
         // anyway, because the row it belongs to is the authority on that.
-        stored = { ...parsed, archetype: kind };
+        stored = { ...parsed, archetype: kind, budget_allocation_hint: allocation };
         problem = null;
         break;
       }

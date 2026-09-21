@@ -304,3 +304,48 @@ export function positiveInt(raw: string | undefined, fallback: number): number {
   const n = Number.parseInt(String(raw ?? ''), 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
+
+// ─── Percentages and fractions are not the same number ──────────────────
+// The first real run produced two playbooks with budget_allocation_hint as
+// fractions — {stay: 0.35, food: 0.2, …} — and one with the same idea as
+// whole percentages: {stay: 30, food: 20, …}. Both satisfy `z.number()`,
+// and they differ by a factor of a hundred.
+//
+// Nothing downstream could tell them apart. A budget multiplied by the
+// second is a hundred times the intended figure, and it would arrive on a
+// screen looking like a number somebody had worked out.
+//
+// The model's meaning is not in doubt either way: thirty per cent of the
+// budget goes on the stay. So the certain case is repaired rather than
+// thrown away — losing a good playbook and a paid call over a unit slip
+// helps nobody — and the uncertain case is refused, because a set of
+// weights that sums to neither one nor a hundred is not a rounding slip,
+// it is an answer we do not understand.
+
+export interface Allocation {
+  stay: number; food: number; activities: number; transport: number;
+}
+
+/** The four weights as fractions of one, or null when they make no sense. */
+export function normaliseAllocation(hint: Partial<Allocation> | null | undefined): Allocation | null {
+  if (!hint) return null;
+  const keys: (keyof Allocation)[] = ['stay', 'food', 'activities', 'transport'];
+  const values = keys.map(k => Number(hint[k]));
+  if (values.some(v => !Number.isFinite(v) || v < 0)) return null;
+
+  const total = values.reduce((a, b) => a + b, 0);
+  if (total <= 0) return null;
+
+  // Already fractions, allowing for a model that rounds to two places.
+  if (total > 0.9 && total < 1.1) return scale(hint, keys, 1);
+  // Whole percentages.
+  if (total > 90 && total < 110) return scale(hint, keys, 100);
+  // Neither. We do not know what was meant, so we do not guess.
+  return null;
+}
+
+function scale(hint: Partial<Allocation>, keys: (keyof Allocation)[], by: number): Allocation {
+  const out = {} as Allocation;
+  for (const k of keys) out[k] = Number(hint[k]) / by;
+  return out;
+}
