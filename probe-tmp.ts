@@ -1,11 +1,21 @@
 import { createServerClient } from './lib/supabase.ts';
+import { writeFileSync } from 'node:fs';
 const db = createServerClient();
-const { data: plans } = await db.from('plans')
-  .select('id, title, type, destination_city, destination_country, start_date, end_date, budget_cents, status, solo_mode, group_id')
-  .order('created_at', { ascending: false });
+const { data: items } = await db.from('itinerary_items').select('*');
+writeFileSync('/tmp/itinerary-backup-2026-09-21.json', JSON.stringify(items, null, 1));
+console.log(`backed up ${items?.length} itinerary items to /tmp/itinerary-backup-2026-09-21.json`);
+
+// The cities these plans are actually about, read from their own titles.
+const FIX: Record<string,{city:string;country:string}> = {
+  'Moab, Utah, USA': { city: 'Moab', country: 'US' },
+  'Puerto Vallarta, Mexico': { city: 'Puerto Vallarta', country: 'MX' },
+  'The Milk Carton Kids': { city: 'Washington', country: 'US' },
+};
+const { data: plans } = await db.from('plans').select('id, title, destination_city');
 for (const p of plans ?? []) {
-  const { count } = await db.from('itinerary_items').select('id',{count:'exact',head:true}).eq('plan_id', p.id);
-  const { data: pref } = await db.from('plan_preferences').select('summary_text').eq('plan_id', p.id).limit(1);
-  console.log(`${String(p.title).slice(0,30).padEnd(32)} ${String(p.type).padEnd(10)} city=${String(p.destination_city ?? 'NULL').padEnd(14)} ${p.start_date ?? '—'}→${p.end_date ?? '—'} $${(p.budget_cents??0)/100} items=${count} ${p.status}`);
-  if (pref?.[0]?.summary_text) console.log(`    goal: "${String(pref[0].summary_text).slice(0,70)}"`);
+  const fix = FIX[p.title as string];
+  if (!fix || p.destination_city) continue;
+  const { error } = await db.from('plans')
+    .update({ destination_city: fix.city, destination_country: fix.country }).eq('id', p.id);
+  console.log(`${p.title}: city ← ${fix.city}, ${fix.country} ${error ? 'FAILED '+error.message : ''}`);
 }

@@ -6027,8 +6027,21 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           // came back as a pottery studio in the morning, lunch at an
           // izakaya, and then dinner. The labels said Morning and Afternoon
           // because the content genuinely was.
-          mode:plan?.type==="restaurant"?"night":"trip",
-          tripData:{destination:plan.title,vibe:plan.vibe||null,costs:null},
+          // Which kind of plan this is. A concert is one evening, and it
+          // was falling through to "trip" because only "restaurant" was
+          // listed — so a single gig was answered with a four-day itinerary.
+          mode:(plan?.type==="restaurant"||plan?.type==="concert")?"night":"trip",
+          // Where it is, separately from what it is called. A concert's
+          // title is the band's name, so sending it as the destination
+          // asked the generator to plan a trip to The Milk Carton Kids —
+          // which is how a gig in Washington came back full of Los Angeles.
+          location:plan.destinationCity||null,
+          tripData:{
+            destination:plan.destinationCity||plan.title,
+            city:plan.destinationCity||null,
+            country_code:plan.destinationCountry||null,
+            vibe:plan.vibe||null,costs:null,
+          },
         }),
       });
       const d=await res.json().catch(()=>({}));
