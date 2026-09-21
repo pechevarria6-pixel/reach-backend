@@ -6120,7 +6120,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           // the useful thing on a restaurant row is how the person takes one
           // themselves — and a number somebody can ring is the answer we
           // have most often.
-          venue_name:item.venue_name||null,venue_phone:item.venue_phone||null}))}:p)}));
+          venue_name:item.venue_name||null,venue_phone:item.venue_phone||null,
+          venue_website:item.venue_website||null}))}:p)}));
         setLoadFailed(false);
       }catch(e){
         // Swallowing this made the itinerary tab say "No itinerary yet" when
@@ -8826,6 +8827,13 @@ export default function ReachApp({realUser,onSignOut}={}){
       // generating and never again — the exact shape of the bug that lost
       // the practicals, and then the trip reasons.
       because:item.because||null,
+      // And the same shape again, caught on screen: the ticket page and the
+      // venue survived generating and vanished on the next load, so a
+      // concert showed "Reserve ahead" with nothing to press — the row knew
+      // where its tickets were sold and the screen was never told.
+      venue_website:item.venue_website||null,
+      venue_name:item.venue_name||null,
+      venue_phone:item.venue_phone||null,
     })),
     votes:p.votes||{},
     options:p.vote_options||[],
