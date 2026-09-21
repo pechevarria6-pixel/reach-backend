@@ -538,12 +538,18 @@ person actually spends there, drinks included. These are the numbers somebody
 budgets against, so be realistic rather than optimistic — and make each day's
 three costs add up to roughly that day's cost_today.
 
-Never write "placeholder", "TBD", "N/A", "Activity" or any other filler. If you
-genuinely cannot fill ${nights} days from the verified list, return fewer days
-rather than padding — a short honest itinerary beats a long one with holes in
-it, and a day of invented restaurants is a hole with a name on it.
+Never write "placeholder", "TBD", "N/A", "Activity" or any other filler.
 
-Write one entry for each of the ${nights} days.
+Write one entry for each of the ${nights} days. All of them. The days come
+from the dates they are going; the venues come from the verified list, and
+those are separate things. A short list is not a reason to give somebody a
+shorter trip — they are still there on the Thursday.
+
+Where the list runs out, write the day without naming a place: "a slow
+morning on the beach", "wander the old town and find lunch where it looks
+busy", "an afternoon doing nothing in particular". That is a true sentence
+about a real day and it is genuinely useful. A named restaurant that does
+not exist is not.
 
 Use the verified list above for every venue you name. Neighbourhoods,
 distances and the shape of the day are yours; the names are not.
@@ -611,6 +617,19 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // A day whose slots say "placeholder" is worse than a missing day: it
       // looks planned. Drop it rather than write a hole into somebody's trip.
       const days = dropFillerDays(parsed?.itinerary ?? []);
+      // Far fewer days than were asked for.
+      //
+      // A seven-night Puerto Vallarta came back as one day — three rows and
+      // $34 for a week — because the prompt said to return fewer days rather
+      // than pad, and that town holds nine verified venues. The instruction
+      // was meant to stop invented restaurants and it stopped Tuesday
+      // through Sunday instead. Loud, because it reaches a screen looking
+      // like a plan rather than like a failure.
+      if (nights > 1 && days.length < Math.ceil(nights / 2)) {
+        console.error('[trips itinerary] came back far shorter than asked', {
+          destination, asked: nights, got: days.length, verified_places: realPlaces.length,
+        });
+      }
       if (days.length < (parsed?.itinerary?.length ?? 0)) {
         console.error('[trips itinerary] dropped filler days', {
           destination, asked: nights,
