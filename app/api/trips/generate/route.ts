@@ -722,6 +722,17 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           // book this" appeared over a restaurant table, which is the exact
           // promise the whole check exists to stop. The ticket is attached
           // above, so the slot can simply be asked.
+          // The place's own site, so somebody can actually go and book it.
+          //
+          // Every one of the 386 verified venues carries a website and not
+          // one of them reached a screen: a trip's itinerary named real
+          // restaurants and gave no way to reserve any of them. The row we
+          // matched has the address; it just was never passed on.
+          if (cited?.url && !slot.ticket_url) {
+            slot.place_url = cited.url;
+            slot.venue = slot.venue ?? cited.name;
+          }
+
           const honest = bookingFor(slot.booking, cited, !!slot.ticket_url);
           if (honest !== slot.booking) {
             console.error('[trips itinerary] downgraded a booking claim we cannot keep', {

@@ -489,7 +489,12 @@ function itineraryRows(days,nightOut=false){
     // Reach cannot sell it, and handing somebody straight to who can is a
     // complete answer rather than a "Reserve ahead" with nothing behind it.
     const kind=(sl,fallback)=>sl.ticket_url?"event":fallback;
-    const ticket=(sl)=>sl.ticket_url?{venue_website:sl.ticket_url,venue_name:sl.venue||null}:{};
+    // A ticket page for an event; the place's own site for everything
+    // else. Both land in venue_website, because from the screen's point
+    // of view they are the same thing: where you go to sort this out.
+    const ticket=(sl)=>sl.ticket_url
+      ?{venue_website:sl.ticket_url,venue_name:sl.venue||null}
+      :(sl.place_url?{venue_website:sl.place_url,venue_name:sl.venue||null}:{});
     return [
       // The day's own title sits under its first slot, which reads as a
       // theme on a trip and as an echo on an evening: "An Evening with The
@@ -1984,7 +1989,12 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             {bookStep===2&&(
               <div style={{padding:"20px 0 30px",textAlign:"center"}}>
                 <div style={{fontSize:60,marginBottom:16}}>🎉</div>
-                <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,marginBottom:8}}>We're on it</div>
+                {/* "We're on it" said Reach was doing something. Reach is
+                    not: there is no confirmation path in this codebase and
+                    nobody rings a venue. What actually happened is that it
+                    was saved, which is worth saying plainly and is not the
+                    same claim. */}
+                <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,marginBottom:8}}>Saved to your plans</div>
                 <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:24}}>
                   {exp.title}, {formatDates(fixedDate||bookDate)}{bookTime?" at "+bookTime:""}, {bookGuests==="8+"?"8+ people":plural(parseInt(bookGuests)||2,"person","people")}. It's saved in {bookedPlan?.groupName||"your plans"} — open it whenever you like.
                 </div>
@@ -1993,14 +2003,31 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                       promise a calendar entry and an automatic group
                       notification, neither of which exists. */}
                   <div style={{fontSize:12,color:C.t3,marginBottom:8,textTransform:"uppercase",letterSpacing:".08em"}}>What happens next</div>
+                  {/* The middle line used to read "Someone at Reach confirms
+                      it with the venue". Nobody does. There is no
+                      confirmation path in this codebase — the request is
+                      written as a pending row and sits there — so it
+                      promised a person who does not exist, on the screen
+                      somebody reads before walking away satisfied.
+                      The link below is the thing that actually books it. */}
                   {["📋 It's in your plans already — nothing to keep track of",
-                    "📞 Someone at Reach confirms it with the venue",
-                    "💳 Nothing is charged until it's confirmed"].map((s,i)=>(
+                    "🤙 The booking itself is yours to make — the link is below",
+                    "💳 Reach charges you nothing for this"].map((s,i)=>(
                     <div key={i} style={{fontSize:13,color:C.t2,padding:"4px 0"}}>{s}</div>
                   ))}
                 </div>
+                {/* Where it is actually booked. Every venue we hold carries
+                    its own address, and until now not one of them reached a
+                    screen — so somebody was told it was handled, and given
+                    nothing to handle it with. */}
+                {exp?.url&&(
+                  <a href={exp.url} target="_blank" rel="noopener noreferrer"
+                    className="bp" style={{width:"100%",marginBottom:8,display:"block",textAlign:"center",textDecoration:"none"}}>
+                    Book it{exp.venue?` at ${exp.venue}`:""} →
+                  </a>
+                )}
                 {bookedPlan&&(
-                  <button className="bp" style={{width:"100%",marginBottom:8}}
+                  <button className="bp" style={{width:"100%",marginBottom:8,background:"none",border:`1px solid ${C.border}`,color:C.t1}}
                     onClick={()=>{setBooking(false);setBookStep(0);push("planDetail",{planId:bookedPlan.planId,groupId:bookedPlan.groupId});}}>
                     Open the plan →
                   </button>
@@ -6620,6 +6647,20 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           not "Reserve ahead" with nothing behind it, which
                           is what a concert used to get. The price is
                           whatever the seller says; we do not restate it. */}
+                      {/* Anything we hold an address for gets a way in. A
+                          ticket page for an event, the place's own site for
+                          a table or a class — from here they are the same
+                          thing: where somebody goes to sort it out. Every
+                          verified venue has one, and none of them reached a
+                          screen until now. */}
+                      {item.type!=="event"&&item.venue_website&&!item.filled&&(
+                        <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
+                          style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,
+                            border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:600,
+                            padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
+                          {item.venue_name||"Their site"} →
+                        </a>
+                      )}
                       {item.type==="event"&&item.venue_website&&(
                         <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,flexWrap:"wrap"}}>
                           {item.filled

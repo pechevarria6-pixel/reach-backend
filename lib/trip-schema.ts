@@ -97,6 +97,10 @@ export const SlotSchema = z.object({
   // it is a fact or it is absent.
   ticket_url: z.string().nullish(),
   venue: z.string().nullish(),
+  // The place's own site, for a slot that names a verified one. Attached by
+  // the route from the row we matched, never written by the model — so it is
+  // the real address or it is absent. Every venue we hold has one.
+  place_url: z.string().nullish(),
   // Whose wish this answers, when it answers one. "Peter asked for one big
   // night out." Nullish rather than optional: plenty of a good day is just a
   // good day, and a model with nothing to say should send null rather than
