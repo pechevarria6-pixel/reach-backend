@@ -43,6 +43,29 @@ export function itineraryDays(
     }
     index.get(key)!.items.push(item);
   }
+
+  // An evening is not a preparation for one.
+  //
+  // Rows are grouped by the "Day N" their label starts with, and anything
+  // without one is what you do before you set off — which is right for a
+  // trip and wrong for a night out, where every row is "To start", "The
+  // main event" or "After" and none of them says Day. A concert's itinerary
+  // was therefore headed "Before you go", above the concert.
+  //
+  // So when nothing in the plan is a numbered day, the single group is the
+  // plan itself, and it takes the date rather than a heading that argues
+  // with the rows beneath it.
+  if (groups.length === 1 && groups[0].key === 'before') {
+    const only = groups[0];
+    only.label = 'The plan';
+    if (startDate) {
+      const when = new Date(startDate + 'T00:00:00');
+      only.dateLabel = when.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+      only.isToday = when.getTime() === today.getTime();
+      only.isPast = when.getTime() < today.getTime();
+    }
+  }
+
   return groups;
 }
 

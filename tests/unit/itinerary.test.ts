@@ -55,3 +55,35 @@ test('nothing in, nothing out — no crash on an empty plan', () => {
   assert.deepEqual(itineraryDays(null, null), []);
   assert.deepEqual(itineraryDays(undefined, undefined), []);
 });
+
+// ─── An evening is not a preparation for one ────────────────────────────
+
+test('a night out is the plan, not what comes before it', () => {
+  // A concert's rows are "To start", "The main event" and "After" — none of
+  // them says "Day 1", so every one fell into the before-you-go bucket and
+  // the concert was listed under "Before you go".
+  const evening = itineraryDays([
+    { time: 'To start', title: 'Dinner at Domestique' },
+    { time: 'The main event', title: 'The Milk Carton Kids at the 9:30 Club' },
+    { time: 'After', title: 'A pint at World of Beer' },
+  ], '2026-09-21', new Date('2026-09-21T09:00:00'));
+
+  assert.equal(evening.length, 1);
+  assert.notEqual(evening[0].label, 'Before you go');
+  assert.equal(evening[0].label, 'The plan');
+  // And it carries its date, like any day does.
+  assert.match(evening[0].dateLabel, /Sep/);
+  assert.equal(evening[0].isToday, true);
+});
+
+test('a trip still separates what comes before from its days', () => {
+  // The case the bucket exists for: pack your passport, then Day 1.
+  const trip = itineraryDays([
+    { time: 'Before you go', title: 'Check your passport is in date' },
+    { time: 'Day 1 · Morning', title: 'Land and get the car' },
+  ], '2026-10-01', new Date('2026-09-21T09:00:00'));
+
+  assert.equal(trip.length, 2);
+  assert.equal(trip[0].label, 'Before you go');
+  assert.equal(trip[1].label, 'Day 1');
+});
