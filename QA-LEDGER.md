@@ -364,3 +364,32 @@ Suite: **73/73 e2e, 486/486 unit, zero flaky reruns** — the first fully
 green full-suite run of this session.
 
 ---
+
+## Pass 6 — navigation graph & deep links — 2026-09-21 15:3x UTC
+
+Walked: all ten routes signed out and signed in; the invite screen with a
+token that is not real. | Found: P0 0 / P1 0 / **P2 4**
+
+`NAV-GRAPH.md` written — built by walking the screens, not by reading the
+router, because a route that exists and a screen somebody can reach are
+different claims.
+
+**Every route lands. No dead ends remain.** `/`, `/home`, `/onboarding`,
+`/privacy`, `/terms`, `/sign-in`, `/sign-up`, `/invite/<bad>`, and the
+`/sign-up/sign-up` address the middleware comments warn about — all resolve
+to a real screen, all have a way back.
+
+**P2 ×4 — an invite that does not work said nothing about what to do.** The
+screen itself is good: designed, themed, "Go to Reach". It said "Invite not
+found" and stopped. Somebody holding a link a friend sent cannot act on
+that — mistyped? expired? withdrawn? wait or ask? Fixed at `bdba3cd`, each
+state in its own words, and the not-found case fixed at the API since the
+page renders that message verbatim. It deliberately does not guess why: a
+typo and a deleted invite look identical from there.
+
+Open, and honest about it: the new-user path is exercised through the Clerk
+test harness rather than walked by hand, because creating an account and
+typing a password are outside what this agent may do. Checkout past the
+payment sheet stays unwalked while Stripe's mode is unconfirmable.
+
+---
