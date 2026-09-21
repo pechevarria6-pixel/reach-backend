@@ -964,7 +964,7 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
       })).filter(h=>Number.isFinite(h.lat)&&Number.isFinite(h.lng)));
     }catch(e){
       console.error("[place] search failed",e);
-      toast&&toast("Couldn't search for that just now");
+      toast&&toast("Couldn't search for that just now — try again in a moment");
     }
     setSearching(false);
   };
@@ -1179,7 +1179,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
       setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
       setVisited(v=>{const n=new Set(v);n.delete(ref);return n;});
       setUndo(null);
-      toast("Couldn't save that");
+      toast("Couldn't save that — try again in a moment");
     }
   };
 
@@ -1191,8 +1191,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     setUndo(null);
     try{
       const r=await fetch(`/api/recommendations/feedback?itemRef=${encodeURIComponent(ref)}`,{method:"DELETE"});
-      if(!r.ok)toast("Couldn't undo that");
-    }catch(e){ console.error("[discover] could not undo",e); toast("Couldn't undo that"); }
+      if(!r.ok)toast("Couldn't undo that — it should still be where you left it");
+    }catch(e){ console.error("[discover] could not undo",e); toast("Couldn't undo that — it should still be where you left it"); }
   };
 
   const allItems=localRecs.map(e=>({
@@ -1282,7 +1282,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
       })).filter(h=>Number.isFinite(h.lat)&&Number.isFinite(h.lng)));
     }catch(e){
       console.error("[discover] place search failed",e);
-      toast("Couldn't search for that just now");
+      toast("Couldn't search for that just now — try again in a moment");
     }
     setSearchingPlace(false);
   };
@@ -2473,7 +2473,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         return;
       }
       toast("Invite pulled back");loadInvites();
-    }catch(e){console.error("[invites] withdraw failed",e);toast("Couldn't withdraw that invite");}
+    }catch(e){console.error("[invites] withdraw failed",e);toast("Couldn't withdraw that invite — try again, it is still active");}
   };
 
   const [savingName,setSavingName]=useState(false);
@@ -4553,7 +4553,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         console.error("[groupTrip] itinerary request failed",err);
         toast(err.error||"Couldn't build the day-by-day plan");
       }
-    }catch(e){console.error("Itinerary generation failed",e);toast("Couldn't build the day-by-day plan");}
+    }catch(e){console.error("Itinerary generation failed",e);toast("Couldn't build the day-by-day plan — try again, or add days yourself");}
     setBuildingItinerary(null);
     push("planDetail",{planId:realId,groupId});
   };

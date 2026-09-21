@@ -256,3 +256,66 @@ whether somebody granted a permission is not worth making.
 Suite: 479/479 unit, build clean.
 
 ---
+
+## Pass 4 — Flow A8: the bookings bridge, and double-submit everywhere — 2026-09-21 14:4x UTC
+
+Walked: every booking row in production, the booking route, the funding
+route, the legacy payment route. | Found: **P0 2** / P1 0 / P2 0
+
+Read the data first rather than trusting the screen. Booking names and
+flight prices are real — no "restaurant × 3 at $0" (restaurants sit at $0
+because Reach charges nothing for a reservation, which is honest). What the
+rows did show was worse.
+
+**P0 — booking the same thing twice.** `POST /api/bookings` ends in a plain
+insert with no idempotency key and no check for what is already there. Every
+call creates a row. In production now:
+
+```
+4×  flight · RDU → PVR · 2026-11-02   awaiting_approval, pending, pending, confirmed
+3×  flight · RDU → PVR · 2026-11-02   cancelled, pending, confirmed
+```
+
+For a table that is a duplicated reservation. For a flight it is a second
+order with a real fare on it. Could not be reproduced by exercising it —
+Duffel orders are off-limits by rule — so it was found by reading the rows
+and then the route.
+
+Fix `7d4d260`, in two halves because one cannot be done in the application:
+the route now reads what the plan holds and returns a live booking for the
+same thing instead of making another (identity = the flight/room/table/
+ticket, not the whole payload, since two presses can carry different
+travellers). A failed or cancelled booking is deliberately **not** a
+duplicate — it is why somebody is pressing again.
+
+That covers a retry. It cannot cover two requests in the same instant, which
+is what a fast double-tap sends. → `sql/booking-idempotency-2026-09-21.sql`
+adds a unique index over live statuses. **BLOCKED-ON-OWNER.** It deletes
+nothing and will refuse to build while the duplicates above are still live;
+the query to find them is in the file. A booking is somebody's money and a
+migration should not pick which one survives. Until it runs, the insert
+degrades cleanly.
+
+**P0 — a double-tap could charge somebody twice.** Same read-then-write
+shape in `/api/plans/[planId]/funding`, and this one is money. The in-flight
+guard is good — it asks Stripe what became of any existing intent — but two
+concurrent requests both pass it and both create an intent.
+
+Stripe has idempotency keys and we were not using them anywhere in the
+codebase. Fix `2d43257`: the intent now carries one, keyed on plan + person
++ amount so a retry returns the first intent while a genuinely changed share
+is new. The legacy `/api/payments` got the same treatment — unused, but
+reachable, and it can charge someone.
+
+New guard `check:idempotency`, in `verify`: anything creating a charge,
+intent, refund, transfer or checkout session must send a key or state on the
+spot why not. **Proven to fire** — run against the tree before the fix it
+named `app/api/payments/route.ts:74`.
+
+**Nothing was exercised.** Stripe's mode still cannot be confirmed from this
+session and independent evidence says live, so the payment lane stays
+untested by rule. Both fixes are read-and-reason, not charges anybody made.
+
+Suite: 486/486 unit (+7), build clean.
+
+---

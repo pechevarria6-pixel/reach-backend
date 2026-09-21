@@ -36,9 +36,21 @@ setup('sign in the test account', async ({ page }) => {
     await page.goto(`${BASE_URL}/sign-in`);
     // Signs in with a one-time token created by CLERK_SECRET_KEY, so no
     // password is typed and none needs to be stored.
-    await clerk.signIn({ page, emailAddress: TEST_EMAIL });
-    await page.goto(`${BASE_URL}/home`);
-    await page.waitForURL('**/home', { timeout: 20000 });
+    //
+    // Raced against a deadline of its own. Without one this hung past the
+    // 60s test timeout: the fallback ran, printed its line, and Playwright
+    // killed the test anyway — so `setup` failed and all 72 tests behind it
+    // were skipped. A suite that reports nothing because signing in was slow
+    // is worse than one that runs on yesterday's cookie jar.
+    await Promise.race([
+      (async () => {
+        await clerk.signIn({ page, emailAddress: TEST_EMAIL });
+        await page.goto(`${BASE_URL}/home`);
+        await page.waitForURL('**/home', { timeout: 15000 });
+      })(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Clerk did not answer within 30s')), 30000)),
+    ]);
     await page.context().storageState({ path: SESSION_FILE });
     console.log(`[auth.setup] Signed in ${TEST_EMAIL} with Clerk testing helpers.`);
   } catch (e) {
