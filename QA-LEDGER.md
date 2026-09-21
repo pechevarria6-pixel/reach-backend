@@ -393,3 +393,71 @@ typing a password are outside what this agent may do. Checkout past the
 payment sheet stays unwalked while Stripe's mode is unconfirmable.
 
 ---
+
+## Pass 7 — the concert, end to end — 2026-09-21 17:0x–19:0x UTC
+
+Walked: five screenshots from the owner, the concert plan, the regenerated
+itineraries, the plan screen. | Found: **P0 5** / P1 3 / P2 2
+
+The owner reported that booking a single concert still did not work. It was
+not one bug. Every one of these is a fact the app already held and did not
+pass on.
+
+| # | fault | effect |
+|---|---|---|
+| 1 | `mode: type==="restaurant" ? "night" : "trip"` | a concert is neither → ran the **full-day prompt** → four days |
+| 2 | `tripData.destination = plan.title` | the title is the **act's name** → planned a trip to "The Milk Carton Kids" → Los Angeles |
+| 3 | `itineraryRows(..., type==="restaurant")` | an evening labelled "Day 1 · Morning" |
+| 4 | `event` absent from the item type enum | a concert could only be filed as a **restaurant** |
+| 5 | ticket URL read as `!!url`, then discarded | "Reserve ahead" with nothing behind it |
+| 6 | `buildItinerary` sent no goal | rebuild produced a perfect DC evening **with no concert in it** |
+| 7 | client mapping dropped `venue_website` | ticket written correctly, returned correctly, **dropped before render** |
+
+Six and seven were found only by regenerating and then opening the screen.
+The API response was right, the row was right, the suite was green, and the
+thing a person came for was missing.
+
+**Two I introduced myself, both caught on the screen.**
+
+`bookingFor` takes a `hasTicket` flag so a ticketed event may keep a "reach"
+claim, and I passed it `!!realEvent?.url` — a fact about the PLAN. So once a
+plan had a gig in it, every slot keeping "reach" kept it, and **"Reach will
+book this" appeared over a restaurant table** — the exact promise this run
+has spent the day removing. The question is about the slot, not the trip.
+
+And `effectiveBudget` falls back to 2000, a *trip* budget, so the night
+prompt read "about $2000 a head across the whole night". The model obliged:
+$900 dinner, $500 gig, $300 pint. **Seventeen hundred dollars for a Monday.**
+An evening now takes an evening's figures.
+
+**Completability**, which the owner asked for by name. "Confirmed 0/0" on a
+plan with a concert in it — nothing to do, nothing done, no number that
+could move. Ticketed events now count alongside what Reach books, and since
+Reach cannot know somebody bought a ticket on a site it does not run, it
+asks: "I've got them" → "✓ Tickets sorted". No confirmation number is
+invented, because we do not hold one.
+
+Verified on screen and in the database:
+
+```
+Ticketed — buy from the seller
+🎟️ Get tickets · 9:30 CLUB →     I've got them
+→ ✓ Tickets sorted   (is_confirmed = true in the row)
+```
+
+**P2 ×2, also from the screenshot:** a concert's whole evening sat under the
+heading "Before you go" (rows say "To start", not "Day 1", so all of them
+fell into the before-you-go bucket), and the day title echoed under the
+first slot.
+
+Regeneration: 5 of 6 plans redone. Across **84 items exactly one** name had
+to be softened, and that one — "walk the length of a local spot" — is fixed
+too. The itineraries replaced were full of restaurants in the wrong state.
+
+**Blocked:** the owner's own rate limiter, 10 generations an hour, which I
+exhausted. The audit rows behind that counter are not something to edit, so
+the remaining regeneration waits for the window. Working as designed.
+
+Suite: 496 unit, 73 e2e.
+
+---
