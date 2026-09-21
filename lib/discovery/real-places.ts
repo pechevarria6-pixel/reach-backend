@@ -30,6 +30,9 @@ export interface RealPlace {
   name: string;
   /** "restaurant", "museum", "bar" — from the map's own tag, not guessed. */
   kind: string;
+  /** The quiz's word for it — "mexican restaurants" — which is what the
+   *  venue table stores and what says something about a town's food. */
+  interest: string | null;
   /** Its own site, when the map records one. Null is common and fine. */
   url: string | null;
   city: string | null;
@@ -89,8 +92,14 @@ function dedupe<T extends { name: string }>(rows: T[]): T[] {
 export async function placesFor(
   db: SupabaseClient,
   where: { city: string | null; country?: string | null; interests?: string[] },
+  // A menu is capped so it can be read; a count must not be, or the number
+  // is an artifact of the cap rather than a fact about the town. "10 places
+  // to eat verified here" was true of the list and false of the place.
+  opts: { perKind?: number; max?: number } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<RealPlace[]> {
+  const perKind = opts.perKind ?? PER_KIND;
+  const max = opts.max ?? 60;
   const city = String(where.city || '').trim();
   if (!city) return [];
 
@@ -157,6 +166,7 @@ export async function placesFor(
       .map(v => ({
         name: String(v.name),
         kind: String(v.kind || v.interest || 'place').replace(/_/g, ' ').trim() || 'place',
+        interest: (v.interest as string | null) || null,
         url: (v.website as string | null) || null,
         city: (v.city as string | null) ?? seeker.city ?? null,
         miles: milesBetween(at.lat, at.lng, Number(v.lat), Number(v.lng)),
@@ -174,13 +184,13 @@ export async function placesFor(
   const places: RealPlace[] = [];
   for (const r of rows) {
     const n = taken.get(r.kind) ?? 0;
-    if (n >= PER_KIND) continue;
+    if (n >= perKind) continue;
     taken.set(r.kind, n + 1);
     places.push({
       ref: `p${places.length + 1}`,
-      name: r.name, kind: r.kind, url: r.url, city: r.city, source: 'osm',
+      name: r.name, kind: r.kind, interest: r.interest, url: r.url, city: r.city, source: 'osm',
     });
-    if (places.length >= 60) break;
+    if (places.length >= max) break;
   }
   return places;
 }
@@ -345,7 +355,7 @@ export function unverifiedNames(
   places: RealPlace[],
   allow: string[] = [],
 ): string[] {
-  const extra = allow.filter(Boolean).map(a => ({ ref: '', name: a, kind: '', url: null, city: null, source: 'given' }));
+  const extra = allow.filter(Boolean).map(a => ({ ref: '', name: a, kind: '', interest: null, url: null, city: null, source: 'given' }));
   const vouching = [...places, ...extra];
   return [...new Set(properNames(text).filter(n => !isVouchedFor(n, vouching)))];
 }
@@ -384,4 +394,53 @@ export function withoutUnverified(
   let seen = 0;
   out = out.replace(/a local spot/g, () => (++seen > 1 ? 'another nearby' : 'a local spot'));
   return { text: out, removed };
+}
+
+// ─── What a town's scene actually is, counted rather than remembered ─────
+// The option cards carried two paragraphs each — "legendary taco trucks on
+// Cesar Chavez, plus James Beard-winning Suerte" — written from a model's
+// memory of a city. They read beautifully and asserted a dozen things
+// nobody had checked: that the trucks are there, that the restaurant has
+// that award, that either still exists.
+//
+// We do hold something true about a town, though, and it is duller and
+// better: the venues we have actually verified in it. Counting those says
+// something real about where somebody is going, and says it in a form that
+// cannot be wrong.
+
+/** The scene lines for a town, from the venues we hold, or null for none. */
+export function scenesFrom(places: RealPlace[]): { food: string; music: string } | null {
+  if (!places.length) return null;
+
+  const count = (test: (p: RealPlace) => boolean) => places.filter(test).length;
+  const isFood = (p: RealPlace) =>
+    /restaurant|cafe|bakery|marketplace|food|deli|pub/i.test(`${p.kind} ${p.interest ?? ''}`);
+  const isDrink = (p: RealPlace) => /brewery|bar|wine|pub|distiller/i.test(`${p.kind} ${p.interest ?? ''}`);
+  const isMusic = (p: RealPlace) =>
+    /nightclub|music|theatre|theater|concert|dance|arts centre/i.test(`${p.kind} ${p.interest ?? ''}`);
+
+  // The cuisines the table actually recorded, in its own words.
+  const cuisines = [...new Set(
+    places
+      .map(p => /^(\w[\w\s]*?) restaurants$/i.exec(String(p.interest ?? ''))?.[1])
+      .filter((c): c is string => !!c),
+  )].slice(0, 4);
+
+  const food = [
+    `${count(isFood)} places to eat verified here`,
+    cuisines.length ? `strongest on ${listOf(cuisines)}` : null,
+    count(isDrink) ? `${count(isDrink)} for a drink` : null,
+  ].filter(Boolean).join(', ') + '.';
+
+  const music = count(isMusic)
+    ? `${count(isMusic)} music, theatre and nightlife venues verified here.`
+    : 'Nothing verified for music or nightlife here yet.';
+
+  return { food, music };
+}
+
+/** "a, b and c" — the way somebody would say it. */
+function listOf(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }

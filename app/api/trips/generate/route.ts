@@ -10,7 +10,7 @@ import { planReadiness } from '@/lib/plan-readiness';
 import { allowance, tooOften } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
-import { placesFor, placeMenu, withoutUnverified, type RealPlace } from '@/lib/discovery/real-places';
+import { placesFor, placeMenu, withoutUnverified, scenesFrom, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -687,7 +687,9 @@ Price diversity, one per tier, within 10% of these figures:
 - "stretch":   total_per_person about $${Math.round(effectiveBudget * 1.15)}
 
 why_this_group is one sentence tied to their actual food, music and drink
-answers. food_scene and music_scene are two sentences each. tagline is at most
+answers. food_scene and music_scene are one short line each and are REPLACED
+by counts from our verified venue table before anybody sees them, so do not
+spend words or claims on them. tagline is at most
 ten words. emoji is one emoji. accommodation.example is the neighbourhood the
 night happens in.` : `You are Reach's AI travel planner. Generate exactly 3 destination options. BE FAST — no itinerary needed yet, just destination overviews and cost estimates.
 
@@ -758,7 +760,8 @@ them, and never apologise for them.
 
 For each, costs must sum to total_per_person. Write why_this_group as one
 sentence tied to their actual food, music and activity preferences. Keep
-food_scene and music_scene to two sentences each. tagline is at most ten
+food_scene and music_scene to one short line each — they are REPLACED by
+counts from our verified venue table, so claim nothing in them. tagline is at most ten
 words. emoji is a single emoji for the destination. accommodation.example
 names a specific hotel or neighbourhood.
 
@@ -774,7 +777,9 @@ Be fast and be specific. Real place names, not categories.
 
 Keep it tight — this has to fit in one response:
 - every "details" is at most 12 words
-- food_scene and music_scene are two short sentences each
+- food_scene and music_scene are one short line each, and are replaced by
+  counts from our verified venue table before anybody reads them. Never name
+  a restaurant, bar or venue in them.
 - why_this_group is one sentence
 - tagline is at most ten words
 - destination is for people to read; city and country_code are for looking the
@@ -785,7 +790,7 @@ Return JSON only, shaped exactly like this:
 {"trips":[{"id":"trip_1","destination":"City, Country","city":"City","country_code":"US","emoji":"🌍",
 "tagline":"Ten words on why this group","vibe":"Vibe label",
 "why_this_group":"One sentence tied to their preferences",
-"food_scene":"Two sentences","music_scene":"Two sentences",
+"food_scene":"One line, replaced","music_scene":"One line, replaced",
 "total_per_person":1850,"tier":"saver","used_suggestions":["Priya wanted somewhere her sister could see snow — this is a ski town"],
 "costs":{"flights":{"per_person":400,"details":"..."},
 "accommodation":{"per_person":500,"details":"...","example":"Hotel or area"},
@@ -884,6 +889,38 @@ Return JSON only, shaped exactly like this:
         { status: 502 },
       );
     }
+
+    // ── The scene, counted rather than remembered ────────────────────
+    // Each card carried two paragraphs about a city's food and music,
+    // written from the model's memory — "legendary taco trucks on Cesar
+    // Chavez, plus James Beard-winning Suerte". They read beautifully and
+    // asserted a dozen things nobody had checked: that the trucks are
+    // there, that the award is real, that either still exists.
+    //
+    // We do hold something true about a town, and it is duller and better:
+    // the venues we have verified in it. Counted, it cannot be wrong. Where
+    // we hold nothing the line says so, which is a fair thing to tell
+    // somebody choosing between three places.
+    await Promise.all(trips.map(async (trip) => {
+      const places = await placesFor(
+        supabase,
+        { city: trip.city || trip.destination, country: trip.country_code ?? null, interests: [...cuisines, ...musicGenres, ...activityVibes] },
+        // Uncapped: this is counted, not read, and a count taken off a
+        // shortened list is a number about the list rather than the town.
+        { perKind: Infinity, max: Infinity },
+      ).catch(() => [] as RealPlace[]);
+
+      const scenes = scenesFrom(places);
+      if (scenes) {
+        trip.food_scene = scenes.food;
+        trip.music_scene = scenes.music;
+        return;
+      }
+      // Nothing held for this town yet. Saying so is honest, and the sweep
+      // has just been told about it, so the next person sees the real thing.
+      trip.food_scene = 'We have not verified any places here yet — the plan will keep to what we can stand behind.';
+      trip.music_scene = trip.food_scene;
+    }));
 
     return NextResponse.json({
       success: true,

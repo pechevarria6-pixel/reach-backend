@@ -4,6 +4,7 @@ import { toDateOrNull } from '@/lib/dates';
 import { z } from 'zod';
 import { track } from '@/lib/track';
 import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
+import { placesFor } from '@/lib/discovery/real-places';
 import { within } from '@/lib/deadline';
 
 const CreatePlanSchema = z.object({
@@ -74,6 +75,23 @@ export async function POST(req: NextRequest) {
     destinationPhoto([body.destination_city, body.destination_country].filter(Boolean).join(', ') || body.title || ''),
     3000, 'the destination photo',
   ).catch(() => null);
+
+  // Tell the venue sweep this town is wanted, now rather than when somebody
+  // asks for the itinerary. The itinerary is what names places, and it is
+  // requested later — often much later — so registering the destination the
+  // moment a plan exists is the difference between a first trip to a new
+  // city naming real places and naming none.
+  //
+  // Only the registering happens here. The map itself is read by
+  // /api/discovery/sweep on a schedule, because Overpass takes tens of
+  // seconds when it answers at all and nobody is going to wait for it while
+  // saving a plan. Next 14 has no after-response hook to hide that in.
+  if (body.destination_city) {
+    void within(
+      placesFor(supabase, { city: body.destination_city, country: body.destination_country ?? null }),
+      3000, 'registering the destination',
+    ).catch(() => null);
+  }
 
   const row: Record<string, unknown> = {
     group_id: body.group_id,

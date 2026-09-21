@@ -4792,7 +4792,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                         <div style={{fontFamily:"var(--font-display)",fontSize:28,color:voted?C.accentText:C.t1}}>
                           ${trip.total_per_person?.toLocaleString()}
                         </div>
-                        <div style={{fontSize:11,color:C.t3}}>per person</div>
+                        <div style={{fontSize:11,color:C.t3}}>per person, est.</div>
                         <div style={{fontSize:11,color:C.t3}}>{nights} nights</div>
                       </div>
                     </div>
@@ -4843,7 +4843,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                       </div>
                     ))}
                     <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border,display:"flex",justifyContent:"space-between"}}>
-                      <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Total per person</div>
+                      <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Total per person, est.</div>
                       <div style={{fontSize:16,fontWeight:700,color:voted?C.accentText:C.t1}}>${trip.total_per_person?.toLocaleString()}</div>
                     </div>
                     {group.memberIds?.length>1&&(
@@ -4851,6 +4851,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                         ${(trip.total_per_person*(group.memberIds?.length||2))?.toLocaleString()} total for the group
                       </div>
                     )}
+                    {/* Said once, plainly. These are estimates: nobody has
+                        priced a room or a seat for this trip, and a number
+                        shown without that word reads as one somebody quoted. */}
+                    <div style={{fontSize:11,color:C.t3,marginTop:8,lineHeight:1.4}}>
+                      Estimates, to plan against — not quotes. Real prices come from
+                      the airline and the hotel when you book.
+                    </div>
                   </div>
 
                   {/* Itinerary preview */}

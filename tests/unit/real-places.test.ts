@@ -6,7 +6,7 @@ import {
 } from '../../lib/discovery/real-places.ts';
 
 const place = (ref: string, name: string, kind = 'restaurant'): RealPlace =>
-  ({ ref, name, kind, url: null, city: 'Moab', source: 'osm' });
+  ({ ref, name, kind, interest: `${kind}s`, url: null, city: 'Moab', source: 'osm' });
 
 const MOAB = [
   place('p1', 'Milt\'s Stop & Eat'),
