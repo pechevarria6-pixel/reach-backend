@@ -280,8 +280,16 @@ const NOT_A_VENUE = new Set([
   'if', 'you', 'your', 'it', 'this', 'that', 'there', 'here', 'reach',
 ]);
 
-/** The small words real names carry: Museum *of the* American West. */
-const JOINER = new Set(['of', 'the', 'de', 'du', 'la', 'le', 'and', '&', 'at', 'on', 'in']);
+/**
+ * The small words real names carry: Museum *of the* American West.
+ *
+ * Deliberately no "in", "at" or "on". Those introduce where a thing is
+ * rather than belonging to what it is called, and treating them as joiners
+ * glued the location onto the name: "La Piazzetta in the Romantic Zone" came
+ * out as one name, which then matched the real Romantic Zone and let the
+ * invented restaurant through on its coat-tails.
+ */
+const JOINER = new Set(['of', 'the', 'de', 'du', 'la', 'le', 'and', '&']);
 
 /**
  * Proper names in a sentence — the runs of capitalised words that read like
@@ -304,7 +312,15 @@ export function properNames(text: string): string[] {
       while (run.length && JOINER.has(run[run.length - 1].toLowerCase())) run.pop();
       // Trim the sentence's own opening words, and any joiner they leave
       // stranded, until what is left starts like a name.
-      while (run.length && (NOT_A_VENUE.has(stripPunctuation(run[0])) || JOINER.has(run[0].toLowerCase()))) run.shift();
+      //
+      // A capitalised joiner is kept, because it is part of the name rather
+      // than glue between parts of one: "La Piazzetta" and "The Black Cat"
+      // begin with their article. Trimming it produced "La a local spot",
+      // which is worse than either leaving the name or removing it whole.
+      while (run.length && (
+        NOT_A_VENUE.has(stripPunctuation(run[0]))
+        || (JOINER.has(run[0].toLowerCase()) && run[0][0] === run[0][0].toLowerCase())
+      )) run.shift();
       if (run.length >= 2) names.push(run.join(' ').replace(/[.,;:!?]+$/, ''));
       run = [];
     };
@@ -337,9 +353,17 @@ export function isVouchedFor(name: string, places: RealPlace[]): boolean {
   if (!want) return false;
   return places.some(p => {
     const known = normalise(p.name);
-    // Containment either way: the map's "9:30 Club" against a sentence's
-    // "the 9:30 Club", and a menu's long official name against a short one.
-    return known === want || known.includes(want) || want.includes(known);
+    if (!known) return false;
+    // One direction only. A real name may be longer than the one somebody
+    // writes — the map's "Arches National Park Visitor Center" against a
+    // sentence's "Arches National Park" — so a known name containing what
+    // was written vouches for it.
+    //
+    // The other way round does not, and that is the whole "Moab Giants"
+    // lesson in one line: a real "Moab" inside an invented "Moab Giants"
+    // would vouch for the invention. Anything we hold that happens to be a
+    // fragment of a longer phrase proves nothing about the phrase.
+    return known === want || known.includes(want);
   });
 }
 

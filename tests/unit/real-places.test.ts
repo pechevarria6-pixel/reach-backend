@@ -143,3 +143,19 @@ test('the modes Reach never promised are left alone', () => {
   // Anything unrecognised falls to the claim that promises least.
   assert.equal(bookingFor('nonsense', null), 'walk_in');
 });
+
+test('a name that begins with its own article is removed whole', () => {
+  // "La Piazzetta" became "La a local spot": `la` is a joining word inside
+  // names like Cafe de la Paix, and trimming it off the FRONT left the
+  // article stranded in front of the replacement. A capitalised joiner
+  // starts a name; a lowercase one joins one.
+  const { text, removed } = withoutUnverified(
+    'Italian-leaning brunch at La Piazzetta in the Romantic Zone.', MOAB, ['Romantic Zone']);
+  assert.deepEqual(removed, ['La Piazzetta']);
+  assert.equal(text, 'Italian-leaning brunch at a local spot in the Romantic Zone.');
+  assert.doesNotMatch(text, /La a local spot/);
+});
+
+test('a lowercase joiner inside a name still joins it', () => {
+  assert.deepEqual(properNames('Dinner at Cafe de la Paix tonight'), ['Cafe de la Paix']);
+});
