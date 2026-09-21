@@ -76,7 +76,7 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
 
   const { data, error } = await db
     .from('discovery_venues')
-    .select('osm_type, osm_id, name, lat, lng, city, website, interest, kind, street')
+    .select('osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url')
     .in('interest', asStored(keys))
     .gte('lat', seeker.lat - dLat).lte('lat', seeker.lat + dLat)
     .gte('lng', seeker.lng - dLng).lte('lng', seeker.lng + dLng)
@@ -103,6 +103,7 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
         dist: `${Math.max(1, Math.round(miles))} mi`,
         category: label(v.interest),
         url: v.website,
+        image: (v as { image_url?: string | null }).image_url ?? null,
         // A studio is open on Tuesdays. It does not happen once, and giving it
         // a date is what made the detail screen ask people to pick one.
         date: null,

@@ -29,6 +29,14 @@ export interface Finding {
   /** Where it actually is, when the source knows. Null when it does not. */
   lat?: number | null;
   lng?: number | null;
+  /**
+   * A picture of the actual place, when there is one.
+   *
+   * Every card used the same orange gradient, so a jazz bar, a pottery
+   * studio and a taqueria all looked like the same thing. Null keeps the
+   * gradient, which is better than somebody else's photograph.
+   */
+  image?: string | null;
 }
 
 export type SourceName = 'ticketmaster' | 'yelp-events' | 'yelp-places' | 'osm' | 'harvest';

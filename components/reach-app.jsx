@@ -1138,6 +1138,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     // was filed under "unknown:" — the prefix exists to tell two sources'
     // ids apart and cannot do that if nothing sets it.
     source:e.source||null,
+    // The venue's own picture, when they publish one. Null keeps the
+    // gradient — better than somebody else's photograph of somewhere else.
+    image:e.image||null,
     title:e.title,
     sub:e.meta,
     emoji:e.emoji,
@@ -1353,7 +1356,13 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
         <div key={exp.id} className="exp-card" style={{margin:"0 20px 14px",borderRadius:20,overflow:"hidden",
           border:"1px solid "+C.border,cursor:"pointer",position:"relative"}}
           onClick={()=>push("expDetail",{exp,groups})}>
-          <div style={{height:175,background:exp.bg,position:"relative"}}>
+          {/* A real picture of the actual place where there is one. The
+              gradient stays underneath, so a photo that fails to load leaves
+              the card as it always looked rather than a white gap, and the
+              dark overlay above keeps the title readable on any image. */}
+          <div style={{height:175,background:exp.bg,position:"relative",
+            ...(exp.image?{backgroundImage:`url(${JSON.stringify(exp.image).slice(1,-1)})`,
+              backgroundSize:"cover",backgroundPosition:"center"}:{})}}>
             <div style={{position:"absolute",inset:0,
               background:"linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.85))",
               display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:16}}>

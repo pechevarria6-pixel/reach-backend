@@ -137,6 +137,11 @@ export async function GET(req: NextRequest) {
     const { error: marked } = await db.from('discovery_venues').update({
       last_harvested_at: new Date().toISOString(),
       harvest_status: result.status,
+      // The venue's own picture, read from the page this already fetched —
+      // no extra request, and only when they publish one. Left alone rather
+      // than overwritten with null, so a site that stops serving og:image
+      // for a week does not blank a card that was working.
+      ...(result.imageUrl ? { image_url: result.imageUrl, image_source: 'og' } : {}),
     }).eq('id', venue.id);
     if (marked) console.error('[discovery/harvest] could not mark the venue harvested', venue.name, marked.message);
   }
