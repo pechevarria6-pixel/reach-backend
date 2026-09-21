@@ -34,11 +34,30 @@ export function createBrowserClient() {
 
 // Server client — service role, bypasses RLS.
 // Only use in API routes and server components — never in the browser.
+//
+// Every read goes out with `cache: 'no-store'`.
+//
+// supabase-js calls the global fetch, and inside Next that is a patched
+// fetch with a data cache behind it. A cached database read is a wrong
+// answer that looks like a right one: the playbooks job reported eight rows
+// still queued on three consecutive runs while the real number went five,
+// two, nought — the count was correct code reading a stale response.
+//
+// That one was only a line in a report. The same staleness on a booking, a
+// contribution or a member list is somebody acting on a row that has already
+// changed, and this codebase reads back after every write precisely because
+// those reads have to be true. A database is the authority or it is not.
 export function createServerClient() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   return createClient(
     required('SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL)', url),
     required('SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY),
-    { auth: { persistSession: false, autoRefreshToken: false } }
+    {
+      auth: { persistSession: false, autoRefreshToken: false },
+      global: {
+        fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+          fetch(input, { ...init, cache: 'no-store' }),
+      },
+    }
   );
 }
