@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   placeMenu, citedPlace, properNames, isVouchedFor, unverifiedNames,
-  withoutUnverified, bookingFor, type RealPlace,
+  withoutUnverified, bookingFor, cleanRef, wouldMangle, type RealPlace,
 } from '../../lib/discovery/real-places.ts';
 
 const place = (ref: string, name: string, kind = 'restaurant'): RealPlace =>
@@ -158,4 +158,25 @@ test('a name that begins with its own article is removed whole', () => {
 
 test('a lowercase joiner inside a name still joins it', () => {
   assert.deepEqual(properNames('Dinner at Cafe de la Paix tonight'), ['Cafe de la Paix']);
+});
+
+// ─── Found by running it against production, not by thinking ─────────────
+
+test('a place_ref that is not one is not a citation', () => {
+  // A live run put "http://null" in this field. It resolves to nothing, so
+  // it did no harm, and it is still not a reference.
+  assert.equal(cleanRef('http://null'), null);
+  assert.equal(cleanRef('p12'), 'p12');
+  assert.equal(cleanRef('[p3]'), 'p3');
+  assert.equal(cleanRef('the diner'), null);
+  assert.equal(cleanRef(null), null);
+  assert.equal(citedPlace('http://null', MOAB), null);
+});
+
+test('a tip is dropped rather than left a broken sentence', () => {
+  // "a local spot stays lively after evening shows let out" shipped from a
+  // live run. Swapping a name works when it is the object of the sentence
+  // and not when it is the subject.
+  assert.equal(wouldMangle('The Black Cat stays lively after shows.', ['The Black Cat']), true);
+  assert.equal(wouldMangle('Grab a pint at The Black Cat after.', ['The Black Cat']), false);
 });

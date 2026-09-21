@@ -10,7 +10,7 @@ import { planReadiness } from '@/lib/plan-readiness';
 import { allowance, tooOften } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
-import { placesFor, placeMenu, withoutUnverified, scenesFrom, citedPlace, bookingFor, type RealPlace } from '@/lib/discovery/real-places';
+import { placesFor, placeMenu, withoutUnverified, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -626,11 +626,24 @@ you have made up; a day that is simply a good day is allowed to be one.`;
             // A reference to a place we just removed is not a reference.
             slot.place_ref = null;
           }
+          // A live run returned "http://null" here. It resolves to nothing,
+          // so it was harmless, and it is still not a citation — it must not
+          // travel on as though it might be one.
+          if (slot.place_ref && !cleanRef(slot.place_ref)) {
+            console.error('[trips itinerary] discarded a place_ref that is not one', { got: String(slot.place_ref).slice(0, 40) });
+            slot.place_ref = null;
+          }
         }
         const tip = withoutUnverified(day.insider_tip, realPlaces, vouchers);
         if (tip.removed.length) {
           tip.removed.forEach(n => stripped.add(n));
-          day.insider_tip = tip.text;
+          // Softening works when the name is the object of the sentence.
+          // When it is the subject it does not: a live run produced "a local
+          // spot stays lively after evening shows let out", which is not a
+          // sentence anybody wrote. A tip is flavour, so it is dropped rather
+          // than mangled — and a tip naming a business was already against
+          // the rule that a tip describes a place, not what a business does.
+          day.insider_tip = wouldMangle(day.insider_tip, tip.removed) ? '' : tip.text;
         }
       }
       if (softened || stripped.size) {

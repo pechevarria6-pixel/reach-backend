@@ -248,11 +248,23 @@ export function placeMenu(places: RealPlace[]): string {
   return lines.join('\n');
 }
 
-/** The place a slot cites, or null when it cites nothing we handed over. */
+/**
+ * A citation, or null — and null for anything that is not one.
+ *
+ * A live run put "http://null" in this field, which resolves to nothing and
+ * so was harmless, but it is not a reference and it must not travel any
+ * further as if it might be one. Only the shape we handed out is accepted.
+ */
 export function citedPlace(ref: unknown, places: RealPlace[]): RealPlace | null {
-  if (typeof ref !== 'string' || !ref) return null;
+  const want = cleanRef(ref);
+  return want ? places.find(p => p.ref === want) ?? null : null;
+}
+
+/** The ref if it looks like one of ours, otherwise null. */
+export function cleanRef(ref: unknown): string | null {
+  if (typeof ref !== 'string') return null;
   const want = ref.trim().toLowerCase().replace(/[[\]]/g, '');
-  return places.find(p => p.ref === want) ?? null;
+  return /^p\d+$/.test(want) ? want : null;
 }
 
 // ─── The check, because a prompt rule is a request ───────────────────────
@@ -418,6 +430,24 @@ export function withoutUnverified(
   let seen = 0;
   out = out.replace(/a local spot/g, () => (++seen > 1 ? 'another nearby' : 'a local spot'));
   return { text: out, removed };
+}
+
+/**
+ * Whether softening this sentence would leave it broken.
+ *
+ * Swapping a name out works when the name is the object of the sentence —
+ * "dinner at X" becomes "dinner at a local spot" and still reads. It does
+ * not work when the name is the SUBJECT. A live run turned a tip into "a
+ * local spot stays lively after evening shows let out", which is not a
+ * sentence anybody wrote and not advice anybody can use.
+ *
+ * Where the replacement would land at the start, the line is dropped
+ * instead. A missing tip is a day without a tip; a mangled one is the app
+ * talking nonsense.
+ */
+export function wouldMangle(text: string, removed: string[]): boolean {
+  const t = String(text || '').trimStart();
+  return removed.some(name => t.startsWith(name));
 }
 
 // ─── What a town's scene actually is, counted rather than remembered ─────
