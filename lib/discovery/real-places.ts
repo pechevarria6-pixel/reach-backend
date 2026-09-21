@@ -55,6 +55,10 @@ const RADIUS_MILES = 25;
  * own. Checked against the live table before it was written here.
  */
 const ALWAYS_SWEPT = [
+  // Dinner first, and without a cuisine attached: the cuisine lookups only
+  // find restaurants tagged with one, which left Washington holding no
+  // places to eat at all.
+  'places to eat',
   'mexican restaurants', 'italian restaurants', 'japanese restaurants',
   'breweries', 'wine tasting', 'live music', 'museums & history',
   'art & galleries', 'outdoors', 'markets & food halls',

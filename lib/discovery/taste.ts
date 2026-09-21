@@ -52,6 +52,20 @@ const KINDS: Record<string, Kind> = Object.fromEntries([
   kind('photography', '📷', ['shop=photo', 'craft=photographer'], 'photography workshop', true),
   kind('outdoors', '🥾', ['leisure=nature_reserve', 'tourism=wilderness_hut'], 'guided walks', true),
   kind('markets & food halls', '🧺', ['amenity=marketplace'], 'farmers market', true),
+  // Somewhere to eat, without caring what kind.
+  //
+  // Every food lookup in this file is `amenity=restaurant][cuisine~"..."`,
+  // which only ever finds restaurants that carry a cuisine tag — and a great
+  // many do not. Washington ended up with fifty-five verified venues and not
+  // one place to eat: ten breweries, nine wine shops, seven pottery studios,
+  // and nothing to have dinner at. So the itinerary for a gig there said
+  // "a quick bite near the venue, nothing fancy", because there was nothing
+  // it was allowed to name.
+  //
+  // This asks for restaurants as restaurants. The cuisine kinds still exist
+  // and still matter — somebody who said they love Thai should be shown Thai
+  // first — but a town needs dinner whether or not anybody said a cuisine.
+  kind('places to eat', '🍽️', ['amenity=restaurant', 'amenity=cafe'], 'restaurant', false),
   kind('museums & history', '🏛️', ['tourism=museum'], 'museum', true),
   kind('wine tasting', '🍷', ['shop=wine', 'craft=winery'], 'wine tasting', true, { alcohol: true }),
   kind('breweries', '🍺', ['craft=brewery', 'microbrewery=yes'], 'brewery', true, { alcohol: true }),
