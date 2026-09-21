@@ -22,6 +22,7 @@
 // volunteer-run service. From here it is identified, cached, and bounded.
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
+import { whereFrom } from '@/lib/discovery/where';
 
 const API = 'https://nominatim.openstreetmap.org';
 const AGENT = 'Reach/1.0 (+https://www.alcanzar.io; hello@alcanzar.io)';
@@ -49,17 +50,28 @@ export async function GET(req: NextRequest) {
 
   const params = req.nextUrl.searchParams;
   const q = (params.get('q') || '').trim();
-  const lat = Number(params.get('lat'));
-  const lng = Number(params.get('lng'));
 
-  const reverse = Number.isFinite(lat) && Number.isFinite(lng);
-  if (!reverse && q.length < 3) {
+  // whereFrom, not Number(params.get('lat')).
+  //
+  // The first version of this route did the latter, and `Number(null)` is 0,
+  // and `Number.isFinite(0)` is true — so a request carrying only `q` was
+  // read as a point at 0,0 and every search went down the reverse branch and
+  // asked the map what is at Null Island. Searching returned nothing, always,
+  // while reverse lookups worked perfectly, which is why it looked like a
+  // parsing fault rather than a routing one.
+  //
+  // lib/discovery/where.ts exists because /api/nearby had this exact bug and
+  // showed a user in North Carolina pottery studios in San Francisco. The
+  // fix already existed and was exported; it just was not used here.
+  const point = whereFrom(params);
+
+  if (!point && q.length < 3) {
     return NextResponse.json({ error: 'Give a place to look for, or a point to look up' }, { status: 400 });
   }
 
   const limit = Math.min(Math.max(Number(params.get('limit')) || 6, 1), 10);
-  const url = reverse
-    ? `${API}/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1`
+  const url = point
+    ? `${API}/reverse?lat=${point.lat}&lon=${point.lng}&format=json&addressdetails=1`
     : `${API}/search?format=json&addressdetails=1&limit=${limit}&q=${encodeURIComponent(q)}`;
 
   try {
@@ -71,7 +83,7 @@ export async function GET(req: NextRequest) {
       next: { revalidate: 86400 },
     });
     if (!res.ok) {
-      console.error('[geo] the map returned', { status: res.status, reverse });
+      console.error('[geo] the map returned', { status: res.status, reverse: !!point });
       return NextResponse.json({ error: 'The map is not answering just now' }, { status: 502 });
     }
 
@@ -87,6 +99,11 @@ export async function GET(req: NextRequest) {
       }))
       .filter(h => h.label && Number.isFinite(h.lat) && Number.isFinite(h.lng));
 
+    if (!hits.length) {
+      // The gap that let the bug above hide: a 200 with nothing in it looked
+      // exactly like "no such place" and said nothing in any log.
+      console.error('[geo] the map had nothing', { reverse: !!point, q: q.slice(0, 40), rows: rows.length });
+    }
     return NextResponse.json({ hits });
   } catch (err) {
     // Unreachable is not "there is no such place". The caller keeps whatever
