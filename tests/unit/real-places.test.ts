@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   placeMenu, citedPlace, properNames, isVouchedFor, unverifiedNames,
-  withoutUnverified, type RealPlace,
+  withoutUnverified, bookingFor, type RealPlace,
 } from '../../lib/discovery/real-places.ts';
 
 const place = (ref: string, name: string, kind = 'restaurant'): RealPlace =>
@@ -118,4 +118,28 @@ test('two invented names do not both read as "a local spot"', () => {
   const { text } = withoutUnverified(
     'Lunch at Pasta Jay, dinner at Sunset Grille.', MOAB);
   assert.equal(text, 'Lunch at a local spot, dinner at another nearby.');
+});
+
+// ─── A promise the app cannot keep ───────────────────────────────────────
+
+test('"Reach will book this" survives only where Reach can book', () => {
+  const hotel = { ...place('p1', 'The Gonzo Inn', 'hotel'), interest: 'hotels' };
+  const diner = place('p2', 'Moab Diner');
+
+  // A room, which Reach does book.
+  assert.equal(bookingFor('reach', hotel), 'reach');
+  // A table, which it does not — whatever the model claimed. The member
+  // books their own, on their own card, where their dining benefits live.
+  assert.equal(bookingFor('reach', diner), 'ahead');
+  // Claimed with nothing resolved at all: the least checkable case there is.
+  assert.equal(bookingFor('reach', null), 'ahead');
+  // A real listing with a page that sells tickets. Somebody checked.
+  assert.equal(bookingFor('reach', null, true), 'reach');
+});
+
+test('the modes Reach never promised are left alone', () => {
+  assert.equal(bookingFor('ahead', null), 'ahead');
+  assert.equal(bookingFor('walk_in', null), 'walk_in');
+  // Anything unrecognised falls to the claim that promises least.
+  assert.equal(bookingFor('nonsense', null), 'walk_in');
 });

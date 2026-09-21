@@ -444,3 +444,36 @@ function listOf(items: string[]): string {
   if (items.length <= 1) return items[0] ?? '';
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
+
+// ─── "Reach will book this" has to be something Reach can do ─────────────
+// The pill said so on slots the app has never been able to book. The prompt
+// forbids it — "never reach for a restaurant, a bar or anything with a
+// table" — and a prompt forbidding something is not the same as it not
+// happening. The screen defended itself by checking the slot's type, which
+// is a second guess at the same unknown.
+//
+// A resolved place answers it outright. The map says what a thing is, and
+// Reach books flights, rooms and ticketed events — not tables.
+
+/** Kinds Reach can genuinely book, in the map's own words. */
+const BOOKABLE = /hotel|hostel|motel|guest_house|guesthouse|apartment|chalet|resort/i;
+
+/**
+ * The booking mode this slot can actually stand behind.
+ *
+ * `hasTicket` is for the one case the map cannot answer: a real listed event
+ * with a page that sells tickets. That is bookable because somebody checked,
+ * not because a model felt confident.
+ */
+export function bookingFor(
+  claimed: string,
+  place: RealPlace | null,
+  hasTicket = false,
+): 'reach' | 'ahead' | 'walk_in' {
+  if (claimed !== 'reach') return claimed === 'ahead' ? 'ahead' : 'walk_in';
+  if (hasTicket) return 'reach';
+  if (place && BOOKABLE.test(`${place.kind} ${place.interest ?? ''}`)) return 'reach';
+  // Claimed and unsupportable. "Reserve ahead" is the honest neighbour: it
+  // tells somebody this needs arranging without promising we will do it.
+  return 'ahead';
+}

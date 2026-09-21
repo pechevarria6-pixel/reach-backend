@@ -10,7 +10,7 @@ import { planReadiness } from '@/lib/plan-readiness';
 import { allowance, tooOften } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
-import { placesFor, placeMenu, withoutUnverified, scenesFrom, type RealPlace } from '@/lib/discovery/real-places';
+import { placesFor, placeMenu, withoutUnverified, scenesFrom, citedPlace, bookingFor, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -604,6 +604,20 @@ you have made up; a day that is simply a good day is allowed to be one.`;
         const slots = [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])];
         for (const slot of slots) {
           if (!slot) continue;
+          // What this slot actually points at, if anything we handed over.
+          const cited = citedPlace(slot.place_ref, realPlaces);
+
+          // "Reach will book this" has to be something Reach can do. The
+          // prompt forbids claiming it for a table and the screen guessed
+          // from the slot's type; a resolved place answers it outright.
+          const honest = bookingFor(slot.booking, cited, !!realEvent?.url);
+          if (honest !== slot.booking) {
+            console.error('[trips itinerary] downgraded a booking claim we cannot keep', {
+              destination, claimed: slot.booking, kept: honest, place: cited?.name ?? null,
+            });
+            slot.booking = honest;
+          }
+
           const clean = withoutUnverified(slot.plan, realPlaces, vouchers);
           if (clean.removed.length) {
             softened++;
