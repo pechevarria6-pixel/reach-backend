@@ -953,11 +953,14 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
     if(term.length<3){setHits([]);return;}
     setSearching(true);
     try{
-      const r=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=6&q="+encodeURIComponent(term));
+      // Through our own server: a browser cannot set the User-Agent the
+      // map's usage policy requires, and calling it from the page was
+      // blocked by CORS in production — so this search never worked at all.
+      const r=await fetch("/api/geo?limit=6&q="+encodeURIComponent(term));
       if(!r.ok)throw new Error(String(r.status));
       const found=await r.json();
-      setHits((Array.isArray(found)?found:[]).map(h=>({
-        label:h.display_name, lat:Number(h.lat), lng:Number(h.lon),
+      setHits((found.hits||[]).map(h=>({
+        label:h.label, lat:h.lat, lng:h.lng,
       })).filter(h=>Number.isFinite(h.lat)&&Number.isFinite(h.lng)));
     }catch(e){
       console.error("[place] search failed",e);
@@ -1248,12 +1251,15 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     if(term.length<3){setPlaceHits([]);return;}
     setSearchingPlace(true);
     try{
-      const r=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=6&q="+encodeURIComponent(term));
+      // Through our own server — see /api/geo. Called from the page this was
+      // blocked by CORS in production, so Discover's place search never
+      // returned anything at all.
+      const r=await fetch("/api/geo?limit=6&q="+encodeURIComponent(term));
       if(!r.ok)throw new Error(String(r.status));
-      const hits=await r.json();
-      setPlaceHits((Array.isArray(hits)?hits:[]).map(h=>({
-        label:h.display_name,
-        lat:Number(h.lat), lng:Number(h.lon),
+      const hits=(await r.json()).hits||[];
+      setPlaceHits(hits.map(h=>({
+        label:h.label,
+        lat:h.lat, lng:h.lng,
       })).filter(h=>Number.isFinite(h.lat)&&Number.isFinite(h.lng)));
     }catch(e){
       console.error("[discover] place search failed",e);
@@ -8458,11 +8464,11 @@ export default function ReachApp({realUser,onSignOut}={}){
           const lat=pos.coords.latitude;
           const lng=pos.coords.longitude;
           // Reverse geocode to get city name
-          const res=await fetch("https://nominatim.openstreetmap.org/reverse?lat="+lat+"&lon="+lng+"&format=json");
+          const res=await fetch("/api/geo?lat="+lat+"&lng="+lng);
           if(res.ok){
-            const geo=await res.json();
-            const city=geo.address?.city||geo.address?.town||geo.address?.county||"Your city";
-            const state=geo.address?.state_code||"";
+            const geo=(await res.json()).hits?.[0]||{};
+            const city=geo.city||"Your city";
+            const state=geo.state||"";
             // Find nearest major airport (simplified - use city)
             const airport=getNearestAirport(city,state);
             setUserLocation({lat,lng,city,state,airport,formatted:city+(state?", "+state:""),source:"device"});
@@ -8490,12 +8496,11 @@ export default function ReachApp({realUser,onSignOut}={}){
     const city=user?.homeCity;
     if(!city)return;                       // nothing to fall back to: ask.
     try{
-      const res=await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&q="+encodeURIComponent(city));
+      const res=await fetch("/api/geo?limit=1&q="+encodeURIComponent(city));
       if(!res.ok){console.error("[location] home city lookup returned",res.status);return;}
-      const hits=await res.json();
-      const hit=Array.isArray(hits)&&hits[0];
+      const hit=(await res.json()).hits?.[0];
       if(!hit)return;                      // an unrecognised city is not a point.
-      const lat=Number(hit.lat), lng=Number(hit.lon);
+      const lat=Number(hit.lat), lng=Number(hit.lng);
       if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
       setUserLocation({lat,lng,city,airport:user?.homeAirport||null,formatted:city,source:"home"});
     }catch(e){
