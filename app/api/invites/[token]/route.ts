@@ -18,7 +18,7 @@ export async function GET(_req: NextRequest, { params }: { params: { token: stri
     .eq('token', params.token)
     .maybeSingle();
 
-  if (!invite) return NextResponse.json({ error: 'Invite not found' }, { status: 404 });
+  if (!invite) return NextResponse.json({ error: "We can't find that invite. Ask whoever sent it for a fresh link." }, { status: 404 });
 
   const expired = new Date(invite.expires_at).getTime() <= Date.now();
   const group = Array.isArray(invite.groups) ? invite.groups[0] : invite.groups;
@@ -44,7 +44,7 @@ export async function POST(_req: NextRequest, { params }: { params: { token: str
     .eq('token', params.token)
     .maybeSingle();
 
-  if (!invite) return NextResponse.json({ error: 'Invite not found' }, { status: 404 });
+  if (!invite) return NextResponse.json({ error: "We can't find that invite. Ask whoever sent it for a fresh link." }, { status: 404 });
   if (invite.status !== 'pending') {
     return NextResponse.json({ error: `This invite was already ${invite.status}` }, { status: 409 });
   }

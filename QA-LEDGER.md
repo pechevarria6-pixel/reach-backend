@@ -319,3 +319,48 @@ untested by rule. Both fixes are read-and-reason, not charges anybody made.
 Suite: 486/486 unit (+7), build clean.
 
 ---
+
+## Pass 5 — double-submit sweep, copy audit, suite reliability — 2026-09-21 15:1x UTC
+
+Walked: every POST route that inserts; every user-facing error string.
+| Found: **P0 1** / P1 1 / P2 5
+
+**Swept the rest for the double-submit shape found in Pass 4.** Votes are
+protected by a pre-check *and* a DB unique constraint. Availability inserts
+the new ranges then deletes the old ones, so a resubmit nets out correctly.
+No other POST route inserts unguarded. The pattern was contained to bookings
+and payments — both now fixed.
+
+**P0 — the suite reported "1 failed, 72 did not run".** Clerk's sign-in hung;
+the fallback to the saved cookie jar ran and printed its line, and Playwright
+killed the test on its 60s timeout anyway. So `setup` failed and every test
+behind it was **skipped rather than run against the jar that had just been
+put in place**.
+
+This is the worst kind of failure in a QA run: "72 did not run" reads very
+easily as "72 fine", and the whole directive rests on the suite meaning
+something. Fix `1767ec6` — the sign-in races a 30s deadline of its own, well
+inside the test timeout, so the fallback has time to matter. Same lesson as
+the geolocation deadline: when a thing can hang, whatever waits on it needs
+its own clock.
+
+**P2 ×5 — error messages that stopped at what went wrong.** The directive's
+bar is human words *plus a next step*, and the app already sets it: "That
+payment didn't go through. Nothing was taken — you can try again." Six fell
+short and now do not:
+
+| before | after |
+|---|---|
+| Couldn't save that | — try again in a moment |
+| Couldn't undo that | — it should still be where you left it |
+| Couldn't withdraw that invite | — try again, it is still active |
+| Couldn't build the day-by-day plan | — try again, or add days yourself |
+| Couldn't search for that just now | — try again in a moment |
+
+A person reading "Couldn't undo that" does not know whether their thing is
+gone.
+
+Suite: **73/73 e2e, 486/486 unit, zero flaky reruns** — the first fully
+green full-suite run of this session.
+
+---

@@ -100,10 +100,13 @@ export default function InvitePage({ params }: { params: { token: string } }) {
   }
 
   if (invite.status !== 'pending') {
+    // What happened, and what to do about it. A person holding a link a
+    // friend sent has no way of knowing whether to retype it, wait, or ask
+    // — and the one thing that always works is asking for another.
     const message =
-      invite.status === 'expired' ? 'This invite has expired.'
-      : invite.status === 'revoked' ? 'This invite was withdrawn.'
-      : 'This invite has already been used.';
+      invite.status === 'expired' ? 'This invite has expired. Ask whoever sent it for a fresh link.'
+      : invite.status === 'revoked' ? 'This invite was withdrawn. Ask whoever sent it if that was a mistake.'
+      : 'This invite has already been used. Ask whoever sent it for one of your own.';
     return (
       <div style={shell}>
         <div style={{ fontSize: 44 }}>{invite.groupEmoji || '✈️'}</div>
