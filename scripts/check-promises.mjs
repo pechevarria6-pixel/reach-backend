@@ -44,13 +44,17 @@ const ACTION = /\b(send|sends|sent|book|books|confirm|confirms|pay|invite|submit
 // exactly how "Allow →" shipped doing nothing but advancing a step.
 const PERMISSION = /\b(allow|enable|grant|connect)\b/i;
 
+// `replace(` alongside `push(`: both navigate, and the rule above already
+// says navigating to the screen that does the work keeps the promise. Only
+// push( was listed, so a button routing with replace( read as doing nothing.
+//
 // `fetchWithin(` as well as `fetch(`: every call in the checkout path was
 // given a deadline, which renamed it — and this pattern stopped recognising
 // that those handlers deliver anything, so "Couldn't book" was reported as a
 // button that promises and does nothing while it was calling the API all
 // along. A guard that goes wrong quietly is the thing these guards exist to
 // prevent.
-const KEEPS_ACTION = /fetch(Within)?\(|ToServer|submitBooking|castVote|nudg|window\.open|push\(|updateStatus\(|setBooking\(true\)|signOut|openSignIn/;
+const KEEPS_ACTION = /fetch(Within)?\(|ToServer|submitBooking|castVote|nudg|window\.open|push\(|replace\(|updateStatus\(|setBooking\(true\)|signOut|openSignIn/;
 const KEEPS_PERMISSION = /requestFor|requestPermission|getCurrentPosition|getUserMedia|\.requestAccess/;
 
 // Names the search must not follow into. updateGroup writes local state and,

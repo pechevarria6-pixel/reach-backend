@@ -7514,7 +7514,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
           a plan already as finished as it would ever get looked permanently
           unfinished. There is nothing to pay, so say so and let them go. */}
       {checkout.nothingToCharge
-        ?<button onClick={onBack}
+        ?<button onClick={()=>replace?replace("planDetail",{planId,groupId}):onBack()}
           style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16}}>
           Nothing to pay — take me to the plan</button>
         :<button disabled={busy||!checkout.canPay} onClick={startPayment}
