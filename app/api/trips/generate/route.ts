@@ -10,7 +10,10 @@ import { planReadiness } from '@/lib/plan-readiness';
 import { allowance, tooOften } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
-import { placesFor, placeMenu, withoutUnverified, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
+import { realPlacesAmong } from '@/lib/discovery/is-place';
+import { within } from '@/lib/deadline';
+import { locate } from '@/lib/discovery/geocode';
+import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -595,9 +598,42 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // The town's own name, and a real ticketed venue from a listing, are
       // real without being on a map-built menu, so they are allowed through
       // by name.
-      const vouchers = [
+      const vouchers: string[] = [
         destination, tripCity, fixedPlace, realEvent?.venue, realEvent?.city, realEvent?.title,
       ].filter((v): v is string => typeof v === 'string' && v.length > 0);
+      // ── Geography is real even when we hold no record of it ─────────
+      // A beach, a river and a neighbourhood are not businesses, so they are
+      // never in a venue table built from business tags. Softening them
+      // turned "Sunset from Playa Los Muertos" into "Sunset from a local
+      // spot", which is not an improvement on anything.
+      //
+      // The same map that lists the restaurants lists the beach, so the
+      // names nothing else vouches for are asked about before they are
+      // softened. Strictly time-boxed: Overpass taught this lesson at
+      // seventy-two seconds, and a check that cannot answer in time must
+      // cost the traveller nothing. Falling back means softening, which is
+      // what happened before this existed.
+      const candidates = [...new Set(days.flatMap(day =>
+        [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])]
+          .filter(Boolean)
+          .flatMap(slot => unverifiedNames(slot!.plan, realPlaces, vouchers))
+          .concat(unverifiedNames(day.insider_tip, realPlaces, vouchers)),
+      ))];
+      let geography = new Set<string>();
+      if (candidates.length) {
+        const at = await locate(tripCity || destination, tripCountry ?? null).catch(() => null);
+        if (at) {
+          geography = await within(
+            realPlacesAmong(candidates.slice(0, 10), { lat: at.lat, lng: at.lng }),
+            8000, 'checking the landmarks',
+          ).catch(() => new Set<string>());
+        }
+        console.log('[trips itinerary] names nothing held vouched for', {
+          asked: candidates.length, real_places: [...geography],
+        });
+      }
+      vouchers.push(...geography);
+
       let softened = 0;
       const stripped = new Set<string>();
       for (const day of days) {
