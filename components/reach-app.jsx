@@ -491,7 +491,11 @@ function itineraryRows(days,nightOut=false){
     const kind=(sl,fallback)=>sl.ticket_url?"event":fallback;
     const ticket=(sl)=>sl.ticket_url?{venue_website:sl.ticket_url,venue_name:sl.venue||null}:{};
     return [
-      {time:label(day,0),title:m.plan,sub:day.title||"",type:kind(m,nightOut?"restaurant":"activity"),conf:null,filled:false,
+      // The day's own title sits under its first slot, which reads as a
+      // theme on a trip and as an echo on an evening: "An Evening with The
+      // Milk Carton Kids" appeared beneath the dinner while the same words
+      // were already the plan's name at the top of the screen.
+      {time:label(day,0),title:m.plan,sub:nightOut?"":(day.title||""),type:kind(m,nightOut?"restaurant":"activity"),conf:null,filled:false,
         cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null,because:m.because||null,...ticket(m)},
       {time:label(day,1),title:a.plan,sub:"",type:kind(a,"activity"),conf:null,filled:false,
         cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null,because:a.because||null,...ticket(a)},
