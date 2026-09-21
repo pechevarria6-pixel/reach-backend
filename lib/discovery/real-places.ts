@@ -273,7 +273,15 @@ export function placeMenu(places: RealPlace[]): string {
   ];
   for (const [kind, list] of byKind) {
     lines.push(`${kind}:`);
-    for (const p of list) {
+    // Places with something on first.
+    //
+    // A pub with a quiz on Wednesday is a better answer than a pub about
+    // which we know only the name — it gives somebody a reason to pick a
+    // night and somebody else a reason to come. They were being listed in
+    // whatever order the table returned, so across six regenerated plans
+    // not one of the venues with a known night was chosen.
+    const ordered = [...list].sort((a, b) => (b.whatsOn?.length ?? 0) - (a.whatsOn?.length ?? 0));
+    for (const p of ordered) {
       lines.push(`  [${p.ref}] ${p.name}`);
       // What is actually on there, read off the venue's own page. Their
       // words, not ours — "every Wednesday Night at 7 PM" is the pub's own
@@ -295,6 +303,9 @@ export function placeMenu(places: RealPlace[]): string {
     '  what it costs, when it is open or how busy it gets. The list gives you',
     '  a name, a kind, and sometimes what is on there. That is everything we',
     '  know about it.',
+    '- Places with something listed under them come first in each group, and',
+    '  they are the better answer where one fits: a night somebody can plan',
+    '  around beats a name on its own.',
     '- Where a place has something listed under it — "· Pub Trivia Night —',
     '  every Wednesday Night at 7 PM" — that is read off the venue\'s own',
     '  page and you may say it, in those words. It is the most useful thing',

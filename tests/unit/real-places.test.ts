@@ -241,3 +241,15 @@ test('a place with nothing listed gets nothing invented for it', () => {
   assert.doesNotMatch(venues, /·/);
   assert.match(menu, /do not\s+invent one for a place that has none/);
 });
+
+test('places with something on are listed first', () => {
+  // Across six regenerated plans, not one venue with a known night was
+  // chosen — they were listed in whatever order the table returned, behind
+  // places we know nothing about but the name.
+  const quiet = place('p1', 'Quiet Bar', 'bar');
+  const busy: RealPlace = { ...place('p2', 'Red Bear Brewing', 'bar'),
+    whatsOn: ['Pub Trivia Night — every Wednesday Night at 7 PM'] };
+  const venues = placeMenu([quiet, busy]).split('RULES')[0];
+  assert.ok(venues.indexOf('Red Bear Brewing') < venues.indexOf('Quiet Bar'),
+    'the one with a night on should come first');
+});
