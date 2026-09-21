@@ -70,7 +70,13 @@ export async function POST(req: NextRequest) {
 
   const requiresMFA = amountCents > 50000; // $500
 
-  // Create PaymentIntent — secret key stays server-side
+  // Create PaymentIntent — secret key stays server-side.
+  //
+  // Keyed, like /funding, so two requests in the same instant cannot make
+  // two intents for one share. This route is the legacy path and nothing in
+  // the client calls it, which is not a reason to leave a charge unguarded:
+  // it is reachable, and an endpoint that can take somebody's money gets the
+  // same care as the one that does.
   const intent = await stripe.paymentIntents.create({
     amount: amountCents,
     currency: 'usd',
@@ -81,7 +87,7 @@ export async function POST(req: NextRequest) {
     description: `Reach: ${plan.title}`,
     receipt_email: user.email,
     statement_descriptor_suffix: 'REACH TRAVEL',
-  });
+  }, { idempotencyKey: `reach_payment_${body.plan_id}_${user.id}_${amountCents}` });
 
   // Record pending payment
   const { error: logged } = await supabase.from('payments').insert({

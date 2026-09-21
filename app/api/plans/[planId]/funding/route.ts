@@ -232,11 +232,24 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     'metadata[kind]': 'reach_contribution',
     'automatic_payment_methods[enabled]': 'true',
   });
+  // Stripe's own idempotency, because the guard above is a read and this is
+  // a write, and a fast double-tap sends two requests that both read "no
+  // payment in flight" before either of them writes one. Without this they
+  // create two payment intents for the same share and the person can be
+  // charged twice.
+  //
+  // Keyed on the plan, the person and the amount, so a retry of the same
+  // press returns the very same intent while a different share — someone
+  // leaving the group changes what everyone owes — is a new one. A second
+  // identical payment is already refused above, which is what makes keying
+  // on the amount safe rather than a way to block a legitimate charge.
+  const idempotencyKey = `reach_contrib_${params.planId}_${ctx.user.id}_${amountCents}`;
   const stripeRes = await fetch('https://api.stripe.com/v1/payment_intents', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
       'Content-Type': 'application/x-www-form-urlencoded',
+      'Idempotency-Key': idempotencyKey,
     },
     body: form,
   });
