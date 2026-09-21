@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness, withoutTravelerDetails } from '@/lib/essentials-server';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
+import { findDuplicate, identityOf as findKey } from '@/lib/booking/duplicate';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
 import { kiwiFlights, viatorActivities, ticketmasterEvents, tableReservations } from '@/lib/booking/providers/rest';
 import { duffelFlights } from '@/lib/booking/providers/flights.duffel';
@@ -85,7 +86,50 @@ export async function POST(req: NextRequest) {
     if (!ready) flightsBlocked = blocking;
   }
 
+  // What this plan already has in play, read once. A double-tapped "Book
+  // everything", a retry after a dropped connection, or a refresh at the
+  // wrong moment all arrive here as a fresh request, and this route ended in
+  // a plain insert — so each one created another row. The bookings table
+  // shows the result: the same RDU → PVR flight on the same date four times,
+  // two of them pending behind one already confirmed.
+  //
+  // For a table that is a duplicated reservation. For a flight it is a
+  // second order with a real fare on it.
+  const { data: already, error: readBack } = await ctx.db
+    .from('bookings')
+    .select('id, vertical, status, price_cents, provider, mode, provider_ref, redirect_url, currency, detail, request_payload')
+    .eq('plan_id', body.planId);
+  if (readBack) {
+    // Not fatal. Failing the whole request because we could not check for
+    // duplicates would turn a rare double-booking into a total outage; the
+    // insert below is still the behaviour we have always had.
+    console.error('[bookings] could not read what this plan already has', { code: readBack.code });
+  }
+  const existing = already ?? [];
+
   for (const item of body.items as BookingItemRequest[]) {
+    // Already booked, and still live. Hand back what is there rather than
+    // making a second one. A failed or cancelled booking is deliberately not
+    // a duplicate — it is the reason somebody is pressing the button again.
+    const twin = dryRun ? null : findDuplicate(existing, item as unknown as Record<string, unknown>);
+    if (twin) {
+      console.log('[bookings] already booked — returning the existing one', {
+        plan: body.planId, vertical: item.vertical, status: twin.status,
+      });
+      results.push({
+        vertical: twin.vertical as BookingItemResult['vertical'],
+        mode: twin.mode as BookingItemResult['mode'],
+        status: twin.status as BookingItemResult['status'],
+        provider: twin.provider as string,
+        providerRef: (twin.provider_ref as string) || undefined,
+        redirectUrl: (twin.redirect_url as string) || undefined,
+        priceCents: (twin.price_cents as number) ?? undefined,
+        currency: (twin.currency as string) || 'USD',
+        detail: twin.detail ?? undefined,
+      } as BookingItemResult);
+      continue;
+    }
+
     if (item.vertical === 'flight' && flightsBlocked) {
       results.push({
         vertical: 'flight', mode: 'native', status: 'failed', provider: 'none',
@@ -121,7 +165,12 @@ export async function POST(req: NextRequest) {
       results.push(result);
 
       if (!dryRun) {
-        const { error: wrote } = await ctx.db.from('bookings').insert({
+        // The identity of the thing booked, so the database can refuse a
+        // second live one. Two requests in flight at the same moment — which
+        // is what a fast double-tap sends — both read nothing above and both
+        // arrive here; only a unique index settles that.
+        const row: Record<string, unknown> = {
+          idempotency_key: findKey(item as unknown as Record<string, unknown>),
           plan_id: body.planId,
           group_id: ctx.plan.group_id,
           booked_by: ctx.user.id,
@@ -139,12 +188,39 @@ export async function POST(req: NextRequest) {
           request_payload: withoutTravelerDetails(item),
           response_payload: result.raw || null,
           error: result.error || null,
-        });
+        };
+
+        let { error: wrote } = await ctx.db.from('bookings').insert(row);
+
+        // The column arrives in a migration the owner runs. Until then
+        // PostgREST fails the whole insert on a column it does not know, and
+        // losing the booking to keep the key would be the wrong trade.
+        if (wrote && /idempotency_key/.test(wrote.message || '')) {
+          console.error('[bookings] writing without the idempotency key — migration not run yet');
+          delete row.idempotency_key;
+          ({ error: wrote } = await ctx.db.from('bookings').insert(row));
+        }
+        // The index did its job: somebody else booked this in the moment
+        // between our read and our write. Not an error to show anybody.
+        if (wrote && wrote.code === '23505') {
+          console.log('[bookings] a duplicate was refused by the database', { plan: body.planId, vertical: result.vertical });
+          wrote = null;
+        }
 
         // Checked, because a booking that was quoted and not stored is a
         // booking nobody can act on, and returning the quote anyway tells the
         // screen it worked. This route reported success on every write
         // regardless of whether one happened.
+        // Also visible to the rest of this same request: a payload carrying
+        // the same flight twice would otherwise write it twice.
+        existing.push({
+          id: '', vertical: result.vertical, status: result.status,
+          price_cents: result.priceCents ?? null, provider: result.provider,
+          mode: result.mode, provider_ref: result.providerRef ?? null,
+          redirect_url: result.redirectUrl ?? null, currency: result.currency ?? 'USD',
+          detail: result.detail ?? null, request_payload: withoutTravelerDetails(item),
+        } as typeof existing[number]);
+
         if (!wrote) {
           // Money always travels, so GMV is summable from events alone.
           void track(ctx.db, result.status === 'failed' ? 'booking_failed' : 'booking_created', {

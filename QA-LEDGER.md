@@ -231,3 +231,28 @@ states and only one of them is the user's to fix. Not yet fixed; logged.
 Suite: 479/479 unit, 71/71 e2e.
 
 ---
+
+## Pass 3b — fixes verified in production — 2026-09-21 14:0x UTC
+
+Cleared the saved place, reloaded, waited out the 9s deadline, opened
+Discover. Before the fixes it read *"Allow location in your browser"*. After:
+
+> Discover
+> **Based on your home city, Raleigh, North Carolina** · change
+> 📍 NEAR YOU IN RALEIGH, NORTH CAROLINA
+> Pullen Arts Center · Centro · The Blind Barb…
+
+Real Raleigh venues, and the screen says where the location came from rather
+than implying GPS — "near you" and "near where you live" are different
+claims. The owner's Pittsburgh override was restored afterwards, verified.
+
+**P2 fixed** (`94cf368`): the empty state now asks the browser whether
+permission was refused or simply never answered, and says the true one.
+Where the device has gone quiet it points at what does work — pick a place —
+instead of at a permission already granted. Where the permissions API is
+missing the state stays unknown and the copy is unchanged; a guess about
+whether somebody granted a permission is not worth making.
+
+Suite: 479/479 unit, build clean.
+
+---
