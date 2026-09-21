@@ -140,3 +140,35 @@ plans** — not a sandbox. So for the rest of this run:
 suite cannot touch real data. Logged, not changed — env is owner-only.
 
 ---
+
+## Pass 2 — navigation: the 404 — 2026-09-21 13:0x UTC
+
+Walked: unknown addresses, signed in and signed out. | Found: P0 0 / **P1 1** / P2 0
+
+**P1 — a wrong address was a dead end.** No custom `not-found` page existed,
+so every mistyped URL, stale bookmark and replaced invitation landed on
+Next's built-in 404: black Helvetica on white, "This page could not be
+found", and **no link anywhere on the page**. The navigation audit's one
+unbendable rule is no dead ends; this was the largest one, and reachable
+from outside by anybody holding an old link.
+
+Fix: `785ad81` — `app/not-found.tsx` in the app's own tokens, light and dark,
+explicit background (a page that inherits transparent flashes white in dark
+mode), and a way back. It does not guess why somebody arrived: a wrong
+address and an expired invitation are indistinguishable from there.
+
+Two regression tests, **watched failing against production before the fix
+shipped**, then passing after: 5/5.
+
+**Corrected my own mistake.** The first version of the test asserted a 404
+while signed out and got a 307. That is the app being right, not a bug: the
+middleware redirects a signed-out visitor to sign-in with a `returnBackUrl`
+so an anonymous caller cannot probe which addresses exist, and they reach
+the 404 after signing in. Test rewritten to match the app; the app was not
+changed to match the test.
+
+Screen walked and read, not just asserted: renders correctly in dark mode.
+
+Suite: 69/69 e2e (+2 new = 71), 475/475 unit.
+
+---

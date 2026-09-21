@@ -390,13 +390,18 @@ test.describe('12. Theme', () => {
 });
 
 test.describe('13. Not found', () => {
-  // Signed out on purpose: a stale link is most often opened by somebody who
-  // is not signed in, and that is exactly when a dead end is worst.
-  test.use({ storageState: { cookies: [], origins: [] } });
+  // Signed in, because that is the only way to reach this screen.
+  //
+  // A signed-out visitor asking for an unknown address is redirected to
+  // sign-in with a returnBackUrl, not 404'd — deliberately, so an anonymous
+  // caller cannot probe which addresses exist. They land here after signing
+  // in. The first version of this test asserted a 404 while signed out, got
+  // a 307, and was wrong about the app rather than finding a bug in it.
 
   test('A wrong address is a designed screen, not a dead end', async ({ page }) => {
     const res = await page.goto(`${BASE_URL}/this-page-does-not-exist`);
     expect(res?.status()).toBe(404);
+    await expect(page).toHaveURL(/this-page-does-not-exist/);
 
     // Next's built-in 404 says "This page could not be found" in black
     // Helvetica on white, with no link anywhere. Every mistyped URL and
@@ -408,7 +413,7 @@ test.describe('13. Not found', () => {
     const home = page.getByRole('link', { name: /take me back/i });
     await expect(home).toBeVisible();
     await home.click();
-    await expect(page).toHaveURL(new RegExp(`^${BASE_URL}/(home|sign-in)?`));
+    await expect(page).toHaveURL(new RegExp(`^${BASE_URL}/(home)?$`));
   });
 
   test('The not-found screen paints a themed background, never transparent', async ({ page }) => {
