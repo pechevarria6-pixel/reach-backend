@@ -1,0 +1,387 @@
+// ─── The places that actually exist, handed over before anybody writes ───
+// Until now the generator was asked to plan three days in a town and then,
+// separately and afterwards, a verifier went and checked whether the places
+// it had named were real. That order is backwards, and it is why "Cash only
+// at Milt's" and a Milk Carton Kids gig at the wrong venue both shipped: by
+// the time anything was checked, the sentence had already been written in
+// Reach's voice, and the best a checker can do with an invented restaurant
+// is take it away again.
+//
+// So the places come first. This reads the map and our own cache for the
+// town somebody is going to, and hands the model a numbered list of real
+// venues with their real names. The model arranges a day out of that list.
+// It does not get to add to it.
+//
+// The important case is the empty one. A thin list is not a licence to fall
+// back on invention — it is the honest shape of what we know about a small
+// town, and the prompt says so plainly: name nothing you were not given.
+// "Dinner somewhere near the venue" is a true sentence. "Dinner at El Charro
+// Loco" is not, and we know it is not, because we looked.
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Seeker } from './types.ts';
+import { locate } from './geocode.ts';
+import { noteArea, milesBetween } from './cache.ts';
+import { canTurnUp } from './rules.ts';
+import { normalise } from './verify.ts';
+
+export interface RealPlace {
+  /** What the model cites. Short on purpose — it is typed back to us. */
+  ref: string;
+  name: string;
+  /** "restaurant", "museum", "bar" — from the map's own tag, not guessed. */
+  kind: string;
+  /** Its own site, when the map records one. Null is common and fine. */
+  url: string | null;
+  city: string | null;
+  /** Which source vouches for it, so a card can say where this came from. */
+  source: string;
+}
+
+/**
+ * How far out to look, in miles.
+ *
+ * A trip is not a Friday night: somebody in Moab will drive forty minutes to
+ * a trailhead and think nothing of it, where Discover's tighter box is right
+ * for "what is on near me tonight".
+ */
+const RADIUS_MILES = 25;
+
+/**
+ * The kinds worth holding for any destination, in the vocabulary the venue
+ * table actually stores — which is the quiz's, not a category system of my
+ * own. Checked against the live table before it was written here.
+ */
+const ALWAYS_SWEPT = [
+  'mexican restaurants', 'italian restaurants', 'japanese restaurants',
+  'breweries', 'wine tasting', 'live music', 'museums & history',
+  'art & galleries', 'outdoors', 'markets & food halls',
+];
+
+/** At most this many of any one kind, so a city's restaurants cannot bury
+ *  its one museum. The menu has to be able to furnish a whole day. */
+const PER_KIND = 8;
+
+/** One entry per real place, however the table spells it. */
+function dedupe<T extends { name: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const kept: T[] = [];
+  for (const r of rows) {
+    const key = normalise(r.name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    kept.push(r);
+  }
+  return kept;
+}
+
+/**
+ * Real places near where somebody is going.
+ *
+ * The cache first and the map second, which is the same order Discover uses
+ * and for the same reason: the cached rows came from the map on an earlier
+ * sweep, they cost nothing, and a town we have already swept answers
+ * instantly. The live call only happens when the cache is thin.
+ *
+ * Returns an empty list rather than throwing. Every caller has to handle
+ * empty anyway — plenty of real towns have nothing mapped — and an empty
+ * list has a correct behaviour, which is to name no venues at all.
+ */
+export async function placesFor(
+  db: SupabaseClient,
+  where: { city: string | null; country?: string | null; interests?: string[] },
+  fetchImpl: typeof fetch = fetch,
+): Promise<RealPlace[]> {
+  const city = String(where.city || '').trim();
+  if (!city) return [];
+
+  const at = await locate(city, where.country ?? null, fetchImpl).catch(() => null);
+  if (!at) {
+    console.error('[real-places] could not place', { city });
+    return [];
+  }
+
+  // What the sweep should go and fetch for this town, in the quiz's own
+  // words — which is the vocabulary discovery_venues.interest is stored in.
+  // Whatever they answered, plus the kinds every itinerary needs: a trip has
+  // dinner and a morning in it regardless of what anybody ticked.
+  const seeker: Seeker = {
+    lat: at.lat, lng: at.lng, city: at.city || city,
+    interests: [...new Set([...(where.interests ?? []).slice(0, 6), ...ALWAYS_SWEPT])],
+    avoid: [],
+  };
+
+  // Our own rows only. Overpass was tried here first and measured, which is
+  // the whole reason it is not here now:
+  //
+  //   Moab        1 place    6.2s   (three mirrors timed out)
+  //   Washington  0 places  72.7s   (every mirror timed out, twice over)
+  //   Charleston 13 places  39.2s   (answered, but only at a 4-mile box)
+  //
+  // Seventy-two seconds to be told nothing. A generation that already had to
+  // drop from adaptive thinking to stay under the platform's ceiling cannot
+  // spend that, and a dense city — which is where most trips go — is exactly
+  // where Overpass refuses. So the map is read on a schedule by
+  // /api/discovery/sweep and this reads the table, which is instant.
+  //
+  // Read without an interest filter, unlike Discover. Discover is answering
+  // "what is on near me that I would like", so it matches the quiz's own
+  // words; a menu is answering "what exists here at all", and filtering it
+  // to somebody's five answers returned six of Raleigh's eighty-seven
+  // venues and not one restaurant. A day has a dinner in it whether or not
+  // anybody listed food as an interest.
+  const dLat = RADIUS_MILES / 69;
+  const dLng = RADIUS_MILES / Math.max(1, 69 * Math.cos((at.lat * Math.PI) / 180));
+  const { data, error } = await db
+    .from('discovery_venues')
+    .select('name, kind, interest, website, city, street, lat, lng')
+    .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
+    .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng)
+    .limit(400);
+
+  if (error) {
+    // A missing table means the migration has not been run, which looks
+    // exactly like a town with nothing in it unless the log says otherwise.
+    console.error('[real-places] could not read the venue table', { code: error.code, message: error.message });
+    return [];
+  }
+
+  // Tell the sweep this town is wanted. It writes an area row, the nightly
+  // job works through them, and a destination asked for once is covered the
+  // next time somebody asks. Never awaited into the answer: filling the
+  // cache is for the next traveller, not this one.
+  void noteArea(db, seeker).catch(() => {});
+
+  const rows = dedupe(
+    (data ?? [])
+      .filter(v => v.name && canTurnUp(String(v.name), [String(v.kind || '')]))
+      .map(v => ({
+        name: String(v.name),
+        kind: String(v.kind || v.interest || 'place').replace(/_/g, ' ').trim() || 'place',
+        url: (v.website as string | null) || null,
+        city: (v.city as string | null) ?? seeker.city ?? null,
+        miles: milesBetween(at.lat, at.lng, Number(v.lat), Number(v.lng)),
+      }))
+      .sort((a, b) => a.miles - b.miles),
+  );
+
+  if (!rows.length) {
+    console.log('[real-places] no verified venues held for this town yet — it will name none', { city: seeker.city });
+  }
+
+  // A few of each kind, nearest first, so the menu can furnish a whole day
+  // rather than sixty restaurants and nothing to do between them.
+  const taken = new Map<string, number>();
+  const places: RealPlace[] = [];
+  for (const r of rows) {
+    const n = taken.get(r.kind) ?? 0;
+    if (n >= PER_KIND) continue;
+    taken.set(r.kind, n + 1);
+    places.push({
+      ref: `p${places.length + 1}`,
+      name: r.name, kind: r.kind, url: r.url, city: r.city, source: 'osm',
+    });
+    if (places.length >= 60) break;
+  }
+  return places;
+}
+
+/**
+ * The block the prompt carries, and the only venues a plan may name.
+ *
+ * Grouped by kind so the model can find a dinner without reading sixty
+ * lines, and capped, because a list long enough to bury the instruction is
+ * a list that gets ignored.
+ */
+export function placeMenu(places: RealPlace[]): string {
+  if (!places.length) {
+    return [
+      'WE HAVE NO VERIFIED VENUES FOR THIS PLACE.',
+      '',
+      'Name no restaurants, bars, shops, venues or businesses at all — not',
+      'one, however sure you feel. Write the plan in terms of what to do',
+      '("dinner near the waterfront", "a morning walk along the cliff path")',
+      'and leave the choosing to them. A made-up name is worse than no name:',
+      'they will turn up at a door that is not there.',
+    ].join('\n');
+  }
+
+  const byKind = new Map<string, RealPlace[]>();
+  for (const p of places) {
+    const list = byKind.get(p.kind) ?? [];
+    list.push(p);
+    byKind.set(p.kind, list);
+  }
+
+  const lines: string[] = [
+    'THE REAL PLACES IN THIS TOWN. These exist — they are read from',
+    'OpenStreetMap and our own verified venue table, not remembered.',
+    '',
+  ];
+  for (const [kind, list] of byKind) {
+    lines.push(`${kind}:`);
+    for (const p of list) lines.push(`  [${p.ref}] ${p.name}`);
+    lines.push('');
+  }
+  lines.push(
+    'RULES, and they are absolute:',
+    '- Every venue you name must be one of these, spelled exactly as written,',
+    '  with its [ref] in the slot\'s place_ref field.',
+    '- You may not name any other business. Not one you are confident about,',
+    '  not a famous one, not an "obvious" one. If it is not on this list we',
+    '  have not checked it and we will not put it in front of anybody.',
+    '- A slot that needs no venue — a walk, a drive, a morning off — sets',
+    '  place_ref to null and names nothing. That is a good answer.',
+    '- Do not describe what a place is like inside, what it is known for,',
+    '  what it costs, when it is open or how busy it gets. The list gives you',
+    '  a name and a kind. That is everything we know about it.',
+  );
+  return lines.join('\n');
+}
+
+/** The place a slot cites, or null when it cites nothing we handed over. */
+export function citedPlace(ref: unknown, places: RealPlace[]): RealPlace | null {
+  if (typeof ref !== 'string' || !ref) return null;
+  const want = ref.trim().toLowerCase().replace(/[[\]]/g, '');
+  return places.find(p => p.ref === want) ?? null;
+}
+
+// ─── The check, because a prompt rule is a request ───────────────────────
+// Everything above asks the model not to invent. Asking has a good success
+// rate and a good success rate is not the standard: one invented restaurant
+// in fifty is still somebody standing outside a building that is a laundrette.
+// So the output is read back, and a name we cannot source does not ship.
+
+/**
+ * Words that are capitalised because a sentence started, not because
+ * somebody named a business.
+ *
+ * Trimmed off the front of a run rather than used to reject it. "Dinner at
+ * El Charro Loco" is one capitalised run, and rejecting the whole thing
+ * because it opens with "Dinner" is how the invented restaurant got through
+ * the first version of this: the giveaway word shielded the name behind it.
+ */
+const NOT_A_VENUE = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'then', 'after', 'before', 'grab',
+  'head', 'walk', 'drive', 'take', 'start', 'finish', 'end', 'spend', 'catch',
+  'visit', 'try', 'stop', 'book', 'stay', 'eat', 'see', 'go', 'get', 'enjoy',
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'morning', 'afternoon', 'evening', 'night', 'breakfast', 'lunch', 'dinner',
+  'brunch', 'day', 'one', 'two', 'three', 'four', 'five',
+  'if', 'you', 'your', 'it', 'this', 'that', 'there', 'here', 'reach',
+]);
+
+/** The small words real names carry: Museum *of the* American West. */
+const JOINER = new Set(['of', 'the', 'de', 'du', 'la', 'le', 'and', '&', 'at', 'on', 'in']);
+
+/**
+ * Proper names in a sentence — the runs of capitalised words that read like
+ * somebody's business rather than like prose.
+ *
+ * Deliberately eager. A false positive costs a name being softened to "a
+ * nearby spot", which is a true sentence either way; a false negative is an
+ * invented restaurant on somebody's phone at seven in the evening.
+ */
+export function properNames(text: string): string[] {
+  const names: string[] = [];
+  const isCap = (w: string) => /^[A-Z][\w'’&-]*$/.test(w);
+
+  for (const sentence of String(text || '').split(/(?<=[.!?;:])\s+|\n+/)) {
+    const words = sentence.trim().split(/\s+/).filter(Boolean);
+    let run: string[] = [];
+
+    const flush = () => {
+      // Drop a trailing joiner: "Moab and" ends at "Moab".
+      while (run.length && JOINER.has(run[run.length - 1].toLowerCase())) run.pop();
+      // Trim the sentence's own opening words, and any joiner they leave
+      // stranded, until what is left starts like a name.
+      while (run.length && (NOT_A_VENUE.has(stripPunctuation(run[0])) || JOINER.has(run[0].toLowerCase()))) run.shift();
+      if (run.length >= 2) names.push(run.join(' ').replace(/[.,;:!?]+$/, ''));
+      run = [];
+    };
+
+    for (const word of words) {
+      const bare = word.replace(/[.,;:!?]+$/, '');
+      if (isCap(bare)) {
+        run.push(word);
+        // Punctuation ends a name: "Milt's Stop & Eat, then drinks".
+        if (/[.,;:!?]$/.test(word)) flush();
+      } else if (run.length && JOINER.has(bare.toLowerCase())) {
+        run.push(word);
+      } else {
+        flush();
+      }
+    }
+    flush();
+  }
+  return names;
+}
+
+/** A word as it reads without the punctuation attached to it. */
+function stripPunctuation(word: string): string {
+  return word.replace(/[.,;:!?]+$/, '').toLowerCase();
+}
+
+/** Does the list of real places vouch for this name? */
+export function isVouchedFor(name: string, places: RealPlace[]): boolean {
+  const want = normalise(name);
+  if (!want) return false;
+  return places.some(p => {
+    const known = normalise(p.name);
+    // Containment either way: the map's "9:30 Club" against a sentence's
+    // "the 9:30 Club", and a menu's long official name against a short one.
+    return known === want || known.includes(want) || want.includes(known);
+  });
+}
+
+/**
+ * Every name in this text that nothing vouches for.
+ *
+ * `allow` carries the names we know are real from somewhere other than the
+ * menu — the town itself, and a real ticketed event's venue, which comes
+ * from a listing rather than from the map.
+ */
+export function unverifiedNames(
+  text: string,
+  places: RealPlace[],
+  allow: string[] = [],
+): string[] {
+  const extra = allow.filter(Boolean).map(a => ({ ref: '', name: a, kind: '', url: null, city: null, source: 'given' }));
+  const vouching = [...places, ...extra];
+  return [...new Set(properNames(text).filter(n => !isVouchedFor(n, vouching)))];
+}
+
+
+/**
+ * The same sentence with the unsourceable names taken out of it.
+ *
+ * Not deleted, and not left in either — softened to what we can actually
+ * stand behind. "Dinner at El Charro Loco, then drinks" becomes "Dinner at a
+ * local spot, then drinks", which is a true sentence about an evening rather
+ * than a false one about a restaurant.
+ *
+ * This is the same bargain `payment` struck when it became nullable: a field
+ * that cannot be answered honestly is answered emptily. The difference is
+ * that a plan line cannot be empty, so it loses the claim and keeps the
+ * shape. Somebody reading "a local spot" knows to choose one; somebody
+ * reading a name that does not exist finds out at the door.
+ */
+export function withoutUnverified(
+  text: string,
+  places: RealPlace[],
+  allow: string[] = [],
+): { text: string; removed: string[] } {
+  const removed = unverifiedNames(text, places, allow);
+  if (!removed.length) return { text, removed: [] };
+
+  let out = String(text || '');
+  for (const name of removed) {
+    // Longest first would matter if names overlapped; they are whole runs,
+    // so a plain replacement of each is enough.
+    out = out.split(name).join('a local spot');
+  }
+  // "at a local spot" twice in one line reads like a fault, because it is
+  // one. Second and later mentions become "another".
+  let seen = 0;
+  out = out.replace(/a local spot/g, () => (++seen > 1 ? 'another nearby' : 'a local spot'));
+  return { text: out, removed };
+}

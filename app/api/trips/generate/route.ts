@@ -10,6 +10,7 @@ import { planReadiness } from '@/lib/plan-readiness';
 import { allowance, tooOften } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
+import { placesFor, placeMenu, withoutUnverified, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -247,7 +248,9 @@ quoting it were the same as planning around it.\n`
 
   // ── STAGE 2: Full itinerary for one selected trip ──────────────────────────
   if (detailTripId) {
-    const { destination, vibe, costs } = body.tripData || {};
+    // city and country_code are carried through stage 1 precisely so the
+    // place can be looked up rather than parsed back out of a display name.
+    const { destination, vibe, costs, city: tripCity, country_code: tripCountry } = body.tripData || {};
 
     // What this group asked for, for THIS trip.
     //
@@ -382,6 +385,27 @@ about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
       console.log('[generate] an act was named and not found — the evening will not claim a show', { act });
     }
 
+    // ── The places that actually exist there ──────────────────────────
+    // Read before anything is written, which is the whole change. The model
+    // used to be asked for "real venue names" and answered from memory, and
+    // a verifier went looking afterwards — by which point an invented
+    // restaurant was already a sentence in Reach's voice, and the best
+    // anyone could do was take it away again.
+    //
+    // So the map and our own venue table are read first, and the list they
+    // give is the only list a plan may name from. A thin list is not a
+    // licence to fall back on memory: it is the honest shape of what we know
+    // about a small town, and the prompt says so.
+    const realPlaces: RealPlace[] = await placesFor(
+      supabase,
+      { city: tripCity || fixedPlace || destination, country: tripCountry ?? null, interests: [...cuisines, ...activityVibes, ...musicGenres] },
+    ).catch((err) => {
+      console.error('[generate] could not read the real places', err instanceof Error ? err.message : 'failed');
+      return [];
+    });
+    console.log('[generate] verified places for this plan', { city: tripCity || destination, count: realPlaces.length });
+    const menu = placeMenu(realPlaces);
+
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = (nightPrefs.food || []).join(', ');
     const prompt = isNightPlan ? `Plan one evening out: ${destination}.
@@ -392,6 +416,9 @@ They mentioned something they want to see, and we could not find it in any
 listing. Do NOT invent a venue, a date or a show for it. Plan the evening
 without naming that event at all, and let them add it themselves.` : ''}
 ${nightWhen ? `When and where: ${nightWhen}` : ''}
+
+${menu}
+
 Keep it to one part of town — everything within a short walk or a single
 short ride of the first stop, because an evening that crosses a city is
 three journeys and a lot of standing about. Which part is yours to choose
@@ -469,21 +496,23 @@ ${solo ? `On their own, so every slot works for one: counter or bar seating,
 neighbourhoods that are comfortable solo, some days to meet people and some to
 talk to nobody. Nothing that needs a second person. Never mention sharing.
 ` : ''}
+${menu}
+
 Every slot also needs "cost": what that one thing costs per person, in whole
 dollars. A free walk is 0. A museum is its ticket price. Dinner is what one
 person actually spends there, drinks included. These are the numbers somebody
 budgets against, so be realistic rather than optimistic — and make each day's
 three costs add up to roughly that day's cost_today.
 
-Never write "placeholder", "TBD", "N/A", "Activity" or any other filler. Every
-slot names a real place a person could walk into. If you genuinely cannot fill
-${nights} days with real places, return fewer days rather than padding — a
-short honest itinerary beats a long one with holes in it.
+Never write "placeholder", "TBD", "N/A", "Activity" or any other filler. If you
+genuinely cannot fill ${nights} days from the verified list, return fewer days
+rather than padding — a short honest itinerary beats a long one with holes in
+it, and a day of invented restaurants is a hole with a name on it.
 
 Write one entry for each of the ${nights} days.
 
-Be specific: real venue names, real neighbourhoods. Make it feel like a local
-planned it, not a guidebook.
+Use the verified list above for every venue you name. Neighbourhoods,
+distances and the shape of the day are yours; the names are not.
 
 insider_tip is what a place is like, not what a business does. Weather,
 crowds, terrain, light, parking, how long things take, what to bring — all
@@ -554,6 +583,52 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           returned: parsed?.itinerary?.length, kept: days.length,
         });
       }
+      // ── Nothing goes out that we cannot stand behind ────────────────
+      // The prompt asks the model to name only verified places. Asking has
+      // a good success rate, and a good success rate is not the standard:
+      // one invented restaurant in fifty is still somebody standing outside
+      // a laundrette at eight in the evening.
+      //
+      // So the output is read back against the same list the prompt was
+      // given. A name nothing vouches for is softened to what we can
+      // actually support — the claim goes, the shape of the evening stays.
+      // The town's own name, and a real ticketed venue from a listing, are
+      // real without being on a map-built menu, so they are allowed through
+      // by name.
+      const vouchers = [
+        destination, tripCity, fixedPlace, realEvent?.venue, realEvent?.city, realEvent?.title,
+      ].filter((v): v is string => typeof v === 'string' && v.length > 0);
+      let softened = 0;
+      const stripped = new Set<string>();
+      for (const day of days) {
+        const slots = [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])];
+        for (const slot of slots) {
+          if (!slot) continue;
+          const clean = withoutUnverified(slot.plan, realPlaces, vouchers);
+          if (clean.removed.length) {
+            softened++;
+            clean.removed.forEach(n => stripped.add(n));
+            slot.plan = clean.text;
+            // A reference to a place we just removed is not a reference.
+            slot.place_ref = null;
+          }
+        }
+        const tip = withoutUnverified(day.insider_tip, realPlaces, vouchers);
+        if (tip.removed.length) {
+          tip.removed.forEach(n => stripped.add(n));
+          day.insider_tip = tip.text;
+        }
+      }
+      if (softened || stripped.size) {
+        // Worth shouting about. A high count here means the menu was thin or
+        // the rule is not landing, and both are fixable — but only if the
+        // log says so rather than the traveller finding out.
+        console.error('[trips itinerary] removed names nothing vouches for', {
+          destination, slots: softened, verified_places: realPlaces.length,
+          names: [...stripped].slice(0, 12),
+        });
+      }
+
       if (!days.length) {
         console.error('[trips itinerary] no itinerary in response', {
           destination, nights, stop_reason: res.stop_reason,

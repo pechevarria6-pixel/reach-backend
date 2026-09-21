@@ -84,6 +84,14 @@ export const SlotSchema = z.object({
   // checked yet, and lib/discovery/verify.ts fills it in from a source that
   // actually says — or leaves it empty, which the screen can live with.
   payment: z.string().nullish(),
+  // Which verified place this names, as [ref] from the list the prompt was
+  // given. Empty when the slot names no venue at all — a walk, a drive, a
+  // morning off — which is a good answer and not a missing one.
+  //
+  // This is what makes "only real places" checkable rather than hoped for.
+  // The route resolves it against the list it handed over, and a slot whose
+  // plan names a business it cannot resolve does not go out as written.
+  place_ref: z.string().nullish(),
   // Whose wish this answers, when it answers one. "Peter asked for one big
   // night out." Nullish rather than optional: plenty of a good day is just a
   // good day, and a model with nothing to say should send null rather than
@@ -191,12 +199,16 @@ export const slot = {
     // takes — it does not mean cash, and it does not mean cards. Verified
     // payment is filled in later from a source that actually records it.
     payment: str,
+    // The [ref] of the verified place this slot names, or empty for a slot
+    // that names none. Required on the wire so it cannot be skipped in
+    // silence: a named venue with no ref is exactly the case worth catching.
+    place_ref: str,
     // Required in the wire format so it cannot be quietly skipped, and
     // allowed to be empty: a day that answers nobody in particular should
     // say so rather than have a reason invented for it.
     because: str,
   },
-  required: ['plan', 'cost', 'booking', 'payment', 'because'],
+  required: ['plan', 'cost', 'booking', 'payment', 'place_ref', 'because'],
   additionalProperties: false,
 } as const;
 
