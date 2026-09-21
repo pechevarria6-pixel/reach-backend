@@ -353,3 +353,45 @@ export function daysAway(plan: DatedPlan, today: string): string | null {
   if (days >= 7 && days < 14) return 'Next week';
   return null;
 }
+
+/**
+ * How long until a plan, in whole days.
+ *
+ * Counted between calendar days rather than between instants, because "in 3
+ * days" is a statement about dates and not about 72 hours. Both sides use
+ * the same local-day rule as today(), so a trip on Friday reads "in 2 days"
+ * all Wednesday and does not become "in 1 day" at eight in the evening when
+ * UTC rolls over — which is exactly the bug that made tonight's events
+ * disappear from Discover.
+ *
+ * Null when the plan has no real date. A countdown to a date nobody set
+ * would be a number the app invented.
+ */
+export function daysUntil(plan: DatedPlan, now: Date = new Date()): number | null {
+  const day = planDay(plan);
+  if (!day) return null;
+  const from = Date.parse(`${today(now)}T00:00:00Z`);
+  const to = Date.parse(`${day}T00:00:00Z`);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  return Math.round((to - from) / 86400000);
+}
+
+/**
+ * The countdown as somebody reads it, or null when there is nothing to say.
+ *
+ * Nothing is said about a trip that has been and gone, and nothing is
+ * invented for one with no date — the card simply carries no countdown,
+ * which is honest and quiet.
+ */
+export function countdown(plan: DatedPlan, now: Date = new Date()): string | null {
+  const days = daysUntil(plan, now);
+  if (days === null || days < 0) return null;
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days < 7) return `In ${days} days`;
+  if (days < 14) return 'Next week';
+  if (days < 31) return `In ${Math.round(days / 7)} weeks`;
+  // Past a month, weeks stop meaning anything to anybody.
+  const months = Math.round(days / 30);
+  return months <= 1 ? 'In a month' : `In ${months} months`;
+}

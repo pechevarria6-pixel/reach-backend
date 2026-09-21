@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
-import { planSections, daysAway, today, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter } from "@/lib/calendar";
+import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
@@ -761,6 +761,19 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
               </span>
               <div style={{fontFamily:"var(--font-display)",fontSize:20,color:"white",marginBottom:4}}>{plan.title}</div>
               <div style={{fontSize:12,color:"rgba(255,255,255,.65)",marginBottom:10}}>{plan.startDate?plan.dates:"No date yet"} · {plan.group.name}</div>
+              {/* How long until it. Counted between calendar days rather
+                  than between instants, so a trip on Friday reads "In 2
+                  days" all Wednesday instead of ticking over at eight in the
+                  evening when UTC rolls. A plan with no real date carries no
+                  countdown — a number for a date nobody set would be one the
+                  app invented. */}
+              {countdown(plan)&&(
+                <div style={{display:"inline-flex",alignItems:"center",gap:5,marginBottom:10,
+                  padding:"3px 9px",borderRadius:20,background:"rgba(255,255,255,.16)",
+                  fontSize:11,fontWeight:700,color:"white",letterSpacing:".01em"}}>
+                  {countdown(plan)}
+                </div>
+              )}
               <AvCluster ids={plan.participants} um={um} max={4}/>
               {/* Whose photograph it is. A picture is somebody's work, and
                   the licence it is free under asks for the credit — so it

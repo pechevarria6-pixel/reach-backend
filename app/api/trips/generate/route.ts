@@ -9,6 +9,7 @@ import { applyRules, correctionNote } from '@/lib/generation-rules';
 import { planReadiness } from '@/lib/plan-readiness';
 import { allowance, tooOften } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
+import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -354,11 +355,42 @@ about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
     // Still used when somebody volunteered it: "drinks by the water" is a
     // real preference, it just was not worth a question.
     const nightWhen = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
+    // ── The event they actually named ──────────────────────────────────
+    // "milk carton kids concert in dc" came back as a multi-day trip at a
+    // venue nobody plays at, because nothing looked the concert up. A gig is
+    // the most checkable thing in this product — it has a date, a venue and
+    // a page that sells tickets — so it is looked up, and the evening is
+    // built around the real one or around no specific one at all.
+    const act = actWords(goal);
+    let realEvent = act.length >= 2 ? await eventFromCache(supabase, act) : null;
+    if (!realEvent && act.length >= 2) {
+      realEvent = await eventFromProvider(act, fixedPlace, fetch);
+    }
+    if (realEvent) {
+      console.log('[generate] planning around a real event', { title: realEvent.title, venue: realEvent.venue });
+      // A gig on a named night is an evening, whatever the request said.
+      // "the milk carton kids in Washington DC" names no kind of outing, so
+      // the mode fell through to a trip and somebody asking about one
+      // concert was handed several days. The listing settles it: this event
+      // happens on one evening, so the plan is one evening.
+      if (!isNightPlan) {
+        console.log('[generate] a one-night event was named — planning an evening, not a trip');
+        isNightPlan = true;
+        nights = 1;
+      }
+    } else if (act.length >= 2) {
+      console.log('[generate] an act was named and not found — the evening will not claim a show', { act });
+    }
+
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = (nightPrefs.food || []).join(', ');
     const prompt = isNightPlan ? `Plan one evening out: ${destination}.
 
 ${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
+${realEvent ? eventFacts(realEvent) : ''}${act.length >= 2 && !realEvent ? `
+They mentioned something they want to see, and we could not find it in any
+listing. Do NOT invent a venue, a date or a show for it. Plan the evening
+without naming that event at all, and let them add it themselves.` : ''}
 ${nightWhen ? `When and where: ${nightWhen}` : ''}
 Keep it to one part of town — everything within a short walk or a single
 short ride of the first stop, because an evening that crosses a city is

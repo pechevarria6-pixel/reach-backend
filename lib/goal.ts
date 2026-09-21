@@ -376,6 +376,31 @@ const NOT_A_PLACE = new Set([
 ]);
 
 /**
+ * Places people write in lower case, or in letters.
+ *
+ * "milk carton kids concert in dc" named the city and the extractor found
+ * nothing, because it looks for a capital letter — which is how people write
+ * Charlotte and is not how anybody writes dc. A handful of cities are
+ * habitually written this way and they are among the biggest, so missing
+ * them is not a rare edge.
+ */
+const SHORTHAND: Record<string, string> = {
+  dc: 'Washington, D.C.',
+  'washington dc': 'Washington, D.C.',
+  nyc: 'New York City',
+  la: 'Los Angeles',
+  sf: 'San Francisco',
+  philly: 'Philadelphia',
+  vegas: 'Las Vegas',
+  nola: 'New Orleans',
+  atl: 'Atlanta',
+  chi: 'Chicago',
+  pdx: 'Portland',
+  rva: 'Richmond',
+  cle: 'Cleveland',
+};
+
+/**
  * The place a sentence names, as written, or null.
  *
  * Capitalisation is the signal, because that is how people write a place and
@@ -388,6 +413,15 @@ export function placeFromGoal(goal: string | null | undefined): string | null {
 
   for (const lead of text.matchAll(PLACE_LEAD)) {
     const after = text.slice((lead.index ?? 0) + lead[0].length);
+
+    // A city written in lower case or in letters, before the capital rule
+    // gets a chance to miss it. Two words first, so "washington dc" is not
+    // read as "washington".
+    const short = after.toLowerCase().trim().split(/[^a-z]+/).filter(Boolean);
+    const twoWords = short.slice(0, 2).join(' ');
+    if (SHORTHAND[twoWords]) return SHORTHAND[twoWords];
+    if (short[0] && SHORTHAND[short[0]]) return SHORTHAND[short[0]];
+
     // Stop at punctuation: a place name does not run across a comma.
     const clause = after.split(/[,.;:—!?]/)[0] ?? '';
     const words = clause.trim().split(/\s+/);
