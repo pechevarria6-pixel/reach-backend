@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   answersFromGoal, tripTypesFromGoal, goalAnswersTripType, isNegated, findPhrase, summarise,
-  modeFromGoal,
+  modeFromGoal, placeFromGoal,
 } from '../../lib/goal.ts';
 
 // ─── What somebody does not want ────────────────────────────────────────
@@ -153,4 +153,54 @@ test('the six on the list are still ticked rather than typed', () => {
 test('a cuisine somebody rules out is not ordered for them', () => {
   const r = answersFromGoal('dinner tonight, no indian');
   assert.ok(!(r.answers.nightFood ?? []).includes('custom:indian'));
+});
+
+// ─── Where they said it is ──────────────────────────────────────────────
+
+test('a city in the sentence is the city', () => {
+  // "dinner and drinks in Charlotte this Friday" named the city, and the
+  // city was ignored — the plan was built around wherever the device
+  // thought the person was.
+  assert.equal(placeFromGoal('dinner and drinks in Charlotte this Friday'), 'Charlotte');
+  assert.equal(placeFromGoal('a few drinks in Asheville with the guys'), 'Asheville');
+  assert.equal(placeFromGoal('ski trip to Aspen in March'), 'Aspen');
+});
+
+test('two-word and three-word places survive whole', () => {
+  assert.equal(placeFromGoal('birthday in Chapel Hill, she loves sushi'), 'Chapel Hill');
+  assert.equal(placeFromGoal('trip to New York City in May'), 'New York City');
+});
+
+test('a lowercase qualifier before the name is stepped over', () => {
+  assert.equal(placeFromGoal('birthday dinner for Tim in downtown Durham'), 'Durham');
+});
+
+test('words that follow "in" without naming anywhere are not places', () => {
+  // Without this, "a night out in the city" proposes "the city" as a town
+  // and the geocoder is asked about it for nothing.
+  assert.equal(placeFromGoal('a night out in the city'), null);
+  assert.equal(placeFromGoal('book it in advance'), null);
+  assert.equal(placeFromGoal('night out with my buddy who loves thai food'), null);
+});
+
+test('a place name does not run across a comma', () => {
+  assert.equal(placeFromGoal('dinner in Durham, then drinks somewhere'), 'Durham');
+});
+
+// ─── Which kind of thing, from what they want to do ─────────────────────
+
+test('describing an evening is saying it is one', () => {
+  // Reading only "night out" and "trip" meant somebody describing their
+  // evening perfectly was still asked whether it was an evening.
+  assert.equal(modeFromGoal('dinner and drinks in Charlotte this Friday'), 'night');
+  assert.equal(modeFromGoal('birthday dinner for Tim in downtown Durham'), 'night');
+});
+
+test('being away wins over the dinner that is somewhere inside it', () => {
+  assert.equal(modeFromGoal('beach week in Charleston with the family'), 'trip');
+  assert.equal(modeFromGoal('a week in Lisbon, great dinners'), 'trip');
+});
+
+test('neither described leaves the question asked', () => {
+  assert.equal(modeFromGoal('something nice'), null);
 });

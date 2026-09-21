@@ -113,6 +113,42 @@ const MODE_WORDS: Record<string, string[]> = {
          'long weekend', 'days away', 'travel to', 'fly to'],
 };
 
+/** Words that only ever describe being away: nights somewhere, not an evening. */
+const AWAY_WORDS = [
+  'week', 'weekend', 'nights', 'days', 'fly', 'flight', 'flights', 'hotel',
+  'airbnb', 'resort', 'abroad', 'overseas', 'staying', 'stay in',
+];
+
+/**
+ * What they are doing, when they have not named the kind of thing.
+ *
+ * "dinner and drinks in Charlotte this Friday" is a night out and says so in
+ * every word except the two this used to look for. Reading only "night out"
+ * and "trip" meant somebody describing their evening perfectly was still
+ * asked whether it was an evening.
+ *
+ * Dinner, drinks, a gig, a show — those are an evening. A week, a flight, a
+ * hotel, a beach — those are being away. Both silent leaves it asked.
+ */
+function modeFromWhatTheyWant(text: string, found: GoalAnswers): 'night' | 'trip' | null {
+  const away = AWAY_WORDS.some(w => findPhrase(text, w) >= 0)
+    || (found.answers.tripType ?? []).length > 0
+    || (found.answers.accommodation ?? []).length > 0;
+
+  // A concrete thing they are doing that evening — dinner, drinks, a gig, a
+  // cuisine. Deliberately not the energy: "somewhere we can actually talk"
+  // describes a vibe and fits a quiet cabin as well as a wine bar, and
+  // guessing an evening off it is a question skipped that nobody answered.
+  const evening = (found.answers.nightKind ?? []).length > 0
+    || (found.answers.nightFood ?? []).length > 0;
+
+  // A beach week is a trip even though dinner is in it somewhere, so being
+  // away wins outright. Only an evening with nothing away about it is one.
+  if (away) return 'trip';
+  if (evening) return 'night';
+  return null;
+}
+
 export function modeFromGoal(goal: string | null | undefined): 'night' | 'trip' | null {
   const text = String(goal || '').toLowerCase().replace(/[’]/g, "'");
   if (text.trim().length < 4) return null;
@@ -124,7 +160,8 @@ export function modeFromGoal(goal: string | null | undefined): 'night' | 'trip' 
 
   const night = at(MODE_WORDS.night);
   const trip = at(MODE_WORDS.trip);
-  if (night < 0 && trip < 0) return null;
+  // Neither named outright, so read what they actually want to do.
+  if (night < 0 && trip < 0) return modeFromWhatTheyWant(text, answersFromGoal(goal));
   if (night < 0) return 'trip';
   if (trip < 0) return 'night';
   // Both said. Whichever came first is what the sentence is about — "a night
@@ -309,4 +346,69 @@ export function summarise(
   const said = parts.filter(Boolean);
   if (!said.length) return null;
   return said.join(' · ');
+}
+
+// ─── Where they said it is ──────────────────────────────────────────────
+// "dinner and drinks in Charlotte this Friday" names the city, and the city
+// was ignored — the plan was built around wherever the device thought the
+// person was. Somebody who tells us where they are going should not then
+// watch the app plan somewhere else.
+//
+// Extracting the candidate is all that happens here, and deliberately: this
+// is a guess at which words are a place, and a guess is not a place. It is
+// handed to the geocoder, which already refuses anything that is not a
+// settlement — asked for "Test" it returns a canal in Iran, which is why
+// that guard exists. So a wrong guess here resolves to nothing rather than
+// to somewhere wrong.
+
+/** Words that introduce a place, and the ones that only look like they do. */
+const PLACE_LEAD = /\b(?:in|to|around|near|out in|over in|down in|up in)\s+/gi;
+
+/**
+ * Words that follow "in" without naming anywhere: "in the mood", "in a
+ * week". Without these, "a night out in the city" proposes "the city" as a
+ * town and the geocoder is asked about it for nothing.
+ */
+const NOT_A_PLACE = new Set([
+  'the', 'a', 'an', 'my', 'our', 'his', 'her', 'their', 'town', 'city',
+  'advance', 'mind', 'mood', 'general', 'particular', 'fact', 'total',
+  'time', 'order', 'person', 'charge', 'case', 'between', 'front',
+]);
+
+/**
+ * The place a sentence names, as written, or null.
+ *
+ * Capitalisation is the signal, because that is how people write a place and
+ * it is the only thing separating "in Charlotte" from "in charge". Up to
+ * three words, so "Chapel Hill" and "New York City" survive whole.
+ */
+export function placeFromGoal(goal: string | null | undefined): string | null {
+  const text = String(goal || '').replace(/[’]/g, "'");
+  if (text.trim().length < 4) return null;
+
+  for (const lead of text.matchAll(PLACE_LEAD)) {
+    const after = text.slice((lead.index ?? 0) + lead[0].length);
+    // Stop at punctuation: a place name does not run across a comma.
+    const clause = after.split(/[,.;:—!?]/)[0] ?? '';
+    const words = clause.trim().split(/\s+/);
+
+    const taken: string[] = [];
+    for (const raw of words.slice(0, 3)) {
+      const word = raw.replace(/[^A-Za-z'-]/g, '');
+      if (!word) break;
+      // "downtown Durham" — a lowercase qualifier before the name is skipped
+      // once, rather than ending the run before the name arrives.
+      if (!/^[A-Z]/.test(word)) {
+        if (taken.length) break;
+        if (/^(downtown|central|greater|old|new)$/i.test(word)) continue;
+        break;
+      }
+      // "the city" is not a place; "New York City" is. The word only
+      // disqualifies a candidate when it is the whole of it.
+      if (NOT_A_PLACE.has(word.toLowerCase()) && !taken.length) break;
+      taken.push(word);
+    }
+    if (taken.length) return taken.join(' ');
+  }
+  return null;
 }

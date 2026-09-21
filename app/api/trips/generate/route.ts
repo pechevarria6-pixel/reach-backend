@@ -8,6 +8,7 @@ import {
 import { applyRules, correctionNote } from '@/lib/generation-rules';
 import { planReadiness } from '@/lib/plan-readiness';
 import { allowance, tooOften } from '@/lib/rate-limit';
+import { placeFromGoal } from '@/lib/goal';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -119,8 +120,21 @@ export async function POST(req: NextRequest) {
   // `let`, because a saved plan can correct a caller that did not say — see
   // the detail branch below.
   let isNightPlan = mode === 'night';
-  const fixedPlace = typeof location === 'string' && location.trim() ? location.trim() : null;
   const goal = typeof goalBlurb === 'string' && goalBlurb.trim() ? goalBlurb.trim().slice(0, 500) : null;
+
+  // Where they said it is.
+  //
+  // "dinner and drinks in Charlotte this Friday" names the city, and the
+  // city was ignored — the plan was built around wherever the device thought
+  // the person was. Somebody who tells us where they are going should not
+  // then watch the app plan somewhere else.
+  //
+  // An explicit location still wins: a field somebody filled in is a
+  // decision, and a phrase read out of a sentence is a reading of one.
+  const said = typeof location === 'string' && location.trim() ? location.trim() : null;
+  const fromGoal = said ? null : placeFromGoal(goal);
+  if (fromGoal) console.log('[generate] took the place from what they wrote', { place: fromGoal });
+  const fixedPlace = said ?? fromGoal;
 
   // This reads every member's dietary needs, budget and preferences, so the
   // caller has to actually be in the group.
