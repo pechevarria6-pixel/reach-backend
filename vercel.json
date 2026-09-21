@@ -2,6 +2,7 @@
   "crons": [
     { "path": "/api/discovery/sweep", "schedule": "0 4 * * *" },
     { "path": "/api/discovery/harvest", "schedule": "30 4 * * *" },
-    { "path": "/api/discovery/platforms", "schedule": "0 5 * * *" }
+    { "path": "/api/discovery/platforms", "schedule": "0 5 * * *" },
+    { "path": "/api/cron/knowledge", "schedule": "30 5 * * *" }
   ]
 }

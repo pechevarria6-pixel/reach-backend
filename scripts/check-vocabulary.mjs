@@ -13,6 +13,14 @@ import path from 'path';
 const BANNED = [
   'concierge', 'funding gate', 'quote drift', 'fulfillment mode',
   'vertical', 'awaiting_approval', 'no_key', 'provider_error',
+  // How the background jobs talk about what they write down: a "playbook"
+  // for an "archetype", the whole "knowledge layer", the "enrichment" run
+  // that fills it, a group's "taste profile" and the "distillation" that
+  // produces one. Users only ever see the result — a better trip — and none
+  // of these words describes anything they asked for. The same trap as
+  // "concierge items": machinery that reads like copy.
+  'playbook', 'archetype', 'enrichment', 'knowledge layer',
+  'taste profile', 'distillation',
 ];
 
 // Lines that are plainly machinery rather than anything a person reads: a

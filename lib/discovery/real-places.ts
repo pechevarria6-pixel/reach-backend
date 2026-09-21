@@ -421,6 +421,12 @@ export function withoutUnverified(
 
   let out = String(text || '');
   for (const name of removed) {
+    // The article in front comes with it. "The Pour House Music Hall" is
+    // detected as the name without its "The", because a leading article is
+    // how sentences start as well as how names do — and replacing only the
+    // rest left "The another nearby" on the screen.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`\\b(?:The|A|An)\\s+${escaped}`, 'g'), 'a local spot');
     // Longest first would matter if names overlapped; they are whole runs,
     // so a plain replacement of each is enough.
     out = out.split(name).join('a local spot');

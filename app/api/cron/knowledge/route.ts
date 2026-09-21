@@ -139,7 +139,11 @@ export async function GET(req: NextRequest) {
     return answer({ error: dueError.message }, 500);
   }
   if (!due?.length) {
-    return answer({ processed: 0, ready: 0, failed: 0, remaining_queued: 0, note: 'nothing due' });
+    return answer({
+      processed: 0, ready: 0, failed: 0,
+      remaining_queued: await stillQueued(db),
+      note: 'nothing due',
+    });
   }
 
   // ── Claim them ───────────────────────────────────────────────────────

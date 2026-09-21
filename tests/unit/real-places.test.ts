@@ -180,3 +180,13 @@ test('a tip is dropped rather than left a broken sentence', () => {
   assert.equal(wouldMangle('The Black Cat stays lively after shows.', ['The Black Cat']), true);
   assert.equal(wouldMangle('Grab a pint at The Black Cat after.', ['The Black Cat']), false);
 });
+
+test('the article in front of a name goes with it', () => {
+  // "The Pour House Music Hall" left "The another nearby" on the screen: the
+  // name is detected without its leading article, because that is how
+  // sentences begin as well as how names do.
+  const { text } = withoutUnverified(
+    'A short walk to The Pour House Music Hall for a band.', MOAB);
+  assert.equal(text, 'A short walk to a local spot for a band.');
+  assert.doesNotMatch(text, /The a local spot|The another nearby/);
+});
