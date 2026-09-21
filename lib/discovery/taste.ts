@@ -42,15 +42,40 @@ const KINDS: Record<string, Kind> = Object.fromEntries([
   // supplier rather than an evening. amenity=cooking_school teaches people.
   kind('cooking', '🍳', ['amenity=cooking_school'], 'cooking class', true),
   kind('art & galleries', '🎨', ['tourism=gallery', 'amenity=arts_centre', 'craft=painter'], 'art class', true),
-  kind('live music', '🎸', ['amenity=music_venue', 'amenity=nightclub'], 'live music venue', true),
+  // music_venue and nightclub found NOTHING in central Washington, where
+  // 311 bars and pubs sit. The answer is not "add bars": a bar is not a
+  // live music venue and offering one as such is a claim we cannot make.
+  // OSM has a tag for exactly this distinction, so it is asked for.
+  kind('live music', '🎸', [
+    'amenity=music_venue', 'amenity=nightclub',
+    'amenity=bar][live_music~"yes|regular",i', 'amenity=pub][live_music~"yes|regular",i',
+  ], 'live music venue', true),
   kind('dancing', '💃', ['amenity=dancing_school', 'leisure=dance'], 'dance class', true),
-  kind('wellness', '🧘', ['leisure=sauna', 'amenity=spa', 'shop=herbalist'], 'yoga studio', true),
+  // A gym is not wellness and most fitness_centre rows are gyms, so this
+  // asks for the ones that actually teach the thing — which is what
+  // somebody ticking "wellness" is after.
+  kind('wellness', '🧘', [
+    'leisure=sauna', 'amenity=spa', 'shop=herbalist',
+    'leisure=fitness_centre][sport~"yoga|pilates",i', 'sport=yoga',
+  ], 'yoga studio', true),
   kind('sport', '⚽', ['leisure=sports_centre', 'leisure=climbing', 'sport=climbing'], 'climbing gym', true),
   kind('books & talks', '📚', ['shop=books', 'amenity=library'], 'bookshop events', true),
   kind('film & theatre', '🎬', ['amenity=cinema', 'amenity=theatre'], 'independent cinema', true),
   kind('comedy', '🎤', ['amenity=theatre'], 'comedy club', true),
   kind('photography', '📷', ['shop=photo', 'craft=photographer'], 'photography workshop', true),
-  kind('outdoors', '🥾', ['leisure=nature_reserve', 'tourism=wilderness_hut'], 'guided walks', true),
+  // Measured against the map for central Washington: nature_reserve and
+  // wilderness_hut between them found 8 things, where parks, viewpoints,
+  // gardens and beaches account for over two thousand. "Outdoors" was
+  // finding almost none of the outdoors — on an app whose best destination
+  // so far is Moab.
+  //
+  // These are all genuinely outdoors, which is the test for widening a
+  // lookup: a park IS somewhere to spend an afternoon outside. Bars are not
+  // live music, so that one is widened differently below.
+  kind('outdoors', '🥾', [
+    'leisure=nature_reserve', 'tourism=wilderness_hut',
+    'leisure=park', 'leisure=garden', 'tourism=viewpoint', 'natural=beach',
+  ], 'guided walks', true),
   kind('markets & food halls', '🧺', ['amenity=marketplace'], 'farmers market', true),
   // Somewhere to eat, without caring what kind.
   //
@@ -66,7 +91,12 @@ const KINDS: Record<string, Kind> = Object.fromEntries([
   // and still matter — somebody who said they love Thai should be shown Thai
   // first — but a town needs dinner whether or not anybody said a cuisine.
   kind('places to eat', '🍽️', ['amenity=restaurant', 'amenity=cafe'], 'restaurant', false),
-  kind('museums & history', '🏛️', ['tourism=museum'], 'museum', true),
+  // A memorial IS history, and in Washington the museums tag misses the
+  // entire Mall. Named ones only: an unnamed plaque is not somewhere to
+  // spend an afternoon, and a list of them would bury the Lincoln Memorial.
+  kind('museums & history', '🏛️', [
+    'tourism=museum', 'historic=memorial][name', 'historic=monument][name',
+  ], 'museum', true),
   kind('wine tasting', '🍷', ['shop=wine', 'craft=winery'], 'wine tasting', true, { alcohol: true }),
   kind('breweries', '🍺', ['craft=brewery', 'microbrewery=yes'], 'brewery', true, { alcohol: true }),
   kind('trivia & board games', '🎲', ['shop=games'], 'trivia night', true),

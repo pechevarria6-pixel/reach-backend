@@ -23,7 +23,7 @@ const rows=(days:any[],n:boolean)=>{
   });
 };
 const PLANS=[
- {id:"30c78ed1-b351-4815-9107-a8ffed264348",g:"6d21d902-710a-4874-a16b-4548c021612b",t:"Puerto Vallarta, Mexico",c:"Puerto Vallarta",k:"MX",s:"2026-11-02",e:"2026-11-09",n:false},
+ {id:"3d686f65-f696-475f-abd7-bd46ff805bbc",g:"6d21d902-710a-4874-a16b-4548c021612b",t:"The Milk Carton Kids",c:"Washington",k:"US",s:"2026-09-21",e:"2026-09-21",n:true},
 ];
 for (const P of PLANS) {
   let cookie=refresh();
