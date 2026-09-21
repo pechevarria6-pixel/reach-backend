@@ -197,3 +197,11 @@ test('a phrase about a place with extent is not softened into nonsense', () => {
   assert.equal(wouldMangle('Walk the length of Main Street on your own.', ['Main Street']), true);
   assert.equal(wouldMangle('Dinner at Main Street Grill afterwards.', ['Main Street Grill']), false);
 });
+
+test('a ticket exempts its own slot, not every slot in the plan', () => {
+  // "Reach will book this" appeared over a restaurant table because the
+  // exemption was asked of the plan ("does this trip have a gig?") instead
+  // of the slot ("is this the gig?").
+  assert.equal(bookingFor('reach', null, true), 'reach');    // the gig
+  assert.equal(bookingFor('reach', null, false), 'ahead');   // dinner beside it
+});

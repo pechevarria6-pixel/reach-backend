@@ -199,10 +199,23 @@ export async function POST(req: NextRequest) {
     ? Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000)
     : 5);
 
-  const budgetMap: Record<string, number> = { budget: 800, mid: 2000, premium: 4000, luxury: 8000 };
+  // A night out is not a small trip, and the same answer means very
+  // different money for each. Somebody who said "mid" means about $2,000 for
+  // a week away and about $110 for an evening — and the evening was being
+  // given the trip figure, so the prompt read "about $2000 a head across the
+  // whole night". The model did as it was told: $900 for dinner, $500 for
+  // the gig, $300 for a last pint. Seventeen hundred dollars for a Monday.
+  const TRIP_BUDGET: Record<string, number> = { budget: 800, mid: 2000, premium: 4000, luxury: 8000 };
+  const NIGHT_BUDGET: Record<string, number> = { budget: 45, mid: 110, premium: 220, luxury: 400 };
   const budgets = prefs.map((p: any) => p.budget_range).filter(Boolean);
-  const effectiveBudget = budgetPerPerson ||
-    (budgets.length > 0 ? Math.min(...budgets.map((b: string) => budgetMap[b] || 2000)) : 2000);
+  // Recomputed below if a listing turns what was asked for into an evening.
+  const budgetFor = (night: boolean) => {
+    const map = night ? NIGHT_BUDGET : TRIP_BUDGET;
+    const fallback = night ? 110 : 2000;
+    return budgetPerPerson
+      || (budgets.length > 0 ? Math.min(...budgets.map((b: string) => map[b] || fallback)) : fallback);
+  };
+  let effectiveBudget = budgetFor(isNightPlan);
 
   const allVetoes = [...new Set([
     ...prefs.flatMap((p: any) => p.no_way_jose || []),
@@ -384,6 +397,8 @@ about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
         console.log('[generate] a one-night event was named — planning an evening, not a trip');
         isNightPlan = true;
         nights = 1;
+        // An evening's money, now that we know it is an evening.
+        effectiveBudget = budgetFor(true);
       }
     } else if (act.length >= 2) {
       console.log('[generate] an act was named and not found — the evening will not claim a show', { act });
@@ -602,6 +617,37 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       const vouchers: string[] = [
         destination, tripCity, fixedPlace, realEvent?.venue, realEvent?.city, realEvent?.title,
       ].filter((v): v is string => typeof v === 'string' && v.length > 0);
+      // ── The ticket, carried through to something you can press ───────
+      // The listing gave us a venue, a date and the page that sells the
+      // tickets, and until now only the first two survived: the URL was
+      // read as a boolean and thrown away. So the evening said "See The
+      // Milk Carton Kids live at 9:30 CLUB" above a button reading "Reserve
+      // ahead", which is not a thing anybody can do. Reach cannot sell a
+      // ticket; it can hand somebody straight to the page that does, and
+      // that is a complete answer rather than a dead end.
+      //
+      // Attached to the slot that actually names the event rather than to a
+      // fixed position, because which slot holds it is the model's choice.
+      if (realEvent?.url) {
+        const marks = [realEvent.venue, realEvent.title].filter(Boolean).map(v => normalise(String(v)));
+        let attached = false;
+        for (const day of days) {
+          for (const slot of [day.evening, day.afternoon, day.morning, ...(day.daytime ?? [])]) {
+            if (!slot || attached) continue;
+            const here = normalise(slot.plan);
+            if (!marks.some(m => m && here.includes(m))) continue;
+            slot.ticket_url = realEvent.url;
+            slot.venue = realEvent.venue ?? null;
+            attached = true;
+          }
+        }
+        if (!attached) {
+          console.error('[trips itinerary] a real event was found but no slot names it', {
+            title: realEvent.title, venue: realEvent.venue,
+          });
+        }
+      }
+
       // ── Geography is real even when we hold no record of it ─────────
       // A beach, a river and a neighbourhood are not businesses, so they are
       // never in a venue table built from business tags. Softening them
@@ -654,7 +700,14 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           // "Reach will book this" has to be something Reach can do. The
           // prompt forbids claiming it for a table and the screen guessed
           // from the slot's type; a resolved place answers it outright.
-          const honest = bookingFor(slot.booking, cited, !!realEvent?.url);
+          // hasTicket is about THIS slot, not the plan.
+          //
+          // It was `!!realEvent?.url`, so once a plan had a real gig in it
+          // every slot claiming "reach" kept the claim — and "Reach will
+          // book this" appeared over a restaurant table, which is the exact
+          // promise the whole check exists to stop. The ticket is attached
+          // above, so the slot can simply be asked.
+          const honest = bookingFor(slot.booking, cited, !!slot.ticket_url);
           if (honest !== slot.booking) {
             console.error('[trips itinerary] downgraded a booking claim we cannot keep', {
               destination, claimed: slot.booking, kept: honest, place: cited?.name ?? null,
@@ -690,37 +743,6 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           day.insider_tip = wouldMangle(day.insider_tip, tip.removed) ? '' : tip.text;
         }
       }
-      // ── The ticket, carried through to something you can press ───────
-      // The listing gave us a venue, a date and the page that sells the
-      // tickets, and until now only the first two survived: the URL was
-      // read as a boolean and thrown away. So the evening said "See The
-      // Milk Carton Kids live at 9:30 CLUB" above a button reading "Reserve
-      // ahead", which is not a thing anybody can do. Reach cannot sell a
-      // ticket; it can hand somebody straight to the page that does, and
-      // that is a complete answer rather than a dead end.
-      //
-      // Attached to the slot that actually names the event rather than to a
-      // fixed position, because which slot holds it is the model's choice.
-      if (realEvent?.url) {
-        const marks = [realEvent.venue, realEvent.title].filter(Boolean).map(v => normalise(String(v)));
-        let attached = false;
-        for (const day of days) {
-          for (const slot of [day.evening, day.afternoon, day.morning, ...(day.daytime ?? [])]) {
-            if (!slot || attached) continue;
-            const here = normalise(slot.plan);
-            if (!marks.some(m => m && here.includes(m))) continue;
-            slot.ticket_url = realEvent.url;
-            slot.venue = realEvent.venue ?? null;
-            attached = true;
-          }
-        }
-        if (!attached) {
-          console.error('[trips itinerary] a real event was found but no slot names it', {
-            title: realEvent.title, venue: realEvent.venue,
-          });
-        }
-      }
-
       if (softened || stripped.size) {
         // Worth shouting about. A high count here means the menu was thin or
         // the rule is not landing, and both are fixable — but only if the
