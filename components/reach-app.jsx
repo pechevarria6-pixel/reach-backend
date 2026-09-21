@@ -743,14 +743,33 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
         {upcoming.map(plan=>(
           <div key={plan.id} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
-            style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s"}}>
-            <div style={{padding:16}}>
+            style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
+              // A picture of the place they are actually going. The gradient
+              // stays underneath, so a photo that fails to load leaves the
+              // card as it always looked rather than a white rectangle.
+              ...(plan.imageUrl?{backgroundImage:`url(${JSON.stringify(plan.imageUrl).slice(1,-1)})`,
+                backgroundSize:"cover",backgroundPosition:"center"}:{}),
+              position:"relative",overflow:"hidden"}}>
+            {/* Dark enough to read white text on any photograph. */}
+            {plan.imageUrl&&(
+              <div style={{position:"absolute",inset:0,
+                background:"linear-gradient(160deg,rgba(0,0,0,.28),rgba(0,0,0,.78))"}}/>
+            )}
+            <div style={{padding:16,position:"relative"}}>
               <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`} style={{marginBottom:10,display:"inline-flex"}}>
                 {plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":plan.status==="approved"?"👍 Ready to book":"📋 Planning"}
               </span>
               <div style={{fontFamily:"var(--font-display)",fontSize:20,color:"white",marginBottom:4}}>{plan.title}</div>
               <div style={{fontSize:12,color:"rgba(255,255,255,.65)",marginBottom:10}}>{plan.startDate?plan.dates:"No date yet"} · {plan.group.name}</div>
               <AvCluster ids={plan.participants} um={um} max={4}/>
+              {/* Whose photograph it is. A picture is somebody's work, and
+                  the licence it is free under asks for the credit — so it
+                  travels with the picture or the picture is not shown. */}
+              {plan.imageUrl&&plan.imageCredit&&(
+                <div style={{fontSize:9.5,color:"rgba(255,255,255,.55)",marginTop:8,lineHeight:1.3}}>
+                  📷 {plan.imageCredit}
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -8556,6 +8575,10 @@ export default function ReachApp({realUser,onSignOut}={}){
     startDate:p.start_date||null,
     endDate:p.end_date||null,
     destinationCity:p.destination_city||null,
+    // The picture of the place and whose it is. Read together, because the
+    // credit travels with the photograph or the photograph is not shown.
+    imageUrl:p.image_url||null,
+    imageCredit:p.image_credit||null,
     destinationCountry:p.destination_country||null,
     budget:Math.round((p.budget_cents||0)/100),
     participants:p.participants||fallbackMembers||[],

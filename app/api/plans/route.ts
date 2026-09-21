@@ -3,6 +3,8 @@ import { requireUser, isFail } from '@/lib/auth';
 import { toDateOrNull } from '@/lib/dates';
 import { z } from 'zod';
 import { track } from '@/lib/track';
+import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
+import { within } from '@/lib/deadline';
 
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),
@@ -64,6 +66,15 @@ export async function POST(req: NextRequest) {
   // not know — so a migration that had not been run yet would stop anybody
   // creating a trip at all, to keep a line of explanatory text. The trip
   // matters more than the sentence about it.
+  // A picture of the place, from Wikimedia Commons, with the photographer
+  // and licence beside it. Given a short deadline of its own: a trip card
+  // without a photograph is the card as it has always looked, and nobody
+  // should wait on an encyclopaedia to save a plan. Null is a fine answer.
+  const photo = await within(
+    destinationPhoto([body.destination_city, body.destination_country].filter(Boolean).join(', ') || body.title || ''),
+    3000, 'the destination photo',
+  ).catch(() => null);
+
   const row: Record<string, unknown> = {
     group_id: body.group_id,
     title: body.title,
@@ -81,22 +92,33 @@ export async function POST(req: NextRequest) {
     vote_options: body.vote_options || [],
     solo_mode: body.solo_mode === true,
     why_chosen: body.why_chosen?.length ? body.why_chosen : null,
+    // Never the picture without the credit: a photograph is somebody's work.
+    ...(photo ? { image_url: photo.url, image_credit: credit(photo), image_source: photo.source } : {}),
     created_by: user.id,
   };
 
   const first = await supabase.from('plans').insert(row).select().single();
   // "Could not find the 'x' column" — drop the ones a migration adds and go
   // again, rather than losing the plan.
-  const unknownColumn = /could not find the '([a-z_]+)' column|column "?([a-z_]+)"? .*does not exist/i
-    .exec(first.error?.message || '');
-  let retry = null;
-  if (first.error && unknownColumn) {
-    const name = unknownColumn[1] || unknownColumn[2];
+  // Dropped one at a time, for as many as this database is missing.
+  //
+  // This retried exactly once, which was enough while one migration was
+  // pending at a time. Three columns arrived together with the destination
+  // photograph, so the second unknown one would have failed plan creation
+  // outright — the thing the retry exists to prevent. Bounded, so a genuine
+  // error cannot become a loop.
+  const UNKNOWN = /could not find the '([a-z_]+)' column|column "?([a-z_]+)"? .*does not exist/i;
+  let attempt = first;
+  for (let i = 0; i < 6 && attempt.error; i++) {
+    const missing = UNKNOWN.exec(attempt.error.message || '');
+    if (!missing) break;
+    const name = missing[1] || missing[2];
+    if (!(name in row)) break;
     console.error('[plans POST] retrying without a column this database does not have yet', { column: name });
     delete row[name];
-    retry = await supabase.from('plans').insert(row).select().single();
+    attempt = await supabase.from('plans').insert(row).select().single();
   }
-  const { data: plan, error } = retry ?? first;
+  const { data: plan, error } = attempt;
 
   if (error || !plan) {
     console.error('[plans POST] insert failed', error);
