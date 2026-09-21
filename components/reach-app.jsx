@@ -1353,45 +1353,6 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
         <div key={exp.id} className="exp-card" style={{margin:"0 20px 14px",borderRadius:20,overflow:"hidden",
           border:"1px solid "+C.border,cursor:"pointer",position:"relative"}}
           onClick={()=>push("expDetail",{exp,groups})}>
-          {/* Two answers, not one hide. "Already done it" is a positive
-              signal — they went, and a restaurant can come round again —
-              while "Not for me" is a refusal that never does. One button
-              would have lost the difference between a place somebody loved
-              and one they would not go to at gunpoint. */}
-          {/* Marked, not removed. Somewhere you have been stays on the screen
-              saying so, because a place you enjoyed is one you might go back
-              to and that is your call rather than the app's. */}
-          {visited.has(`${String(exp.source||"unknown").toLowerCase()}:${exp.id}`)&&(
-            <div style={{position:"absolute",top:12,left:12,zIndex:3,
-              padding:"4px 9px",borderRadius:11,background:"rgba(0,0,0,.55)",
-              color:"white",fontSize:11,fontWeight:700,letterSpacing:".02em"}}>
-              ✓ You've been
-            </div>
-          )}
-          <button aria-label={`Hide ${exp.title}`}
-            onClick={e=>{e.stopPropagation();setAsking(a=>a===exp.id?null:exp.id);}}
-            style={{position:"absolute",top:10,right:10,zIndex:3,width:30,height:30,
-              borderRadius:15,border:"none",background:"rgba(0,0,0,.45)",color:"white",
-              fontSize:15,lineHeight:1,cursor:"pointer",display:"flex",
-              alignItems:"center",justifyContent:"center"}}>×</button>
-          {asking===exp.id&&(
-            <div onClick={e=>e.stopPropagation()}
-              style={{position:"absolute",top:46,right:10,zIndex:4,background:C.s1,
-                border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",
-                minWidth:170,boxShadow:"0 8px 24px rgba(0,0,0,.18)"}}>
-              <button onClick={()=>rule(exp,"done")}
-                style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",
-                  border:"none",background:"none",fontSize:13,color:C.t1,cursor:"pointer"}}>
-                Already done it
-              </button>
-              <button onClick={()=>rule(exp,"not_interested")}
-                style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",
-                  borderTop:`1px solid ${C.border}`,border:"none",background:"none",
-                  fontSize:13,color:C.t1,cursor:"pointer"}}>
-                Not for me
-              </button>
-            </div>
-          )}
           <div style={{height:175,background:exp.bg,position:"relative"}}>
             <div style={{position:"absolute",inset:0,
               background:"linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.85))",
@@ -1402,10 +1363,48 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
               <div style={{fontSize:12,color:"rgba(255,255,255,.65)"}}>{exp.sub}</div>
             </div>
             <div style={{position:"absolute",top:12,right:14,fontSize:34}}>{exp.emoji}</div>
+            {/* Bottom-right, over the dark end of the gradient. It used to
+                sit at top-right, exactly where the emoji is, so the control
+                covered the one picture the card had. The corners are spoken
+                for: chips top-left, emoji top-right, title bottom-left. */}
+            <button aria-label={`Hide ${exp.title}`}
+              onClick={e=>{e.stopPropagation();setAsking(a=>a===exp.id?null:exp.id);}}
+              style={{position:"absolute",bottom:12,right:12,zIndex:3,width:28,height:28,
+                borderRadius:14,border:"1px solid rgba(255,255,255,.28)",
+                background:"rgba(0,0,0,.42)",backdropFilter:"blur(6px)",color:"rgba(255,255,255,.92)",
+                fontSize:14,lineHeight:1,cursor:"pointer",display:"flex",
+                alignItems:"center",justifyContent:"center",padding:0}}>×</button>
+            {asking===exp.id&&(
+              <div onClick={e=>e.stopPropagation()}
+                style={{position:"absolute",bottom:46,right:12,zIndex:4,background:C.s1,
+                  border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",
+                  minWidth:168,boxShadow:"0 10px 28px rgba(0,0,0,.22)"}}>
+                <button onClick={()=>rule(exp,"done")}
+                  style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",
+                    border:"none",background:"none",fontSize:13,color:C.t1,cursor:"pointer"}}>
+                  Already done it
+                </button>
+                <button onClick={()=>rule(exp,"not_interested")}
+                  style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",
+                    borderTop:`1px solid ${C.border}`,border:"none",background:"none",
+                    fontSize:13,color:C.t1,cursor:"pointer"}}>
+                  Not for me
+                </button>
+              </div>
+            )}
             {/* What is happening says which day. What is simply open says
                 where it is and nothing about hours, because nobody has
                 checked them and "open any time" would be a promise. */}
             <div style={{position:"absolute",top:12,left:14,display:"flex",gap:6,flexWrap:"wrap",maxWidth:"72%"}}>
+              {/* A chip among the other chips rather than a badge floating
+                  over them. Marked, not removed: somewhere you have been
+                  stays on the screen saying so. */}
+              {visited.has(`${String(exp.source||"unknown").toLowerCase()}:${exp.id}`)&&(
+                <span style={{background:"rgba(0,0,0,.72)",borderRadius:20,padding:"3px 10px",
+                  fontSize:11,color:"white",fontWeight:600}}>
+                  ✓ You've been
+                </span>
+              )}
               {dayLabel(exp.date)&&(
                 <span style={{background:"rgba(0,0,0,.72)",borderRadius:20,padding:"3px 10px",
                   fontSize:11,color:"white",fontWeight:600}}>
