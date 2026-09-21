@@ -32,6 +32,17 @@ const MAX_KINDS = 24;
 // Stop starting new work with a minute in hand, so the run reports what it
 // did rather than being killed mid-write at the five minute limit.
 const DEADLINE_MS = 240_000;
+// No single area may eat the run. Washington had been asked about nineteen
+// times and swept none, because it is dense enough that Overpass refuses it,
+// it sorted first among the never-swept, and it spent every run's whole
+// budget failing — so Charlotte, Seattle, Pittsburgh and Moab queued behind
+// it were never reached at all. An area that cannot be done in a minute
+// yields to the next one.
+const PER_AREA_MS = 60_000;
+// How long a failed area waits before it is tried again. Sooner than a
+// successful one, which is what the old rule was reaching for; not
+// immediately and forever, which is what it actually did.
+const RETRY_HOURS = 6;
 
 function authorised(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -76,6 +87,9 @@ export async function GET(req: NextRequest) {
   for (const area of areas) {
     const name = area.city || `${area.lat},${area.lng}`;
     if (outOfTime()) { report.push({ area: name, status: 'next_run' }); continue; }
+    // This area's own share, so one unsweepable city cannot starve the rest.
+    const areaStarted = Date.now();
+    const areaOutOfTime = () => outOfTime() || Date.now() - areaStarted > PER_AREA_MS;
 
     // Only kinds the map can answer, each once, whatever capitalisation an
     // older row stored them under.
@@ -87,7 +101,7 @@ export async function GET(req: NextRequest) {
     let failed = 0;
     let detail: string | undefined;
     for (let i = 0; i < kinds.length; i += PER_QUERY) {
-      if (outOfTime()) { failed++; detail = 'ran out of time'; break; }
+      if (areaOutOfTime()) { failed++; detail = 'ran out of time'; break; }
       // A generous budget: nobody is waiting on this, and a mirror that needs
       // twenty seconds is still better than an empty city.
       const found = await openStreetMap({
@@ -165,8 +179,13 @@ export async function GET(req: NextRequest) {
       await db.from('discovery_areas').update({
         sweep_status: status,
         sweep_detail: detail ?? (writeFailed || storedNothing ? 'venues could not be written' : null),
-        // Deliberately not stamping last_swept_at: a failed sweep must come
-        // round again quickly rather than counting as a day's work done.
+        // Stamped, but backdated so it falls stale again in RETRY_HOURS
+        // rather than a full day. Leaving it null was the intent — a failed
+        // sweep should come round again quickly — and the effect was that an
+        // area which always fails always sorts first and always eats the
+        // whole run. Washington starved four other cities for a fortnight
+        // that way. Quickly, not forever.
+        last_swept_at: new Date(Date.now() - (FRESH_HOURS - RETRY_HOURS) * 3600_000).toISOString(),
       }).eq('id', area.id);
       report.push({ area: name, status, kinds: kinds.length, found: all.length, stored: wroteAny });
       continue;
