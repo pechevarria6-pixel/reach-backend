@@ -7,6 +7,7 @@ import { planSections, daysAway, today, countdown, groupSchedule, byName, monthG
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle, bookedClaim, bookedWording } from "@/lib/checkout";
+import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
@@ -7443,23 +7444,27 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // first — collapsing on what that screen displayed would have merged three
   // different dinners into one.
   const checkout=checkoutState(bookings||[]);
-  const lines=(checkout.rows.length?checkout.rows.map(b=>({
+  // The facts come from the contract; the icons and the wording stay here,
+  // because they are presentation and they belong to the screen. The two
+  // comments below are both post-mortems of a hand-written field list: a
+  // redirect with nowhere to tap, and a table with no way to get it.
+  const lines=(checkout.rows.length?bookingFactsFrom(checkout.rows).map(b=>({
     id:b.id, icon:vIcon[b.vertical]||"\u2728", l:itemTitle(b),
     // The provider's own note when it left one. A seat being booked by hand
     // because automatic booking will not carry somebody's passport marker
     // deserves that sentence, not "we'll handle this one for you" — the
     // person it concerns is reading this screen.
-    d:b.response_payload?.note||BOOKING_MODE[b.mode]||BOOKING_MODE[b.provider]||"",
-    a:b.price_cents, st:b.status,
+    d:b.note||BOOKING_MODE[b.mode]||BOOKING_MODE[b.provider]||"",
+    a:b.priceCents, st:b.status,
     // A redirected booking finishes somewhere else, and until now the screen
     // said so with nothing to tap: "Finish on their site" and no site. The
     // provider hands the address back on the booking; this is it.
-    href:b.redirect_url||null, provider:b.provider||null,
+    href:b.href, provider:b.provider,
     // A number somebody can ring. Most restaurants are not on Resy or
     // OpenTable, and for those the screen offered a status and nothing to
     // do — a table the app said it wanted and gave you no way to get. The
     // phone is the answer for those, and it is the one we have most often.
-    phone:b.response_payload?.phone||null,
+    phone:b.phone,
   })):[
     // Nothing is priced yet, so there is nothing to itemise. This used to list
     // flights, accommodation and activities at 34, 40 and 26 per cent of the

@@ -9,6 +9,7 @@ import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness, withoutTravelerDetails } from '@/lib/essentials-server';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
 import { findDuplicate, identityOf as findKey } from '@/lib/booking/duplicate';
+import { bookingFacts } from '@/lib/contracts/booking';
 import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
 import { kiwiFlights, viatorActivities, ticketmasterEvents, tableReservations } from '@/lib/booking/providers/rest';
 import { duffelFlights } from '@/lib/booking/providers/flights.duffel';
@@ -98,7 +99,12 @@ export async function POST(req: NextRequest) {
   // second order with a real fare on it.
   const { data: already, error: readBack } = await ctx.db
     .from('bookings')
-    .select('id, vertical, status, price_cents, provider, mode, provider_ref, redirect_url, currency, detail, request_payload')
+    // `*`, deliberately. This list used to be written out here and it left
+    // out `response_payload` — where the venue's phone number and the
+    // provider's own note live — so the twin below was handed back thinner
+    // than the booking it stands for. A column list is a place to drop a
+    // fact; one read per POST is cheaper than doing that again.
+    .select('*')
     .eq('plan_id', body.planId);
   if (readBack) {
     // Not fatal. Failing the whole request because we could not check for
@@ -117,16 +123,25 @@ export async function POST(req: NextRequest) {
       console.log('[bookings] already booked — returning the existing one', {
         plan: body.planId, vertical: item.vertical, status: twin.status,
       });
+      // Read through the contract rather than field by field. Written out
+      // here, this dropped `response_payload` — so a second press of "Book
+      // everything" described the same restaurant with no number to ring and
+      // none of the provider's own wording, while the first press had both.
+      const f = bookingFacts(twin as unknown as Record<string, unknown>);
       results.push({
-        vertical: twin.vertical as BookingItemResult['vertical'],
-        mode: twin.mode as BookingItemResult['mode'],
-        status: twin.status as BookingItemResult['status'],
-        provider: twin.provider as string,
-        providerRef: (twin.provider_ref as string) || undefined,
-        redirectUrl: (twin.redirect_url as string) || undefined,
-        priceCents: (twin.price_cents as number) ?? undefined,
-        currency: (twin.currency as string) || 'USD',
-        detail: twin.detail ?? undefined,
+        vertical: f.vertical as BookingItemResult['vertical'],
+        mode: f.mode as BookingItemResult['mode'],
+        status: f.status as BookingItemResult['status'],
+        provider: f.provider as string,
+        providerRef: f.providerRef || undefined,
+        redirectUrl: f.href || undefined,
+        priceCents: f.priceCents ?? undefined,
+        currency: f.currency,
+        detail: (f.detail as string) ?? undefined,
+        // `raw` is the field an insert writes to `response_payload`, so
+        // handing it back here means a duplicate answers with exactly what
+        // the first one answered with. A round trip, not a copy.
+        raw: f.payload ?? undefined,
       } as BookingItemResult);
       continue;
     }
