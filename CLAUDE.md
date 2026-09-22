@@ -213,8 +213,10 @@ honest itinerary names none — fix it by sweeping, not by loosening the rule.
 
 ## Still open
 
-- `sql/finish-idempotency-2026-09-21.sql` — two unique indexes, blocked on
-  the owner deciding between two real Duffel orders (`MHW2Y3`, `SFYVFK`).
+- `sql/finish-idempotency-2026-09-21.sql` — two unique indexes, **no longer
+  blocked**: the duplicate Duffel orders were orphaned test orders and were
+  deleted on 2026-09-22 (f89a3eb). Zero duplicates remain; the owner runs
+  section 2 in the SQL editor.
 - Harvest coverage is thin: ~8 pages in 20 give anything up, and sites that
   build themselves with scripts are recorded `needs_render` rather than
   guessed at.
