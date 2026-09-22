@@ -9,6 +9,7 @@ import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle, bookedClaim, bookedWording } from "@/lib/checkout";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild } from "@/lib/itinerary-rebuild";
+import { ticketSources } from "@/lib/tickets";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
@@ -5945,13 +5946,33 @@ function ItemActions({item,markGot,tight}){
     <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:gap}}>
       {/* A ticket is bought from whoever sells it. Reach cannot sell one, and
           the honest complete answer is to hand somebody to the page that can. */}
-      {ticketed&&(
-        <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
-          style={{display:"inline-flex",alignItems:"center",gap:6,background:C.accent,color:C.onAccent,
-            fontSize:12.5,fontWeight:700,padding:"8px 14px",borderRadius:999,textDecoration:"none"}}>
-          🎟️ Get tickets{item.venue_name?` · ${item.venue_name}`:""} →
+      {/* One seller is a single point of failure. J. Cole sold out on
+          Ticketmaster in Fayetteville and the plan stopped there, with the
+          resale sites and the box office still selling.
+          Only the first of these is a claim: it is the URL a source gave us
+          for this exact event. The rest are searches on real marketplaces,
+          offered as somewhere to look — Reach has not asked StubHub whether
+          anything is available and does not imply that it has. */}
+      {/* No venueWebsite passed, on purpose. On an event line venue_website
+          already holds the TICKET url, and there is no column for the
+          venue's own site — so a box office link needs
+          sql/venue-box-office-2026-09-22.sql, which the owner runs. Passing
+          a field that does not exist would have rendered nothing and looked
+          like a working feature, which is the fault this file is full of. */}
+      {ticketed&&ticketSources({title:item.title,venueName:item.venue_name,
+        primaryUrl:item.venue_website}).map((src,i)=>(
+        <a key={src.url} href={src.url} target="_blank" rel="noopener noreferrer"
+          style={src.exact&&i===0
+            ?{display:"inline-flex",alignItems:"center",gap:6,background:C.accent,color:C.onAccent,
+              fontSize:12.5,fontWeight:700,padding:"8px 14px",borderRadius:999,textDecoration:"none"}
+            :{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,
+              color:src.exact?C.accentText:C.t2,fontSize:12,fontWeight:600,
+              padding:"7px 11px",borderRadius:999,textDecoration:"none"}}>
+          {i===0&&src.exact
+            ?`🎟️ ${src.label}${item.venue_name?` · ${item.venue_name}`:""} →`
+            :`${src.label} →`}
         </a>
-      )}
+      ))}
       {/* Anything we hold an address for gets a way in — a place's own site
           for a table or a class. Every verified venue has one. */}
       {site&&(
