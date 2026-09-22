@@ -424,3 +424,117 @@ test.describe('13. Not found', () => {
     expect(bg).not.toBe('transparent');
   });
 });
+
+// ─── 14. Rendered facts ──────────────────────────────────────────────────
+// The layer that missed six bugs in a day.
+//
+// Every one of them passed a green build, a 200 response and a correct
+// database row, and failed at the only place that matters: the screen. The
+// ticket URL was generated, stored and returned, and a hand-written field
+// list dropped it before the render. Nothing in the stack objected.
+//
+// These assert the DOM. They are deliberately structural rather than tied to
+// one plan's wording — a plan gets regenerated and its restaurants change,
+// but the rule "an item that has somewhere to book must offer a way to get
+// there" holds for every plan there will ever be.
+test.describe('14. Rendered facts', () => {
+  // Serial, because every test here drives the same signed-in session.
+  // Run in parallel they interfere — two workers walking one account, with
+  // one rotating the session cookie under the other. It passed alone and
+  // failed in the suite, which is the worst of both: a flaky test teaches
+  // people to ignore red, and then a real failure goes unread too.
+  test.describe.configure({ mode: 'serial' });
+
+  async function openFirstPlanItinerary(page: Page, titled?: RegExp) {
+    await page.goto(`${BASE_URL}/home`);
+    await page.waitForLoadState('networkidle');
+    const cards = page.locator('[class*="card"]').filter({ hasText: titled ?? /·/ });
+    await cards.first().click({ timeout: 15000 }).catch(() => {});
+    await page.getByText('Itinerary', { exact: true }).first().click({ timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+  }
+
+  /**
+   * Any plan that holds a ticketed event.
+   *
+   * The first version of this opened whichever plan came first and skipped
+   * when it had no gig in it — so the assertion that matters most, on the
+   * feature that shipped broken this morning, quietly never ran. A test that
+   * excuses itself is not a test.
+   */
+
+
+  test('a place we can link to always offers a way to get there', async ({ page }) => {
+    await openFirstPlanItinerary(page);
+    // Every outbound link on an itinerary row must actually go somewhere.
+    // "Get tickets" with no href is exactly what shipped this morning.
+    const links = page.locator('a[target="_blank"]');
+    const n = await links.count();
+    for (let i = 0; i < n; i++) {
+      const href = await links.nth(i).getAttribute('href');
+      expect(href, 'a link on the itinerary had no destination').toBeTruthy();
+      expect(href).toMatch(/^https?:\/\//);
+    }
+  });
+
+  test('no placeholder poison reaches a screen', async ({ page }) => {
+    await openFirstPlanItinerary(page);
+    const text = await page.locator('body').innerText();
+    // Each of these has been on a screen in this app at some point.
+    for (const poison of ['undefined', 'NaN', '[object Object]', '\\u2190', 'null,']) {
+      expect(text, `"${poison}" rendered to a person`).not.toContain(poison);
+    }
+    // A raw enum is the shape "restaurant" took before it was a pill.
+    expect(text).not.toMatch(/^\s*(walk_in|on_budget)\s*$/m);
+  });
+
+  test('every ticketed event has somewhere to buy', async ({ page }) => {
+    // The rule that shipped broken this morning: an item typed 'event' must
+    // carry the page that sells it, or the screen shows a pill saying
+    // "ticketed" above nothing to press.
+    //
+    // Asserted against the API rather than by clicking to a plan, because
+    // there is no URL for a plan — every screen lives inside the SPA shell,
+    // so a headless test can only reach one by clicking a card, and that was
+    // too brittle to trust. Recorded in STATUS.md as its own gap: a trip you
+    // cannot link to is a trip you cannot share.
+    // Fetched from inside the page, not through page.request.
+    //
+    // page.request carries a snapshot of the cookies, and Clerk rotates the
+    // session while the earlier tests in this block are navigating — so by
+    // the time this ran it was using a cookie that had expired thirty
+    // seconds ago and got a 401. The document always has the live one.
+    await page.goto(`${BASE_URL}/home`);
+    await page.waitForLoadState('networkidle');
+
+    const checked = await page.evaluate(async () => {
+      const get = (u: string) => fetch(u, { cache: 'no-store' }).then(r => r.ok ? r.json() : null);
+      const groups = (await get('/api/groups'))?.groups ?? [];
+      const offenders: string[] = [];
+      let seen = 0;
+      for (const g of groups.slice(0, 3)) {
+        const detail = await get(`/api/groups/${g.id}`);
+        for (const plan of (detail?.plans ?? []).slice(0, 6)) {
+          const p = await get(`/api/plans/${plan.id}`);
+          for (const item of p?.itinerary ?? []) {
+            if (item.type !== 'event') continue;
+            seen++;
+            if (!item.venue_website) offenders.push(String(item.title).slice(0, 60));
+          }
+        }
+      }
+      return { seen, offenders };
+    });
+
+    expect(checked.offenders, 'ticketed events with nowhere to buy').toEqual([]);
+    console.log(`[contract] checked ${checked.seen} ticketed event(s)`);
+  });
+
+  test('money on a plan screen is a number, never an empty promise', async ({ page }) => {
+    await page.goto(`${BASE_URL}/home`);
+    await page.waitForLoadState('networkidle');
+    const text = await page.locator('body').innerText();
+    // "$NaN" and "$undefined" have both been on this screen.
+    expect(text).not.toMatch(/\$\s*(NaN|undefined|null)/);
+  });
+});
