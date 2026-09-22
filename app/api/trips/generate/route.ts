@@ -15,6 +15,7 @@ import { realPlacesAmong } from '@/lib/discovery/is-place';
 import { within } from '@/lib/deadline';
 import { locate } from '@/lib/discovery/geocode';
 import { normalise } from '@/lib/discovery/verify';
+import { withoutStayClaim } from '@/lib/stay-claims';
 import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
@@ -275,7 +276,17 @@ quoting it were the same as planning around it.\n`
     : '';
   const tripTypes = (tripPrefs.tripType || []).join(', ') || 'any';
   const tripPace = tripPrefs.pace || 'balanced';
-  const tripAccommodation = (tripPrefs.accommodation || []).join(', ') || 'hotel';
+  // No default. This read `|| 'hotel'`, so a group who never said where they
+  // wanted to stay was described to the model as staying in a hotel — and the
+  // model, correctly following its brief, wrote the days around one. A real
+  // Moab plan in the table opens with "check into the hotel", has "an
+  // afternoon doing nothing in particular back at the hotel pool", and ends
+  // with "check out of the hotel". That trip has no hotel item and no hotel
+  // booking. The pool was invented on top of the hotel, which was invented by
+  // this line.
+  //
+  // Empty is the honest value, and the prompt says what to do with it.
+  const tripAccommodation = (tripPrefs.accommodation || []).join(', ');
   const departure = departureCity || 'a major US city';
   const departureCode = departureAirport || 'nearest major airport';
 
@@ -524,7 +535,17 @@ Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
 Music/nightlife: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
 Activities: ${activityVibes.slice(0, 4).join(', ') || 'mixed'}
 Dietary: ${dietaryNeeds.join(', ') || 'no restrictions'}
-Accommodation: ${tripAccommodation}
+${tripAccommodation
+  ? `Accommodation they asked for: ${tripAccommodation}. This is the kind of
+place they want, not somewhere that has been booked. Do not write them into
+it.`
+  : `Where they are sleeping: NOT DECIDED. Nobody has booked anywhere, and
+Reach has not placed them.`}
+Either way, no slot may reference the stay. No checking in, no checking out,
+no "back at the hotel", no room, no pool, no lobby, no breakfast included.
+Those read as facts about a booking that does not exist, and the first thing
+somebody does with the first line of a plan is act on it. Write the day
+outside: arrive, drop the bags, and go and look at the town.
 ${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${wantedBlock}
 
 ${solo ? `On their own, so every slot works for one: counter or bar seating,
@@ -724,6 +745,13 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       vouchers.push(...geography);
 
       let softened = 0;
+      // Nothing generated here books a bed. A slot is a plan, a cost, a
+      // booking mode and a payment note — there is no accommodation in the
+      // schema at all, and the accommodation figure on a trip option is a
+      // budget line, a number to plan against, not a reservation. So the rule
+      // needs no condition: a generated day may never write somebody into a
+      // room, because at this point nobody has one.
+      const invented = new Set<string>();
       const stripped = new Set<string>();
       for (const day of days) {
         const slots = [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])];
@@ -767,6 +795,22 @@ you have made up; a day that is simply a good day is allowed to be one.`;
             slot.booking = honest;
           }
 
+          // Nobody is written into a room nobody booked. The prompt says so
+          // now; this is the half that does not depend on the prompt being
+          // obeyed. A whole Moab plan shipped opening with "check into the
+          // hotel" on a trip with no hotel item and no hotel booking.
+          const stay = withoutStayClaim(String(slot.plan ?? ''));
+          if (stay.removed) {
+            console.error('[trips itinerary] removed a stay nobody booked', {
+              destination, claim: stay.removed, kept: stay.text === null ? '(whole slot)' : 'clause',
+            });
+            invented.add(stay.removed);
+            // Null means nothing true was left. Rather than invent a
+            // replacement — which is how the hotel got here in the first
+            // place — the slot loses the sentence that was not true.
+            slot.plan = stay.text ?? '';
+          }
+
           const clean = withoutUnverified(slot.plan, realPlaces, vouchers);
           if (clean.removed.length) {
             softened++;
@@ -802,6 +846,17 @@ you have made up; a day that is simply a good day is allowed to be one.`;
         console.error('[trips itinerary] removed names nothing vouches for', {
           destination, slots: softened, verified_places: realPlaces.length,
           names: [...stripped].slice(0, 12),
+        });
+      }
+
+      if (invented.size) {
+        // Separate from the venue count above, because it is a different
+        // failure with a different fix. A stripped venue name means the menu
+        // was thin. This means the model was told, in the prompt, not to put
+        // anybody in a room, and did it anyway — so if this keeps appearing,
+        // the instruction is the thing to change, not the venue table.
+        console.error('[trips itinerary] removed stays nobody booked', {
+          destination, claims: [...invented].slice(0, 8),
         });
       }
 
