@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
 import { itemsFromRows } from "@/lib/contracts/itinerary-item";
-import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter } from "@/lib/calendar";
+import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
@@ -6376,6 +6376,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const reachTotal=quotedPerHead??estimateTotal;
   const reachTotalIsEstimate=quotedPerHead===null;
 
+  // Where this trip is relative to today. Worked out once, from the dates on
+  // the plan, and read by the booking button and the line above it.
+  const timing=tripTiming({startDate:plan.startDate,endDate:plan.endDate},today());
+
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const totalV=Object.values(plan.votes||{}).reduce((a,b)=>a+b,0);
 
@@ -6681,10 +6685,25 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
               {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
               {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
-              {plan.status==="approved"&&(
+              {/* A trip that has started cannot be booked ahead of itself.
+                  This offered "Book everything" on a trip five days into its
+                  own dates; pressing it reached a hotel provider and came
+                  back "No rates available", which is true and is a strange
+                  way to find out. The dates are on the plan and nothing in
+                  the booking path had ever looked at them. */}
+              {plan.status==="approved"&&timing&&timing!=="upcoming"&&(
+                <div style={{marginBottom:10,padding:"12px 14px",background:C.s2,
+                  border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,
+                  color:C.t2,lineHeight:1.5}}>
+                  {timing==="on_now"
+                    ?"This trip is happening now, so there is nothing left to book ahead. Anything still open is on the Itinerary tab."
+                    :"This trip has finished."}
+                </div>
+              )}
+              {plan.status==="approved"&&timing!=="over"&&(
                 <>
                   <button className="bp" style={{marginBottom:6,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>
-                    Book everything{reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?" est.":""} each`:""} →
+                    {timing==="on_now"?"Open the booking list →":`Book everything${reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?" est.":""} each`:""} →`}
                   </button>
                   {/* The biggest commitment in the app used to be a button
                       with no number on it. People do not press those. Say
@@ -7076,11 +7095,19 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               // Everything you pay for yourself, as it happens.
               const variable=items.filter(i=>i.booking_mode!=="reach"&&i.cost_cents>0)
                 .map(i=>({l:i.title,d:i.time,c:i.cost_cents,pay:i.payment_note,it:i}));
+              // Bookable and not yet priced. A hotel line carries no number
+              // until a provider quotes one — inventing a price for where
+              // somebody sleeps is exactly the thing this app does not do —
+              // and a row with no number was simply dropped here, so the
+              // screen showed a budget of $1,474 above a list adding to $581
+              // and said nothing about the difference.
+              const unpriced=items.filter(i=>i.booking_mode==="reach"&&!(i.cost_cents>0))
+                .map(i=>({l:i.title,d:i.time,it:i}));
               const sum=a=>a.reduce((t,x)=>t+(x.c||0),0);
               const fixedTotal=sum(fixed), varTotal=sum(variable);
               const heads=plan.participants.length||1;
 
-              if(!fixed.length&&!variable.length)return(
+              if(!fixed.length&&!variable.length&&!unpriced.length)return(
                 <div style={{fontSize:13,color:C.t2,lineHeight:1.6,padding:"4px 0 8px"}}>
                   Costs appear here once this trip has a day-by-day plan. Build it on the
                   Itinerary tab and every event gets priced.
@@ -7122,6 +7149,30 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       note="Committed once the group funds the trip. You pay this through Reach and it is done."
                       rows={fixed} total={fixedTotal}/>
                   )}
+                  {/* Named, with no number, because there is not a true one
+                      yet. The old screen dropped these entirely and left the
+                      difference between the budget and the list unexplained. */}
+                  {unpriced.length>0&&(
+                    <div style={{marginBottom:18}}>
+                      <div style={{fontSize:13.5,fontWeight:600,color:C.t1,marginBottom:4}}>
+                        Reach prices these when you book
+                      </div>
+                      <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:10}}>
+                        Not in the totals below. The number comes from the provider, so
+                        there is not an honest one to show until Reach has asked.
+                      </div>
+                      {unpriced.map((r,i)=>(
+                        <div key={i} style={{display:"flex",justifyContent:"space-between",gap:12,
+                          padding:"7px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:13,color:C.t1,lineHeight:1.35}}>{r.l}</div>
+                            {r.d&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{r.d}</div>}
+                          </div>
+                          <div style={{fontSize:12,color:C.t3,flexShrink:0}}>priced at booking</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {variable.length>0&&(
                     <Section title="You pay on the day" tone={C.t1}
                       note="Estimates for what you spend as you go. Nobody collects this up front."
@@ -7129,7 +7180,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   )}
                   <div style={{height:1,background:C.border,margin:"4px 0 14px"}}/>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
-                    <span style={{fontSize:14,color:C.t1,fontWeight:600}}>Per person, all in</span>
+                    <span style={{fontSize:14,color:C.t1,fontWeight:600}}>
+                      {unpriced.length>0?"Per person, priced so far":"Per person, all in"}
+                    </span>
                     <span style={{fontSize:16,color:C.t1,fontWeight:700}}>{money(fixedTotal+varTotal)}</span>
                   </div>
                   {heads>1&&(
@@ -7173,6 +7226,10 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
   const [confirmLeave,setConfirmLeave]=useState(false);
   useEscape(confirmLeave,()=>setConfirmLeave(false));
   if(!plan)return <NotLoaded what="This plan" onBack={onBack}/>;
+  // Where this trip is relative to today. Worked out once, from the dates on
+  // the plan, and read by the booking button and the line above it.
+  const timing=tripTiming({startDate:plan.startDate,endDate:plan.endDate},today());
+
   const tIc={flight:"✈️",hotel:"🏨",activity:"🎯",restaurant:"🍽️",transport:"🚗"};
   const addItem=()=>{if(!ni.title)return;setItems(p=>[...p,{...ni,filled:!!ni.conf}]);setNi({time:"",title:"",sub:"",type:"activity",conf:""});setAdding(false);setDirty(true);};
   const rm=idx=>{setItems(p=>p.filter((_,i)=>i!==idx));setDirty(true);};

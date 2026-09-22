@@ -395,3 +395,29 @@ export function countdown(plan: DatedPlan, now: Date = new Date()): string | nul
   const months = Math.round(days / 30);
   return months <= 1 ? 'In a month' : `In ${months} months`;
 }
+
+/**
+ * Where a trip is relative to today: still coming, happening, or finished.
+ *
+ * The plan screen offered "Book everything" on a trip that began five days
+ * ago. Pressing it reached LiteAPI and got "No rates available", which is
+ * true and is a strange way to find out your trip has started. `daysAway`
+ * already worked all this out for the home screen; the booking path never
+ * asked.
+ *
+ * Null when there are no dates — an undated plan is not late, it is undated.
+ */
+export type TripTiming = 'upcoming' | 'on_now' | 'over';
+export function tripTiming(plan: DatedPlan, today: string): TripTiming | null {
+  const day = planDay(plan);
+  if (!day || !ISO.test(today)) return null;
+  const ends = lastDay(plan) ?? day;
+  if (ends < today) return 'over';
+  if (day <= today) return 'on_now';
+  return 'upcoming';
+}
+
+/** Whether there is any point asking a provider to price this. */
+export function worthQuoting(plan: DatedPlan, today: string): boolean {
+  return tripTiming(plan, today) === 'upcoming';
+}
