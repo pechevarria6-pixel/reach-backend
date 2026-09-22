@@ -75,7 +75,16 @@ walk('components'); walk('app'); walk('lib');
 
 let found = 0;
 for (const f of files) {
-  fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+  // Block comments removed whole, before anything is read line by line.
+  //
+  // Stripping `//` and lines beginning `*` or `/*` missed a JSX comment —
+  // `{/* … */}` — and every continuation line inside one. Two of the three
+  // hits on the first honest run were comments explaining why a banned
+  // phrase had been removed, which is a checker tripping over its own
+  // paperwork. Newlines are kept so the line numbers it reports stay true.
+  const source = fs.readFileSync(f, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '));
+  source.split('\n').forEach((line, i) => {
     const code = line.replace(/\/\/.*$/, '');
     // A block comment is a comment too. This only stripped `//`, so a comment
     // explaining the very rule it enforces tripped it — which is a checker
@@ -84,9 +93,19 @@ for (const f of files) {
     if (trimmed.startsWith('*') || trimmed.startsWith('/*')) return;
     if (MACHINERY.test(code)) return;
     // Only sentences: several words, in quotes, that a person could read.
-    const strings = code.match(/["'`][^"'`]{12,}["'`]/g) || [];
-    for (const raw of strings) {
-      const text = raw.slice(1, -1);
+    //
+    // The content class excludes only the SAME quote that opened the string.
+    // It used to exclude all three, so any sentence containing an apostrophe
+    // was invisible — which in English user-facing copy is most of them.
+    // "We're on it" sat in BOOKING_STATE, on the banned list, on screen, and
+    // green on every run: eleven characters and an apostrophe, and the check
+    // could see neither.
+    //
+    // Eight characters rather than twelve for the same reason. "We're on it"
+    // is eleven and is a promise the app cannot keep.
+    const strings = [...code.matchAll(/(["'`])((?:(?!\1).){8,})\1/g)];
+    for (const match of strings) {
+      const text = match[2];
       if (!/\s/.test(text)) continue;
       if (DATA_SHAPED.test(text)) continue;
       for (const word of [...BANNED, ...BROKEN_PROMISES]) {

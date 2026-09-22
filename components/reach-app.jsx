@@ -2864,7 +2864,13 @@ const BOOKING_MODE={
 
 const BOOKING_STATE={
   confirmed:{label:"Booked ✓",tone:"green"},
-  pending:{label:"We're on it",tone:"gold"},
+  // Not "We're on it". Nobody at Reach is on it: a pending row is a table
+  // the trip knows is wanted and that nobody has taken yet, and the person
+  // who takes it is the one reading this. Saying we were working on it was a
+  // promise with no path behind it in this codebase — and it survived every
+  // run of the guard that bans exactly that phrase, because the guard could
+  // not see a string with an apostrophe in it.
+  pending:{label:"Yours to book",tone:"gold"},
   awaiting_approval:{label:"Waiting for the group",tone:"plain"},
   redirected:{label:"Finish on their site",tone:"gold"},
   failed:{label:"Couldn't book",tone:"red"},
