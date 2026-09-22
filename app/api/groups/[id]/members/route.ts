@@ -7,6 +7,7 @@ import { appUrl } from '@/lib/app-url';
 import { requireGroupMember, isFail } from '@/lib/auth';
 import { normalizeEmail, newInviteToken, INVITE_TTL_DAYS } from '@/lib/invites';
 import { sendGroupInvite } from '@/lib/email';
+import { beforeJoining, afterJoining } from '@/lib/joining';
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await requireGroupMember(params.id);
@@ -41,6 +42,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .eq('group_id', params.id).eq('user_id', targetUser.id).maybeSingle();
     if (existing) return NextResponse.json({ error: 'Already a member' }, { status: 409 });
 
+    // Whatever the trip already holds was booked without them, so they are
+    // kept off it before they are let in — see lib/joining.ts.
+    const prepared = await beforeJoining(supabase, params.id, targetUser.id);
+    if (!prepared.ok) {
+      console.error('[members POST] not added — existing bookings could not be kept off their share', { group: params.id });
+      return NextResponse.json({ error: prepared.error }, { status: 503 });
+    }
+
     const { error } = await supabase
       .from('group_members')
       .insert({ group_id: params.id, user_id: targetUser.id, role: 'member' });
@@ -48,7 +57,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       console.error('[members POST] insert failed', error);
       return NextResponse.json({ error: 'Could not add that member' }, { status: 500 });
     }
-    return NextResponse.json({ added: true, userId: targetUser.id }, { status: 201 });
+    // Two people now, so no plan in this group is a solo trip any more.
+    const { soloEnded } = await afterJoining(supabase, params.id);
+    return NextResponse.json({ added: true, userId: targetUser.id, soloEnded }, { status: 201 });
   }
 
   // ── Nobody by that address yet: invite them ────────────────────────────

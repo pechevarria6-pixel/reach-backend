@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
+import { beforeJoining, afterJoining } from '@/lib/joining';
 
 export async function GET(_req: NextRequest, { params }: { params: { token: string } }) {
   const db = createServerClient();
@@ -59,6 +60,14 @@ export async function POST(_req: NextRequest, { params }: { params: { token: str
     .eq('group_id', invite.group_id).eq('user_id', ctx.user.id).maybeSingle();
 
   if (!existing) {
+    // Kept off whatever the trip already holds before being let in, so
+    // joining never re-prices a booking somebody else has paid for.
+    const prepared = await beforeJoining(ctx.db, invite.group_id, ctx.user.id);
+    if (!prepared.ok) {
+      console.error('[invite accept] not joined — existing bookings could not be kept off their share', { group: invite.group_id });
+      return NextResponse.json({ error: prepared.error }, { status: 503 });
+    }
+
     const { error } = await ctx.db.from('group_members').insert({
       group_id: invite.group_id,
       user_id: ctx.user.id,
@@ -68,6 +77,7 @@ export async function POST(_req: NextRequest, { params }: { params: { token: str
       console.error('[invite accept] join failed', error);
       return NextResponse.json({ error: 'Could not join that group' }, { status: 500 });
     }
+    await afterJoining(ctx.db, invite.group_id);
   }
 
   // They are in the group either way — that insert above is the part that

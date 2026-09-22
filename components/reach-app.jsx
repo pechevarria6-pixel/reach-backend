@@ -24,6 +24,7 @@ import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { STEPS, stepStates, cannotSign, bookingTracker } from "@/lib/plan-steps";
+import { bringAlongNote } from "@/lib/joining";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -2665,6 +2666,19 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           </div>
           {isAdmin&&<button className="bsm bsm-g" onClick={()=>push("editGroup",{groupId})}>Edit</button>}
         </div>
+        {/* A solo trip can stop being one. Adding somebody is the same invite
+            the Members tab uses on a group — one way in — and this is where a
+            group of one sees it, because it has no Members tab. Once they
+            join, isAlone goes false on the next refresh and every line on
+            this screen switches to group wording with it. */}
+        {isAlone&&isAdmin&&(
+          <div style={{marginTop:14}}>
+            <button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Bring someone along</button>
+            <div style={{fontSize:12,color:C.t2,marginTop:8,lineHeight:1.5}}>
+              {bringAlongNote({hasBookings:group.plans.some(p=>p.status==="booked"),paidCents:0})}
+            </div>
+          </div>
+        )}
         <div style={{display:"flex",gap:0,marginTop:16,borderBottom:`1px solid ${C.border}`}}>
           {(isAlone?["plans"]:["plans","members","wallet"]).map(t=>(
             <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"10px 0",background:"none",border:"none",borderBottom:`2px solid ${tab===t?C.accentText:"transparent"}`,color:tab===t?C.accentText:C.t2,fontSize:13,fontWeight:600,cursor:"pointer",textTransform:"capitalize",transition:"all .15s"}}>{t}</button>
@@ -8353,6 +8367,24 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   <span className="pill pill-g" style={{fontSize:10}}>✓ In</span>
                 </div>
               ):null;})}
+              {/* Plans change, and a trip for one is allowed to become a trip
+                  for two. The invite is the group's own (Edit group → Add
+                  someone), not a second mechanism. What it must not do is
+                  suggest the newcomer's seat or room came with it: once
+                  anything here is booked or paid, the note says what stays
+                  and what does not — and the server keeps them off every
+                  existing booking so that is true (lib/joining.ts). */}
+              {soloTrip&&group.role==="admin"&&(
+                <div style={{marginTop:12}}>
+                  <button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Bring someone along</button>
+                  <div style={{fontSize:12,color:C.t2,marginTop:8,lineHeight:1.5}}>
+                    {bringAlongNote({
+                      hasBookings:plan.status==="booked"||(funding?.targetCents||0)>0||(plan.itinerary||[]).some(i=>i.conf),
+                      paidCents:funding?.collectedCents||0,
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
             {/* When the group can go. Everybody says which dates work; Reach
                 finds the stretch most of them can make, and one tap puts it on

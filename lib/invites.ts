@@ -9,6 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // test runner, and neither does an extensionless relative path — this file
 // has tests, and a module they cannot load is a module without them.
 import { track } from './track.ts';
+import { beforeJoining, afterJoining } from './joining.ts';
 
 export const INVITE_TTL_DAYS = 30;
 
@@ -73,6 +74,12 @@ export async function claimInvitesFor(
     if (existing) {
       result.alreadyIn.push(invite.group_id);
     } else {
+      // Kept off whatever the trip already holds. If that cannot be written
+      // the invite stays pending and is claimed on the next sign-in, rather
+      // than letting them in on a share of somebody else's booking.
+      const prepared = await beforeJoining(db, invite.group_id, userId);
+      if (!prepared.ok) continue;
+
       const { error } = await db.from('group_members').insert({
         group_id: invite.group_id,
         user_id: userId,
@@ -83,6 +90,7 @@ export async function claimInvitesFor(
         console.error('[claimInvites] could not join group', invite.group_id, error);
         continue;
       }
+      await afterJoining(db, invite.group_id);
       result.joined.push(invite.group_id);
     }
 

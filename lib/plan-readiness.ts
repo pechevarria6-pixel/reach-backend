@@ -17,6 +17,7 @@
 // changed under them. The moment one member answers for a trip, the trip is
 // running the new way and everybody is counted.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isSoloCount } from './joining.ts';
 
 export interface MemberReadiness {
   userId: string;
@@ -90,8 +91,6 @@ export async function planReadiness(
   groupId: string,
   soloMode: boolean,
 ): Promise<ReadinessReport> {
-  if (soloMode) return { members: [], allReady: true, waitingOn: [], solo: true };
-
   const { data: members, error } = await db
     .from('group_members')
     .select('user_id, users(id, name)')
@@ -102,6 +101,17 @@ export async function planReadiness(
     // "everyone is ready" and open the vote.
     console.error('[readiness] could not read the group', { planId, code: error.code });
     throw new Error('readiness unavailable');
+  }
+
+  // The flag is written once, when the plan is made, and a trip for one can
+  // become a trip for two. Joining clears it (lib/joining.ts), but the rule
+  // is not left resting on that write: somebody who is in the group is asked,
+  // whatever the plan was created as.
+  if (soloMode && isSoloCount((members ?? []).length)) {
+    return { members: [], allReady: true, waitingOn: [], solo: true };
+  }
+  if (soloMode) {
+    console.error('[readiness] plan still marked solo with more than one person in the group', { planId, members: (members ?? []).length });
   }
 
   // Who has answered for this trip. A missing table would mean the migration
