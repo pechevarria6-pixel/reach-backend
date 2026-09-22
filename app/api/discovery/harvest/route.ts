@@ -103,8 +103,32 @@ export async function GET(req: NextRequest) {
       // worst case is last week's list surviving one more night, which is
       // what stale_after already guards.
       const stamp = new Date().toISOString();
+      // One row per (title, when_text), because that is what the upsert
+      // conflicts on and Postgres refuses a statement naming the same row
+      // twice — it fails the WHOLE write with "ON CONFLICT DO UPDATE
+      // command cannot affect row a second time".
+      //
+      // Maryland Meadworks lists two things with the same name at the same
+      // time on its own page. So that venue failed to store on every run,
+      // every night, and would have gone on failing for ever: the error was
+      // logged, the venue was marked read, and nothing was ever kept. The
+      // sweep already dedupes for exactly this reason; the harvester did
+      // not.
+      const seen = new Set<string>();
+      const unique = result.events.filter(e => {
+        const key = `${e.title}|${e.when_text || ''}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (unique.length !== result.events.length) {
+        console.log('[discovery/harvest] the page listed the same thing twice', {
+          venue: venue.name, listed: result.events.length, kept: unique.length,
+        });
+      }
+
       const { error: wrote } = await db.from('discovery_events').upsert(
-        result.events.map(e => ({
+        unique.map(e => ({
           venue_id: venue.id,
           title: e.title,
           starts_on: e.starts_on,
@@ -121,7 +145,7 @@ export async function GET(req: NextRequest) {
         console.error('[discovery/harvest] could not write events', venue.name, wrote.message);
         stored = false;
       } else {
-        events += result.events.length;
+        events += unique.length;
         // Anything from an earlier run that this one did not see again has
         // come off the page. Removed only now that the new list is stored.
         const { error: pruned } = await db.from('discovery_events')

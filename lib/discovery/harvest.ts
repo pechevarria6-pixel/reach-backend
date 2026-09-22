@@ -306,7 +306,12 @@ export async function harvestVenue(venue: { name: string; website: string }): Pr
     const res = await new Anthropic({ apiKey: key }).messages.create({
       // Reading one page is not hard work, and there are a great many pages.
       model: 'claude-haiku-4-5',
-      max_tokens: 2000,
+      // 2000 truncated the richest pages mid-object, and a truncated answer
+      // is not a short list — it is no list at all, because the JSON will
+      // not parse. Kings and the North Carolina Museum of Art both lost
+      // everything that way, which is backwards: the venues with the most on
+      // are the ones worth reading.
+      max_tokens: 8000,
       output_config: { format: { type: 'json_schema', schema: EVENTS_SCHEMA } },
       messages: [{ role: 'user', content: extractionPrompt(venue.name, readUrl, text.slice(0, 14000)) }],
     });
