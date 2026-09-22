@@ -17,7 +17,7 @@
 import { BookingProvider, BookingItemRequest, BookingItemResult, CancelResult } from '../types';
 import {
   amountToCents, offerExpired, duffelGender, toDuffelPassenger,
-  describeOffer, flightIdent, describeConditions, departed, offerKey, offerOption, type DuffelPassenger,
+  describeOffer, flightIdent, describeConditions, departed, offerKey, offerOption, isOrderId, type DuffelPassenger,
 } from '../duffel-map';
 
 const BASE = process.env.DUFFEL_BASE || 'https://api.duffel.com';
@@ -442,6 +442,12 @@ export async function cancelDuffelOrder(
 ): Promise<CancelResult> {
   if (!process.env.DUFFEL_API_KEY) {
     return { status: 'failed', error: 'Flights are not configured for this deployment.' };
+  }
+  // An airline booking reference is not an order id, and Duffel answers one
+  // with "does not exist" — a sentence that reads like a fact about the
+  // order and is only a fact about the request.
+  if (!isOrderId(orderRef)) {
+    return { status: 'failed', error: "That isn't an order number the airline system knows." };
   }
 
   try {

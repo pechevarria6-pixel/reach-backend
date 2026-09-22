@@ -159,3 +159,13 @@ test('an X marker is a concierge case, not a blank to fill in', () => {
     }
   }
 });
+
+
+import { isOrderId } from '../../lib/booking/duffel-map.ts';
+// The airline's booking reference was sent to Duffel as an order id, earned
+// "does not exist", and that was read as proof two orders were orphaned.
+test('a booking reference is not an order id', () => {
+  assert.equal(isOrderId('MHW2Y3'), false);
+  assert.equal(isOrderId('ord_0000AbCdEf'), true);
+  assert.equal(isOrderId(''), false);
+});

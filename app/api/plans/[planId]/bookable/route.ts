@@ -18,6 +18,7 @@ import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness } from '@/lib/essentials-server';
 import { type Gateway } from '@/lib/booking/providers/flights.duffel';
 import { arrivalFor } from '@/lib/booking/arrival';
+import { partySize as countParty } from '@/lib/participation';
 import { tripTiming, today } from '@/lib/calendar';
 import { rentalLine } from '@/lib/ground';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
@@ -285,7 +286,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const named = city || (plan.title || '').trim();
   const countryCode = (plan.destination_country || '').trim().toUpperCase();
   // Everybody in the group, unless somebody has sat this one out.
-  const partySize = Math.max(1, (ctx.plan.participants as unknown[] | null)?.length ?? 2);
+  const partySize = await countParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null });
 
   const requests: (BookingItemRequest & { itineraryItemId: string; title: string })[] = [];
   const skipped: { title: string; why: string }[] = [];

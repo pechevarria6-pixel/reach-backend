@@ -279,3 +279,9 @@ export function offerOption(offer: {
     back: leg(offer.slices?.[1]),
   };
 }
+
+
+/** Duffel's own order id, as opposed to the airline booking reference a traveller reads. */
+export function isOrderId(ref: unknown): boolean {
+  return typeof ref === 'string' && /^ord_[A-Za-z0-9]+$/.test(ref);
+}

@@ -28,3 +28,19 @@ export async function readSkips(db: SupabaseClient, planId: string): Promise<{ s
 export async function planSkips(db: SupabaseClient, planId: string): Promise<Skip[]> {
   return (await readSkips(db, planId)).skips;
 }
+
+
+/**
+ * How many people a plan is for. plans.participants was read for this and is
+ * not a column, so every plan was two people: a solo trip quoted two seats,
+ * a group of four quoted two. One for a solo plan, otherwise the group.
+ */
+export async function partySize(
+  db: SupabaseClient, plan: { group_id?: unknown; solo_mode?: boolean | null },
+): Promise<number> {
+  if (plan.solo_mode === true) return 1;
+  const { count, error } = await db.from('group_members')
+    .select('user_id', { count: 'exact', head: true }).eq('group_id', String(plan.group_id));
+  if (error) console.error('[participation] could not count the group', { code: error.code });
+  return Math.max(1, count ?? 1);
+}

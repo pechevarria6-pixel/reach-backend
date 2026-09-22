@@ -15,6 +15,7 @@
 //
 // Nobody should cancel a flight without being told first what it costs them.
 import { NextRequest, NextResponse } from 'next/server';
+import { isOrderId } from '@/lib/booking/duffel-map';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: booking, error } = await db
     .from('bookings')
-    .select('id, plan_id, vertical, provider, provider_ref, status, price_cents')
+    .select('id, plan_id, vertical, provider, provider_ref, status, price_cents, response_payload')
     .eq('id', params.id)
     .maybeSingle();
   if (error) {
@@ -61,7 +62,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  const result = await cancelDuffelOrder(String(booking.provider_ref), { confirm });
+  // Duffel's order id, not the airline's booking reference. provider_ref
+  // holds the reference ("MHW2Y3") because that is what a traveller reads,
+  // and sending it as order_id earned Duffel's "does not exist" — which was
+  // then read as proof two orders were orphaned. It proved nothing.
+  const payload = (booking.response_payload ?? {}) as { orderId?: string };
+  const orderId = payload.orderId || (isOrderId(booking.provider_ref) ? String(booking.provider_ref) : null);
+  if (!orderId) {
+    return NextResponse.json({ error: "We don't hold the airline's order number for this one, so it can't be cancelled from here." }, { status: 400 });
+  }
+  const result = await cancelDuffelOrder(orderId, { confirm });
 
   if (result.status === 'failed') {
     // The provider has already logged why. This records which booking it
