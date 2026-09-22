@@ -6025,7 +6025,7 @@ function ItemActions({item,markGot,tight}){
   if(item.filled&&needsDoing)return(
     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:tight?6:8,
       fontSize:12.5,fontWeight:600,color:C.green}}>
-      ✓ {ticketed?"Tickets sorted":"Sorted"}
+      ✓ {ticketed?"Tickets sorted":item.type==="restaurant"?"Table reserved":"Sorted"}
     </div>
   );
   const gap=tight?6:8;
@@ -6093,7 +6093,7 @@ function ItemActions({item,markGot,tight}){
         <button onClick={()=>markGot(item)}
           style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
             fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
-          {ticketed?"I've got them":"I've sorted it"}</button>
+          {ticketed?"I've got them":item.type==="restaurant"?"I've reserved a table":"I've sorted it"}</button>
       )}
     </div>
   );
@@ -8229,13 +8229,18 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         // there is no overlap: `yoursToBook` already drops anything that has
         // a booking row.
         const mine=lines.filter(isYours);
-        const total=mine.length+stillOpen.length;
+        // Lines marked done stay, showing that they are done. Dropping them
+        // off the list the moment "I've sorted it" was pressed meant the one
+        // screen before paying never confirmed the table was reserved — the
+        // person had to trust that a line vanishing meant it had worked.
+        const total=mine.length+yoursToBook.length;
         if(!total)return null;
+        const open=mine.length+stillOpen.length;
         return(
         <div style={{margin:"0 4px 16px",padding:"12px 14px",background:C.s2,
           border:`1px solid ${C.border}`,borderRadius:14}}>
           <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:4}}>
-            {plural(total,"thing","things")} you book yourself
+            {open?`${plural(open,"thing","things")} you book yourself`:"Everything you book yourself is sorted ✓"}
           </div>
           <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:8}}>
             Not in the total below. You can do them now or after paying — a table
@@ -8269,9 +8274,17 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               </div>
             </div>
           ))}
-          {stillOpen.map((item,i)=>(
+          {yoursToBook.map((item,i)=>(
             <div key={item.id||i} style={{padding:"9px 0",borderTop:(i||mine.length)?`1px solid ${C.border}`:"none"}}>
               <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{item.title}</div>
+              {/* What one person spends there, as the generator estimated it —
+                  its costs are per person by instruction. Labelled, because
+                  nobody has read this place's menu for us. */}
+              {item.cost_cents>0?(
+                <div style={{fontSize:11,color:C.t3,marginTop:2}}>
+                  About {fmt(item.cost_cents)} a person · estimate
+                </div>
+              ):null}
               <ItemActions item={item} markGot={markGot} tight/>
             </div>
           ))}

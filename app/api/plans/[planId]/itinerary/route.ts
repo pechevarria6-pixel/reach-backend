@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { z } from 'zod';
 import { replaceItinerary, outcomeMessage } from '@/lib/itinerary-replace';
+import { reconcileBookings } from '@/lib/itinerary-bookings';
 import { rowFromItem } from '@/lib/contracts/itinerary-item';
 
 const ItemSchema = z.object({
@@ -86,6 +87,10 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
     ...rowFromItem(item, idx),
   }));
 
+  // What the lines were, so a booking on one can follow it to its new id.
+  const { data: oldLines } = await supabase.from('itinerary_items')
+    .select('id, type, title').eq('plan_id', params.planId);
+
   const outcome = await replaceItinerary(supabase, params.planId, rows, async (toWrite) => {
     const { error } = await supabase.from('itinerary_items').insert(toWrite);
     if (!error) return null;
@@ -123,6 +128,22 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
 
   const { data: newItems } = await supabase.from('itinerary_items')
     .select('*').eq('plan_id', params.planId).order('sort_order');
+
+  // Every line has a new id now. See lib/itinerary-bookings.ts for why the
+  // bookings have to be told, and what happens to one whose line is gone.
+  const { data: live } = await supabase.from('bookings')
+    .select('id, itinerary_item_id, status').eq('plan_id', params.planId)
+    .not('status', 'in', '("failed","cancelled")');
+  const { relink, retire } = reconcileBookings(oldLines ?? [], newItems ?? [], live ?? []);
+  for (const r of relink) {
+    const { error } = await supabase.from('bookings').update({ itinerary_item_id: r.itemId }).eq('id', r.bookingId);
+    if (error) console.error('[itinerary] could not move a booking onto its line', { plan: params.planId, booking: r.bookingId, code: error.code });
+  }
+  if (retire.length) {
+    const { error } = await supabase.from('bookings')
+      .update({ status: 'cancelled', itinerary_item_id: null }).in('id', retire);
+    if (error) console.error('[itinerary] could not retire bookings for removed lines', { plan: params.planId, count: retire.length, code: error.code });
+  }
 
   return NextResponse.json({ itinerary: newItems || [] });
 }
