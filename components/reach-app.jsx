@@ -7381,6 +7381,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   const [retryable,setRetryable]=useState(true);
   // Lines of the itinerary that did not become bookings, and why.
   const [unbooked,setUnbooked]=useState([]);
+  const [skipBroken,setSkipBroken]=useState(false);
 
   // Everything on this trip that Reach is not going to book, with the way to
   // book it attached. "Book everything" books what Reach can; the rest is the
@@ -7706,7 +7707,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // every row and each fell through to the enum. Naming them correctly comes
   // first — collapsing on what that screen displayed would have merged three
   // different dinners into one.
-  const checkout=checkoutState(bookings||[]);
+  // "Book the rest without these" is a decision, taken once, after reading
+  // what failed. It is not remembered: reopening checkout asks again, because
+  // the failure may have been fixed in between and skipping it a second time
+  // should be as deliberate as the first.
+  const checkout=checkoutState(bookings||[],{ignoreBroken:skipBroken});
   // The facts come from the contract; the icons and the wording stay here,
   // because they are presentation and they belong to the screen. The two
   // comments below are both post-mortems of a hand-written field list: a
@@ -8080,6 +8085,40 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         {/* The button used to be live over a total of $0. Whatever else is
             true, nobody should be invited to pay for a trip we have not
             managed to price. */}
+        {/* What failed, why, and the two ways out of it. A booking that could
+            not be made used to leave "Trip item (details coming) — Couldn't
+            book" on the screen with nothing to do about it, and the pay
+            button live above it. */}
+        {checkout.broken.length>0&&!skipBroken&&(
+          <div style={{margin:"0 0 10px",padding:"12px 14px",background:C.amberDim,
+            border:`1px solid ${C.border}`,borderRadius:14,textAlign:"left"}}>
+            {checkout.broken.map((b,i)=>(
+              <div key={b.id||i} style={{fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:6}}>
+                <span style={{fontWeight:600}}>{itemTitle(b)}</span>
+                {b.error?<span style={{color:C.t2}}> — {b.error}</span>:null}
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+              <button onClick={()=>{setPhase("loading");load();}}
+                style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,
+                  fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+                Try these again
+              </button>
+              {/* Never a trap. Moab's flight cannot be booked at any price —
+                  the trip started — so without this the hotel could never be
+                  paid for either. */}
+              <button onClick={()=>setSkipBroken(true)}
+                style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
+                  fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+                {/* "Book the rest without them" was the first wording and
+                    check:promises refused it, rightly: this button books
+                    nothing. It uncovers the pay button, and the booking
+                    happens when that is pressed. */}
+                Carry on without {checkout.broken.length===1?"it":"them"}
+              </button>
+            </div>
+          </div>
+        )}
         {checkout.blockedCopy
           ?checkout.blockedCopy
           :participants<=1

@@ -52,6 +52,12 @@ recommendations, notifications — exactly as much as to code.
 - **No redundancy.** Never show the same information or the same action twice
   on one screen — Pay and Book It as separate tabs, Jump Back In alongside the
   trips tab.
+- **Solve problems before they are problems.** Always leave the person a next
+  option. Tickets come from more than one source — Ticketmaster, StubHub,
+  SeatGeek, the venue's own box office — so one sold-out vendor never ends a
+  plan. The same goes for hotels, restaurants and activities: a single point
+  of failure in a plan is a bug. When one path fails the next should already
+  be on the screen, not something they have to go and find.
 
 Ask it out loud: *would a real person reading this be confused or misled?* If
 yes, fix the logic underneath, not the sentence on top. Rewording a screen
@@ -66,6 +72,7 @@ Each of these is here because it has already happened:
 | no invented venue facts | every food query required a cuisine tag, so Washington returned nothing and the app phrased our gap as a fact about the city |
 | copy matches context | a solo plan put everything in the approval queue and told the one person on it that it was waiting on the others |
 | no redundancy | the owner's own list — Pay + Book It, Jump Back In + trips |
+| a next option ready | Ticketmaster sold out for J. Cole in Fayetteville and the plan stopped there, with StubHub and SeatGeek still selling |
 
 Some of this is enforced and some of it is not, and it is worth knowing which:
 `check:promises` and `check:vocabulary` catch the false-capability strings,

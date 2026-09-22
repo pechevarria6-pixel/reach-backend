@@ -145,6 +145,8 @@ function charged(row: CheckoutRow): boolean {
 
 export interface CheckoutState {
   rows: CheckoutRow[];
+  /** Rows the provider refused. The pay button stays shut while any exist. */
+  broken: CheckoutRow[];
   totalCents: number;
   canPay: boolean;
   /** Why the button is off, in words for the screen. Null when it is on. */
@@ -170,7 +172,7 @@ export interface CheckoutState {
  * Everything the screen needs to decide what to show and whether to let
  * anybody pay.
  */
-export function checkoutState(rows: CheckoutRow[]): CheckoutState {
+export function checkoutState(rows: CheckoutRow[], opts: { ignoreBroken?: boolean } = {}): CheckoutState {
   const deduped = dedupe(rows ?? []);
   const chargeable = deduped.filter(charged);
 
@@ -185,7 +187,28 @@ export function checkoutState(rows: CheckoutRow[]): CheckoutState {
   // not the seat.
   const conciergeCount = deduped.filter(r => settled(r) && isConcierge(r) && !priced(r)).length;
 
-  const canPay = totalCents > 0 && unpricedCharged.length === 0;
+  // A booking that failed is not a reason to let somebody pay.
+  //
+  // `charged()` drops failed rows, so they were invisible to this: a plan
+  // with a flight that could not be booked still offered "Looks good" over a
+  // total that quietly excluded it. The person confirms a trip they think is
+  // whole, and finds out later that a piece of it never happened.
+  //
+  // Failed rows are listed on the screen either way — each says what went
+  // wrong — so this only stops the button, which is the thing that cannot be
+  // undone.
+  const broken = deduped.filter(r => r.status === 'failed');
+
+  // Blocked by a failure, and never trapped by one.
+  //
+  // Blocking outright would deadlock a real plan: Moab's flight cannot be
+  // booked at any price because the trip started five days ago, so a rule of
+  // "no failures, no payment" would mean that trip could never pay for its
+  // hotel either. The screen offers "Book the rest without these" and that
+  // sets `ignoreBroken` — a decision somebody makes on purpose, once, having
+  // read what failed and why.
+  const canPay = totalCents > 0 && unpricedCharged.length === 0
+    && (broken.length === 0 || opts.ignoreBroken === true);
 
   // Nothing chargeable at all AND nothing being arranged, as opposed to
   // something chargeable we have not priced yet. Waiting is the right
@@ -195,13 +218,18 @@ export function checkoutState(rows: CheckoutRow[]): CheckoutState {
 
   return {
     rows: deduped,
+    broken,
     totalCents,
     canPay,
     nothingToCharge,
     blockedCopy: canPay ? null
-      : nothingToCharge
-        ? 'Nothing here for Reach to pay for — the tickets and tables are yours to book.'
-        : "We're still pricing this — check back soon.",
+      : broken.length && !opts.ignoreBroken
+        // Named, because "something went wrong" sends somebody looking. The
+        // row itself carries the provider's reason.
+        ? `${broken.length === 1 ? "One booking couldn't be made" : `${broken.length} bookings couldn't be made`}. Fix it, or carry on without it.`
+        : nothingToCharge
+          ? 'Nothing here for Reach to pay for — the tickets and tables are yours to book.'
+          : "We're still pricing this — check back soon.",
     // "concierge" is our word for how we handle something, not a word anybody
     // outside this codebase should have to read. It shipped to the checkout
     // screen under the total and a founder saw it there.

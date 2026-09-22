@@ -92,14 +92,25 @@ test('a charged row with no price stops the payment', () => {
   assert.equal(s.blockedCopy, "We're still pricing this — check back soon.");
 });
 
-test('a failed booking is not something to pay for', () => {
-  const s = checkoutState([
+test('a failed booking never joins the total, and now holds the button', () => {
+  // This asserted canPay === true. The owner's rule is that nobody should
+  // confirm a broken plan, so a failure holds the button until it is either
+  // fixed or knowingly skipped. The total is unchanged: a failed booking was
+  // never money anybody owed.
+  const rows = [
     { vertical: 'hotel', detail: 'Best Western', price_cents: 33401, provider: 'liteapi', itinerary_item_id: 'h1' },
     { vertical: 'flight', detail: 'This trip dates have passed', price_cents: null, provider: 'duffel', status: 'failed', itinerary_item_id: 'f1' },
-  ]);
-  // The failed flight neither blocks the payment nor joins the total.
-  assert.equal(s.canPay, true);
+  ];
+  const s = checkoutState(rows);
+  assert.equal(s.canPay, false);
   assert.equal(s.totalCents, 33401);
+
+  // And never a trap. That flight cannot be booked at any price — the trip
+  // has started — so without a way past it the hotel could never be paid for
+  // either.
+  const past = checkoutState(rows, { ignoreBroken: true });
+  assert.equal(past.canPay, true);
+  assert.equal(past.totalCents, 33401);
 });
 
 test('an empty trip cannot be paid for', () => {
@@ -201,4 +212,46 @@ test('a priced row still pays as before', () => {
   assert.equal(state.nothingToCharge, false);
   assert.equal(state.canPay, true);
   assert.equal(state.blockedCopy, null);
+});
+
+test('a failed booking keeps the pay button shut', () => {
+  // charged() drops failed rows, so they were invisible to canPay: a plan
+  // whose flight could not be booked still offered "Looks good" over a total
+  // that quietly excluded it. Somebody confirms a trip they believe is whole
+  // and finds out later that a piece of it never happened.
+  const state = checkoutState([
+    { vertical: 'hotel',  detail: 'Two nights in Moab', price_cents: 33401, status: 'confirmed' },
+    { vertical: 'flight', detail: 'RDU → SLC',          price_cents: 21200, status: 'failed' },
+  ]);
+  assert.equal(state.canPay, false);
+  assert.equal(state.broken.length, 1);
+  assert.match(state.blockedCopy ?? '', /couldn't be made/i);
+  assert.match(state.blockedCopy ?? '', /carry on without it/i);
+});
+
+test('the failed row is still listed, only the button is shut', () => {
+  // Hiding it would be worse: the row carries the provider's reason, and
+  // that reason is the only way anybody knows what to do next.
+  const state = checkoutState([
+    { vertical: 'hotel',  detail: 'Two nights in Moab', price_cents: 33401, status: 'confirmed' },
+    { vertical: 'flight', detail: 'RDU → SLC',          price_cents: 21200, status: 'failed' },
+  ]);
+  assert.equal(state.rows.length, 2);
+});
+
+test('once nothing has failed the button opens again', () => {
+  const state = checkoutState([
+    { vertical: 'hotel', detail: 'Two nights in Moab', price_cents: 33401, status: 'confirmed' },
+  ]);
+  assert.equal(state.canPay, true);
+  assert.equal(state.blockedCopy, null);
+});
+
+test('two failures are counted, not pluralised wrongly', () => {
+  const state = checkoutState([
+    { vertical: 'hotel',  detail: 'A stay',  price_cents: 1000, status: 'confirmed' },
+    { vertical: 'flight', detail: 'A seat',  price_cents: 2000, status: 'failed' },
+    { vertical: 'activity', detail: 'A tour', price_cents: 3000, status: 'failed' },
+  ]);
+  assert.match(state.blockedCopy ?? '', /2 bookings couldn't be made/i);
 });
