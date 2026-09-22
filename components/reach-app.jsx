@@ -7264,7 +7264,19 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
 // ─── CHECKOUT ─────────────────────────────────────────────────────────────────
 
 // ============ CHECKOUT V2 — real propose -> fund -> approve ============
-function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus,saveItineraryToServer}){
+// What a booking failure is actually asking for, and where that is fixed.
+// "We need the name of whoever the room is under before this can be booked"
+// is a true, specific answer and, printed on its own, still leaves somebody
+// hunting through Profile for the page that takes it.
+const FIX_FOR=[
+  {when:/name of whoever|date of birth|gender|passenger|traveller|traveler|essentials/i,
+   section:"flying", label:"Add flying details →"},
+  {when:/home airport/i, section:"flying", label:"Add your home airport →"},
+  {when:/passport|document/i, section:"documents", label:"Add travel documents →"},
+];
+function fixFor(why){ return FIX_FOR.find(f=>f.when.test(String(why||"")))||null; }
+
+function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus,saveItineraryToServer,goToProfileSection}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans?.find(p=>p.id===planId);
   // phases: loading | review | pay | approving | waiting | priceUp | done | error
@@ -7743,11 +7755,24 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               {/* All of them. This showed the first four, so a trip with
                   nine things Reach could not book told you about four and
                   left five for you to discover on the day. */}
-              {unbooked.map((u,i)=>(
-                <div key={i} style={{fontSize:12,color:C.t2,lineHeight:1.5}}>
-                  {u.title} — {u.why}
-                </div>
-              ))}
+              {unbooked.map((u,i)=>{
+                const fix=fixFor(u.why);
+                return(
+                  <div key={i} style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:fix?6:0}}>
+                    {u.title} — {u.why}
+                    {/* The reason names a thing that is missing; this is where
+                        that thing is entered. Without it the screen says what
+                        is wrong and leaves finding the page to the person it
+                        is telling. */}
+                    {fix&&goToProfileSection&&(
+                      <div><button onClick={()=>goToProfileSection(fix.section)}
+                        style={{marginTop:4,background:"none",border:`1px solid ${C.border}`,
+                          color:C.accentText,fontSize:12,fontWeight:700,padding:"6px 11px",
+                          borderRadius:999,cursor:"pointer"}}>{fix.label}</button></div>
+                    )}
+                  </div>
+                );
+              })}
               <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.45}}>
                 You are paying for what is listed below.
               </div>
@@ -7986,8 +8011,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
 // Sections with nothing behind them were removed rather than rebuilt: Reach
 // has no PIN, no Face ID enrolment, no SMS second factor and no spending
 // limits, so showing them as configured was the worst kind of placeholder.
-function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityChange}){
-  const [section,setSection]=useState(null);
+function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityChange,openSection}){
+  // Openable at a section, so something that needs a detail can send somebody
+  // to the exact page that takes it rather than to a menu with seven rows on
+  // it. Checkout uses this: "we need the name the room is under" is a real
+  // answer, and on its own it is not a way to fix anything.
+  const [section,setSection]=useState(openSection||null);
+  useEffect(()=>{ if(openSection)setSection(openSection); },[openSection]);
   const [data,setData]=useState(null);
   const [loadErr,setLoadErr]=useState(false);
   const [busy,setBusy]=useState(null);
@@ -8710,6 +8740,10 @@ export default function ReachApp({realUser,onSignOut}={}){
   const [identityLoaded,setIdentityLoaded]=useState(false);
   const [toastMsg,setToastMsg]=useState(null);
   const [stack,setStack]=useState([]);
+  // Which page of Profile to land on, when something sent somebody there to
+  // fix a specific thing. Cleared when the tab changes so it does not reopen
+  // on the next visit.
+  const [profileSection,setProfileSection]=useState(null);
 
   // User map: demo contacts plus every real member seen from the API.
   const [knownUsers,setKnownUsers]=useState({});
@@ -9454,7 +9488,12 @@ export default function ReachApp({realUser,onSignOut}={}){
   };
 
   const cur=stack[stack.length-1];
-  const cp={onBack:pop,replace,groups,setGroups,updateGroup,um,push,toast:showToast,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,setPlaceOverride,saveDeparture,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
+  // Somewhere to send a person who has been told what is missing. A pushed
+  // screen sits above the tabs, so it cannot reach one on its own — and every
+  // "add your home airport in Profile" in this app was a sentence with
+  // nowhere to press until now.
+  const goToProfileSection=(sec)=>{ setStack([]); setProfileSection(sec); setTab("profile"); };
+  const cp={onBack:pop,replace,groups,setGroups,updateGroup,um,push,toast:showToast,goToProfileSection,refreshGroup,updatePlanOnServer,castVoteOnServer,saveItineraryToServer,savePlanToServer,saveGroupToServer,userLocation,departure,setPlaceOverride,saveDeparture,notifyGroupUpdate,removeGroupMember,leaveGroup,deleteGroup,me:user?.id};
 
   const renderSub=()=>{
     if(!cur)return null;
@@ -9531,7 +9570,7 @@ export default function ReachApp({realUser,onSignOut}={}){
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure} setPlaceOverride={setPlaceOverride}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading} onDeleteGroup={deleteGroupFromList}/>}
-                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push}/>}
+                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push} openSection={profileSection}/>}
                 </div>
               )}
               {!cur&&!quizRequired&&(
