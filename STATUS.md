@@ -35,10 +35,10 @@ protected and it is not.
 |---|---|---|
 | T3 build gate | ✅ | `build: npm run verify && next build`; proven by planting a failing test → `exit=1`, `next build` never ran |
 | T1 itinerary contract | ✅ | `lib/contracts/itinerary-item.ts`; all four layers import it; `venue_website:item.venue_website` appears nowhere |
-| T1 booking contract | ❌ | not written |
-| T2 rendered-content tests | ❌ | `tests/contract/` does not exist |
-| T4 empty-town honesty test | ❌ | not written |
-| T4 vocabulary additions | 🟡 | internal terms added; the reintroduced false-promise strings are not banned |
+| T1 booking contract | ✅ | `lib/contracts/booking.ts`; route + checkout screen read it; a live drop found and fixed (`response_payload` on the duplicate path) |
+| T2 rendered-content tests | ✅ | `tests/contract/`, serial (two workers shared one session and Clerk rotates the cookie) |
+| T4 empty-town honesty test | ✅ | a town we hold nothing for names no venues, and says so |
+| T4 vocabulary additions | ✅ | `BROKEN_PROMISES` bans the five false-promise strings that shipped on 09-21 |
 
 ## 3. Infrastructure
 
@@ -48,7 +48,7 @@ protected and it is not.
 | events / metrics table | 🟡 | exists, **3 rows** — `funding_started` ×2, `trip_input_submitted` ×1. Instrumented but barely firing; trip created/booked/invite/veto not seen |
 | `@clerk/testing` | ✅ | `tests/auth.setup.ts`, races a 30s deadline, falls back to the jar |
 | rate limits | ✅ | 10 new trips/hour, 30 rebuilds/hour, separate counters, human copy on 429 |
-| **Sentry** | ❌ | no config, not a dependency — nothing catches a thrown error in production |
+| Sentry | 🟡 | `lib/report.ts` posts to the ingest endpoint; inert until `SENTRY_DSN` is set (🔒) |
 | crons | 🟡 | four entries on a plan documenting two; all daily |
 | itinerary replace | ✅ | insert-then-delete, in `lib/itinerary-replace.ts`, with a test that fails if reversed |
 | DELETE plan audit log | ✅ | `audit_logs` written on plan delete |
@@ -90,12 +90,12 @@ protected and it is not.
 
 ## 7. Ordered gap list
 
-1. **Sentry** — nothing reports a production error today. (Phase 1)
+1. ~~Sentry~~ — `lib/report.ts`; no-ops until the owner sets `SENTRY_DSN`.
 2. **Booking + contribution indexes** — 🔒, but the SQL is ready.
-3. **T2 rendered-content tests** — the layer that missed six bugs.
-4. **T4 empty-town test + vocabulary bans** — freeze today's fixes.
-5. **T1 booking contract** — same disease, money-side.
-6. **events table barely firing** — it is the valuation.
+3. ~~T2 rendered-content tests~~ — done; the layer that missed six bugs.
+4. ~~T4 empty-town test + vocabulary bans~~ — done; today's fixes are frozen.
+5. ~~T1 booking contract~~ — done; the duplicate path was dropping the venue's phone.
+6. **events table barely firing** — it is the valuation. ← next
 7. **one-active-trip**, **dismiss suppression**, **localStorage purge**.
 8. **reservation-platform + plan-photo migrations** — 🔒.
 
