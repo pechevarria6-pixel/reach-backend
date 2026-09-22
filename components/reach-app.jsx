@@ -5911,7 +5911,8 @@ function ItemActions({item,markGot,tight}){
   // "still needs you" list for the rest of the trip — a checklist that
   // cannot be finished is a screen telling you something untrue, every time
   // you open it.
-  if(item.filled)return(
+  const needsDoing=ticketed||item.booking_mode==="ahead";
+  if(item.filled&&needsDoing)return(
     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:tight?6:8,
       fontSize:12.5,fontWeight:600,color:C.green}}>
       ✓ {ticketed?"Tickets sorted":"Sorted"}
@@ -5952,7 +5953,13 @@ function ItemActions({item,markGot,tight}){
       {/* Reach cannot know somebody bought a ticket on a site it does not run,
           or got through on the phone. So it asks — and once told, stops
           asking, and the line leaves the list. */}
-      {markGot&&(
+      {/* Only where there is something to sort. A walk-in needs no booking,
+          so "I've sorted it" beside one is an action that means nothing —
+          and the Budget tab, which lists every priced line, offered it
+          against a state park you just drive to. The link stays: opening
+          hours and directions are worth having wherever the place appears.
+          Marking it done is what has to be earned. */}
+      {markGot&&(ticketed||item.booking_mode==="ahead")&&(
         <button onClick={()=>markGot(item)}
           style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
             fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
