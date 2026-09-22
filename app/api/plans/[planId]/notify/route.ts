@@ -7,6 +7,7 @@
 // between what is built and what a group can actually use.
 //
 // POST { kind: "vote" | "funding" } → emails members who have not yet acted
+import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   if (kind === 'funding') {
     const { data: planBookings } = await db
       .from('bookings').select('id,price_cents,status').eq('plan_id', params.planId)
-      .not('status', 'in', '("failed","cancelled")');
+      .not('status', 'in', NOT_CHARGED);
     shares = planShares(planBookings || [], plan.budget_cents || 0, memberIds, await planSkips(db, params.planId));
   }
 

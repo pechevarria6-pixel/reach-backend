@@ -7,6 +7,7 @@
 // The share is computed here, not in the client. The client used to divide by
 // `plan.participants.length` — a field the API never returned — so it fell
 // back to 1 and asked every member to pay for the entire trip.
+import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { report } from '@/lib/report';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
@@ -23,7 +24,7 @@ async function fundingStatus(
     .from('bookings')
     .select('id,price_cents,status')
     .eq('plan_id', planId)
-    .not('status', 'in', '("failed","cancelled")');
+    .not('status', 'in', NOT_CHARGED);
   const targetCents = (bookings || []).reduce((s, b) => s + (b.price_cents || 0), 0);
 
   const { data: contributions } = await db

@@ -7,6 +7,7 @@
 //                                          completes checkout in 1–2 taps
 //   concierge lane (restaurants)         → ticket moves to 'pending' for ops
 // Body (optional): { note?: string }
+import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { PROVIDERS } from '@/lib/booking/registry';
 import { appUrl } from '@/lib/app-url';
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (body.skipFundingCheck !== true) {
     const { data: planBookings } = await db
       .from('bookings').select('price_cents,status').eq('plan_id', booking.plan_id)
-      .not('status', 'in', '("failed","cancelled")');
+      .not('status', 'in', NOT_CHARGED);
     const targetCents = (planBookings || []).reduce((s, b) => s + (b.price_cents || 0), 0);
     const { data: contribs } = await db
       .from('contributions').select('amount_cents,status').eq('plan_id', booking.plan_id);

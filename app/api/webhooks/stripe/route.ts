@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { NOT_CHARGED } from '@/lib/booking/charged';
 import { appUrl } from '@/lib/app-url';
 import { stripe } from '@/lib/stripe';
 import { createServerClient } from '@/lib/supabase';
@@ -171,7 +172,7 @@ async function announceIfFunded(
   try {
     const { data: bookings } = await supabase
       .from('bookings').select('price_cents,status').eq('plan_id', planId)
-      .not('status', 'in', '("failed","cancelled")');
+      .not('status', 'in', NOT_CHARGED);
     const targetCents = (bookings || []).reduce((s, b) => s + (b.price_cents || 0), 0);
     if (targetCents <= 0) return;
 

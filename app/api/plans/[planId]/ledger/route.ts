@@ -6,6 +6,7 @@
 // Every id here is a `users.id` UUID. `paid_by` used to hold a Clerk id while
 // `split_between` held UUIDs from the member list, so the payer and the people
 // splitting the bill were never the same person and settle-up was nonsense.
+import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { apportion, evenSplit, planShares, settleUp } from '@/lib/money';
@@ -53,7 +54,7 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
     ctx.db.from('expenses').select('*').eq('plan_id', params.planId),
     ctx.db.from('contributions').select('*').eq('plan_id', params.planId).eq('status', 'succeeded'),
     ctx.db.from('bookings').select('id,price_cents,status').eq('plan_id', params.planId)
-      .not('status', 'in', '("failed","cancelled")'),
+      .not('status', 'in', NOT_CHARGED),
     planSkips(ctx.db, params.planId),
   ]);
 

@@ -9,6 +9,7 @@
 // PATCH { amountCents, note? }   → log a savings check-in
 // GET   → my goal + pace, every member's pace, group readiness, and the
 //         affordability guardrail vs my stated budget_range.
+import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { evenSplit } from '@/lib/money';
@@ -26,7 +27,7 @@ async function planShareCents(
 ): Promise<number> {
   const { data: bookings } = await db
     .from('bookings').select('price_cents,status').eq('plan_id', planId)
-    .not('status', 'in', '("failed","cancelled")');
+    .not('status', 'in', NOT_CHARGED);
   const total = (bookings || []).reduce((s, b) => s + (b.price_cents || 0), 0);
 
   // Split across the whole group. Dividing by the number of savings_goals rows

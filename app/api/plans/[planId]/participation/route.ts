@@ -11,6 +11,7 @@
 // Shares lock the moment anybody on the plan pays. Moving them after money has
 // moved leaves one person overpaid and another short, and Reach does not hold
 // money to even that out.
+import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -59,7 +60,7 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
       ctx.db.from('bookings')
         .select('id, vertical, detail, price_cents, status')
         .eq('plan_id', params.planId)
-        .not('status', 'in', '("failed","cancelled")')
+        .not('status', 'in', NOT_CHARGED)
         .order('created_at', { ascending: true }),
       groupMemberIds(ctx.db, ctx.plan.group_id),
       readSkips(ctx.db, params.planId),

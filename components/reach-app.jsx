@@ -427,10 +427,15 @@ function fixedCostRows(trip){
   // transfers" onto the itinerary while the real detail — the airline, the
   // hotel — sat unused one field away, so three placeholder lines sat at the
   // top of a plan that was otherwise specific throughout.
+  // Ground transport is not something Reach can book — there is no car
+  // provider connected — so it is never marked as one. It was: "Car rental
+  // full week" sat on Rincón as a thing Reach books, was skipped at checkout
+  // every time, and nothing booked the car. It is the traveller's, with the
+  // rental search opened at their airport once the flight is priced.
   const row=(title,detail,cents,type)=>cents>0&&title?{
     time:"Before you go",title,sub:detail||"",type,conf:null,filled:false,
-    cost_cents:Math.round(cents*100),booking_mode:"reach",
-    payment_note:"Paid through Reach when the group funds the trip",
+    cost_cents:Math.round(cents*100),booking_mode:type==="transport"?"ahead":"reach",
+    payment_note:type==="transport"?"You book this on your own card — the rental search opens at your airport and dates":"Paid through Reach when the group funds the trip",
   }:null;
   return [
     row(c.flights?.details||"Round-trip flights",c.flights?.airlines,c.flights?.per_person,"flight"),
@@ -2976,6 +2981,8 @@ const BOOKING_STATE={
   // Not "Waiting for the group": solo plans come through this state too, and
   // there is no group to wait for.
   awaiting_approval:{label:"Ready to book",tone:"plain"},
+  // Held back on purpose: priced, and left out of this booking and the total.
+  quoted:{label:"Held — not booking yet",tone:"plain"},
   redirected:{label:"Finish on their site",tone:"gold"},
   failed:{label:"Couldn't book",tone:"red"},
   cancelled:{label:"Cancelled",tone:"red"},
@@ -6011,6 +6018,36 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
 // stopping one layer short. Here it stopped one *tab* short. Anything that
 // renders a bookable line renders this, so a second copy cannot drift from
 // the first.
+// Everything Reach books goes in one press; this is the way to leave a part
+// out of it for now, and put it back. Only while nobody has paid — the
+// server refuses after that and says why.
+function HoldToggle({bookingId,status,toast,onChanged}){
+  const [busy,setBusy]=useState(false);
+  if(status!=="awaiting_approval"&&status!=="quoted")return null;
+  const held=status==="quoted";
+  const flip=async()=>{
+    if(busy)return;
+    setBusy(true);
+    try{
+      const r=await fetchWithin(`/api/bookings/${bookingId}/hold`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({hold:!held})},15000,"saving that");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't change that");
+      toast(held?"Back in — it books with the rest":"Held — it won't be booked or charged this time");
+      await onChanged?.();
+    }catch(e){
+      console.error("[hold] could not change",{bookingId},e);
+      toast(e.message);
+    }
+    setBusy(false);
+  };
+  return(
+    <button onClick={flip} disabled={busy}
+      style={{background:"none",border:"none",padding:"5px 0 0",color:C.t2,fontSize:12,cursor:"pointer",textDecoration:"underline"}}>
+      {busy?"…":held?"Book it with the rest":"Hold off on this for now"}
+    </button>
+  );
+}
+
 // ─── What Reach picked, and what else there is ────────────────────────────
 // Reach chooses a hotel and a flight so nobody has to; nobody has to keep
 // them either. This shows the choice properly — the hotel by name with its
@@ -7056,7 +7093,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                               return(
                                 <>
                                   <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.4}}>
-                                    {b.detail}{b.price_cents>0?` · ${usd(b.price_cents)}${b.status==="confirmed"?"":" quoted"}`:""}
+                                    {b.detail}{b.price_cents>0?` · ${usd(b.price_cents)}${b.status==="confirmed"?"":b.status==="quoted"?" · held, not booking yet":" quoted"}`:""}
                                   </div>
                                   {canSee&&(
                                     <button onClick={()=>setOpenChoice(o=>o===b.id?null:b.id)}
@@ -7065,6 +7102,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                                     </button>
                                   )}
                                   {openChoice===b.id&&<ChoicePanel booking={b} vertical={b.vertical} toast={toast} onChanged={refreshBookings}/>}
+                                  <div><HoldToggle bookingId={b.id} status={b.status} toast={toast} onChanged={refreshBookings}/></div>
                                 </>
                               );
                             })()}
@@ -8445,7 +8483,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         {lines.filter(it=>!isYours(it)).map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderBottom:i<lines.length-1?`1px solid ${C.border}`:"none"}}>
           <span style={{fontSize:20}}>{it.icon}</span>
           <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
-            {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}</div>
+            {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}
+            <HoldToggle bookingId={it.id} status={it.st} toast={toast} onChanged={load}/></div>
           {/* Same fall-through as the success screen had: anything that was
               not confirmed or awaiting_approval read "We're on it", so a
               booking that had already failed claimed somebody was working on

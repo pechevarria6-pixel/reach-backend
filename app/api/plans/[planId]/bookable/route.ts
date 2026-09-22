@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness } from '@/lib/essentials-server';
-import { resolveAirport, nearestAirports, type Gateway } from '@/lib/booking/providers/flights.duffel';
+import { resolveAirport, nearestAirports, flightOptions, type Gateway } from '@/lib/booking/providers/flights.duffel';
 import { locate } from '@/lib/discovery/geocode';
 import { tripTiming, today } from '@/lib/calendar';
 import { rentalLine } from '@/lib/ground';
@@ -317,7 +317,25 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   if (hasFlight && !flightWhy && !flightTo && city) {
     const here = await locate(city, countryCode || null);
     if (here) {
-      gateway = (await nearestAirports(here))[0] ?? null;
+      // Nearest is not the same as served. Rincón's nearest airport is MAZ,
+      // which sees a commuter hop or two; BQN, a few miles further, is where
+      // the flights from the mainland land. So the three nearest are tried
+      // in order and the first with any flight from home on these dates
+      // wins. Without a home airport to try from, nearest stands.
+      const near = (await nearestAirports(here)).slice(0, 3);
+      const { data: me } = await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).maybeSingle();
+      const home = me?.home_airport ?? null;
+      gateway = near[0] ?? null;
+      if (home && plan.start_date) {
+        for (const g of near) {
+          const probe = await flightOptions({
+            vertical: 'flight', planId: params.planId, groupId: String(ctx.plan.group_id), travelers: [],
+            flight: { origin: home, destination: g.iata, departDate: plan.start_date,
+              ...(plan.end_date && plan.end_date !== plan.start_date ? { returnDate: plan.end_date } : {}), seats: partySize },
+          } as BookingItemRequest, 1);
+          if (probe.options.length) { gateway = g; break; }
+        }
+      }
       flightTo = gateway?.iata ?? null;
     }
   }
@@ -410,16 +428,39 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     });
   }
 
-  // The drive from the airport, on the plan — once. A line the traveller books
-  // themselves, with the search already opened at their airport and dates.
-  if (gateway && city && plan.start_date && plan.end_date) {
-    const { data: already } = await ctx.db.from('itinerary_items')
-      .select('id').eq('plan_id', params.planId).eq('type', 'transport').like('venue_website', 'https://www.kayak.com/cars/%').limit(1);
-    const line = rentalLine(gateway, city, plan.start_date, plan.end_date);
-    if (line && !already?.length) {
-      const { error } = await ctx.db.from('itinerary_items').insert({ ...line, plan_id: params.planId, sort_order: -1 });
-      if (error) console.error('[bookable] could not add the rental car', { planId: params.planId, code: error.code });
+  // The car, from the airport the flight actually lands at. Reach cannot book
+  // a car — no rental provider is connected — so the car is the traveller's,
+  // with the search already open at that airport on the trip's dates.
+  //
+  // One car line per trip. Rincón had two: the generator's "Car rental full
+  // week", marked as something Reach books and skipped at checkout every
+  // time, and the rental added here when the flight went into MAZ. An
+  // existing car line gets the link; a new one is only added when Reach sent
+  // somebody to an airport that is not in the town.
+  const arrival = flightTo;
+  if (arrival && city && plan.start_date && plan.end_date) {
+    const { data: carLines, error: carErr } = await ctx.db.from('itinerary_items')
+      .select('id, title, booking_mode, venue_website').eq('plan_id', params.planId).eq('type', 'transport');
+    if (carErr) console.error('[bookable] could not read transport lines', { planId: params.planId, code: carErr.code });
+    const isCar = (t: string) => /\b(car|rental|hire|drive)\b/i.test(t);
+    const cars = (carLines ?? []).filter(l => isCar(l.title || ''));
+    const line = rentalLine(gateway ?? { iata: arrival, name: arrival, miles: 0 }, city, plan.start_date, plan.end_date);
+    if (line) {
+      const needsLink = cars.filter(c => !c.venue_website || c.booking_mode === 'reach');
+      for (const c of needsLink) {
+        const { error } = await ctx.db.from('itinerary_items').update({
+          booking_mode: 'ahead', venue_website: line.venue_website, venue_name: line.venue_name,
+          payment_note: 'You book this on your own card — the search is open at your airport and dates',
+        }).eq('id', c.id);
+        if (error) console.error('[bookable] could not link the car', { planId: params.planId, code: error.code });
+      }
+      if (!cars.length && gateway) {
+        const { error } = await ctx.db.from('itinerary_items').insert({ ...line, plan_id: params.planId, sort_order: -1 });
+        if (error) console.error('[bookable] could not add the rental car', { planId: params.planId, code: error.code });
+      }
     }
+  }
+  if (gateway && city) {
     const flightLine = (items as Item[]).find(i => i.type === 'flight');
     if (flightLine && !flightLine.subtitle) {
       const { error } = await ctx.db.from('itinerary_items')
