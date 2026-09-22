@@ -621,3 +621,90 @@ is exactly why it belongs in a guard rather than in anybody's memory.
 Suite: 519 unit, 9/9 rendered-fact.
 
 ---
+
+## 2026-09-22 — handoff. Contract lockdown finished, instrumentation proven.
+
+Phases 1–5 of REACH-FINISH-LINE, ending in `BETA-GATE.md`. Every row in that
+file names the file, the command or the production response behind it, and the
+rows that are not green say how far short they are.
+
+**T1, second half — the booking contract.** `lib/contracts/booking.ts`, read by
+the route, the duplicate path and the checkout screen. One live drop found by
+reading the route rather than by anything in the suite: `/api/bookings` checked
+for duplicates with eleven named columns and handed the twin straight back to
+the caller, and `response_payload` was not among them — so pressing "Book
+everything" twice answered with the same restaurant minus its phone number and
+minus the provider's own note. Proven by reverting a field.
+
+Two more of the same shape surfaced while closing it, which is the argument for
+doing it structurally:
+
+- `itemTitle` reads `detail`, which the first draft of `BookingFacts` did not
+  carry. That would have printed "Trip item (details coming)" over every line
+  on the pay screen. The contract is now tested against the function that
+  consumes it, not on its own.
+- `checkoutState` totals the raw rows *before* the mapper runs, so a row the
+  contract refused would have stayed in the total and vanished from the lines
+  explaining it. Refusals now reach the log, and a price arriving as a string —
+  which is how PostgREST returns numerics — parses instead of dropping the row.
+
+**Instrumentation — probed, not read about.** The tables said: 14 plans, 30
+bookings, 6 contributions, 18 groups, and **5 events**. `plan_created` had no
+call site anywhere; `track` was imported into `app/api/plans/route.ts` and never
+called, so the top of the funnel had never been recorded and the views in
+`sql/events-2026-09-20.sql` that select on it were reading an empty set.
+
+`plan_deleted` was worse: **structurally impossible.** `events.plan_id` is
+`references plans(id) on delete set null`, and the track call runs after the
+plan row is deleted, so the insert names a row that no longer exists:
+
+    23503: insert or update on table "events" violates foreign key
+    constraint "events_plan_id_fkey"
+
+Reproduced directly against the database. `track()` swallows it by design —
+nothing about recording an event may take down the thing it describes — so it
+failed silently from the day it was written. The id moved to the props bag,
+which has no foreign key, and a test pins the 36-character uuid clearing the
+40-character cap.
+
+Both proven in production afterwards, then swept:
+
+    plan_created {"city":"Asheville","kind":"trip","solo":true,"nights":2,
+                  "voting":false,"country":"US","budget_cents":50000}
+    plan_deleted {"plan":"1a348dbe-…","cancelled_quotes":0}
+
+`booking_created` was checked before being blamed and is **not** broken — both
+bookings written since the events table went live predate its first row.
+
+**Two gaps that were already closed.** STATUS.md had B11 dismiss suppression
+and the localStorage purge as partial. Both were done; the file was wrong and
+now says so. The purge did carry its own second spelling of the temp-id test —
+`startsWith("g_local_")` — which misses the `p1758…` form, so it uses `isTempId`
+now. One definition.
+
+**The console-error test never looked at home.** It was called "No console
+errors on home page load" and it loaded `/sign-in`. Home — the screen the whole
+app lives on — had never once been checked, on every green run. Now one test
+per addressable screen: `/home`, `/onboarding`, `/sign-in`, `/sign-up`,
+`/terms`, `/privacy`, each watched for console errors, uncaught exceptions and
+404s. All six pass.
+
+**Money path.** Mode checked first: `pk_test_51U4lDQ…`, test. A QA plan asked
+for a funding intent and was refused — `{"targetCents":0,…}` with "We're still
+pricing this" — which is the w5 $0-checkout guard, live and correct. Going
+further needs priced bookings quoted against live providers on the owner's real
+account, so it stopped there and the gate row says so.
+
+**Swept.** Every QA artefact was deleted through the API and the six event rows
+they produced were removed. Events back to 5 genuine rows, 0 `QA-` plans,
+contributions unchanged at 6.
+
+Suite: **531 unit, 0 fail** · **81 e2e, 0 fail** (4.1 min, chromium + iPhone 14).
+
+Open and owner-blocked: the two migrations, `SENTRY_DSN`, `RESEND_API_KEY`, the
+`+qa` account, the Duffel decision that blocks the idempotency indexes, and the
+one-active-trip rule — whose specifying package is in neither the repo nor
+Downloads, and which refuses somebody a trip, so it is a question in the runbook
+rather than a guess.
+
+---
