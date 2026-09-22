@@ -538,3 +538,40 @@ renders the other nineteen days.
 Suite: 511 unit. Build gated by T3.
 
 ---
+
+## Phase 1 — error reporting — 2026-09-21 22:0x UTC
+
+208 `console.error` calls in the API routes and nothing read them. They land
+in Vercel's function logs, which are searchable and which nobody searches
+until they already know something is wrong — so the first anybody hears of a
+fault is a user saying a screen is blank.
+
+That cost real time twice today. Two unit tests had been red on every
+deployment for weeks and nothing looked. And `/api/geo` answered 200 with an
+empty list to every search for two hours: route fine, data fine, and no
+signal at all between "it returned" and "somebody noticed".
+
+`lib/report.ts` — `report(err, { where, extra })`. Posts one event to
+Sentry's ingest endpoint, no-ops without a DSN, never awaited, cannot throw.
+Personal keys are scrubbed the way `track()` scrubs them.
+
+**Deliberately not `@sentry/nextjs`.** That package wraps the build, and the
+build broke twice today; a reporter that can take the deploy down is worse
+than no reporter. Call sites use `report()`, so swapping in the real package
+later changes one file and nothing else.
+
+Wired where a fault costs a trip or money: generation failures, Stripe
+refusing a payment intent, and a booking that was made and could not be
+recorded — the one fault here nobody recovers from by retrying, because the
+provider holds an order and we have no row pointing at it.
+
+🔒 OWNER: set `SENTRY_DSN` and this starts reporting. Until then it logs
+exactly as before.
+
+Noted while in `next.config.js`: the build sets `typescript.ignoreBuildErrors`
+and `eslint.ignoreDuringBuilds`. So `next build` alone never fails on a type
+error — the gate's entire value is `verify` running `tsc` and the suite.
+
+Suite: 514 unit.
+
+---

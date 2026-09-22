@@ -4,6 +4,7 @@
 // to Supabase `bookings`, notifies nothing (frontend polls plan status).
 // GET /api/bookings?planId=… — list bookings for a plan.
 import { NextRequest, NextResponse } from 'next/server';
+import { report } from '@/lib/report';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness, withoutTravelerDetails } from '@/lib/essentials-server';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
@@ -202,6 +203,14 @@ export async function POST(req: NextRequest) {
         }
         // The index did its job: somebody else booked this in the moment
         // between our read and our write. Not an error to show anybody.
+        if (wrote && wrote.code !== '23505') {
+          // A booking that was made and not recorded is the one fault here
+          // nobody can recover from by retrying: the provider holds an order
+          // and we have no row pointing at it.
+          report(new Error(wrote.message), {
+            where: 'bookings/write', extra: { plan: body.planId, vertical: result.vertical, code: wrote.code },
+          });
+        }
         if (wrote && wrote.code === '23505') {
           console.log('[bookings] a duplicate was refused by the database', { plan: body.planId, vertical: result.vertical });
           wrote = null;

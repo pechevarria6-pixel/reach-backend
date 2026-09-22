@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { report } from '@/lib/report';
 import { requireGroupMember, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
 import {
@@ -815,6 +816,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       }
       return NextResponse.json({ itinerary: days });
     } catch (e: any) {
+      report(e, { where: 'trips/generate', extra: { destination, nights, status: e?.status } });
       console.error('[trips itinerary] generation failed', {
         destination, nights, status: e?.status, message: e?.message,
       });

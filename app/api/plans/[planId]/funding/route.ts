@@ -8,6 +8,7 @@
 // `plan.participants.length` — a field the API never returned — so it fell
 // back to 1 and asked every member to pay for the entire trip.
 import { NextRequest, NextResponse } from 'next/server';
+import { report } from '@/lib/report';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { planShares } from '@/lib/money';
 import { planSkips } from '@/lib/participation';
@@ -257,6 +258,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   if (!stripeRes.ok) {
     // Stripe refusing to create the payment intent is the moment checkout
     // dies, and it needs the reason recorded, not just relayed.
+    report(new Error(pi?.error?.message ?? 'Stripe refused the payment intent'), { where: 'funding', extra: { planId: params.planId, status: stripeRes.status } });
     console.error('[funding] Stripe refused the payment intent', {
       planId: params.planId, status: stripeRes.status, error: pi?.error,
     });
