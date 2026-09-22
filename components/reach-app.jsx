@@ -7240,7 +7240,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
 // ─── CHECKOUT ─────────────────────────────────────────────────────────────────
 
 // ============ CHECKOUT V2 — real propose -> fund -> approve ============
-function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus}){
+function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus,saveItineraryToServer}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans?.find(p=>p.id===planId);
   // phases: loading | review | pay | approving | waiting | priceUp | done | error
@@ -7258,6 +7258,35 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   const [retryable,setRetryable]=useState(true);
   // Lines of the itinerary that did not become bookings, and why.
   const [unbooked,setUnbooked]=useState([]);
+
+  // Everything on this trip that Reach is not going to book, with the way to
+  // book it attached. "Book everything" books what Reach can; the rest is the
+  // traveller's to arrange, and until now this screen said so and stopped
+  // there — a list of four titles and a reason, no link, no number, nothing
+  // to press. A plan you cannot finish from the screen that took your money
+  // is not finished.
+  // Anything already represented by a booking row is left out. Those rows
+  // are listed above with their own "Reserve on Resy" or "Call to reserve",
+  // and showing the same dinner twice on one screen under two headings is
+  // the duplication rule in CLAUDE.md, committed on the screen where being
+  // confusing costs the most.
+  const bookedRefs=new Set((bookings||[]).map(b=>b.itinerary_item_id).filter(Boolean));
+  const yoursToBook=(plan?.itinerary||[]).filter(i=>
+    i.booking_mode!=="reach"&&i.booking_mode!=="walk_in"
+    &&(i.venue_website||i.venue_phone)
+    &&!bookedRefs.has(i.id));
+  const stillOpen=yoursToBook.filter(i=>!i.filled);
+
+  // The same "I've sorted it" the plan screen has, so a thing marked done
+  // here is done everywhere. Without this the checklist on the screen at the
+  // end of the money path would have been the one place you could not tick
+  // anything off.
+  const markGot=async(row)=>{
+    const next=(plan?.itinerary||[]).map(r=>r===row?{...r,filled:true}:r);
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:next}:p)}));
+    const ok=await saveItineraryToServer?.(planId,next);
+    if(ok===false)toast("Couldn't save that — try again in a moment");
+  };
   // Who has been sent off to a booking platform this visit, so the app can
   // ask how it went without nagging about rows they have not touched.
   const [handedOver,setHandedOver]=useState({});
@@ -7687,13 +7716,16 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               <div style={{fontSize:12.5,color:C.t1,fontWeight:600,marginBottom:5}}>
                 {unbooked.length===1?"One thing isn't in this total":`${unbooked.length} things aren't in this total`}
               </div>
-              {unbooked.slice(0,4).map((u,i)=>(
+              {/* All of them. This showed the first four, so a trip with
+                  nine things Reach could not book told you about four and
+                  left five for you to discover on the day. */}
+              {unbooked.map((u,i)=>(
                 <div key={i} style={{fontSize:12,color:C.t2,lineHeight:1.5}}>
                   {u.title} — {u.why}
                 </div>
               ))}
               <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.45}}>
-                You are paying for what is listed below. These stay yours to arrange.
+                You are paying for what is listed below.
               </div>
             </div>
           )}
@@ -7715,6 +7747,50 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
             ):null}
           </div>))}
         </div>
+        {/* What is left, and how to do it — on the screen that just took the
+            money, because this is the moment somebody is willing to finish
+            the job. "Book everything" books everything Reach can book; a
+            table it is not allowed to take and a ticket somebody else sells
+            are the two it cannot, and both of those have a link or a number
+            sitting on the row. Naming them without those was the old screen:
+            a to-do list with nothing to press.
+            The same ItemActions the plan screen and the budget tab use, and
+            the same markGot, so ticking one off here ticks it off there. */}
+        {stillOpen.length>0&&(
+          <div style={{marginBottom:16}}>
+            <div className="sl" style={{marginBottom:6}}>
+              {plural(stillOpen.length,"thing","things")} left for you
+            </div>
+            <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:10}}>
+              Reach booked what it could. These are the ones somebody else sells or
+              takes by phone — here is where to do each of them.
+            </div>
+            <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:"4px 14px"}}>
+              {stillOpen.map((item,i)=>(
+                <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                  <div style={{fontSize:13.5,color:C.t1,lineHeight:1.4}}>{item.title}</div>
+                  {item.time&&<div style={{fontSize:11.5,color:C.t3,marginTop:1}}>{item.time}</div>}
+                  {item.payment_note&&(
+                    <div style={{display:"flex",gap:6,marginTop:4,fontSize:11.5,lineHeight:1.45,
+                      color:/cash only/i.test(item.payment_note)?C.amber:C.t3}}>
+                      <span style={{flexShrink:0}}>{/cash only/i.test(item.payment_note)?"💵":"💳"}</span>
+                      <span>{item.payment_note}</span>
+                    </div>
+                  )}
+                  <ItemActions item={item} markGot={markGot} tight/>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* Everything on this trip is arranged — said only when it is true,
+            which is when nothing Reach cannot book is still outstanding. */}
+        {stillOpen.length===0&&yoursToBook.length>0&&(
+          <div style={{marginBottom:16,padding:"12px 14px",background:C.greenDim,
+            border:`1px solid ${C.green}`,borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
+            ✓ Every table and ticket on this trip is sorted, and Reach has the rest.
+          </div>
+        )}
         {/* This was onBack, which is not what it says. Back from here is
             wherever checkout was opened from — usually the plan's overview,
             sometimes the group — so the one button on the screen after a
@@ -7808,6 +7884,32 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
           </div>
         </div>
       ))}
+      {/* Before the money, not only after it. The rows above are what Reach
+          is booking; these are the lines of the same trip it is not allowed
+          to — a table that has to go on the traveller's own card, a ticket
+          somebody else sells — and the total below covers none of them.
+          Saying so here is the difference between a total that looks like
+          the trip and a total somebody understands.
+          Anything that already has a booking row above is excluded, so no
+          dinner appears twice under two headings. */}
+      {stillOpen.length>0&&(
+        <div style={{margin:"0 4px 16px",padding:"12px 14px",background:C.s2,
+          border:`1px solid ${C.border}`,borderRadius:14}}>
+          <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:4}}>
+            {plural(stillOpen.length,"thing","things")} you book yourself
+          </div>
+          <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:8}}>
+            Not in the total below. You can do them now or after paying — a table
+            goes on your own card so your card's dining benefits still count.
+          </div>
+          {stillOpen.map((item,i)=>(
+            <div key={item.id||i} style={{padding:"9px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+              <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{item.title}</div>
+              <ItemActions item={item} markGot={markGot} tight/>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
         <span style={{fontSize:14,color:C.t2}}>{participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`}</span>
         {/* A figure here while the button is disabled is the screen saying
