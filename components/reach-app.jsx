@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
+import { itemsFromRows } from "@/lib/contracts/itinerary-item";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
@@ -6156,13 +6157,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         if(data.votes)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:data.votes,myVote:data.myVote}:p)}));
         if(data.myVote)setMyVote(data.myVote);
         // Update itinerary
-        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:data.itinerary.map(item=>({time:item.scheduled_time||"",title:item.title,sub:item.subtitle||"",type:item.type,conf:item.confirmation_number||null,filled:item.is_confirmed,cost_cents:item.cost_cents||0,booking_mode:item.booking_mode||null,payment_note:item.payment_note||null,
-          // The verified venue and its number. Reach does not take tables, so
-          // the useful thing on a restaurant row is how the person takes one
-          // themselves — and a number somebody can ring is the answer we
-          // have most often.
-          venue_name:item.venue_name||null,venue_phone:item.venue_phone||null,
-          venue_website:item.venue_website||null}))}:p)}));
+        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:itemsFromRows(data.itinerary)}:p)}));
         setLoadFailed(false);
       }catch(e){
         // Swallowing this made the itinerary tab say "No itinerary yet" when
@@ -8885,33 +8880,12 @@ export default function ReachApp({realUser,onSignOut}={}){
     destinationCountry:p.destination_country||null,
     budget:Math.round((p.budget_cents||0)/100),
     participants:p.participants||fallbackMembers||[],
-    itinerary:(p.itinerary||[]).map(item=>({
-      time:item.scheduled_time||"",
-      title:item.title,
-      sub:item.subtitle||"",
-      type:item.type,
-      conf:item.confirmation_number||null,
-      filled:item.is_confirmed,
-      cost_cents:item.cost_cents||0,
-      // Dropping these here would show the practicals right after generating
-      // and lose them on the next load, which is the exact shape of the bug
-      // that lost whole itineraries.
-      booking_mode:item.booking_mode||null,
-      payment_note:item.payment_note||null,
-      // Whose wish this answers. Dropped here and it would show once after
-      // generating and never again — the exact shape of the bug that lost
-      // the practicals, and then the trip reasons.
-      because:item.because||null,
-      // And the same shape again, caught on screen: the ticket page and the
-      // venue survived generating and vanished on the next load, so a
-      // concert showed "Reserve ahead" with nothing to press — the row knew
-      // where its tickets were sold and the screen was never told.
-      venue_website:item.venue_website||null,
-      venue_name:item.venue_name||null,
-      venue_phone:item.venue_phone||null,
-      venue_note:item.venue_note||null,
-      venue_note_credit:item.venue_note_credit||null,
-    })),
+    // One shape, from lib/contracts/itinerary-item.ts. This was a
+    // hand-written field list, and the comments it replaces record three
+    // separate occasions when somebody added a column and forgot it here —
+    // the practicals, then the trip reasons, then the ticket URL. Each
+    // showed once after generating and vanished on the next load.
+    itinerary:itemsFromRows(p.itinerary),
     votes:p.votes||{},
     options:p.vote_options||[],
     accommodation:p.accommodation,

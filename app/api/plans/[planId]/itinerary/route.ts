@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { z } from 'zod';
 import { replaceItinerary, outcomeMessage } from '@/lib/itinerary-replace';
+import { rowFromItem } from '@/lib/contracts/itinerary-item';
 
 const ItemSchema = z.object({
   // 'event' was missing, so a concert could only ever be filed as an
@@ -75,37 +76,14 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
   // The order of these two writes is the whole safety property, so it lives
   // in lib/itinerary-replace.ts with a test that fails if anybody puts the
   // delete back in front of the insert.
-  const rows = (items ?? []).map((item: any, idx: number) => ({
+  // One shape, defined in lib/contracts/itinerary-item.ts and imported by
+  // every layer that touches it. This used to be a hand-written field list,
+  // and so did the two in the client — which is how the ticket URL, the
+  // venue's website and what is on there each reached the row and never the
+  // screen. Adding a fact to the contract now carries it here for free.
+  const rows = (items ?? []).map((item: Record<string, unknown>, idx: number) => ({
     plan_id: params.planId,
-    type: item.type,
-    title: item.title,
-    subtitle: item.sub || item.subtitle || null,
-    scheduled_time: item.time || item.scheduled_time || null,
-    confirmation_number: item.conf || item.confirmation_number || null,
-    // Confirmed is not the same as having a reference number for it.
-    //
-    // This read is_confirmed off whether a confirmation number existed, which
-    // is right for something Reach booked and wrong for a ticket bought from
-    // the seller: the traveller has it, the plan is that much more finished,
-    // and we hold no reference for it and should not invent one. An explicit
-    // flag wins where the client sends one.
-    is_confirmed: typeof item.filled === 'boolean'
-      ? item.filled
-      : !!(item.conf || item.confirmation_number),
-    cost_cents: item.cost_cents || 0,
-    // How you get in and what they take. Reach books what it can; for
-    // everything else the traveller needs these before they arrive.
-    booking_mode: item.booking_mode || null,
-    payment_note: item.payment_note || null,
-    because: item.because || null,
-    // Where the ticket is actually sold. Only ever set from a listing we
-    // read, never from prose, so it is a link that works or it is absent.
-    venue_website: item.venue_website || null,
-    venue_name: item.venue_name || null,
-    // What is on at that place, in the venue's own words. Dropped here and
-    // it would show once after generating and never again.
-    venue_note: item.venue_note || null,
-    sort_order: idx,
+    ...rowFromItem(item, idx),
   }));
 
   const outcome = await replaceItinerary(supabase, params.planId, rows, async (toWrite) => {

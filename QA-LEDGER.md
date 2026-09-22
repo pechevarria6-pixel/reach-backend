@@ -491,3 +491,50 @@ hook and a build command cannot be piped through anything.
 Next.js default). If it is overridden to `next build`, the gate is bypassed.
 
 ---
+
+## T1 — one contract, imported everywhere — 2026-09-21 21:3x UTC
+
+`lib/contracts/itinerary-item.ts` is now the only place the itinerary item's
+shape is written down. Four layers had their own hand-written field list:
+
+| layer | was |
+|---|---|
+| the PUT that writes rows | a literal with 17 keys |
+| `convertPlan` on load | a literal with 14 keys |
+| the post-generate refresh | a literal with 12 keys |
+| the generator's slot mapper | still its own, by design — it maps a model's answer, not a row |
+
+Adding a column meant remembering three of them. Three times somebody did
+not, and the comments left behind record it: the practicals, then the trip
+reasons, then the ticket URL — each showed once after generating and
+vanished on the next load.
+
+**Grep proof:** `venue_website:item.venue_website` and
+`time:item.scheduled_time` now appear nowhere. `itemsFromRows` /
+`rowFromItem` appear three times in the client and once in the route.
+
+**The test that would have caught all six**
+(`tests/unit/itinerary-contract.test.ts`): writes a row with every fact set,
+turns it into a screen item, turns it back, and fails naming any fact that
+went missing.
+
+**Proven by reverting the fix.** Deleted `venue_website` from `rowFromItem`
+— exactly as the PUT had it this morning:
+
+```
+ℹ fail 2
+AssertionError: venue_website was dropped turning a screen item back into a row
+```
+
+Restored: 7 pass.
+
+**One deliberate divergence from the brief.** `itemFromRow` throws on a row
+that does not match, which is right on a server and behind a test. On a
+screen it is not: one bad row from an old record would white-screen
+somebody's entire trip, a worse failure than the one it guards. Screens use
+`itemsFromRows`, which drops the bad row, says so in the console, and
+renders the other nineteen days.
+
+Suite: 511 unit. Build gated by T3.
+
+---
