@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
-import { toDateOrNull } from '@/lib/dates';
+import { toDateOrNull, nightsBetween } from '@/lib/dates';
 import { z } from 'zod';
 import { track } from '@/lib/track';
 import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
@@ -170,6 +170,32 @@ export async function POST(req: NextRequest) {
 
   const { error: audit } = await supabase.from('audit_logs').insert({ user_id: user.id, action: 'plan_created', resource: 'plans', resource_id: plan.id, success: true });
   if (audit) console.error('[audit] could not record plan_created', { code: audit.code });
+
+  // The top of the funnel, and until now the only event with no call site at
+  // all: `track` was imported into this file and never called. Fourteen plans
+  // in the table, three of them created after the events table went live, and
+  // not one `plan_created` row to show for them — so every number downstream
+  // of "somebody started a trip" had no denominator.
+  //
+  // The audit log above is a different thing for a different reader: it
+  // records who did what, for when something has to be answered for. This
+  // records that it happened at all.
+  void track(supabase, 'plan_created', {
+    userId: user.id,
+    groupId: String(body.group_id),
+    planId: String(plan.id),
+    props: {
+      kind: String(body.type ?? 'trip'),
+      solo: body.solo_mode === true,
+      voting: body.enable_voting === true,
+      // Where people actually plan to go. Not personal data — a destination —
+      // and it is the first question anybody asks of this table.
+      city: String(body.destination_city ?? ''),
+      country: String(body.destination_country ?? '').toUpperCase(),
+      nights: nightsBetween(body.start_date, body.end_date),
+      budget_cents: Number(body.budget_cents || 0),
+    },
+  });
 
   return NextResponse.json({ plan }, { status: 201 });
 }

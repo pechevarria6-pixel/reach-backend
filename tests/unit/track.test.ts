@@ -51,7 +51,7 @@ test('a long string is prose, and prose is never a property', () => {
 test('only the listed names may be written', () => {
   assert.equal(isEventName('booking_confirmed'), true);
   assert.equal(isEventName('something_i_invented'), false);
-  assert.equal(EVENT_NAMES.length, 16);
+  assert.equal(EVENT_NAMES.length, 17);
 });
 
 test('the ids it was given are the ids it records', async () => {

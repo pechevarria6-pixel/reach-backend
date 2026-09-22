@@ -19,6 +19,11 @@ export const EVENT_NAMES = [
   'trip_input_submitted',
   'vote_cast',
   'booking_created',
+  // A double-tap that did not become a second booking. Worth a name of its
+  // own: it is the only number that says whether the idempotency work is
+  // doing anything, and the alternative is finding out from a duplicate
+  // charge. The directive calls this one "409 seen".
+  'booking_duplicate_blocked',
   'booking_approved',
   'booking_confirmed',
   'booking_failed',

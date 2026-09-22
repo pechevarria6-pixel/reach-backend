@@ -128,6 +128,19 @@ export async function POST(req: NextRequest) {
       // everything" described the same restaurant with no number to ring and
       // none of the provider's own wording, while the first press had both.
       const f = bookingFacts(twin as unknown as Record<string, unknown>);
+      // How often this actually happens, which nothing has ever recorded. The
+      // bookings table holds the same RDU → PVR flight four times because
+      // this route used to end in a plain insert; whether that has stopped is
+      // currently a matter of opinion.
+      void track(ctx.db, 'booking_duplicate_blocked', {
+        userId: ctx.user.id, groupId: String(ctx.plan.group_id), planId: body.planId,
+        props: {
+          vertical: String(f.vertical ?? 'unknown'),
+          provider: String(f.provider ?? 'none'),
+          status: String(f.status ?? 'unknown'),
+          price_cents: Number(f.priceCents || 0),
+        },
+      });
       results.push({
         vertical: f.vertical as BookingItemResult['vertical'],
         mode: f.mode as BookingItemResult['mode'],
