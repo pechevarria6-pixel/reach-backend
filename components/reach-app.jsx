@@ -659,7 +659,14 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       // charge for, in which case checkout correctly refuses and the person
       // has been walked into a dead end by their own home screen. What is
       // certainly true is that this is where booking happens.
-      type:"book",rank:0,text:`${p.title} is ready to book`,sub:"Everyone's in — let's see what we can get booked",plan:p,cta:"Book →"})),
+      // Solo-aware, like the "waiting on everyone's share" action four lines
+      // down already is. `solo()` was defined directly above and used there
+      // and not here, so a trip somebody is taking on their own was told
+      // "Everyone's in" by their own home screen — a sentence about other
+      // people, on a plan that has none.
+      type:"book",rank:0,text:`${p.title} is ready to book`,
+      sub:solo(p.group)?"You're all set — let's see what we can get booked":"Everyone's in — let's see what we can get booked",
+      plan:p,cta:"Book →"})),
     ...allPlans.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
       type:"vote",rank:1,text:`${p.group.name} is deciding on ${p.title}`,
       sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →"})),
@@ -906,13 +913,18 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
 // Every line below describes something the request is genuinely doing, paced
 // against the measured runtime. No invented steps and no fake percentage that
 // sticks at 90.
+// Not rendered anywhere today — grep says this component has no call site.
+// Left in place rather than deleted because it is somebody's work and the
+// simpler "Building your days…" button is what ships instead; but its copy is
+// written to be true whether one person is travelling or eight, so that
+// wiring it up later cannot quietly ship group copy to a solo trip.
 function BuildingItinerary({destination,nights,onCancel}){
   // Still describes exactly what the request is doing — the warmth is in the
   // wording, not in inventing steps that are not happening.
   const steps=[
-    {at:0,  t:"Reading the room — what everyone said they wanted"},
+    {at:0,  t:"Reading the room — what you told us you wanted"},
     {at:4,  t:`Working out where to put you in ${destination||"your destination"}`},
-    {at:9,  t:"Finding dinners that suit the fussiest one of you"},
+    {at:9,  t:"Finding dinners worth the trip"},
     {at:15, t:`Writing all ${nights||7} days, breakfast to last orders`},
     {at:22, t:"Arguing with ourselves about the second evening"},
     {at:28, t:"Adding the bits you'd only know the second time round"},

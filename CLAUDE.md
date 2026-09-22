@@ -69,10 +69,11 @@ Each of these is here because it has already happened:
 
 Some of this is enforced and some of it is not, and it is worth knowing which:
 `check:promises` and `check:vocabulary` catch the false-capability strings,
-`tests/unit/grounding.test.ts` holds the venue rule, and the two contracts in
-`lib/contracts/` stop a fact being dropped between the row and the screen.
-**Nothing enforces the solo/group wording or the redundancy rule** — those are
-read by a person, so they are the two to check by opening the screen.
+`check:solo-copy` catches a sentence that speaks for other people on a screen
+somebody can reach alone, `tests/unit/grounding.test.ts` holds the venue rule,
+and the two contracts in `lib/contracts/` stop a fact being dropped between the
+row and the screen. **Nothing enforces the redundancy rule** — that one is read
+by a person, so it is the one to check by opening the screen.
 
 ## How to find bugs here
 
