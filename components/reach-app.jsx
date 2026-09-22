@@ -4542,6 +4542,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   const [step,setStep]=useState(0);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
+  // Which option cards are showing every day rather than the first two.
+  const [allDays,setAllDays]=useState({});
   const [budget,setBudget]=useState("");
   const [trips,setTrips]=useState(null);
   const [vetoes,setVetoes]=useState({});
@@ -5152,6 +5154,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     </div>
                   </div>
 
+                  {!nightOut&&<RealTrip trip={trip} startDate={startDate} endDate={endDate} seats={Math.max(1,(group.memberIds||[]).length)}/>}
+
                   {/* Itinerary preview */}
                   <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
@@ -5164,7 +5168,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                         {enriching>0?"Writing these days now…":"No day plan for this one — you can build it after you pick it."}
                       </div>
                     )}
-                    {(trip.itinerary||[]).slice(0,2).map((day,j)=>{
+                    {(trip.itinerary||[]).slice(0,allDays[trip.id]?undefined:2).map((day,j)=>{
                       const txt=v=>typeof v==="string"?v:(v?.plan||"");
                       const pay=v=>typeof v==="string"?null:(v?.payment||null);
                       const cashOnly=[day.morning,day.afternoon,day.evening]
@@ -5190,10 +5194,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                       </div>
                       );
                     })}
+                    {/* The whole trip, not a teaser of it. Choosing between three
+                        trips on two days of each was choosing on a third of it. */}
                     {(trip.itinerary||[]).length>2&&(
-                      <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>
-                        + {trip.itinerary.length-2} more days, all yours the moment you pick this
-                      </div>
+                      <button onClick={()=>setAllDays(a=>({...a,[trip.id]:!a[trip.id]}))}
+                        style={{background:"none",border:"none",padding:0,fontSize:12,color:C.accentText,fontWeight:600,cursor:"pointer"}}>
+                        {allDays[trip.id]?"Show fewer days":`Show all ${trip.itinerary.length} days`}
+                      </button>
                     )}
                   </div>
 
@@ -6045,6 +6052,89 @@ function HoldToggle({bookingId,status,toast,onChanged}){
       style={{background:"none",border:"none",padding:"5px 0 0",color:C.t2,fontSize:12,cursor:"pointer",textDecoration:"underline"}}>
       {busy?"…":held?"Book it with the rest":"Hold off on this for now"}
     </button>
+  );
+}
+
+// ─── The real trip behind one of the three options ───────────────────────
+// The cards carry estimates. This asks what is actually on sale for those
+// dates — flights from home, hotels by name, the car when it is a fly-and-
+// drive — so people choose between trips on what Reach would really book.
+// Asked for on a tap, not on load: three cards each searching two providers
+// the moment they appear is a lot of waiting for a screen nobody scrolled.
+function RealTrip({trip,startDate,endDate,seats}){
+  const [state,setState]=useState({loading:false,data:null,error:null});
+  const usd=c=>"$"+((c||0)/100).toLocaleString(undefined,{maximumFractionDigits:0});
+  if(!trip.city||!trip.country_code||!startDate||!endDate)return null;
+  const load=async()=>{
+    setState({loading:true,data:null,error:null});
+    try{
+      const r=await fetchWithin("/api/trips/preview",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({city:trip.city,countryCode:trip.country_code,start:startDate,end:endDate,seats})},60000,"checking prices");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't check prices just now");
+      setState({loading:false,data:d,error:null});
+    }catch(e){
+      console.error("[realTrip] preview failed",{city:trip.city},e);
+      setState({loading:false,data:null,error:e.message});
+    }
+  };
+  const d=state.data;
+  return(
+    <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
+      <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
+        The real flights & hotels
+      </div>
+      {!d?(
+        <>
+          <button className="bs" disabled={state.loading} onClick={load}>
+            {state.loading?"Checking what's on sale…":"See the real flights & hotels"}
+          </button>
+          {state.error&&<div style={{fontSize:12,color:C.t2,marginTop:8}}>{state.error}</div>}
+        </>
+      ):(
+        <div>
+          <div style={{fontSize:12.5,fontWeight:600,color:C.t1,marginBottom:6}}>
+            ✈️ Flights{d.from&&d.to?` · ${d.from} → ${d.to}`:""}{seats>1?` · ${seats} seats`:""}
+          </div>
+          {d.gateway&&(
+            <div style={{fontSize:11.5,color:C.t2,marginBottom:6,lineHeight:1.5}}>
+              {trip.city} has no airport of its own — this is the nearest with flights from home, {d.gateway.name} ({d.gateway.iata}), about {d.gateway.miles} miles away as the crow flies.
+            </div>
+          )}
+          {d.flights.length===0&&<div style={{fontSize:12,color:C.t3,marginBottom:6}}>{d.flightsWhy||"No flights found for those dates."}</div>}
+          {d.flights.map(o=>(
+            <div key={o.key} style={{padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.t1,fontWeight:600}}>
+                <span>{o.airline}</span><span>{usd(o.priceCents)}</span>
+              </div>
+              <LegLine leg={o.out} label="Out"/>
+              <LegLine leg={o.back} label="Back"/>
+            </div>
+          ))}
+          <div style={{fontSize:12.5,fontWeight:600,color:C.t1,margin:"12px 0 6px"}}>🏨 Places to stay{d.rooms>1?` · ${d.rooms} rooms`:""}</div>
+          {d.hotels.length===0&&<div style={{fontSize:12,color:C.t3}}>{d.hotelsWhy||"No hotels with rooms for those dates."}</div>}
+          {d.hotels.map(h=>(
+            <div key={h.key} style={{display:"flex",gap:10,alignItems:"center",padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
+              {h.photo&&<img src={h.photo} alt="" style={{width:52,height:52,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12.5,color:C.t1,fontWeight:600}}>{h.name}{h.stars?` · ${h.stars}★`:""}</div>
+                <div style={{fontSize:11,color:C.t3}}>{[h.room,h.board].filter(Boolean).join(" · ")}</div>
+              </div>
+              <div style={{fontSize:12.5,fontWeight:600,color:C.t1}}>{usd(h.priceCents)}</div>
+            </div>
+          ))}
+          {d.car?.url&&(
+            <div style={{marginTop:12,fontSize:12,color:C.t2,lineHeight:1.5}}>
+              🚗 A rental car from {d.car.from.iata} gets you to {trip.city}.{" "}
+              <a href={d.car.url} target="_blank" rel="noopener noreferrer" style={{color:C.accentText,fontWeight:600,textDecoration:"none"}}>See cars at {d.car.from.iata} →</a>
+            </div>
+          )}
+          <div style={{fontSize:10.5,color:C.t3,marginTop:10,lineHeight:1.5}}>
+            On sale right now, for the whole trip. Pick this trip and Reach starts from the cheapest — you can change the hotel or the flights before anything is booked.
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

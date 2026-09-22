@@ -16,8 +16,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness } from '@/lib/essentials-server';
-import { resolveAirport, nearestAirports, flightOptions, type Gateway } from '@/lib/booking/providers/flights.duffel';
-import { locate } from '@/lib/discovery/geocode';
+import { type Gateway } from '@/lib/booking/providers/flights.duffel';
+import { arrivalFor } from '@/lib/booking/arrival';
 import { tripTiming, today } from '@/lib/calendar';
 import { rentalLine } from '@/lib/ground';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
@@ -306,38 +306,18 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // good trip is somewhere you drive.
   // The city alone is asked second: a search box given "Puerto Vallarta, MX"
   // may not know what "MX" is, and the country only ever narrowed it.
-  let flightTo: string | null = hasFlight && !flightWhy
-    ? (city
-        ? (await resolveAirport([city, countryCode].filter(Boolean).join(', '))) ?? (countryCode ? await resolveAirport(city) : null)
-        : await resolveAirport(named))
-    : null;
-  // No airport of its own: fly into the nearest one and drive. Found from
-  // where the town actually is, and the rental car goes on the plan below.
+  // Where the trip lands: the town's airport, or the nearest one with flights
+  // from home (lib/booking/arrival.ts — the trip options use the same).
+  let flightTo: string | null = null;
   let gateway: Gateway | null = null;
-  if (hasFlight && !flightWhy && !flightTo && city) {
-    const here = await locate(city, countryCode || null);
-    if (here) {
-      // Nearest is not the same as served. Rincón's nearest airport is MAZ,
-      // which sees a commuter hop or two; BQN, a few miles further, is where
-      // the flights from the mainland land. So the three nearest are tried
-      // in order and the first with any flight from home on these dates
-      // wins. Without a home airport to try from, nearest stands.
-      const near = (await nearestAirports(here)).slice(0, 3);
-      const { data: me } = await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).maybeSingle();
-      const home = me?.home_airport ?? null;
-      gateway = near[0] ?? null;
-      if (home && plan.start_date) {
-        for (const g of near) {
-          const probe = await flightOptions({
-            vertical: 'flight', planId: params.planId, groupId: String(ctx.plan.group_id), travelers: [],
-            flight: { origin: home, destination: g.iata, departDate: plan.start_date,
-              ...(plan.end_date && plan.end_date !== plan.start_date ? { returnDate: plan.end_date } : {}), seats: partySize },
-          } as BookingItemRequest, 1);
-          if (probe.options.length) { gateway = g; break; }
-        }
-      }
-      flightTo = gateway?.iata ?? null;
-    }
+  if (hasFlight && !flightWhy) {
+    const { data: me } = await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).maybeSingle();
+    const landed = await arrivalFor({
+      city, countryCode, named, home: me?.home_airport ?? null,
+      start: plan.start_date, end: plan.end_date, seats: partySize,
+    });
+    flightTo = landed?.iata ?? null;
+    gateway = landed?.gateway ?? null;
   }
   const flightFrom = hasFlight && !flightWhy && flightTo
     ? (await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).single())
