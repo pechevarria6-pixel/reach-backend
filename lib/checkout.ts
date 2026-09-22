@@ -59,7 +59,49 @@ export function tidyLegacy(detail: string): string {
  * Never the vertical. "restaurant" is a category, and a person looking at a
  * checkout screen is entitled to know which restaurant.
  */
-export function itemTitle(row: CheckoutRow): string {
+/**
+ * What a row with no name of its own should be called.
+ *
+ * Never "Trip item (details coming)". Eleven rows in the table have no
+ * detail — mostly flights that failed before a provider ever named one — and
+ * that string promised details were on their way when nothing was coming.
+ * It is a placeholder, and the rule is that a placeholder never reaches a
+ * screen.
+ *
+ * An article makes these read as a description rather than a title, which is
+ * what they are: the row says what kind of thing it was, the status chip
+ * says it could not be booked, and the reason sits underneath. That is three
+ * true things, which beats one invented one.
+ */
+const UNNAMED: Record<string, string> = {
+  flight: 'A flight',
+  hotel: 'Somewhere to stay',
+  restaurant: 'A table',
+  activity: 'An activity',
+  event: 'A ticket',
+  transport: 'Getting around',
+};
+
+/**
+ * Whether this row carries a name of its own.
+ *
+ * `dedupe` used to ask "is the title the placeholder string?", which tied a
+ * correctness rule to a piece of copy. Changing the copy would then have
+ * merged two unnamed rows into one and dropped somebody's booking — the very
+ * thing the test beside it was written to prevent. The question is about the
+ * row, so it is asked of the row.
+ */
+export function hasOwnName(row: CheckoutRow): boolean {
+  const d = row.detail;
+  if (typeof d === 'string') return d.trim().length > 0;
+  if (d && typeof d === 'object') {
+    const o = d as { title?: unknown; name?: unknown };
+    return [o.title, o.name].some(v => typeof v === 'string' && v.trim().length > 0);
+  }
+  return false;
+}
+
+export function itemTitle(row: CheckoutRow, fallback?: string | null): string {
   const d = row.detail;
   if (typeof d === 'string' && d.trim()) return tidyLegacy(d.trim());
   // Older rows stored an object. Both spellings appear in the table.
@@ -69,9 +111,11 @@ export function itemTitle(row: CheckoutRow): string {
       if (typeof v === 'string' && v.trim()) return v.trim();
     }
   }
-  // No name at all is a malformed row. Say so rather than printing the enum,
-  // which reads like a title and is not one.
-  return 'Trip item (details coming)';
+  // The itinerary line this booking was made from, where the caller knows
+  // it. A booking of "13 nights in Moab" is that, whatever the provider
+  // managed to return.
+  if (typeof fallback === 'string' && fallback.trim()) return fallback.trim();
+  return UNNAMED[row.vertical] ?? 'Part of this trip';
 }
 
 /**
@@ -104,7 +148,7 @@ export function dedupe(rows: CheckoutRow[]): CheckoutRow[] {
     const name = itemTitle(row);
     const key = row.itinerary_item_id
       ? `line:${row.itinerary_item_id}`
-      : name === 'Trip item (details coming)'
+      : !hasOwnName(row)
         ? null                                   // never merged
         : `${row.vertical}|${name.toLowerCase()}|${row.scheduled_date ?? ''}`;
     if (key && seen.has(key)) {

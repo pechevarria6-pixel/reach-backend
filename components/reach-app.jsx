@@ -7712,12 +7712,17 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // the failure may have been fixed in between and skipping it a second time
   // should be as deliberate as the first.
   const checkout=checkoutState(bookings||[],{ignoreBroken:skipBroken});
+  // The itinerary line a booking was made from, so a row the provider never
+  // named is still called what it is for. The hotel booking that failed on
+  // Puerto Vallarta has no detail and does have a line: it is "7 nights in
+  // Puerto Vallarta", whatever came back.
+  const lineTitle=(b)=>(plan?.itinerary||[]).find(i=>i.id===b?.itinerary_item_id)?.title||null;
   // The facts come from the contract; the icons and the wording stay here,
   // because they are presentation and they belong to the screen. The two
   // comments below are both post-mortems of a hand-written field list: a
   // redirect with nowhere to tap, and a table with no way to get it.
   const lines=(checkout.rows.length?bookingFactsFrom(checkout.rows).map(b=>({
-    id:b.id, icon:vIcon[b.vertical]||"\u2728", l:itemTitle(b),
+    id:b.id, icon:vIcon[b.vertical]||"\u2728", l:itemTitle(b,lineTitle(b)),
     // The provider's own note when it left one. A seat being booked by hand
     // because automatic booking will not carry somebody's passport marker
     // deserves that sentence, not "we'll handle this one for you" — the
@@ -8094,7 +8099,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
             border:`1px solid ${C.border}`,borderRadius:14,textAlign:"left"}}>
             {checkout.broken.map((b,i)=>(
               <div key={b.id||i} style={{fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:6}}>
-                <span style={{fontWeight:600}}>{itemTitle(b)}</span>
+                <span style={{fontWeight:600}}>{itemTitle(b,lineTitle(b))}</span>
                 {b.error?<span style={{color:C.t2}}> — {b.error}</span>:null}
               </div>
             ))}

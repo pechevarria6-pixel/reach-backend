@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { itemTitle, dedupe, checkoutState } from '../../lib/checkout.ts';
+import { itemTitle, dedupe, checkoutState, hasOwnName } from '../../lib/checkout.ts';
 
 // The three rows behind the 18 September screenshot, as they sit in the
 // database: three different reservations, one vertical, no prices.
@@ -27,9 +27,26 @@ test('older rows that stored an object still read correctly', () => {
   assert.equal(itemTitle({ vertical: 'hotel', detail: { name: 'Hotel Vallarta' } }), 'Hotel Vallarta');
 });
 
-test('a row with no name says so instead of printing the enum', () => {
-  assert.equal(itemTitle({ vertical: 'restaurant', detail: null }), 'Trip item (details coming)');
-  assert.equal(itemTitle({ vertical: 'restaurant', detail: '   ' }), 'Trip item (details coming)');
+test('a row with no name is described, never called "details coming"', () => {
+  // Eleven rows in the table have no detail — mostly flights that failed
+  // before a provider named one — and "Trip item (details coming)" promised
+  // details that were never coming. A placeholder does not reach a screen.
+  assert.equal(itemTitle({ vertical: 'restaurant', detail: null }), 'A table');
+  assert.equal(itemTitle({ vertical: 'flight', detail: '   ' }), 'A flight');
+  assert.equal(itemTitle({ vertical: 'hotel', detail: null }), 'Somewhere to stay');
+  // A vertical nobody has written a noun for is still not a placeholder.
+  assert.equal(itemTitle({ vertical: 'something-new', detail: null }), 'Part of this trip');
+});
+
+test('the itinerary line names the booking when the provider did not', () => {
+  // The hotel booking that failed on Puerto Vallarta has no detail and does
+  // have a line: it is "7 nights in Puerto Vallarta", whatever came back.
+  assert.equal(
+    itemTitle({ vertical: 'hotel', detail: null }, '7 nights in Puerto Vallarta'),
+    '7 nights in Puerto Vallarta',
+  );
+  // And a real detail still wins over the fallback.
+  assert.equal(itemTitle({ vertical: 'hotel', detail: 'Best Western' }, 'a line'), 'Best Western');
 });
 
 test('three different dinners are three rows, not one', () => {
@@ -254,4 +271,15 @@ test('two failures are counted, not pluralised wrongly', () => {
     { vertical: 'activity', detail: 'A tour', price_cents: 3000, status: 'failed' },
   ]);
   assert.match(state.blockedCopy ?? '', /2 bookings couldn't be made/i);
+});
+
+test('whether a row is named is a fact about the row, not about the copy', () => {
+  // dedupe used to ask "is the title the placeholder string?". Renaming the
+  // placeholder would then have merged two unnamed rows into one and dropped
+  // somebody's booking — which is what the test above exists to prevent, and
+  // what renaming it nearly did.
+  assert.equal(hasOwnName({ vertical: 'activity', detail: null }), false);
+  assert.equal(hasOwnName({ vertical: 'activity', detail: '  ' }), false);
+  assert.equal(hasOwnName({ vertical: 'activity', detail: 'Pottery class' }), true);
+  assert.equal(hasOwnName({ vertical: 'hotel', detail: { name: 'Best Western' } }), true);
 });
