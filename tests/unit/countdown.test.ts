@@ -2,6 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { countdown, daysUntil } from '../../lib/calendar.ts';
 
+// This whole file reasons about a particular wall clock, so it pins one.
+//
+// Without this it passed on a laptop in New York and failed on the build
+// machine, which runs in UTC — and it failed for exactly the reason it
+// exists: at 00:30 UTC the American day has not turned over yet, so "today"
+// is a different date depending on where you ask. That is the bug under
+// test. A test about local days cannot inherit the tester's locale.
+process.env.TZ = 'America/New_York';
+
 // Eight in the evening in New York: the UTC date has already turned over,
 // which is the hour that made tonight's events vanish from Discover.
 const EVENING = new Date('2026-09-21T00:30:00Z');

@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
-    "test:unit": "node --test --experimental-strip-types 'tests/unit/**/*.test.ts'",
+    "test:unit": "TZ=UTC node --test --experimental-strip-types 'tests/unit/**/*.test.ts'",
     "test:e2e": "playwright test",
     "doctor": "node scripts/doctor.mjs",
     "check:scopes": "node scripts/check-scopes.mjs",
