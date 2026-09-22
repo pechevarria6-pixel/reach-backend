@@ -282,8 +282,12 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // once rather than per line, and either coming back empty is a real answer:
   // "Moab, Utah, USA" has no airport Duffel will sell to, and plenty of a
   // good trip is somewhere you drive.
+  // The city alone is asked second: a search box given "Puerto Vallarta, MX"
+  // may not know what "MX" is, and the country only ever narrowed it.
   const flightTo = hasFlight && !flightWhy
-    ? await resolveAirport(city ? [city, countryCode].filter(Boolean).join(', ') : named)
+    ? (city
+        ? (await resolveAirport([city, countryCode].filter(Boolean).join(', '))) ?? (countryCode ? await resolveAirport(city) : null)
+        : await resolveAirport(named))
     : null;
   const flightFrom = hasFlight && !flightWhy && flightTo
     ? (await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).single())
@@ -355,16 +359,22 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     if (request) requests.push(request);
     else skipped.push({
       title: item.title,
-      why: BOOKABLE[item.type]
-        ? (!city || !countryCode ? 'this trip has no destination saved yet' : 'this trip has no dates yet')
-        : item.type === 'flight'
-          ? (flightWhy
-             ?? (!flightTo
-                 ? `we could not find an airport for ${named || 'this trip'} — this one looks like a drive`
-                 : !flightFrom
-                   ? 'add your home airport in Profile and we can price this flight'
+      // A flight first. BOOKABLE has a flight entry, so asking it first sent
+      // every skipped flight to "this trip has no dates yet" — on Puerto
+      // Vallarta, which has dates — and the reasons written for flights
+      // below could never be reached.
+      why: item.type === 'flight'
+        ? (flightWhy
+           ?? (!flightTo
+               ? `we could not find an airport for ${named || 'this trip'} — this one looks like a drive`
+               : !flightFrom
+                 ? 'add your home airport in Profile and we can price this flight'
+                 : !plan.start_date
+                   ? 'this trip has no dates yet'
                    : CANNOT.flight))
-        : (CANNOT[item.type] ?? `nothing books a ${item.type} yet`),
+        : BOOKABLE[item.type]
+          ? (!city || !countryCode ? 'this trip has no destination saved yet' : 'this trip has no dates yet')
+          : (CANNOT[item.type] ?? `nothing books a ${item.type} yet`),
     });
   }
 
