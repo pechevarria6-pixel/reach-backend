@@ -575,3 +575,49 @@ error — the gate's entire value is `verify` running `tsc` and the suite.
 Suite: 514 unit.
 
 ---
+
+## T2 + T4 — freezing today's fixes — 2026-09-21 22:4x UTC
+
+**T2 — rendered-fact tests.** Four assertions on the DOM, the layer that
+missed six bugs. Deliberately structural rather than tied to one plan's
+wording: a plan gets regenerated and its restaurants change, but "an item
+with somewhere to book must offer a way to get there" holds for every plan
+there will ever be. 9/9 across both viewports.
+
+Three things it cost, each worth recording:
+
+- **Serial.** In parallel two workers walk the same signed-in account and
+  one rotates the session under the other. It passed alone and failed in the
+  suite — the worst of both, since a flaky test teaches people to ignore red.
+- **Fetch from inside the page.** `page.request` carries a cookie snapshot,
+  and Clerk rotates the session during the 37-second DOM tests, so it was
+  401ing on an expired cookie.
+- **No URL for a plan.** Every screen lives inside the SPA shell, so a
+  headless test can only reach a plan by clicking a card. New finding, in
+  STATUS.md: **a trip you cannot link to is a trip you cannot share.**
+
+**T4 — grounding frozen.** `tests/unit/grounding.test.ts`: a town with no
+verified venues is told to name none *and not softened into a suggestion*;
+an invented venue is caught and removed; a verified one is untouched; a
+poisoned answer naming two unverified places comes out with both gone; and
+Reach never claims to book a table, a null place, or a ticket.
+
+**T4 — false promises banned.** Not jargon — these read perfectly well,
+which is why they shipped:
+
+| banned | why |
+|---|---|
+| "Someone at Reach confirms it with the venue" | nobody does; there is no confirmation path in this codebase |
+| "We're on it" | it was *saved*, which is a different claim and a true one |
+| "Reach will confirm / will call the venue" | same promise, other words |
+
+**Both proven to fire**, planted in `app/layout.tsx` and caught by file and
+line, then restored byte-for-byte (`git diff --quiet` clean).
+
+"Reach will book this" over a table is already caught by `check:promises`.
+It was removed once today and reintroduced by a fix to something else, which
+is exactly why it belongs in a guard rather than in anybody's memory.
+
+Suite: 519 unit, 9/9 rendered-fact.
+
+---

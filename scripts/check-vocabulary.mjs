@@ -23,6 +23,39 @@ const BANNED = [
   'taste profile', 'distillation',
 ];
 
+/**
+ * Promises this app has made and could not keep.
+ *
+ * Not jargon — these read perfectly well, which is exactly why they shipped.
+ * Each was on a screen today, and each said Reach was doing something Reach
+ * does not do:
+ *
+ *   "Someone at Reach confirms it with the venue"  — nobody does. There is
+ *      no confirmation path in this codebase; the request is written as a
+ *      pending row and sits there.
+ *   "We're on it"  — Reach is not on it. It was saved, which is a different
+ *      claim and a true one.
+ *   "Reach will book this" over a table — the member books their own, on
+ *      their own card, where their dining benefits live. This was removed
+ *      and then reintroduced by a fix to something else, which is precisely
+ *      why it belongs in a guard rather than in anybody's memory.
+ *
+ * A phrase here is banned as a phrase. If the product ever genuinely does
+ * one of these, the line comes out of this list in the same commit that
+ * makes it true.
+ */
+const BROKEN_PROMISES = [
+  'someone at reach confirms',
+  "we're on it",
+  'we are on it',
+  'reach will confirm',
+  'reach will call',
+  'we will call the venue',
+];
+
+/** Values that are never copy, wherever they turn up in a rendered string. */
+const NEVER_RENDERED = ['undefined', 'NaN', '[object Object]'];
+
 // Lines that are plainly machinery rather than anything a person reads: a
 // log, a database column list, a key built for comparison.
 const MACHINERY = /console\.|\.select\(|\.eq\(|\.in\(|\.order\(|import\s|require\(/;
@@ -56,7 +89,7 @@ for (const f of files) {
       const text = raw.slice(1, -1);
       if (!/\s/.test(text)) continue;
       if (DATA_SHAPED.test(text)) continue;
-      for (const word of BANNED) {
+      for (const word of [...BANNED, ...BROKEN_PROMISES]) {
         if (text.toLowerCase().includes(word)) {
           console.log(`  ${f}:${i + 1}  ${text.slice(0, 68)}`);
           found++;
