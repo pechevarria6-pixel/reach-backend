@@ -262,9 +262,21 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({ error: "We couldn't delete that just now" }, { status: 500 });
   }
 
+  // `planId` is deliberately not passed, and the id goes in the props bag.
+  //
+  // events.plan_id is `references plans(id) on delete set null`, and the row
+  // this names was deleted four lines up — so naming it in that column makes
+  // the insert violate the constraint (23503) and the event is refused. This
+  // is the one event in the table that could never be written: the thing it
+  // describes has to be gone before it can be true. Reproduced against the
+  // real database before changing anything.
+  //
+  // Nothing is lost by moving it. `on delete set null` would have blanked the
+  // column the moment the plan went anyway, so the props bag is the only
+  // place this id was ever going to survive.
   void track(supabase, 'plan_deleted', {
-    userId: user.id, groupId: String(plan.group_id), planId: params.planId,
-    props: { cancelled_quotes: loose.length },
+    userId: user.id, groupId: String(plan.group_id),
+    props: { cancelled_quotes: loose.length, plan: params.planId },
   });
 
   // Nine plans once vanished with nothing to read afterwards. This is what

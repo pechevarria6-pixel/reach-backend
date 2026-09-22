@@ -70,3 +70,24 @@ test('an anonymous moment is recorded with no user, not skipped', async () => {
   await track(db(null, r => { row = r; }), 'invite_link_opened', { groupId: 'g1' });
   assert.equal((row as never as Record<string, unknown>).user_id, null);
 });
+
+test('an id in the props bag survives the scrub', () => {
+  // plan_deleted cannot name its plan in the plan_id column: that column is
+  // `references plans(id) on delete set null`, and by the time the event is
+  // true the row is gone, so the insert is refused with 23503. Reproduced
+  // against the real database — it had never once been recorded.
+  //
+  // The id therefore travels in props, which has no foreign key. A uuid is 36
+  // characters and the cap here is 40, which is close enough that lowering the
+  // cap would silently empty this event rather than fail anywhere visible.
+  const kept = scrubProps({ plan: 'cd6a7512-257c-43d7-841f-d1500a589b75', cancelled_quotes: 2 });
+  assert.equal(kept.plan, 'cd6a7512-257c-43d7-841f-d1500a589b75');
+  assert.equal(kept.cancelled_quotes, 2);
+});
+
+test('the props bag still refuses anything about a person', () => {
+  // The reason the cap exists. Widening it for the uuid above must not become
+  // a way for prose to get in.
+  const kept = scrubProps({ plan: 'p1', name: 'Peter', email: 'a@b.c', note: 'hi' });
+  assert.deepEqual(Object.keys(kept), ['plan']);
+});
