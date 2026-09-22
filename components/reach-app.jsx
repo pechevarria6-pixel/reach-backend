@@ -8859,8 +8859,11 @@ export default function ReachApp({realUser,onSignOut}={}){
       const draft=JSON.parse(raw);
       const gid=draft?.gid;
       if(!gid)return;
-      const isTemp=typeof gid==="string"&&gid.startsWith("g_local_");
-      if(isTemp||!validIds.includes(gid)){
+      // isTempId, not a second spelling of it. This read `startsWith("g_local_")`
+      // and missed the `p1758...` form entirely, so a draft could come back
+      // from storage pointing at an id the server has never heard of and the
+      // guards elsewhere would keep saying "still saving" for ever.
+      if(isTempId(gid)||!validIds.includes(gid)){
         delete draft.gid;
         window.localStorage.setItem("reach_plan_draft",JSON.stringify(draft));
       }

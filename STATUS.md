@@ -62,10 +62,10 @@ protected and it is not.
 | venue booking links | ✅ | every cited place carries its site; 386/386 venues have one |
 | what's-on | ✅ | harvested from venue pages, in the menu, on the row |
 | `redirect_url` "Finish on …" | ✅ | rendered, 4 call sites |
-| one-active-trip rule | ❌ | no enforcement found |
-| B11 dismiss → Discover suppression | 🟡 | `recommendation_dismissed` tracked; `item_optouts` written by participation; the suppression path is not joined up |
+| one-active-trip rule | 🔒 | no enforcement found, and **the spec is gone** — see below |
+| B11 dismiss → Discover suppression | ✅ | **corrected**: the path is joined up. Discover GETs `/api/recommendations/feedback` on mount (`reach-app.jsx:1166`) and seeds `hidden`/`visited` from it; the table exists and holds a row. A refusal survives a reload |
 | `←` literals | ✅ | none |
-| `g_local_*` purge on boot | 🟡 | `isTempId` exists and is used; no purge-on-load |
+| `g_local_*` purge on boot | ✅ | **corrected**: `purgeStaleDraft` runs on group load and after every delete (`reach-app.jsx:8845/8943/8958`). It had its own second spelling of the temp-id test and missed the `p1758…` form; it uses `isTempId` now |
 
 ## 5. Owner-blocked
 
@@ -76,6 +76,7 @@ protected and it is not.
 | 🔒 `SENTRY_DSN` | needed before Sentry can be wired |
 | 🔒 `RESEND_API_KEY` | 401; all outbound email dead |
 | 🔒 `TEST_EMAIL` | points at the owner's real account, so e2e acts on real data |
+| 🔒 the one-active-trip rule | the packages that specify it (REACH-HARDENING-BETA rev 2, reach-feedback-w5) are not in the repo or in Downloads, and the rule **stops somebody creating a trip**. Guessing which reading is meant would be inventing product behaviour at the one place it is most expensive to be wrong. The question is in the runbook |
 
 ## 6. What Phase 0 contradicts
 
@@ -96,8 +97,8 @@ protected and it is not.
 4. ~~T4 empty-town test + vocabulary bans~~ — done; today's fixes are frozen.
 5. ~~T1 booking contract~~ — done; the duplicate path was dropping the venue's phone.
 6. **events table barely firing** — it is the valuation. ← next
-7. **one-active-trip**, **dismiss suppression**, **localStorage purge**.
-8. **reservation-platform + plan-photo migrations** — 🔒.
+7. ~~dismiss suppression~~, ~~localStorage purge~~ — both were already done; STATUS.md had them wrong and is corrected above. **one-active-trip** is 🔒 on the spec.
+8. **reservation-platform + plan-photo migrations** — 🔒, re-probed today and still absent.
 
 ---
 
@@ -120,7 +121,15 @@ Struck through is already done.
    real groups and plans.
 7. **Confirm Vercel → Settings → Build Command is `npm run build`.** If it is
    `next build`, the gate proven in T3 is bypassed.
-8. **Confirm the cron count.** Four entries on a plan documenting two; if the
+8. **Decide the one-active-trip rule.** It is the last product gap and the
+   package that specifies it is gone. Which did you mean?
+   (a) a group may hold one plan in `planning`/`voting` at a time, and
+       starting a second is refused with an offer to open the first; or
+   (b) one plan is *featured* on Home at a time, and the rest stay in the
+       list — a display rule, nothing refused.
+   (a) blocks somebody mid-flow, so it is not a guess worth making: say
+   which and it goes in with a test.
+9. **Confirm the cron count.** Four entries on a plan documenting two; if the
    venue sweep silently stops, destinations quietly stop gaining venues.
-9. ~~Switch Stripe to test mode~~ — done, confirmed `pk_test_`.
-10. ~~Run the knowledge-layer migration~~ — done; 11 playbooks `ready`.
+10. ~~Switch Stripe to test mode~~ — done, confirmed `pk_test_`.
+11. ~~Run the knowledge-layer migration~~ — done; 11 playbooks `ready`.
