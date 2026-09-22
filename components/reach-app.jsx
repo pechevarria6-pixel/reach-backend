@@ -10,6 +10,7 @@ import { checkoutState, itemTitle, bookedClaim, bookedWording } from "@/lib/chec
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild } from "@/lib/itinerary-rebuild";
 import { ticketSources } from "@/lib/tickets";
+import { byDay, dearestDay } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
@@ -7249,11 +7250,49 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       ))}
                     </div>
                   )}
-                  {variable.length>0&&(
-                    <Section title="You pay on the day" tone={C.t1}
-                      note="Estimates for what you spend as you go. Nobody collects this up front."
-                      rows={variable} total={varTotal}/>
-                  )}
+                  {/* Day by day, because a total answers "can I afford
+                      this" and the days answer "where is it going" — which
+                      is the question somebody asks when the total is too
+                      high. A thirteen-night trip was one run of forty
+                      numbers with no way to see which day was the expensive
+                      one. */}
+                  {variable.length>0&&(()=>{
+                    const days=byDay(variable);
+                    const dear=dearestDay(days);
+                    return(
+                      <div style={{marginBottom:18}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:4}}>
+                          <span style={{fontSize:13.5,fontWeight:600,color:C.t1}}>You pay on the day</span>
+                          <span style={{fontSize:14,fontWeight:700,color:C.t1}}>{money(varTotal)}</span>
+                        </div>
+                        <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:10}}>
+                          Estimates for what you spend as you go. Nobody collects this up front.
+                          {dear?` ${dear.label} is the dearest at ${money(dear.totalCents)}.`:""}
+                        </div>
+                        {days.map(g=>(
+                          <div key={g.key} style={{marginBottom:10}}>
+                            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",
+                              padding:"6px 0 2px",borderTop:`1px solid ${C.border}`}}>
+                              <span style={{fontSize:12,fontWeight:600,color:C.t2}}>{g.label}</span>
+                              <span style={{fontSize:12,color:C.t2,fontVariantNumeric:"tabular-nums"}}>{money(g.totalCents)}</span>
+                            </div>
+                            {g.rows.map((r,i)=>(
+                              <div key={i} style={{display:"flex",justifyContent:"space-between",gap:12,padding:"5px 0"}}>
+                                <div style={{minWidth:0}}>
+                                  <div style={{fontSize:13,color:C.t1,lineHeight:1.35}}>{r.l}</div>
+                                  {r.pay&&/cash only/i.test(r.pay)&&(
+                                    <div style={{fontSize:11,color:C.amber,marginTop:2}}>💵 {r.pay}</div>
+                                  )}
+                                  <ItemActions item={r.it} markGot={markGot} tight/>
+                                </div>
+                                <div style={{fontSize:13,color:C.t2,flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{money(r.c)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <div style={{height:1,background:C.border,margin:"4px 0 14px"}}/>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
                     <span style={{fontSize:14,color:C.t1,fontWeight:600}}>
