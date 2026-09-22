@@ -1511,13 +1511,13 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
                     letterSpacing:".06em",marginBottom:6}}>
                     {names[d.weekday]} {Number(d.day.slice(8,10))}
                   </div>
+                  {/* "Nothing we've found", not "nothing on". The pool is
+                      whatever the sources returned — seventy things for
+                      Raleigh — and a quiet day in it is our gap, not a fact
+                      about the city. Phrasing our own thin data as a
+                      statement about a place is a mistake this app has made
+                      before and been told about. */}
                   {quiet
-                    {/* "Nothing we've found", not "nothing on". The pool is
-                        whatever the sources returned — seventy things for
-                        Raleigh — and a quiet day in it is our gap, not a
-                        fact about the city. Phrasing our own thin data as a
-                        statement about a place is a mistake this app has
-                        made before and been told about. */}
                     ?<div style={{fontSize:12,color:C.t3,lineHeight:1.45}}>Nothing we've found yet</div>
                     :d.events.slice(0,3).map((e,i)=>(
                       <div key={e.id||i} style={{marginBottom:6}}>
@@ -7875,6 +7875,17 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // Puerto Vallarta has no detail and does have a line: it is "7 nights in
   // Puerto Vallarta", whatever came back.
   const lineTitle=(b)=>(plan?.itinerary||[]).find(i=>i.id===b?.itinerary_item_id)?.title||null;
+
+  // One list per question, not two lists of the same answer.
+  //
+  // The review screen showed booking rows at the top — several of them
+  // carrying a "Yours to book" pill — and then a separate "things you book
+  // yourself" section underneath, built from the itinerary. Two headings for
+  // one idea on the screen where being confusing costs the most.
+  //
+  // A row Reach is not booking belongs with the other things somebody has to
+  // book, whatever table it happens to be stored in.
+  const isYours=(l)=>l.mode==="redirect"||l.st==="redirected"||l.st==="pending";
   // The facts come from the contract; the icons and the wording stay here,
   // because they are presentation and they belong to the screen. The two
   // comments below are both post-mortems of a hand-written field list: a
@@ -7890,7 +7901,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     // A redirected booking finishes somewhere else, and until now the screen
     // said so with nothing to tap: "Finish on their site" and no site. The
     // provider hands the address back on the booking; this is it.
-    href:b.href, provider:b.provider,
+    href:b.href, provider:b.provider, mode:b.mode,
     // A number somebody can ring. Most restaurants are not on Resy or
     // OpenTable, and for those the screen offered a status and nothing to
     // do — a table the app said it wanted and gave you no way to get. The
@@ -8033,7 +8044,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               </div>
             </div>
           )}
-          {lines.map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 4px"}}>
+          {lines.filter(it=>!isYours(it)).map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 4px"}}>
             <span style={{fontSize:20}}>{it.icon}</span>
             <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
               {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}</div>
@@ -8133,7 +8144,12 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     </div>
     <div style={{padding:"6px 20px 0"}}>
       <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:"6px 4px",marginBottom:14}}>
-        {lines.map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderBottom:i<lines.length-1?`1px solid ${C.border}`:"none"}}>
+        {/* Only what Reach is booking and charging for. Anything the
+            traveller books themselves has moved to the one section below
+            that is about exactly that — it used to be in both, with "Yours
+            to book" as a pill up here and "things you book yourself" as a
+            heading down there. */}
+        {lines.filter(it=>!isYours(it)).map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderBottom:i<lines.length-1?`1px solid ${C.border}`:"none"}}>
           <span style={{fontSize:20}}>{it.icon}</span>
           <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
             {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}</div>
@@ -8196,24 +8212,62 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
           the trip and a total somebody understands.
           Anything that already has a booking row above is excluded, so no
           dinner appears twice under two headings. */}
-      {stillOpen.length>0&&(
+      {(()=>{
+        // The two halves of "yours", in one list. A booking row Reach is not
+        // booking and an itinerary line that never got a row are the same
+        // thing to the person reading this, whatever table they live in, and
+        // there is no overlap: `yoursToBook` already drops anything that has
+        // a booking row.
+        const mine=lines.filter(isYours);
+        const total=mine.length+stillOpen.length;
+        if(!total)return null;
+        return(
         <div style={{margin:"0 4px 16px",padding:"12px 14px",background:C.s2,
           border:`1px solid ${C.border}`,borderRadius:14}}>
           <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:4}}>
-            {plural(stillOpen.length,"thing","things")} you book yourself
+            {plural(total,"thing","things")} you book yourself
           </div>
           <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:8}}>
             Not in the total below. You can do them now or after paying — a table
             goes on your own card so your card's dining benefits still count.
           </div>
+          {mine.map((it,i)=>(
+            <div key={it.id||`b${i}`} style={{padding:"9px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+              <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{it.l}</div>
+              {it.d?<div style={{fontSize:11,color:C.t3,marginTop:1}}>{it.d}</div>:null}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
+                {it.href?(
+                  <a href={it.href} target="_blank" rel="noopener noreferrer"
+                    onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
+                    style={{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,
+                      color:C.accentText,fontSize:12.5,fontWeight:600,padding:"7px 12px",
+                      borderRadius:999,textDecoration:"none"}}>
+                    {it.provider==="resy"||it.provider==="opentable"||it.provider==="tock"
+                      ?`Reserve on ${PROVIDER_NAME[it.provider]} →`
+                      :`Finish on ${PROVIDER_NAME[it.provider]||"their site"} →`}
+                  </a>
+                ):null}
+                {!it.href&&it.phone?(
+                  <a href={`tel:${String(it.phone).replace(/[^0-9+]/g,"")}`}
+                    onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
+                    style={{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,
+                      color:C.accentText,fontSize:12.5,fontWeight:600,padding:"7px 12px",
+                      borderRadius:999,textDecoration:"none"}}>
+                    📞 Call to reserve →
+                  </a>
+                ):null}
+              </div>
+            </div>
+          ))}
           {stillOpen.map((item,i)=>(
-            <div key={item.id||i} style={{padding:"9px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+            <div key={item.id||i} style={{padding:"9px 0",borderTop:(i||mine.length)?`1px solid ${C.border}`:"none"}}>
               <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{item.title}</div>
               <ItemActions item={item} markGot={markGot} tight/>
             </div>
           ))}
         </div>
-      )}
+        );
+      })()}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
         <span style={{fontSize:14,color:C.t2}}>{participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`}</span>
         {/* A figure here while the button is disabled is the screen saying
