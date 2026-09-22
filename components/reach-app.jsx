@@ -5903,33 +5903,32 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
 function ItemActions({item,markGot,tight}){
   if(!item)return null;
   const ticketed=item.type==="event"&&item.venue_website;
-  const site=item.type!=="event"&&item.venue_website&&!item.filled;
+  const site=item.type!=="event"&&item.venue_website;
   const phone=item.type==="restaurant"&&item.venue_phone;
   if(!ticketed&&!site&&!phone)return null;
+  // Anything somebody has to arrange can be said to be arranged. Only a
+  // ticket could be marked done, so a table you had just rung stayed on the
+  // "still needs you" list for the rest of the trip — a checklist that
+  // cannot be finished is a screen telling you something untrue, every time
+  // you open it.
+  if(item.filled)return(
+    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:tight?6:8,
+      fontSize:12.5,fontWeight:600,color:C.green}}>
+      ✓ {ticketed?"Tickets sorted":"Sorted"}
+    </div>
+  );
   const gap=tight?6:8;
   return(
     <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:gap}}>
       {/* A ticket is bought from whoever sells it. Reach cannot sell one, and
           the honest complete answer is to hand somebody to the page that can. */}
-      {ticketed&&(item.filled
-        ?<span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,fontWeight:600,color:C.green}}>
-          ✓ Tickets sorted
-        </span>
-        :<>
-          <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
-            style={{display:"inline-flex",alignItems:"center",gap:6,background:C.accent,color:C.onAccent,
-              fontSize:12.5,fontWeight:700,padding:"8px 14px",borderRadius:999,textDecoration:"none"}}>
-            🎟️ Get tickets{item.venue_name?` · ${item.venue_name}`:""} →
-          </a>
-          {/* Reach cannot know somebody bought a ticket on a site it does not
-              run, so it asks — and once told, stops asking. */}
-          {markGot&&(
-            <button onClick={()=>markGot(item)}
-              style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
-                fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
-              I've got them</button>
-          )}
-        </>)}
+      {ticketed&&(
+        <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
+          style={{display:"inline-flex",alignItems:"center",gap:6,background:C.accent,color:C.onAccent,
+            fontSize:12.5,fontWeight:700,padding:"8px 14px",borderRadius:999,textDecoration:"none"}}>
+          🎟️ Get tickets{item.venue_name?` · ${item.venue_name}`:""} →
+        </a>
+      )}
       {/* Anything we hold an address for gets a way in — a place's own site
           for a table or a class. Every verified venue has one. */}
       {site&&(
@@ -5949,6 +5948,15 @@ function ItemActions({item,markGot,tight}){
             padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
           📞 {item.venue_phone}
         </a>
+      )}
+      {/* Reach cannot know somebody bought a ticket on a site it does not run,
+          or got through on the phone. So it asks — and once told, stops
+          asking, and the line leaves the list. */}
+      {markGot&&(
+        <button onClick={()=>markGot(item)}
+          style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
+            fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+          {ticketed?"I've got them":"I've sorted it"}</button>
       )}
     </div>
   );
