@@ -17,6 +17,7 @@ import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
+import { STEPS, stepStates, cannotSign, bookingTracker } from "@/lib/plan-steps";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -6099,12 +6100,21 @@ function ItemActions({item,markGot,tight}){
   );
 }
 
+// Sign-offs are kept on the plan once sql/plan-review-2026-09-22.sql has run.
+// Until then they are kept in this browser, and the screen says so — a check
+// that silently vanished on another phone would be worse than none.
+const reviewKey=id=>`reach.review.${id}`;
+function readLocalReview(id){try{return JSON.parse(localStorage.getItem(reviewKey(id))||"{}")||{};}catch{return {};}}
+function writeLocalReview(id,v){try{localStorage.setItem(reviewKey(id),JSON.stringify(v));}catch{}}
+const STEP_LABEL={overview:"Overview",budget:"Budget",bookings:"Book"};
+
 function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
   // Opens where the caller asked. "See my itinerary" after a payment means
   // the itinerary, not the overview.
-  const [atab,setAtab]=useState(initialTab||"overview");
+  // "itinerary" was a tab; the days now live on the Book step.
+  const [atab,setAtab]=useState(initialTab==="itinerary"?"bookings":(initialTab||"overview"));
   const [myVote,setMyVote]=useState(null);
   const [loading,setLoading]=useState(false);
 
@@ -6408,6 +6418,27 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     return()=>{live=false;};
   },[planId]);
 
+  // The three sign-offs, and the booking rows that say whether Reach's own
+  // lines are actually booked — the itinerary line is never written back, so
+  // without these a confirmed hotel would read "to book" for ever.
+  const [review,setReview]=useState({available:false,steps:{}});
+  const [planBookings,setPlanBookings]=useState([]);
+  const [signing,setSigning]=useState(null);
+  useEffect(()=>{
+    if(!planId||isTempId(planId))return;
+    let live=true;
+    setReview({available:false,steps:readLocalReview(planId)});
+    fetch(`/api/plans/${planId}/review`)
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{if(live&&d&&d.available)setReview({available:true,steps:d.review||{}});})
+      .catch(()=>{});
+    fetch(`/api/bookings?planId=${planId}`)
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{if(live&&d)setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));})
+      .catch(()=>{});
+    return()=>{live=false;};
+  },[planId]);
+
   // Fetch latest plan data on mount
   useEffect(()=>{
     // A temp id means the plan has not reached the server yet; asking for it
@@ -6498,6 +6529,78 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     i.booking_mode!=="reach"&&i.booking_mode!=="walk_in"&&!i.filled
     &&(i.venue_website||i.venue_phone));
 
+  // One list of everything that has to be booked, and whether it is — see
+  // lib/plan-steps.ts. The Book step reads from this and nothing else.
+  const tracker=bookingTracker(plan.itinerary||[],planBookings);
+  const trackedOf=item=>tracker.items.find(t=>t.line===item)||null;
+  const steps=stepStates(review.steps);
+  const readyToGo=steps.bookings==="done";
+
+  /** Taking back "I reserved it" — plans change, and a tick you cannot undo is a lie waiting to happen. */
+  const unmarkGot=async(row)=>{
+    const next=(plan.itinerary||[]).map(r=>r===row?{...r,filled:false}:r);
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:next}:p)}));
+    const ok=await saveItineraryToServer(planId,next);
+    if(ok===false)toast("Couldn't save that — try again in a moment");
+  };
+
+  const signStep=async(step,undo=false)=>{
+    if(signing)return;
+    const outstanding=tracker.total-tracker.done;
+    const why=undo?null:cannotSign(step,review.steps,step==="bookings"?outstanding:0);
+    if(why){toast(why);return;}
+    const local=()=>{
+      const next={...review.steps};
+      if(undo)STEPS.slice(STEPS.indexOf(step)).forEach(s=>{delete next[s];});
+      else next[step]={at:new Date().toISOString(),by:me?.id||"me"};
+      writeLocalReview(planId,next);
+      setReview({available:false,steps:next});
+    };
+    if(!review.available||isTempId(planId)){local();return;}
+    setSigning(step);
+    try{
+      const r=await fetch(`/api/plans/${planId}/review`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({step,undo})});
+      const d=await r.json().catch(()=>({}));
+      if(r.status===503){local();}
+      else if(!r.ok){toast(d.error||"Couldn't save that — try again in a moment");}
+      else setReview({available:true,steps:d.review||{}});
+    }catch(e){
+      console.error("[planDetail] sign-off failed",{planId,step},e);
+      toast("Couldn't save that — check your connection");
+    }
+    setSigning(null);
+  };
+
+  // The button at the foot of each step. Signed shows who and lets you
+  // reopen it; not yet signable says what is in the way.
+  const SignOff=({step,cta,hint})=>{
+    const state=steps[step];
+    const blocked=state!=="done"?cannotSign(step,review.steps,step==="bookings"?tracker.total-tracker.done:0):null;
+    return(
+      <div style={{padding:"16px 20px 4px"}}>
+        {state==="done"?(
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"12px 14px",
+            borderRadius:14,background:C.greenDim,border:`1px solid ${C.green}`}}>
+            <span style={{fontSize:13,fontWeight:600,color:C.green}}>✓ {step==="bookings"?"Ready to go":`${STEP_LABEL[step]} checked`}</span>
+            <button onClick={()=>signStep(step,true)} disabled={!!signing}
+              style={{background:"none",border:"none",color:C.t2,fontSize:12,cursor:"pointer",textDecoration:"underline"}}>Reopen</button>
+          </div>
+        ):(
+          <>
+            <button className="bp" disabled={!!blocked||!!signing} onClick={()=>signStep(step)}
+              style={blocked?{background:C.s2,color:C.t3,border:`1px solid ${C.border}`}:{}}>
+              {signing===step?"Saving…":cta}
+            </button>
+            <div style={{fontSize:11.5,color:C.t3,textAlign:"center",marginTop:6,lineHeight:1.5}}>{blocked||hint}</div>
+          </>
+        )}
+        {!review.available&&state!=="locked"&&(
+          <div style={{fontSize:10.5,color:C.t3,textAlign:"center",marginTop:6}}>Saved on this device for now.</div>
+        )}
+      </div>
+    );
+  };
+
   // The itinerary's own estimate, used only until there are real booking rows
   // to price against. Once there are, the server's figure wins: it is the one
   // a card is actually charged for, and two screens disagreeing about the
@@ -6561,7 +6664,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:previous}:p)}));
     return false;
   };
-  const tabs=["overview","itinerary",(!soloTrip&&plan.options.length>0)?"vote":null,"budget"].filter(Boolean);
+  // Three steps, in order, then the trip is ready to go. Every tab can be
+  // read at any time — checking the overview means reading the days on Book —
+  // but each can only be signed off once the one before it is.
+  const tabs=[(!soloTrip&&plan.options.length>0)?"vote":null,"overview","budget","bookings"].filter(Boolean);
 
   return(
     <div className="sc" style={{paddingBottom:0}}>
@@ -6573,13 +6679,17 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         <div style={{fontFamily:"var(--font-display)",fontSize:26,color:"white",marginBottom:4}}>{plan.title}</div>
         <div style={{fontSize:13,color:"rgba(255,255,255,.65)",marginBottom:12}}>{plan.dates} · {group.name}</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          <span className={`pill ${plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`}>{plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":plan.status==="approved"?"✅ Approved":"📋 Planning"}</span>
+          <span className={`pill ${readyToGo||plan.status==="booked"?"pill-g":plan.status==="voting"?"pill-a":"pill-p"}`}>{readyToGo?"✅ Ready to go":plan.status==="booked"?"✓ Booked":plan.status==="voting"?"⏳ Voting":plan.status==="approved"?"✅ Approved":"📋 Planning"}</span>
           <span className="pill" style={{background:"rgba(255,255,255,.15)",color:"white"}}>${plan.budget}/person</span>
         </div>
       </div>
       <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,background:C.s1,flexShrink:0}}>
         {tabs.map(t=>(
-          <button key={t} onClick={()=>setAtab(t)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:`2px solid ${atab===t?C.accentText:"transparent"}`,color:atab===t?C.accentText:C.t2,fontSize:12,fontWeight:600,cursor:"pointer",textTransform:"capitalize"}}>{t}</button>
+          <button key={t} onClick={()=>setAtab(t)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:`2px solid ${atab===t?C.accentText:"transparent"}`,color:atab===t?C.accentText:steps[t]==="locked"?C.t3:C.t2,fontSize:12,fontWeight:600,cursor:"pointer",textTransform:"capitalize"}}>
+            {STEPS.includes(t)
+              ?<>{steps[t]==="done"?<span style={{color:C.green}}>✓ </span>:`${STEPS.indexOf(t)+1} · `}{STEP_LABEL[t]}</>
+              :t}
+          </button>
         ))}
       </div>
       <div style={{flex:1,overflowY:"auto",paddingBottom:20}}>
@@ -6589,7 +6699,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               plan={plan} group={group} soloTrip={soloTrip} votesIn={totalV}
               busy={building||nudging}
               onAction={async(stage)=>{
-                if(stage==="planned"){setAtab("itinerary");await buildItinerary();return;}
+                if(stage==="planned"){setAtab("bookings");await buildItinerary();return;}
                 if(stage==="voted"){
                   if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
                   setNudging(true);
@@ -6756,66 +6866,64 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 )}
               </div>
             )}
-            {/* What is left for a person to do, on the tab they land on.
-                Everything Reach cannot book — a ticket somebody else sells, a
-                table the restaurant takes by phone — was only actionable on
-                the Itinerary tab, several taps away and only if you thought to
-                look. The plan told you a table was wanted and left finding it
-                to you.
-                Each line carries the same ItemActions the itinerary row does,
-                so this is a shorter route to the same buttons rather than a
-                second set that can disagree with them. It disappears when
-                there is nothing outstanding, because a checklist of nothing
-                is its own kind of noise. */}
-            {needsYou.length>0&&(
-              <div style={{padding:"0 20px 14px"}}>
-                <div className="sl" style={{marginBottom:10}}>
-                  {plural(needsYou.length,"thing","things")} still {needsYou.length===1?"needs":"need"} you
-                </div>
-                <div style={{background:C.s2,borderRadius:14,padding:"4px 14px",border:`1px solid ${C.border}`}}>
-                  {needsYou.map((item,i)=>(
-                    <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
-                      <div style={{fontSize:13,color:C.t1,lineHeight:1.4}}>{item.title}</div>
-                      {item.time&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{item.time}</div>}
-                      <ItemActions item={item} markGot={markGot} tight/>
-                    </div>
-                  ))}
-                </div>
-                <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:8}}>
-                  Reach books what it can. These are the ones somebody else sells or takes by phone.
-                </div>
-              </div>
-            )}
-            {plan.itinerary.length>0&&(
-              <div style={{padding:"0 20px 14px"}}>
-                <div className="sl" style={{marginBottom:10}}>Bookings</div>
-                <div style={{background:C.s2,borderRadius:14,padding:14,border:`1px solid ${C.border}`}}>
-                  {/* Against what Reach books, not against every line of the
-                      itinerary. This read "0/39" on a 13-night trip — one for
-                      every slot, including the walks and the mornings at
-                      leisure, none of which can ever be confirmed — while the
-                      button underneath said "7 bookings Reach handles". Two
-                      counts of the same thing that never agreed, and the one
-                      on the progress bar could not reach the end. */}
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                    <span style={{fontSize:13,color:C.t1}}>Confirmed</span>
-                    <span style={{fontSize:13,color:C.green,fontWeight:600}}>
-                      {gotAlready}/{mustGet.length}
-                    </span>
-                  </div>
-                  <div className="pb-t"><div className="pb-f" style={{width:`${(gotAlready/Math.max(mustGet.length,1))*100}%`,background:C.green}}/></div>
-                  {plan.itinerary.length>mustGet.length&&(
-                    <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
-                      The other {plan.itinerary.length-mustGet.length} things on your days are yours to turn up to.
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
             <div style={{padding:"0 20px"}}>
               {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
               {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
               {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
+              <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
+            </div>
+            {(plan.status==="approved"||plan.status==="booked")&&plan.itinerary.length>0
+              ?<SignOff step="overview" cta="Overview looks right →" hint="Where, when, who and the days on Book. Next: the budget."/>
+              :<div style={{padding:"14px 20px 0",fontSize:11.5,color:C.t3,textAlign:"center",lineHeight:1.5}}>
+                {plan.itinerary.length===0?"Once the days are planned you can check this and move on to the budget.":"Lock the plan in above, then check it here."}
+              </div>}
+          </div>
+        )}
+        {atab==="bookings"&&(
+          <div style={{padding:"12px 0"}}>
+            {/* Everything that has to be booked for this trip, in one list,
+                each with where it stands. Reach's lines are ticked when their
+                booking is confirmed; yours when you say so, and you can take
+                that back. Nothing else on this page offers the same buttons. */}
+            {tracker.total>0&&(
+              <div style={{padding:"4px 20px 14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
+                  <div className="sl">To book</div>
+                  <span style={{fontSize:13,fontWeight:600,color:tracker.done===tracker.total?C.green:C.t2}}>
+                    {tracker.done} of {tracker.total} done
+                  </span>
+                </div>
+                <div className="pb-t" style={{marginBottom:10}}><div className="pb-f" style={{width:`${(tracker.done/tracker.total)*100}%`,background:C.green}}/></div>
+                <div style={{background:C.s2,borderRadius:14,padding:"4px 14px",border:`1px solid ${C.border}`}}>
+                  {tracker.items.map((t,i)=>{
+                    const item=t.line;
+                    return(
+                      <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                        <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
+                          <span style={{fontSize:16,lineHeight:1.2,color:t.done?C.green:C.t3}}>{t.done?"✓":"○"}</span>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,color:C.t1,lineHeight:1.4}}>{item.title}</div>
+                            <div style={{fontSize:11,color:C.t3,marginTop:2}}>
+                              {[item.time,
+                                t.who==="reach"?(t.done?"Booked by Reach":"Reach books this — Book everything below"):(t.done?(item.type==="restaurant"?"Table reserved":"Sorted"):"You book this"),
+                                item.cost_cents>0?`about $${Math.round(item.cost_cents/100)} a person, estimate`:null].filter(Boolean).join(" · ")}
+                            </div>
+                            {t.who==="you"&&!t.done&&<ItemActions item={item} markGot={markGot} tight/>}
+                            {t.who==="you"&&t.done&&(
+                              <button onClick={()=>unmarkGot(item)}
+                                style={{background:"none",border:"none",padding:"4px 0 0",color:C.t3,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>
+                                Not booked after all
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <div style={{padding:"0 20px"}}>
               {/* A trip that has started cannot be booked ahead of itself.
                   This offered "Book everything" on a trip five days into its
                   own dates; pressing it reached a hotel provider and came
@@ -6827,32 +6935,29 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,
                   color:C.t2,lineHeight:1.5}}>
                   {timing==="on_now"
-                    ?"This trip is happening now, so there is nothing left to book ahead. Anything still open is on the Itinerary tab."
+                    ?"This trip is happening now, so there is nothing left to book ahead. Anything still open is in the list below."
                     :"This trip has finished."}
                 </div>
               )}
               {plan.status==="approved"&&timing!=="over"&&(
                 <>
-                  <button className="bp" style={{marginBottom:6,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>
+                  <button className="bp" style={{marginBottom:6,...(steps.budget==="done"?{background:C.green}:{background:C.s2,color:C.t3,border:`1px solid ${C.border}`})}}
+                    disabled={steps.budget!=="done"} onClick={()=>push("checkout",{planId,groupId})}>
                     {timing==="on_now"?"Open the booking list →":`Book everything${reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?" est.":""} each`:""} →`}
                   </button>
                   {/* The biggest commitment in the app used to be a button
                       with no number on it. People do not press those. Say
                       what it covers and that nothing moves until they say so. */}
                   <div style={{fontSize:11.5,color:C.t3,textAlign:"center",marginBottom:10,lineHeight:1.5}}>
-                    {reachBookable>0
-                      ?`${plural(reachBookable,"booking","bookings")} Reach handles. You'll see every one before anything is charged.`
-                      :"You'll see everything before anything is charged."}
+                    {steps.budget!=="done"
+                      ?"Check the overview and the budget first."
+                      :reachBookable>0
+                        ?`${plural(reachBookable,"booking","bookings")} Reach handles. You'll see every one before anything is charged.`
+                        :"You'll see everything before anything is charged."}
                   </div>
                 </>
               )}
-              {plan.status==="booked"&&<button className="bp" style={{marginBottom:10}} onClick={()=>setAtab("itinerary")}>View Itinerary</button>}
-              <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
             </div>
-          </div>
-        )}
-        {atab==="itinerary"&&(
-          <div style={{padding:"12px 0"}}>
             {plan.itinerary.length===0?(
               <div style={{padding:"40px 20px",textAlign:"center"}}>
                 <div style={{fontSize:40,marginBottom:12}}>{loadFailed?"⚠️":"📋"}</div>
@@ -7028,7 +7133,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           of them; it renders this now, so the two cannot
                           drift apart the way hand-written field lists in this
                           file have three times. */}
-                      <ItemActions item={item} markGot={markGot}/>
+                      {trackedOf(item)
+                        ?<div style={{fontSize:11.5,marginTop:6,fontWeight:600,color:trackedOf(item).done?C.green:C.accentText}}>
+                          {trackedOf(item).done?"✓ Done":"In your list to book above ↑"}
+                        </div>
+                        :<ItemActions item={item} markGot={markGot}/>}
                       {/* A real payment note runs to a sentence — "cards at the
                           restaurant, cash only for drinks and cover" — so it is
                           a line, not a pill. Cash-only gets the warm colour
@@ -7082,6 +7191,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
               </>
             )}
+            {tracker.total>0||plan.itinerary.length>0
+              ?<SignOff step="bookings" cta="Everything's booked — ready to go ✓"
+                hint={tracker.total?"Tick off each one above as it's done.":"Nothing on this trip needs booking."}/>
+              :null}
           </div>
         )}
         {atab==="vote"&&plan.options.length>0&&(
@@ -7397,6 +7510,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </>
               );
             })()}
+            {plan.itinerary.length>0&&(
+              <div style={{margin:"0 -20px"}}>
+                <SignOff step="budget" cta="Budget looks right →" hint="Estimates until Reach quotes the real prices at checkout. Next: book it."/>
+              </div>
+            )}
           </div>
         )}
       </div>
