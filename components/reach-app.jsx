@@ -6845,7 +6845,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                               ?<span className="pill pill-a">You book it — we'll show you how</span>
                               :<span className="pill pill-p">Reach will book this</span>
                           )}
-                          {item.booking_mode==="ahead"&&(
+                          {/* Only where there is something to reserve with.
+                              Six lines in the table carry "ahead" with no
+                              venue, no website and no number — among them
+                              "Flight home." and "Head to the airport or next
+                              stop" — and each one printed "Reserve ahead"
+                              over nothing to press. A plan that tells you to
+                              book something and cannot say what or where is
+                              the same fault as a table it wanted and gave
+                              you no way to get. */}
+                          {item.booking_mode==="ahead"&&(item.venue_name||item.venue_website||item.venue_phone)&&(
                             <span className="pill pill-a">Reserve ahead</span>
                           )}
                           </>}
