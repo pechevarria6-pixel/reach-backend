@@ -13,12 +13,12 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 
 | row | state | evidence |
 |---|---|---|
-| suite green (all e2e + unit) | 🟡 | **unit: 531 pass, 0 fail** under `npm run verify`. The 38 e2e specs in `tests/reach.spec.ts` are not part of that gate and were last run by hand — see *What is not proven* |
+| suite green (all e2e + unit) | ✅ | **unit 531 pass / 0 fail** under `npm run verify`, and **e2e 81 pass / 0 fail** in 4.1 min — `npx playwright test`, run against production today across chromium and iPhone 14. The e2e specs still sit outside the build gate on purpose: they need a live deployment and a session, so a build cannot be the thing that runs them |
 | build gate proven | ✅ | `build: npm run verify && next build`. Proven once by planting a failing test: `exit=1` and `next build` never ran. 🔒 depends on the owner confirming Vercel's Build Command is `npm run build` |
 | contract tests ≥ 4 surfaces | ✅ | `lib/contracts/itinerary-item.ts` (API · mapper · client · PUT) and `lib/contracts/booking.ts` (route · duplicate path · checkout screen), each with a round-trip test proven by reverting a field |
 | money path e2e in test mode | 🟡 | Stripe confirmed **test mode** by the `pk_test_` prefix on `/api/config/stripe`. The path is built and read end to end in code; it has not been walked with a test card this session |
 | grounding tests green | ✅ | `tests/unit/grounding.test.ts` — an empty town names nothing, an invented venue is removed, a verified one is left alone, and the instruction is checked for not being softened into a suggestion |
-| zero console errors on all screens | ❌ | not swept this session |
+| zero console errors on all screens | 🟡 | asserted and green for the home screen (`7. Performance › No console errors on home page load`, both viewports). Not swept across every screen |
 | copy sweep clean | ✅ | `check:vocabulary`, `check:promises`, `check:spelling` all green; `BROKEN_PROMISES` bans the five false-promise strings that shipped on 09-21 |
 | nav graph complete | ✅ | `NAV-GRAPH.md` |
 | Sentry live | 🔒 | `lib/report.ts` posts to the ingest endpoint and no-ops without a DSN. Deliberately not `@sentry/nextjs`: that package wraps the build, and the build broke twice on 09-21. Inert until the owner sets `SENTRY_DSN` |
@@ -57,17 +57,24 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 ## What is not proven, stated plainly
 
 The finish-line directive asks for a Phase 5 mini-marathon: Flow A twice on a
-fresh account, B–E once, resilience. That has not been run this session, and
-the two reasons are worth recording because both are 🔒:
+fresh account, B–E once, resilience. The automated half of that ran today and
+passed 81/81. The hand-walked half did not, for one reason, and it is 🔒:
 
-- `TEST_EMAIL` is the owner's real account, so an end-to-end run acts on real
-  groups and real plans rather than a fixture. Every QA artefact made today
-  carried a `QA-` prefix and was deleted through the API afterwards.
-- The e2e suite is not inside `npm run verify`, so "suite green" above means
-  the 531 unit tests and eleven guard scripts. A green build does not today
-  mean the 38 e2e specs passed.
+- `TEST_EMAIL` is the owner's real account, so a walked run acts on real groups
+  and real plans rather than a fixture. Every QA artefact made today carried a
+  `QA-` prefix and was deleted through the API afterwards, and the four event
+  rows they produced were swept.
 
-Both are one owner action away — a `+qa` account — and neither is a code gap.
+One standing caveat, which is not a gap but is easy to misread:
+
+- The e2e suite is not inside `npm run verify` and cannot be: it needs a live
+  deployment and a signed-in session, so a build is the wrong thing to run it
+  from. It was run by hand today and passed 81/81. A green build still does
+  not by itself mean the e2e specs passed — run `npx playwright test` before
+  a release and read the number.
+
+The walked run is a single owner action away — a `+qa` account — and it is not
+a code gap.
 
 ## The thing this campaign was actually about
 
