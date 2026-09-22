@@ -28,6 +28,52 @@ Concretely:
 - A field that cannot be answered honestly is nullable. See `payment` in
   `lib/trip-schema.ts` for the pattern and the reasoning.
 
+## Common-sense check (mandatory on all work)
+
+Every screen, itinerary, recommendation and piece of copy has to pass one
+question before it ships: **does this make sense for this specific person,
+this trip, and this context?** The rule above is the principle; this is the
+check that applies it, and it applies to generated content — itineraries,
+recommendations, notifications — exactly as much as to code.
+
+- **Never reference things that don't exist.** No "check into the hotel" when
+  no hotel was booked. An itinerary step may only reference a booking that is
+  actually in that trip's data.
+- **Never claim a capability that isn't real.** No "we're on it", no "booked",
+  without a working booking link or a completed reservation behind it. When
+  Reach can't book something, say so and hand the person somewhere that can.
+- **Never assume or invent a fact about a venue.** Reservation options, hours
+  and links come from the venue's own data. Walk-in only means walk-in only.
+  A missing website link is a bug, not a shrug.
+- **Match the language to the context.** Solo trip gets singular copy
+  ("You're all set"), never group copy ("Everyone's in"). A night out is a
+  single-event plan, never a full-day itinerary unless the person chose "Make
+  a day of it".
+- **No redundancy.** Never show the same information or the same action twice
+  on one screen — Pay and Book It as separate tabs, Jump Back In alongside the
+  trips tab.
+
+Ask it out loud: *would a real person reading this be confused or misled?* If
+yes, fix the logic underneath, not the sentence on top. Rewording a screen
+that is wrong about the world just makes the wrongness harder to find.
+
+Each of these is here because it has already happened:
+
+| rule | what it cost |
+|---|---|
+| nothing that doesn't exist | a seven-night trip came back as one day and $34, and saved without complaint |
+| no invented capability | "Reach will book this" over a restaurant Reach cannot book — removed once, reintroduced the same day by a fix to something else |
+| no invented venue facts | every food query required a cuisine tag, so Washington returned nothing and the app phrased our gap as a fact about the city |
+| copy matches context | a solo plan put everything in the approval queue and told the one person on it that it was waiting on the others |
+| no redundancy | the owner's own list — Pay + Book It, Jump Back In + trips |
+
+Some of this is enforced and some of it is not, and it is worth knowing which:
+`check:promises` and `check:vocabulary` catch the false-capability strings,
+`tests/unit/grounding.test.ts` holds the venue rule, and the two contracts in
+`lib/contracts/` stop a fact being dropped between the row and the screen.
+**Nothing enforces the solo/group wording or the redundancy rule** — those are
+read by a person, so they are the two to check by opening the screen.
+
 ## How to find bugs here
 
 **Open the screen.** Every serious defect on 2026-09-21 was found by
