@@ -459,7 +459,7 @@ test.describe('14. Rendered facts', () => {
     await page.waitForLoadState('networkidle');
     const cards = page.locator('[class*="card"]').filter({ hasText: titled ?? /·/ });
     await cards.first().click({ timeout: 15000 }).catch(() => {});
-    // The itinerary is part of the overview now; there is no tab to open.
+    await page.getByText('Itinerary', { exact: true }).first().click({ timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(2500);
   }
 

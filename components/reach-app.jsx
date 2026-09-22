@@ -6104,9 +6104,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const plan=group?.plans.find(p=>p.id===planId);
   // Opens where the caller asked. "See my itinerary" after a payment means
   // the itinerary, not the overview.
-  // "itinerary" was a tab; it is part of the overview now. Callers that
-  // still ask for it get the page it lives on.
-  const [atab,setAtab]=useState(initialTab&&initialTab!=="itinerary"?initialTab:"overview");
+  const [atab,setAtab]=useState(initialTab||"overview");
   const [myVote,setMyVote]=useState(null);
   const [loading,setLoading]=useState(false);
 
@@ -6563,7 +6561,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,status:previous}:p)}));
     return false;
   };
-  const tabs=["overview",(!soloTrip&&plan.options.length>0)?"vote":null,"budget"].filter(Boolean);
+  const tabs=["overview","itinerary",(!soloTrip&&plan.options.length>0)?"vote":null,"budget"].filter(Boolean);
 
   return(
     <div className="sc" style={{paddingBottom:0}}>
@@ -6591,7 +6589,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               plan={plan} group={group} soloTrip={soloTrip} votesIn={totalV}
               busy={building||nudging}
               onAction={async(stage)=>{
-                if(stage==="planned"){await buildItinerary();return;}
+                if(stage==="planned"){setAtab("itinerary");await buildItinerary();return;}
                 if(stage==="voted"){
                   if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
                   setNudging(true);
@@ -6779,9 +6777,6 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
                       <div style={{fontSize:13,color:C.t1,lineHeight:1.4}}>{item.title}</div>
                       {item.time&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{item.time}</div>}
-                      {/* Per head, as the plan estimated it. Nobody has read
-                          this place's prices for us, so it says so. */}
-                      {item.cost_cents>0&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>About ${Math.round(item.cost_cents/100)} a person · estimate</div>}
                       <ItemActions item={item} markGot={markGot} tight/>
                     </div>
                   ))}
@@ -6817,11 +6812,47 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
               </div>
             )}
-            {/* The itinerary lives here now, not on a tab of its own. Everything
-                to reserve, call, buy or mark done is on the same page as the
-                button that books the rest, so the page you read the plan on is
-                the page you finish it on — one screen, not three. */}
-            <div style={{padding:"4px 0 8px"}}>
+            <div style={{padding:"0 20px"}}>
+              {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
+              {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
+              {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
+              {/* A trip that has started cannot be booked ahead of itself.
+                  This offered "Book everything" on a trip five days into its
+                  own dates; pressing it reached a hotel provider and came
+                  back "No rates available", which is true and is a strange
+                  way to find out. The dates are on the plan and nothing in
+                  the booking path had ever looked at them. */}
+              {plan.status==="approved"&&timing&&timing!=="upcoming"&&(
+                <div style={{marginBottom:10,padding:"12px 14px",background:C.s2,
+                  border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,
+                  color:C.t2,lineHeight:1.5}}>
+                  {timing==="on_now"
+                    ?"This trip is happening now, so there is nothing left to book ahead. Anything still open is on the Itinerary tab."
+                    :"This trip has finished."}
+                </div>
+              )}
+              {plan.status==="approved"&&timing!=="over"&&(
+                <>
+                  <button className="bp" style={{marginBottom:6,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>
+                    {timing==="on_now"?"Open the booking list →":`Book everything${reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?" est.":""} each`:""} →`}
+                  </button>
+                  {/* The biggest commitment in the app used to be a button
+                      with no number on it. People do not press those. Say
+                      what it covers and that nothing moves until they say so. */}
+                  <div style={{fontSize:11.5,color:C.t3,textAlign:"center",marginBottom:10,lineHeight:1.5}}>
+                    {reachBookable>0
+                      ?`${plural(reachBookable,"booking","bookings")} Reach handles. You'll see every one before anything is charged.`
+                      :"You'll see everything before anything is charged."}
+                  </div>
+                </>
+              )}
+              {plan.status==="booked"&&<button className="bp" style={{marginBottom:10}} onClick={()=>setAtab("itinerary")}>View Itinerary</button>}
+              <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
+            </div>
+          </div>
+        )}
+        {atab==="itinerary"&&(
+          <div style={{padding:"12px 0"}}>
             {plan.itinerary.length===0?(
               <div style={{padding:"40px 20px",textAlign:"center"}}>
                 <div style={{fontSize:40,marginBottom:12}}>{loadFailed?"⚠️":"📋"}</div>
@@ -6997,12 +7028,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           of them; it renders this now, so the two cannot
                           drift apart the way hand-written field lists in this
                           file have three times. */}
-                      {/* The buttons for anything still to book live once, in the
-                          "still needs you" list at the top of this page. Both on
-                          one screen was the same Reserve and the same Call twice. */}
-                      {needsYou.includes(item)
-                        ?<div style={{fontSize:11.5,color:C.accentText,marginTop:6,fontWeight:600}}>To book — in the list at the top ↑</div>
-                        :<ItemActions item={item} markGot={markGot}/>}
+                      <ItemActions item={item} markGot={markGot}/>
                       {/* A real payment note runs to a sentence — "cards at the
                           restaurant, cash only for drinks and cover" — so it is
                           a line, not a pill. Cash-only gets the warm colour
@@ -7052,46 +7078,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     }
                     setEmailing(false);
                   }}>{emailing?"Sending…":(group.memberIds||[]).length>1?"📬 Email this to everyone":"📬 Email this to me"}</button>
+                  <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>+ Add or edit items</button>
                 </div>
               </>
             )}
-            </div>
-            <div style={{padding:"0 20px"}}>
-              {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
-              {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
-              {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
-              {/* A trip that has started cannot be booked ahead of itself.
-                  This offered "Book everything" on a trip five days into its
-                  own dates; pressing it reached a hotel provider and came
-                  back "No rates available", which is true and is a strange
-                  way to find out. The dates are on the plan and nothing in
-                  the booking path had ever looked at them. */}
-              {plan.status==="approved"&&timing&&timing!=="upcoming"&&(
-                <div style={{marginBottom:10,padding:"12px 14px",background:C.s2,
-                  border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,
-                  color:C.t2,lineHeight:1.5}}>
-                  {timing==="on_now"
-                    ?"This trip is happening now, so there is nothing left to book ahead. Anything still open is in your days below."
-                    :"This trip has finished."}
-                </div>
-              )}
-              {plan.status==="approved"&&timing!=="over"&&(
-                <>
-                  <button className="bp" style={{marginBottom:6,background:C.green}} onClick={()=>push("checkout",{planId,groupId})}>
-                    {timing==="on_now"?"Open the booking list →":`Book everything${reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?" est.":""} each`:""} →`}
-                  </button>
-                  {/* The biggest commitment in the app used to be a button
-                      with no number on it. People do not press those. Say
-                      what it covers and that nothing moves until they say so. */}
-                  <div style={{fontSize:11.5,color:C.t3,textAlign:"center",marginBottom:10,lineHeight:1.5}}>
-                    {reachBookable>0
-                      ?`${plural(reachBookable,"booking","bookings")} Reach handles. You'll see every one before anything is charged.`
-                      :"You'll see everything before anything is charged."}
-                  </div>
-                </>
-              )}
-              <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
-            </div>
           </div>
         )}
         {atab==="vote"&&plan.options.length>0&&(
@@ -7274,7 +7264,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               if(!fixed.length&&!variable.length&&!unpriced.length)return(
                 <div style={{fontSize:13,color:C.t2,lineHeight:1.6,padding:"4px 0 8px"}}>
                   Costs appear here once this trip has a day-by-day plan. Build it on the
-                  Overview tab and every event gets priced.
+                  Itinerary tab and every event gets priced.
                 </div>
               );
 
