@@ -273,8 +273,13 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     );
   }
 
+  // With the amount on it. Without one this event says somebody reached the
+  // pay screen and nothing else, so the gap between what people set out to
+  // pay and what they actually paid — the only drop-off on this path that
+  // costs money — could not be worked out from the table at all.
   void track(ctx.db, 'funding_started', {
     userId: ctx.user.id, groupId: String(ctx.plan.group_id), planId: params.planId,
+    props: { amount_cents: amountCents },
   });
 
   // One row per intent.
