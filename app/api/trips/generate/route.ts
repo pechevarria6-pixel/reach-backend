@@ -16,6 +16,7 @@ import { within } from '@/lib/deadline';
 import { locate } from '@/lib/discovery/geocode';
 import { normalise } from '@/lib/discovery/verify';
 import { withoutStayClaim } from '@/lib/stay-claims';
+import { isFiller, fillerClaim } from '@/lib/filler';
 import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
@@ -483,6 +484,12 @@ a day. Nothing here happens before late afternoon:
 - "morning" is where they meet first — a bar for a drink, a walk, or the thing
   before the thing. If the evening genuinely starts at dinner, say so there.
 - "afternoon" is the main event: the game, the gig, the show, the booking.
+  Name it. Never write about the slot — "this is the slot for the thing you
+  already have in mind", "leave this window open" — that is the form talking
+  about itself on somebody's evening. If you do not know what the main event
+  is, make it a real thing they could do: the dinner, the venue, the bar with
+  the band on. An evening of two real things beats three with a note in the
+  middle.
 - "evening" is what follows: dinner, dessert, a last drink.
 
 Then "daytime": two things they could do earlier that same day if they decide
@@ -799,6 +806,20 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           // now; this is the half that does not depend on the prompt being
           // obeyed. A whole Moab plan shipped opening with "check into the
           // hotel" on a trip with no hotel item and no hotel booking.
+          // A line that describes the slot instead of filling it. Two of
+          // these reached real plans — "This is the slot for the thing Peter
+          // already has in mind" — sitting where the gig should be. Unlike a
+          // stay claim there is nothing in it to rescue: it is about the
+          // form all the way through, and writing the evening ourselves is
+          // the thing we do not do. The slot goes.
+          if (isFiller(slot.plan)) {
+            console.error('[trips itinerary] dropped a slot that described itself', {
+              destination, phrase: fillerClaim(slot.plan), slot: String(slot.plan).slice(0, 80),
+            });
+            invented.add(String(fillerClaim(slot.plan)));
+            slot.plan = '';
+          }
+
           const stay = withoutStayClaim(String(slot.plan ?? ''));
           if (stay.removed) {
             console.error('[trips itinerary] removed a stay nobody booked', {
