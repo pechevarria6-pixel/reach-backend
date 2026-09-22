@@ -250,26 +250,35 @@ test.describe('7. Performance', () => {
     expect(elapsed).toBeLessThan(5000);
   });
 
-  test('No console errors on home page load', async ({ page }) => {
-    const errors: string[] = [];
-    page.on('response', r => { if (r.status() === 404) errors.push('404: ' + r.url()); });
-    page.on('console', msg => {
-      if (msg.type() === 'error') errors.push(msg.text());
+  // Noise the browser makes that is not this app failing. Kept small and
+  // named: every entry here is a screen fault somebody has chosen not to see,
+  // so the list is the part of this test worth reviewing.
+  const NOT_OURS = [
+    'icon-192', 'favicon', 'manifest', 'development keys',
+    'afterSignInUrl', 'themeColor', 'viewport',
+  ];
+
+  /** Every addressable screen. The rest of the app is push() inside /home. */
+  const SCREENS = ['/home', '/onboarding', '/sign-in', '/sign-up', '/terms', '/privacy'];
+
+  for (const path of SCREENS) {
+    test(`No console errors on ${path}`, async ({ page }) => {
+      // This used to be one test called "No console errors on home page load"
+      // which loaded /sign-in — so home, the screen the whole app lives on,
+      // was never once checked. The name said one thing and the code did
+      // another, which is the same shape as every other bug found this week.
+      const errors: string[] = [];
+      page.on('response', r => { if (r.status() === 404) errors.push('404: ' + r.url()); });
+      page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+      page.on('pageerror', e => errors.push('uncaught: ' + e.message));
+
+      await page.goto(`${BASE_URL}${path}`);
+      await page.waitForLoadState('networkidle');
+
+      const critical = errors.filter(e => !NOT_OURS.some(ok => e.includes(ok)));
+      expect(critical, `${path} logged errors a person would have seen`).toEqual([]);
     });
-    await page.goto(`${BASE_URL}/sign-in`);
-    await page.waitForLoadState('networkidle');
-    // Filter out known non-critical errors
-    const critical = errors.filter(e =>
-      !e.includes('icon-192') &&
-      !e.includes('favicon') &&
-      !e.includes('manifest') &&
-      !e.includes('development keys') &&
-      !e.includes('afterSignInUrl') &&
-      !e.includes('themeColor') &&
-      !e.includes('viewport')
-    );
-    expect(critical).toEqual([]);
-  });
+  }
 });
 
 test.describe('8. Mobile viewport', () => {
