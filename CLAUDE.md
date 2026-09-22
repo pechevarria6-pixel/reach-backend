@@ -213,10 +213,12 @@ honest itinerary names none — fix it by sweeping, not by loosening the rule.
 
 ## Still open
 
-- `sql/finish-idempotency-2026-09-21.sql` — two unique indexes, **no longer
-  blocked**: the duplicate Duffel orders were orphaned test orders and were
-  deleted on 2026-09-22 (f89a3eb). Zero duplicates remain; the owner runs
-  section 2 in the SQL editor.
+- `sql/finish-idempotency-2026-09-21.sql` — the duplicate rows are gone, so
+  the indexes can build. But the reason they were deleted (f89a3eb, "Duffel
+  says the orders do not exist") was a bad check: cancel sent the airline
+  booking reference as Duffel's order id (fixed in 53fc140). SFYVFK was on
+  Duffel's test carrier; **MHW2Y3 still needs checking in the Duffel
+  dashboard.**
 - Harvest coverage is thin: ~8 pages in 20 give anything up, and sites that
   build themselves with scripts are recorded `needs_render` rather than
   guessed at.
