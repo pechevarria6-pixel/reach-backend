@@ -97,8 +97,17 @@ function visibleStrings(source) {
     if (!LOOKS_LIKE_CODE.test(m[1])) found.push(m[1]);
   }
   // The attributes that render as words.
-  for (const m of source.matchAll(/(?:aria-label|placeholder|title|alt)=["']([^"']{3,})["']/g)) {
-    if (!LOOKS_LIKE_CODE.test(m[1])) found.push(m[1]);
+  // Excludes only the quote that opened the attribute, not both. Excluding
+  // both made every label with an apostrophe invisible — "Don't show this
+  // again" cannot be spell-checked by a pattern that stops at the
+  // apostrophe. check:vocabulary had the same hole and a banned phrase lived
+  // in it for as long as the ban existed.
+  for (const m of source.matchAll(/(?:aria-label|placeholder|title|alt)=(["'])((?:(?!\1).){3,})\1/g)) {
+    // m[1] is the quote, m[2] the label. Capturing the quote shifted these,
+    // and reading m[1] pushed a single `"` into the spell checker, which
+    // passes every dictionary there is. A guard that goes quiet is the
+    // failure mode; this one nearly did it to itself while being widened.
+    if (!LOOKS_LIKE_CODE.test(m[2])) found.push(m[2]);
   }
   return found;
 }
