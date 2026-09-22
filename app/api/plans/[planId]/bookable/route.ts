@@ -142,6 +142,9 @@ function asRequest(
         origin: flight.from,
         destination: flight.to,
         departDate: plan.start_date,
+        // Nobody is named at quote time, and a quote sized off an empty list
+        // priced every group's flights for one seat.
+        seats: partySize,
         // A trip with an end date is a return. Booking two one-ways when
         // somebody meant a return is both dearer and harder to change.
         ...(plan.end_date && plan.end_date !== plan.start_date

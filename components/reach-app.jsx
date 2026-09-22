@@ -6011,6 +6011,140 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
 // stopping one layer short. Here it stopped one *tab* short. Anything that
 // renders a bookable line renders this, so a second copy cannot drift from
 // the first.
+// ─── What Reach picked, and what else there is ────────────────────────────
+// Reach chooses a hotel and a flight so nobody has to; nobody has to keep
+// them either. This shows the choice properly — the hotel by name with its
+// photo, the flights with their times — and, while it is still a quote,
+// the other options for the same dates with what each would change.
+// Departure times come from the airline as the airport's local clock with no
+// zone, so they are read as written rather than converted.
+const clock=iso=>{
+  const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso||""));
+  if(!m)return "";
+  const d=new Date(Date.UTC(+m[1],+m[2]-1,+m[3]));
+  const day=d.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",timeZone:"UTC"});
+  const h=+m[4],ap=h<12?"AM":"PM";
+  return `${day}, ${((h+11)%12)+1}:${m[5]} ${ap}`;
+};
+function LegLine({leg,label}){
+  if(!leg)return null;
+  return(
+    <div style={{fontSize:12,color:C.t2,lineHeight:1.5}}>
+      <b style={{color:C.t1,fontWeight:600}}>{label}</b> {leg.from} {clock(leg.departs)} → {leg.to} {clock(leg.arrives)}
+      {" · "}{leg.stops===0?"nonstop":`${leg.stops} stop${leg.stops>1?"s":""}`}{leg.flights?` · ${leg.flights}`:""}
+    </div>
+  );
+}
+function ChoicePanel({booking,vertical,toast,onChanged}){
+  const [state,setState]=useState({loading:false,options:null,why:null});
+  const [choosing,setChoosing]=useState(null);
+  const raw=booking.response_payload||{};
+  const hotel=raw.hotel, flight=raw.option;
+  const usd=c=>"$"+((c||0)/100).toLocaleString(undefined,{maximumFractionDigits:0});
+  const changeable=booking.status==="awaiting_approval"||booking.status==="quoted";
+  const load=async()=>{
+    setState({loading:true,options:null,why:null});
+    try{
+      const r=await fetchWithin(`/api/bookings/${booking.id}/options`,{},30000,"finding other options");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't look just now");
+      setState({loading:false,options:d.options||[],why:d.why||null});
+    }catch(e){
+      console.error("[choices] could not load options",{booking:booking.id},e);
+      setState({loading:false,options:[],why:e.message});
+    }
+  };
+  const choose=async(key)=>{
+    if(choosing)return;
+    setChoosing(key);
+    try{
+      const r=await fetchWithin(`/api/bookings/${booking.id}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key})},30000,"switching");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't switch to that one");
+      toast(vertical==="hotel"?"Hotel changed":"Flights changed");
+      setState({loading:false,options:null,why:null});
+      await onChanged?.();
+    }catch(e){
+      console.error("[choices] could not switch",{booking:booking.id,key},e);
+      toast(e.message);
+    }
+    setChoosing(null);
+  };
+  return(
+    <div style={{marginTop:10,padding:12,borderRadius:12,background:C.s1,border:`1px solid ${C.border}`}}>
+      {vertical==="hotel"&&hotel?(
+        <div style={{display:"flex",gap:10}}>
+          {hotel.photo&&<img src={hotel.photo} alt="" style={{width:72,height:72,borderRadius:10,objectFit:"cover",flexShrink:0}}/>}
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.t1}}>{hotel.name}{hotel.stars?` · ${hotel.stars}★`:""}</div>
+            {hotel.address&&<div style={{fontSize:11.5,color:C.t3,marginTop:2}}>{hotel.address}</div>}
+            <div style={{fontSize:12,color:C.t2,marginTop:4}}>{[raw.name&&String(raw.name).toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()),raw.boardName].filter(Boolean).join(" · ")}</div>
+          </div>
+        </div>
+      ):vertical==="flight"&&flight?(
+        <div>
+          <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:4}}>{flight.airline}</div>
+          <LegLine leg={flight.out} label="Out"/>
+          <LegLine leg={flight.back} label="Back"/>
+          {Array.isArray(raw.conditions)&&raw.conditions.length>0&&(
+            <div style={{fontSize:11.5,color:C.t3,marginTop:4}}>{raw.conditions.join(" · ")}</div>
+          )}
+        </div>
+      ):(
+        <div style={{fontSize:12,color:C.t2}}>{booking.detail}</div>
+      )}
+      <div style={{fontSize:12.5,color:C.t1,fontWeight:600,marginTop:8}}>
+        {booking.price_cents>0?`${usd(booking.price_cents)} ${booking.status==="confirmed"?"paid":"total, as quoted"}`:null}
+      </div>
+      {!changeable?(
+        <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.5}}>
+          {booking.status==="confirmed"?"Booked. To change it, it has to be cancelled first.":"This one can't be changed right now."}
+        </div>
+      ):state.options===null?(
+        <button className="bs" style={{marginTop:10}} disabled={state.loading} onClick={load}>
+          {state.loading?"Looking…":vertical==="hotel"?"See other hotels":"See other flights"}
+        </button>
+      ):(
+        <div style={{marginTop:10}}>
+          {state.options.length===0&&<div style={{fontSize:12,color:C.t2}}>{state.why||"Nothing else for those dates."}</div>}
+          {state.options.map(o=>{
+            const diff=(o.priceCents||0)-(booking.price_cents||0);
+            const isCurrent=vertical==="hotel"?o.key===raw.hotelId:o.key===raw.offerKey;
+            return(
+              <div key={o.key} style={{display:"flex",gap:10,alignItems:"center",padding:"9px 0",borderTop:`1px solid ${C.border}`}}>
+                {vertical==="hotel"&&o.photo&&<img src={o.photo} alt="" style={{width:52,height:52,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
+                <div style={{flex:1,minWidth:0}}>
+                  {vertical==="hotel"?(
+                    <>
+                      <div style={{fontSize:12.5,color:C.t1,fontWeight:600}}>{o.name}{o.stars?` · ${o.stars}★`:""}</div>
+                      <div style={{fontSize:11,color:C.t3}}>{[o.room,o.board].filter(Boolean).join(" · ")}</div>
+                    </>
+                  ):(
+                    <>
+                      <div style={{fontSize:12.5,color:C.t1,fontWeight:600}}>{o.airline}</div>
+                      <LegLine leg={o.out} label="Out"/>
+                      <LegLine leg={o.back} label="Back"/>
+                    </>
+                  )}
+                  <div style={{fontSize:11.5,color:C.t2,marginTop:2}}>
+                    {usd(o.priceCents)}{isCurrent?" · your current choice":diff===0?"":` · ${diff>0?"+":"−"}${usd(Math.abs(diff))}`}
+                  </div>
+                </div>
+                {!isCurrent&&(
+                  <button className="bsm" disabled={!!choosing} onClick={()=>choose(o.key)}>
+                    {choosing===o.key?"…":"Choose"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          <div style={{fontSize:10.5,color:C.t3,marginTop:6}}>Prices checked again when you choose. Nothing is booked until you pay and press Book.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ItemActions({item,markGot,tight}){
   if(!item)return null;
   const ticketed=item.type==="event"&&item.venue_website;
@@ -6424,6 +6558,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [review,setReview]=useState({available:false,steps:{}});
   const [planBookings,setPlanBookings]=useState([]);
   const [signing,setSigning]=useState(null);
+  const [openChoice,setOpenChoice]=useState(null);
+  // After a hotel or flight is swapped: the rows and the total both moved.
+  const refreshBookings=async()=>{
+    try{
+      const [b,f]=await Promise.all([fetch(`/api/bookings?planId=${planId}`),fetch(`/api/plans/${planId}/funding`)]);
+      if(b.ok){const d=await b.json();setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));}
+      if(f.ok)setFunding(await f.json());
+    }catch(e){console.error("[planDetail] could not refresh bookings",e);}
+  };
   useEffect(()=>{
     if(!planId||isTempId(planId))return;
     let live=true;
@@ -6908,11 +7051,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                                 line itself only ever says "7 nights in Puerto Vallarta". */}
                             {t.who==="reach"&&(()=>{
                               const b=planBookings.find(b=>b.itinerary_item_id===item.id&&b.status!=="failed"&&b.status!=="cancelled");
-                              return b&&b.detail?(
-                                <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.4}}>
-                                  {b.detail}{b.price_cents>0?` · ${usd(b.price_cents)}${b.status==="confirmed"?"":" quoted"}`:""}
-                                </div>
-                              ):null;
+                              if(!b||!b.detail)return null;
+                              const canSee=b.vertical==="hotel"||b.vertical==="flight";
+                              return(
+                                <>
+                                  <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.4}}>
+                                    {b.detail}{b.price_cents>0?` · ${usd(b.price_cents)}${b.status==="confirmed"?"":" quoted"}`:""}
+                                  </div>
+                                  {canSee&&(
+                                    <button onClick={()=>setOpenChoice(o=>o===b.id?null:b.id)}
+                                      style={{background:"none",border:"none",padding:"5px 0 0",color:C.accentText,fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                                      {openChoice===b.id?"Hide":b.status==="confirmed"?"See details":b.vertical==="hotel"?"See the hotel · change it":"See the flights · change them"}
+                                    </button>
+                                  )}
+                                  {openChoice===b.id&&<ChoicePanel booking={b} vertical={b.vertical} toast={toast} onChanged={refreshBookings}/>}
+                                </>
+                              );
                             })()}
                             <div style={{fontSize:11,color:C.t3,marginTop:2}}>
                               {[item.time,

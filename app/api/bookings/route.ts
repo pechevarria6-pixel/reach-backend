@@ -4,31 +4,17 @@
 // to Supabase `bookings`, notifies nothing (frontend polls plan status).
 // GET /api/bookings?planId=… — list bookings for a plan.
 import { NextRequest, NextResponse } from 'next/server';
+import { PROVIDERS } from '@/lib/booking/registry';
 import { report } from '@/lib/report';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness, withoutTravelerDetails } from '@/lib/essentials-server';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
 import { findDuplicate, identityOf as findKey } from '@/lib/booking/duplicate';
 import { bookingFacts } from '@/lib/contracts/booking';
-import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
-import { kiwiFlights, viatorActivities, ticketmasterEvents, tableReservations } from '@/lib/booking/providers/rest';
-import { duffelFlights } from '@/lib/booking/providers/flights.duffel';
 import { track } from '@/lib/track';
 
-const PROVIDERS: Record<Vertical, BookingProvider> = {
-  hotel: liteApiHotels,
-  // Duffel, written against a real offer request. Kiwi stays in the file it
-  // came from: it is dormant (no TEQUILA_API_KEY) and it invents a date of
-  // birth when one is missing, which books a ticket that is refused at the
-  // airport. Nothing routes to it.
-  flight: duffelFlights,
-  activity: viatorActivities,
-  event: ticketmasterEvents,
-  // The member books their own table, on the platform the restaurant uses
-  // and with their own card, so their card's dining benefits survive. No
-  // queue, and nothing waiting on Reach staff.
-  restaurant: tableReservations,
-};
+// One list for quoting and booking — see lib/booking/registry.ts.
+
 
 /**
  * What kind of failure, never the sentence.

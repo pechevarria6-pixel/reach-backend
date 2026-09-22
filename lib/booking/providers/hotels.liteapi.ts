@@ -23,6 +23,71 @@ async function liteFetch(path: string, init?: RequestInit) {
   return json;
 }
 
+/** A hotel's name and the things somebody choosing it looks at. Null if LiteAPI will not say. */
+export interface HotelSummary { id: string; name: string; stars?: number; address?: string; photo?: string }
+async function hotelDetails(hotelId: string): Promise<HotelSummary | null> {
+  try {
+    const info = (await liteFetch(`/data/hotel?hotelId=${encodeURIComponent(hotelId)}&timeout=4`))?.data;
+    if (!info?.name) return null;
+    return {
+      id: hotelId,
+      name: String(info.name),
+      stars: Number.isFinite(Number(info.starRating)) && Number(info.starRating) > 0 ? Number(info.starRating) : undefined,
+      address: [info.address, info.city].filter(Boolean).join(', ') || undefined,
+      photo: info.main_photo || info.thumbnail || undefined,
+    };
+  } catch (e) {
+    console.error('[liteapi] hotel details unavailable', { hotelId, error: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+}
+
+const titleCase = (t: unknown) => typeof t === 'string'
+  ? t.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) : null;
+
+/**
+ * Other hotels for the same dates, cheapest first, each by name — for
+ * somebody who wants a different place to stay than the one Reach picked.
+ * Only hotels LiteAPI will actually sell a room in for these dates; a name
+ * we cannot find is left out rather than shown as a code.
+ */
+export async function hotelOptions(req: BookingItemRequest, limit = 6) {
+  if (!isConfigured('LITEAPI_KEY')) return { error: 'Hotels are switched off.', options: [] };
+  const h = req.hotel;
+  if (!h?.city || !h.countryCode) return { error: 'This trip has no destination saved.', options: [] };
+  const rooms = Math.max(1, h.rooms || 1);
+  let data;
+  try {
+    data = await liteFetch('/hotels/rates', { method: 'POST', body: JSON.stringify({
+      checkin: h.checkin, checkout: h.checkout, currency: 'USD', guestNationality: 'US',
+      occupancies: Array.from({ length: rooms }, () => ({
+        adults: Math.max(1, Math.ceil((req.travelers?.length || rooms * 2) / rooms)),
+      })),
+      cityName: h.city, countryCode: h.countryCode,
+    }) });
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Could not search hotels.', options: [] };
+  }
+  const priced = ((data?.data ?? []) as { hotelId?: string; roomTypes?: { offerId?: string; rates?: { name?: string; boardName?: string; retailRate?: { total?: { amount?: number }[] } }[] }[] }[])
+    .map(x => {
+      const rt = x.roomTypes?.[0]; const r = rt?.rates?.[0];
+      const amount = r?.retailRate?.total?.[0]?.amount;
+      return x.hotelId && amount ? {
+        hotelId: x.hotelId, priceCents: Math.round(Number(amount) * 100),
+        room: titleCase(r?.name), board: r?.boardName || null,
+      } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x)
+    .sort((a, b) => a.priceCents - b.priceCents)
+    .slice(0, limit * 2);
+  const named = await Promise.all(priced.map(async p => {
+    const d = await hotelDetails(p.hotelId);
+    return d ? { ...p, ...d, key: p.hotelId } : null;
+  }));
+  const options = named.filter((x): x is NonNullable<typeof x> => !!x).slice(0, limit);
+  return { error: options.length ? null : 'No other hotels have rooms for those dates.', options };
+}
+
 export const liteApiHotels: BookingProvider = {
   vertical: 'hotel',
   name: 'liteapi',
@@ -70,24 +135,8 @@ export const liteApiHotels: BookingProvider = {
     // answer carries only the id; /data/hotel carries the rest. A failed
     // lookup costs the name, never the quote.
     const hotelId: string | undefined = data?.data?.[0]?.hotelId;
-    let hotel: { id: string; name: string; stars?: number; address?: string; photo?: string } | null = null;
-    if (hotelId) {
-      try {
-        const info = (await liteFetch(`/data/hotel?hotelId=${encodeURIComponent(hotelId)}&timeout=4`))?.data;
-        if (info?.name) {
-          hotel = {
-            id: hotelId,
-            name: String(info.name),
-            stars: Number.isFinite(Number(info.starRating)) && Number(info.starRating) > 0 ? Number(info.starRating) : undefined,
-            address: [info.address, info.city].filter(Boolean).join(', ') || undefined,
-            photo: info.main_photo || info.thumbnail || undefined,
-          };
-        }
-      } catch (e) {
-        console.error('[liteapi] hotel details unavailable', { hotelId, error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    const room = typeof first?.name === 'string' ? first.name.toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase()) : null;
+    const hotel = hotelId ? await hotelDetails(hotelId) : null;
+    const room = titleCase(first?.name);
     return {
       vertical: 'hotel',
       mode: 'native',

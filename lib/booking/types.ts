@@ -39,6 +39,10 @@ export interface BookingItemRequest {
     departDate: string;    // YYYY-MM-DD
     returnDate?: string;
     cabin?: 'M' | 'W' | 'C' | 'F';
+    /** Seats to price when nobody is named yet — the party size. */
+    seats?: number;
+    /** The exact flights chosen (offerKey), so approval books those and not the cheapest. */
+    offerKey?: string;
   };
   hotel?: {
     hotelId?: string;      // LiteAPI hotel id if already selected

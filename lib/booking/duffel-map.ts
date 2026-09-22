@@ -217,3 +217,65 @@ export function departed(departDate: string | null | undefined, today = new Date
   const todayYmd = today.toISOString().slice(0, 10);
   return departDate < todayYmd;
 }
+
+
+type Seg = {
+  marketing_carrier?: { iata_code?: string; name?: string };
+  marketing_carrier_flight_number?: string;
+  departing_at?: string; arriving_at?: string;
+  origin?: { iata_code?: string }; destination?: { iata_code?: string };
+};
+type SliceLike = { origin?: { iata_code?: string }; destination?: { iata_code?: string }; segments?: Seg[] };
+
+/**
+ * Every flight number on the offer, both ways. What a person chose, as
+ * opposed to "the cheapest", and stable across searches where an offer id
+ * lasts half an hour: "AA1234.AA567/AA890".
+ */
+export function offerKey(offer: { slices?: SliceLike[] }): string | null {
+  const slices = offer.slices ?? [];
+  if (!slices.length) return null;
+  const parts: string[] = [];
+  for (const sl of slices) {
+    const segs = sl.segments ?? [];
+    if (!segs.length) return null;
+    const codes = segs.map(seg => {
+      const c = seg.marketing_carrier?.iata_code, n = seg.marketing_carrier_flight_number;
+      return c && n ? `${c}${n}` : null;
+    });
+    // One unnamed leg and the key could match a different itinerary.
+    if (codes.some(c => !c)) return null;
+    parts.push(codes.join('.'));
+  }
+  return parts.join('/');
+}
+
+/** One way of a flight, as somebody choosing between them reads it. */
+export interface Leg { from: string; to: string; departs: string | null; arrives: string | null; stops: number; flights: string }
+
+function leg(sl: SliceLike | undefined): Leg | null {
+  const segs = sl?.segments ?? [];
+  if (!segs.length) return null;
+  return {
+    from: sl?.origin?.iata_code ?? segs[0].origin?.iata_code ?? '',
+    to: sl?.destination?.iata_code ?? segs[segs.length - 1].destination?.iata_code ?? '',
+    departs: segs[0].departing_at ?? null,
+    arrives: segs[segs.length - 1].arriving_at ?? null,
+    stops: segs.length - 1,
+    flights: segs.map(s => `${s.marketing_carrier?.iata_code ?? ''}${s.marketing_carrier_flight_number ?? ''}`).join(', '),
+  };
+}
+
+/** A flight offer as a choice: who, when, how many stops, how much. */
+export function offerOption(offer: {
+  owner?: { name?: string } | null; total_amount?: string; total_currency?: string; slices?: SliceLike[];
+}) {
+  return {
+    key: offerKey(offer),
+    airline: offer.owner?.name ?? 'Airline',
+    priceCents: amountToCents(offer.total_amount),
+    currency: offer.total_currency || 'USD',
+    out: leg(offer.slices?.[0]),
+    back: leg(offer.slices?.[1]),
+  };
+}

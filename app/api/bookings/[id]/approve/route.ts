@@ -8,24 +8,18 @@
 //   concierge lane (restaurants)         → ticket moves to 'pending' for ops
 // Body (optional): { note?: string }
 import { NextRequest, NextResponse } from 'next/server';
+import { PROVIDERS } from '@/lib/booking/registry';
 import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { BookingItemRequest, BookingProvider, Vertical } from '@/lib/booking/types';
 import { sendBookingConfirmation } from '@/lib/email';
-import { liteApiHotels } from '@/lib/booking/providers/hotels.liteapi';
-import { kiwiFlights, viatorActivities, ticketmasterEvents, conciergeRestaurants } from '@/lib/booking/providers/rest';
 import { track } from '@/lib/track';
 
 const supabase = createServerClient;
 
-const PROVIDERS: Record<Vertical, BookingProvider> = {
-  hotel: liteApiHotels,
-  flight: kiwiFlights,
-  activity: viatorActivities,
-  event: ticketmasterEvents,
-  restaurant: conciergeRestaurants,
-};
+// One list for quoting and booking — see lib/booking/registry.ts.
+
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   // Look the booking up first so we know which plan to authorize against.

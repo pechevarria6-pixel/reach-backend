@@ -17,7 +17,7 @@
 import { BookingProvider, BookingItemRequest, BookingItemResult, CancelResult } from '../types';
 import {
   amountToCents, offerExpired, duffelGender, toDuffelPassenger,
-  describeOffer, flightIdent, describeConditions, departed, type DuffelPassenger,
+  describeOffer, flightIdent, describeConditions, departed, offerKey, offerOption, type DuffelPassenger,
 } from '../duffel-map';
 
 const BASE = process.env.DUFFEL_BASE || 'https://api.duffel.com';
@@ -176,8 +176,8 @@ export async function nearestAirports(
   }
 }
 
-/** One search. Returns the cheapest offer, which is what a quote is. */
-async function cheapestOffer(f: NonNullable<BookingItemRequest['flight']>, seats: number) {
+/** One search, every offer, cheapest first. Duffel does not promise an order. */
+async function searchOffers(f: NonNullable<BookingItemRequest['flight']>, seats: number) {
   const res = await fetch(`${BASE}/air/offer_requests?return_offers=true`, {
     method: 'POST',
     headers: headers(),
@@ -198,15 +198,48 @@ async function cheapestOffer(f: NonNullable<BookingItemRequest['flight']>, seats
     }),
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) return { error: duffelError(json), offer: null as Offer | null };
-
+  if (!res.ok) return { error: duffelError(json), offers: [] as Offer[] };
   const offers: Offer[] = json?.data?.offers ?? [];
-  if (!offers.length) return { error: 'No flights found for those dates.', offer: null };
-  // Cheapest first. Duffel does not promise an order.
-  const sorted = [...offers].sort(
-    (a, b) => (amountToCents(a.total_amount) ?? Infinity) - (amountToCents(b.total_amount) ?? Infinity),
-  );
-  return { error: null, offer: sorted[0] };
+  if (!offers.length) return { error: 'No flights found for those dates.', offers };
+  return {
+    error: null,
+    offers: [...offers].sort(
+      (a, b) => (amountToCents(a.total_amount) ?? Infinity) - (amountToCents(b.total_amount) ?? Infinity)),
+  };
+}
+
+/**
+ * The offer a quote is for: the flights somebody chose, if they chose, and
+ * otherwise the cheapest. A chosen flight that is no longer on sale is said
+ * plainly rather than swapped for a different one behind their back.
+ */
+async function cheapestOffer(f: NonNullable<BookingItemRequest['flight']>, seats: number) {
+  const { error, offers } = await searchOffers(f, seats);
+  if (error || !offers.length) return { error: error ?? 'No flights found.', offer: null as Offer | null };
+  if (f.offerKey) {
+    const chosen = offers.find(o => offerKey(o as Parameters<typeof offerKey>[0]) === f.offerKey);
+    if (!chosen) return { error: 'The flights you chose are no longer on sale — pick another from the options.', offer: null };
+    return { error: null, offer: chosen };
+  }
+  return { error: null, offer: offers[0] };
+}
+
+/** Distinct flights for these dates, cheapest first — for choosing a different one. */
+export async function flightOptions(req: BookingItemRequest, limit = 6) {
+  const f = req.flight;
+  if (!process.env.DUFFEL_API_KEY || !f) return { error: 'Flights are switched off.', options: [] };
+  if (departed(f.departDate)) return { error: "This trip's dates have already passed.", options: [] };
+  const { error, offers } = await searchOffers({ ...f, offerKey: undefined }, req.travelers?.length || f.seats || 1);
+  const seen = new Set<string>();
+  const options = [];
+  for (const o of offers) {
+    const opt = offerOption(o as Parameters<typeof offerOption>[0]);
+    if (!opt.key || seen.has(opt.key) || opt.priceCents === null) continue;
+    seen.add(opt.key);
+    options.push(opt);
+    if (options.length >= limit) break;
+  }
+  return { error: options.length ? null : (error ?? 'No other flights found for those dates.'), options };
 }
 
 export const duffelFlights: BookingProvider = {
@@ -228,7 +261,7 @@ export const duffelFlights: BookingProvider = {
       return fail("This trip's dates have already passed — pick new ones and we can price the flights.");
     }
 
-    const { error, offer } = await cheapestOffer(f, req.travelers?.length || 1);
+    const { error, offer } = await cheapestOffer(f, req.travelers?.length || f.seats || 1);
     if (error || !offer) return fail(error ?? 'No flights found.');
 
     const cents = amountToCents(offer.total_amount);
@@ -255,6 +288,9 @@ export const duffelFlights: BookingProvider = {
         priceGuaranteedUntil: offer.payment_requirements?.price_guarantee_expires_at ?? null,
         passengerIds: (offer.passengers ?? []).map(p => p.id),
         flightIdent: flightIdent(offer as Parameters<typeof flightIdent>[0]),
+        // Every flight number, both ways — what approval books.
+        offerKey: offerKey(offer as Parameters<typeof offerKey>[0]),
+        option: offerOption(offer as Parameters<typeof offerOption>[0]),
         // Shown before anyone pays a share towards it.
         conditions: describeConditions(offer.conditions),
       },
