@@ -8295,9 +8295,24 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         ?<button onClick={()=>replace?replace("planDetail",{planId,groupId}):onBack()}
           style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16}}>
           Nothing to pay — take me to the plan</button>
-        :<button disabled={busy||!checkout.canPay} onClick={startPayment}
-          style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16,opacity:(busy||!checkout.canPay)?.6:1}}>
-          {busy?"One sec\u2026":"Looks good"}</button>}
+        :(()=>{
+          // A button that cannot be pressed should not look like one that
+          // can. This was the full gold with opacity .6, which on a dark
+          // screen still reads as "tap me" — and the line under it said
+          // "we're still pricing this". The screen was showing a live
+          // button and telling you it was not ready in the same breath.
+          const off=busy||!checkout.canPay;
+          return(
+            <button disabled={off} onClick={startPayment}
+              style={{width:"100%",padding:"16px",borderRadius:14,
+                border:off?`1px solid ${C.border}`:"none",
+                background:off?C.s2:C.accent,
+                color:off?C.t3:C.onAccent,
+                fontWeight:700,fontSize:16,
+                cursor:off?"not-allowed":"pointer"}}>
+              {busy?"One sec\u2026":"Looks good"}</button>
+          );
+        })()}
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>
         {/* The button used to be live over a total of $0. Whatever else is
             true, nobody should be invited to pay for a trip we have not
