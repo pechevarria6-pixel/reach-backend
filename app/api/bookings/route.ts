@@ -215,6 +215,16 @@ export async function POST(req: NextRequest) {
           error: result.error || null,
         };
 
+        // The hotel that was priced is the hotel that gets booked. The request
+        // named only a city, so approval searched again and would book
+        // whatever came back first — possibly not the one on the screen at
+        // the price on the screen. Pinned after the key is taken, so a
+        // double-tap still matches the first request.
+        const pinnedHotel = result.vertical === 'hotel' ? (result.raw as { hotelId?: string } | undefined)?.hotelId : undefined;
+        if (pinnedHotel && item.hotel) {
+          row.request_payload = { ...(row.request_payload as Record<string, unknown>), hotel: { ...item.hotel, hotelId: pinnedHotel } };
+        }
+
         let { error: wrote } = await ctx.db.from('bookings').insert(row);
 
         // The column arrives in a migration the owner runs. Until then

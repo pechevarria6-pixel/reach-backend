@@ -16,7 +16,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness } from '@/lib/essentials-server';
-import { resolveAirport } from '@/lib/booking/providers/flights.duffel';
+import { resolveAirport, nearestAirports, type Gateway } from '@/lib/booking/providers/flights.duffel';
+import { locate } from '@/lib/discovery/geocode';
+import { tripTiming, today } from '@/lib/calendar';
+import { rentalLine } from '@/lib/ground';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
 import { findProduct } from '@/lib/booking/providers/viator-search';
 
@@ -217,6 +220,22 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const candidates = (items ?? []).filter((i: Item) =>
     i.booking_mode === 'reach' && !alreadyBooked.has(i.id));
 
+  // Nothing is booked ahead for dates that have already come. Moab began on
+  // Sep 17 and every open of checkout asked LiteAPI for a room that night,
+  // got "No rates available", and printed "Couldn't book" — true, and the
+  // wrong answer: the rates are fine, the dates are gone. Say that, and say
+  // where to change them, before asking anybody.
+  const timing = tripTiming({ startDate: plan.start_date, endDate: plan.end_date }, today());
+  if (candidates.length && (timing === 'over' || timing === 'on_now')) {
+    const why = timing === 'over'
+      ? `this trip's dates (${plan.start_date} to ${plan.end_date}) have passed — change them in Edit plan to book`
+      : `this trip began on ${plan.start_date}, so there is nothing left to book ahead — change the dates in Edit plan to book it for later`;
+    return NextResponse.json({
+      created: 0, failed: 0, failures: [], alreadyBooked: alreadyBooked.size,
+      skipped: (candidates as Item[]).map(i => ({ title: i.title, why })),
+    });
+  }
+
   // Free the slot held by a previous failed attempt.
   //
   // bookings_one_per_itinerary_item is a unique index on itinerary_item_id
@@ -284,11 +303,21 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // good trip is somewhere you drive.
   // The city alone is asked second: a search box given "Puerto Vallarta, MX"
   // may not know what "MX" is, and the country only ever narrowed it.
-  const flightTo = hasFlight && !flightWhy
+  let flightTo: string | null = hasFlight && !flightWhy
     ? (city
         ? (await resolveAirport([city, countryCode].filter(Boolean).join(', '))) ?? (countryCode ? await resolveAirport(city) : null)
         : await resolveAirport(named))
     : null;
+  // No airport of its own: fly into the nearest one and drive. Found from
+  // where the town actually is, and the rental car goes on the plan below.
+  let gateway: Gateway | null = null;
+  if (hasFlight && !flightWhy && !flightTo && city) {
+    const here = await locate(city, countryCode || null);
+    if (here) {
+      gateway = (await nearestAirports(here))[0] ?? null;
+      flightTo = gateway?.iata ?? null;
+    }
+  }
   const flightFrom = hasFlight && !flightWhy && flightTo
     ? (await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).single())
       .data?.home_airport ?? null
@@ -366,7 +395,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       why: item.type === 'flight'
         ? (flightWhy
            ?? (!flightTo
-               ? `we could not find an airport for ${named || 'this trip'} — this one looks like a drive`
+               ? `we could not find an airport within 180 miles of ${named || 'this trip'}`
                : !flightFrom
                  ? 'add your home airport in Profile and we can price this flight'
                  : !plan.start_date
@@ -376,6 +405,25 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
           ? (!city || !countryCode ? 'this trip has no destination saved yet' : 'this trip has no dates yet')
           : (CANNOT[item.type] ?? `nothing books a ${item.type} yet`),
     });
+  }
+
+  // The drive from the airport, on the plan — once. A line the traveller books
+  // themselves, with the search already opened at their airport and dates.
+  if (gateway && city && plan.start_date && plan.end_date) {
+    const { data: already } = await ctx.db.from('itinerary_items')
+      .select('id').eq('plan_id', params.planId).eq('type', 'transport').like('venue_website', 'https://www.kayak.com/cars/%').limit(1);
+    const line = rentalLine(gateway, city, plan.start_date, plan.end_date);
+    if (line && !already?.length) {
+      const { error } = await ctx.db.from('itinerary_items').insert({ ...line, plan_id: params.planId, sort_order: -1 });
+      if (error) console.error('[bookable] could not add the rental car', { planId: params.planId, code: error.code });
+    }
+    const flightLine = (items as Item[]).find(i => i.type === 'flight');
+    if (flightLine && !flightLine.subtitle) {
+      const { error } = await ctx.db.from('itinerary_items')
+        .update({ subtitle: `Into ${gateway.name} (${gateway.iata}), the nearest airport to ${city} — then a rental car.` })
+        .eq('id', flightLine.id);
+      if (error) console.error('[bookable] could not note the gateway airport', { planId: params.planId, code: error.code });
+    }
   }
 
   if (!requests.length) {

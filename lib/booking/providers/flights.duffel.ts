@@ -124,6 +124,58 @@ export async function resolveAirport(place: string): Promise<string | null> {
   return code;
 }
 
+/** An airport near somewhere, and how far it is as the crow flies. */
+export interface Gateway { iata: string; name: string; miles: number }
+
+/**
+ * The airports nearest a point, closest first.
+ *
+ * For a town no airline sells to. "Moab, Utah" has no airport of its own in
+ * Duffel's catalogue, and the answer used to be "this one looks like a
+ * drive" — handing the hardest part of the journey back to the traveller.
+ * Reach finds the nearest airports and puts a rental car on top of the
+ * flight instead.
+ *
+ * Duffel's place lookup takes a point and a radius in metres (checked
+ * against its reference, 2026-09-22). Distance is worked out here from the
+ * coordinates it returns, not trusted to its ordering.
+ */
+export async function nearestAirports(
+  point: { lat: number; lng: number },
+  radiusMiles = 180,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Gateway[]> {
+  if (!process.env.DUFFEL_API_KEY) return [];
+  const rad = Math.round(radiusMiles * 1609.34);
+  try {
+    const res = await fetchImpl(
+      `${BASE}/places/suggestions?lat=${point.lat}&lng=${point.lng}&rad=${rad}`,
+      { headers: headers(), signal: AbortSignal.timeout(8000) },
+    );
+    if (!res.ok) {
+      console.error('[duffel] nearby airport lookup failed', { status: res.status });
+      return [];
+    }
+    const json = await res.json().catch(() => null);
+    const places = (json?.data ?? []) as {
+      type?: string; iata_code?: string; name?: string; latitude?: number; longitude?: number;
+    }[];
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const miles = (lat: number, lng: number) => {
+      const dLat = toRad(lat - point.lat), dLng = toRad(lng - point.lng);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(point.lat)) * Math.cos(toRad(lat)) * Math.sin(dLng / 2) ** 2;
+      return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    };
+    return places
+      .filter(p => p.type === 'airport' && p.iata_code && Number.isFinite(p.latitude) && Number.isFinite(p.longitude))
+      .map(p => ({ iata: p.iata_code as string, name: p.name || p.iata_code as string, miles: Math.round(miles(p.latitude as number, p.longitude as number)) }))
+      .sort((a, b) => a.miles - b.miles);
+  } catch (e) {
+    console.error('[duffel] nearby airport lookup unreachable', e instanceof Error ? e.message : String(e));
+    return [];
+  }
+}
+
 /** One search. Returns the cheapest offer, which is what a quote is. */
 async function cheapestOffer(f: NonNullable<BookingItemRequest['flight']>, seats: number) {
   const res = await fetch(`${BASE}/air/offer_requests?return_offers=true`, {

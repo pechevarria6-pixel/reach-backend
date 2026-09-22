@@ -6903,6 +6903,17 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           <span style={{fontSize:16,lineHeight:1.2,color:t.done?C.green:C.t3}}>{t.done?"✓":"○"}</span>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:13,color:C.t1,lineHeight:1.4}}>{item.title}</div>
+                            {/* What Reach actually found for this line — the hotel by
+                                name, the airline and route — and what it costs. The
+                                line itself only ever says "7 nights in Puerto Vallarta". */}
+                            {t.who==="reach"&&(()=>{
+                              const b=planBookings.find(b=>b.itinerary_item_id===item.id&&b.status!=="failed"&&b.status!=="cancelled");
+                              return b&&b.detail?(
+                                <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.4}}>
+                                  {b.detail}{b.price_cents>0?` · ${usd(b.price_cents)}${b.status==="confirmed"?"":" quoted"}`:""}
+                                </div>
+                              ):null;
+                            })()}
                             <div style={{fontSize:11,color:C.t3,marginTop:2}}>
                               {[item.time,
                                 t.who==="reach"?(t.done?"Booked by Reach":"Reach books this — Book everything below"):(t.done?(item.type==="restaurant"?"Table reserved":"Sorted"):"You book this"),

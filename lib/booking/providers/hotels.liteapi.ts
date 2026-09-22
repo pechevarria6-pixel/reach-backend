@@ -63,6 +63,31 @@ export const liteApiHotels: BookingProvider = {
       return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'No rates available' };
     }
     const amount = first?.retailRate?.total?.[0]?.amount;
+
+    // Which hotel this is, by name. The quote used to describe itself as
+    // "lp81ecd · 2026-11-02 → 2026-11-09" — LiteAPI's id — so the trip's
+    // place to stay was a code nobody could recognise or look up. The rates
+    // answer carries only the id; /data/hotel carries the rest. A failed
+    // lookup costs the name, never the quote.
+    const hotelId: string | undefined = data?.data?.[0]?.hotelId;
+    let hotel: { id: string; name: string; stars?: number; address?: string; photo?: string } | null = null;
+    if (hotelId) {
+      try {
+        const info = (await liteFetch(`/data/hotel?hotelId=${encodeURIComponent(hotelId)}&timeout=4`))?.data;
+        if (info?.name) {
+          hotel = {
+            id: hotelId,
+            name: String(info.name),
+            stars: Number.isFinite(Number(info.starRating)) && Number(info.starRating) > 0 ? Number(info.starRating) : undefined,
+            address: [info.address, info.city].filter(Boolean).join(', ') || undefined,
+            photo: info.main_photo || info.thumbnail || undefined,
+          };
+        }
+      } catch (e) {
+        console.error('[liteapi] hotel details unavailable', { hotelId, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    const room = typeof first?.name === 'string' ? first.name.toLowerCase().replace(/\b\w/g, (c: string) => c.toUpperCase()) : null;
     return {
       vertical: 'hotel',
       mode: 'native',
@@ -73,8 +98,12 @@ export const liteApiHotels: BookingProvider = {
       providerRef: roomType?.offerId || first.offerId || first.rateId,
       priceCents: amount ? Math.round(Number(amount) * 100) : undefined,
       currency: first?.retailRate?.total?.[0]?.currency || 'USD',
-      detail: `${data.data[0]?.hotelId || h.city} · ${h.checkin} → ${h.checkout}`,
-      raw: first,
+      detail: hotel
+        ? [hotel.name, hotel.stars ? `${hotel.stars}★` : null, room, `${h.checkin} → ${h.checkout}`].filter(Boolean).join(' · ')
+        : `A hotel in ${h.city} · ${h.checkin} → ${h.checkout}`,
+      // hotelId travels with the quote so approval books this hotel, not
+      // whichever one a fresh city-wide search happens to return first.
+      raw: { ...first, ...(hotelId ? { hotelId } : {}), ...(hotel ? { hotel } : {}) },
     };
   },
 
