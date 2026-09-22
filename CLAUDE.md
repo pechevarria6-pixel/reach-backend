@@ -72,8 +72,42 @@ Some of this is enforced and some of it is not, and it is worth knowing which:
 `check:solo-copy` catches a sentence that speaks for other people on a screen
 somebody can reach alone, `tests/unit/grounding.test.ts` holds the venue rule,
 and the two contracts in `lib/contracts/` stop a fact being dropped between the
-row and the screen. **Nothing enforces the redundancy rule** — that one is read
-by a person, so it is the one to check by opening the screen.
+row and the screen. **Nothing enforces the redundancy rule**, and the attempt
+is written up below so nobody spends the afternoon on it twice.
+
+### Why redundancy has no guard
+
+It was built and thrown away. A script can find every pair of actions in one
+component that navigate to the same place with the same arguments, and with
+three refinements — skip `.map()` bodies (a list is not a duplicate), skip
+opposite arms of a ternary, skip conditions pinning the same variable to
+different strings (`atab==="overview"` against `atab==="itinerary"`) — it gets
+from 14 pairs to 8.
+
+It stops there, and the last step is the one that matters: **nothing in the
+syntax distinguishes a convenient second entry point from a confusing
+duplicate.** The persistent ✎ in the plan screen's header goes where "Edit plan
+details" goes, and that is a normal pattern, not a defect. Shipping the check
+would have meant eight allowlist entries nobody could justify, which is worse
+than no check — see `check:solo-copy`, where every entry carries the reason it
+is allowed.
+
+What the scan is good for is a list to read. These pairs share a destination
+and can appear together; each is a judgement call, not a bug:
+
+    GroupsScreen         createGroup                    ×2
+    GroupDetailScreen    editGroup / createPlan         ×3, ×2
+    GroupTripScreen      planDetail                     ×2
+    PlanDetailScreen     editItinerary / checkout       ×4, ×3
+    ReachApp             setTab groups / setTab home    ×2, ×2
+
+It did earn its keep. Two real faults came out of it, both on the home screen:
+a "3 trips on the go · See all →" card that went to the Groups tab the nav bar
+already reaches, next to an "Upcoming trips · See all →" header doing the same
+thing in the same words; and a "＋ New plan" tile that resumed a half-finished
+draft, because `CreatePlanFlow` restored the draft on mount whatever brought
+you there. Two affordances that read as different things, and the one labelled
+"New" was the one telling the lie.
 
 ## How to find bugs here
 

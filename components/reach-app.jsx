@@ -821,7 +821,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             </div>
           </div>
         ))}
-        <div {...pressable} onClick={()=>push("createPlan",{})} style={{minWidth:130,background:"transparent",border:`2px dashed ${C.border}`,borderRadius:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:20,cursor:"pointer",flexShrink:0}}>
+        <div {...pressable} onClick={()=>push("createPlan",{fresh:true})} style={{minWidth:130,background:"transparent",border:`2px dashed ${C.border}`,borderRadius:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:20,cursor:"pointer",flexShrink:0}}>
           <div style={{fontSize:24,color:C.t3}}>＋</div>
           <div style={{fontSize:12,color:C.t2,fontWeight:500,textAlign:"center"}}>New plan</div>
         </div>
@@ -852,7 +852,18 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       </div>
       {(groups.length>0?[
         {emoji:"✈️",text:groups[0].name+" · "+(groups[0].plans?.length||0)+" plan"+(((groups[0].plans?.length||0)!==1)?"s":""),cta:"Open →",action:()=>push("groupDetail",{groupId:groups[0].id})},
-        groups.length>1?{emoji:"🧭",text:plural(groups.length,"trip")+" on the go.",cta:"See all →",action:()=>setTab("groups")}:{emoji:"➕",text:"Plan another — on your own or with people.",cta:"Start one →",action:()=>push("createGroup")},
+        // Always "plan another", never "see all".
+        //
+        // With more than one group this used to read "3 trips on the go. See
+        // all →" and switch to the Groups tab — which the bottom nav already
+        // does from every screen, and which the "Upcoming trips · See all →"
+        // header eighty lines up already does with the same words. Three ways
+        // to the same tab on one screen, two of them labelled identically.
+        //
+        // A card is the most expensive slot on this screen. Spending it on a
+        // journey the nav bar makes in one tap leaves the person who has come
+        // back with nothing here they could not already do.
+        {emoji:"➕",text:"Plan another — on your own or with people.",cta:"Start one →",action:()=>push("createGroup")},
       ]:[
         // A first visit used to offer exactly one thing, and it was the most
         // committing thing in the app: name a group, pick people, start a
@@ -5152,7 +5163,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 }
 
 
-function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user,departure}){
+function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user,departure,fresh}){
   // ── Draft persistence: load saved progress on mount ──────
   const DRAFT_KEY="reach_plan_draft";
   // SSR-safe localStorage helpers — only run in browser
@@ -5182,8 +5193,20 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   const [draftLoaded,setDraftLoaded]=useState(false);
 
   // Load draft after mount (browser only)
+  //
+  // Unless the person asked for a new plan. This restored unconditionally, so
+  // the "＋ New plan" tile on the home carousel — which sits a few inches from
+  // a separate "Resume your draft" card — handed back the half-finished plan
+  // at its saved step, with its saved name, type and dates. Two affordances
+  // that read as different things did the same thing, and the one labelled
+  // "New" was the one telling the lie.
+  //
+  // The draft itself is left where it is. Starting a new plan overwrites it at
+  // the first step either way, but nothing is thrown away on the strength of a
+  // tap that might have been a mistake.
   useEffect(()=>{
     if(draftLoaded)return;
+    if(fresh){setDraftLoaded(true);return;}
     const draft=loadDraft();
     if(draft&&(draft.planType||draft.gid)){
       if(draft.step)setStep(draft.step);
