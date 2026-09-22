@@ -885,7 +885,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           "Three ways to start" is the answer to it — nothing to jump back
           into, and the most committing thing in the app is not a good first
           move. That stays. */}
-      {groups.length===0&&(<>
+      {/* Only once we know. `groups` is empty while it is still being
+          fetched, so a returning person was shown "Three ways to start" —
+          the first-visit screen, telling them they have nothing — for as
+          long as the request took, and then it was replaced by their trips.
+          Telling somebody they have no plans is not a loading state. */}
+      {groups.length===0&&!loading&&(<>
       <div style={{padding:"0 20px 10px"}}>
         <span className="sl">Three ways to start</span>
       </div>
