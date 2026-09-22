@@ -16,6 +16,7 @@ import { visibleCategories } from "@/lib/discovery/category";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
+import { isJourney } from "@/lib/travel-slot";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -493,7 +494,13 @@ function itineraryRows(days,nightOut=false){
     // restaurant, and carrying the page that actually sells the ticket —
     // Reach cannot sell it, and handing somebody straight to who can is a
     // complete answer rather than a "Reserve ahead" with nothing behind it.
-    const kind=(sl,fallback)=>sl.ticket_url?"event":fallback;
+    //
+    // And a slot that is the journey home is transport, whichever slot it is
+    // in: the last evening of a trip read "Flight home." as a restaurant to
+    // book ahead. Its booking mode goes too — the flight is booked on the
+    // trip's flight line, and leaving is not something anybody reserves.
+    const kind=(sl,fallback)=>sl.ticket_url?"event":isJourney(sl.plan)?"transport":fallback;
+    const mode=(sl)=>isJourney(sl.plan)?null:(sl.booking||null);
     // A ticket page for an event; the place's own site for everything
     // else. Both land in venue_website, because from the screen's point
     // of view they are the same thing: where you go to sort this out.
@@ -511,16 +518,16 @@ function itineraryRows(days,nightOut=false){
       // Milk Carton Kids" appeared beneath the dinner while the same words
       // were already the plan's name at the top of the screen.
       {time:label(day,0),title:m.plan,sub:nightOut?"":(day.title||""),type:kind(m,nightOut?"restaurant":"activity"),conf:null,filled:false,
-        cost_cents:each(m),booking_mode:m.booking||null,payment_note:m.payment||null,because:m.because||null,...ticket(m)},
+        cost_cents:each(m),booking_mode:mode(m),payment_note:m.payment||null,because:m.because||null,...ticket(m)},
       {time:label(day,1),title:a.plan,sub:"",type:kind(a,"activity"),conf:null,filled:false,
-        cost_cents:each(a),booking_mode:a.booking||null,payment_note:a.payment||null,because:a.because||null,...ticket(a)},
+        cost_cents:each(a),booking_mode:mode(a),payment_note:a.payment||null,because:a.because||null,...ticket(a)},
       // The tip belongs to the day and is printed under the last slot of
       // it, so it read as a description of that slot: "the gallery is small
       // enough to see properly in under an hour" sat beneath dinner at a
       // restaurant. Marked, so it reads as a note about the day wherever
       // it lands.
       {time:label(day,2),title:e.plan,sub:day.insider_tip?`💡 ${day.insider_tip}`:"",type:kind(e,"restaurant"),conf:null,filled:false,
-        cost_cents:each(e),booking_mode:e.booking||null,payment_note:e.payment||null,because:e.because||null,...ticket(e)},
+        cost_cents:each(e),booking_mode:mode(e),payment_note:e.payment||null,because:e.because||null,...ticket(e)},
     ].filter(r=>r.title);
   });
 }
