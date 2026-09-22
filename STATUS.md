@@ -36,8 +36,8 @@ protected and it is not.
 | T3 build gate | ✅ | `build: npm run verify && next build`; proven by planting a failing test → `exit=1`, `next build` never ran |
 | T1 itinerary contract | ✅ | `lib/contracts/itinerary-item.ts`; all four layers import it; `venue_website:item.venue_website` appears nowhere |
 | T1 booking contract | ✅ | `lib/contracts/booking.ts`; route + checkout screen read it; a live drop found and fixed (`response_payload` on the duplicate path) |
-| T2 rendered-content tests | ✅ | `tests/contract/`, serial (two workers shared one session and Clerk rotates the cookie) |
-| T4 empty-town honesty test | ✅ | a town we hold nothing for names no venues, and says so |
+| T2 rendered-content tests | ✅ | four structural assertions on the rendered DOM in `tests/reach.spec.ts` (not a separate `tests/contract/` dir — that never existed), serial, because two workers shared one session and Clerk rotates the cookie |
+| T4 empty-town honesty test | ✅ | `tests/unit/grounding.test.ts` — a town we hold nothing for names no venues, and the instruction is checked for not being softened into a suggestion |
 | T4 vocabulary additions | ✅ | `BROKEN_PROMISES` bans the five false-promise strings that shipped on 09-21 |
 
 ## 3. Infrastructure
@@ -45,7 +45,7 @@ protected and it is not.
 | | state | evidence |
 |---|---|---|
 | Stripe webhook | ✅ | `payment_intent.succeeded` **and** `charge.refunded`, signature-verified, refunds mark contributions `refunded`/`partially_refunded` |
-| events / metrics table | 🟡 | exists, **3 rows** — `funding_started` ×2, `trip_input_submitted` ×1. Instrumented but barely firing; trip created/booked/invite/veto not seen |
+| events / metrics table | ✅ | **corrected twice.** Was 5 rows, not 3. `plan_created` had no call site at all — `track` was imported into `app/api/plans/route.ts` and never called — so the top of the funnel was never recorded and the views in `sql/events-2026-09-20.sql` that select on it were reading an empty set. Now proven in production: a plan created against prod produced `plan_created {city, kind, solo, nights, voting, country, budget_cents}`. `plan_deleted` was **structurally impossible**: `events.plan_id` is `on delete set null`, the track call runs after the plan row is deleted, and the insert is refused `23503`. Reproduced against the database, fixed by moving the id into props, pinned by a test. `booking_created` is unexercised, not broken — both bookings written since the table went live predate its first row |
 | `@clerk/testing` | ✅ | `tests/auth.setup.ts`, races a 30s deadline, falls back to the jar |
 | rate limits | ✅ | 10 new trips/hour, 30 rebuilds/hour, separate counters, human copy on 429 |
 | Sentry | 🟡 | `lib/report.ts` posts to the ingest endpoint; inert until `SENTRY_DSN` is set (🔒) |
