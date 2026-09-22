@@ -14,7 +14,7 @@
 //   * an offer expires, often within the hour, and a group takes longer than
 //     that to agree on anything — so book() re-requests rather than trusting
 //     a stored price
-import { BookingProvider, BookingItemRequest, BookingItemResult } from '../types';
+import { BookingProvider, BookingItemRequest, BookingItemResult, CancelResult } from '../types';
 import {
   amountToCents, offerExpired, duffelGender, toDuffelPassenger,
   describeOffer, flightIdent, describeConditions, departed, type DuffelPassenger,
@@ -335,3 +335,68 @@ export const duffelFlights: BookingProvider = {
 };
 
 export { duffelGender };
+
+// ─── Undoing one ─────────────────────────────────────────────────────────
+// Reach could book a flight and had no way to unbook it. The provider
+// interface was quote and book, nothing else, for every lane — so a
+// duplicate order created by a double-tap could only be tidied by marking a
+// row cancelled in our own table, which changes nothing at the airline. The
+// row said cancelled and the seat was still bought.
+//
+// Duffel does this in two steps and they are the right two. Creating a
+// cancellation tells you what would actually come back — airlines refund a
+// fraction, or nothing at all, depending on the fare — and confirming is a
+// separate call. Nobody should cancel a flight without being told first what
+// it costs them.
+export async function cancelDuffelOrder(
+  orderRef: string,
+  opts: { confirm?: boolean } = {},
+): Promise<CancelResult> {
+  if (!process.env.DUFFEL_API_KEY) {
+    return { status: 'failed', error: 'Flights are not configured for this deployment.' };
+  }
+
+  try {
+    // Step one: what would this cost. Safe to call, changes nothing.
+    const asked = await fetch(`${BASE}/air/order_cancellations`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ data: { order_id: orderRef } }),
+      signal: AbortSignal.timeout(20000),
+    });
+    const quoted = await asked.json().catch(() => ({}));
+    if (!asked.ok) {
+      console.error('[duffel] could not price the cancellation', { order: orderRef, status: asked.status });
+      return { status: 'failed', error: duffelError(quoted) ?? 'That booking could not be cancelled.', raw: quoted };
+    }
+
+    const d = quoted?.data ?? {};
+    const refundCents = Math.round(Number(d.refund_amount ?? 0) * 100);
+    const currency = String(d.refund_currency ?? 'USD');
+
+    if (!opts.confirm) {
+      return { status: 'quoted', refundCents, currency, cancellationRef: d.id, raw: quoted };
+    }
+
+    // Step two, and only when asked for by name.
+    const done = await fetch(`${BASE}/air/order_cancellations/${d.id}/actions/confirm`, {
+      method: 'POST',
+      headers: headers(),
+      signal: AbortSignal.timeout(20000),
+    });
+    const result = await done.json().catch(() => ({}));
+    if (!done.ok) {
+      // The money is the thing here: a cancellation that half-happened is
+      // worth shouting about, because the row and the airline now disagree.
+      console.error('[duffel] the cancellation was priced and then refused', {
+        order: orderRef, cancellation: d.id, status: done.status,
+      });
+      return { status: 'failed', error: duffelError(result) ?? 'That booking could not be cancelled.', raw: result };
+    }
+
+    return { status: 'cancelled', refundCents, currency, cancellationRef: d.id, raw: result };
+  } catch (err) {
+    console.error('[duffel] cancellation call failed', err instanceof Error ? err.message : 'failed');
+    return { status: 'failed', error: 'Could not reach the airline just now — nothing was cancelled.' };
+  }
+}

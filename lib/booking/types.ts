@@ -96,6 +96,31 @@ export interface BookingProvider {
   quote(req: BookingItemRequest): Promise<BookingItemResult>;
   /** Commit the booking (or produce redirect/concierge ticket). */
   book(req: BookingItemRequest): Promise<BookingItemResult>;
+  /**
+   * Undo one, where the provider allows it.
+   *
+   * Optional because not every lane can: a table booked on the
+   * restaurant's own site is cancelled on the restaurant's own site, and
+   * pretending otherwise would be the same false promise as "Reach will
+   * book this" over a dinner.
+   *
+   * Two steps on purpose. Asking without `confirm` returns what would come
+   * back — airlines refund a fraction, or nothing — and only a second call
+   * with `confirm` actually does it. Nobody should cancel a flight without
+   * being told first what it costs them.
+   */
+  cancel?(ref: string, opts?: { confirm?: boolean }): Promise<CancelResult>;
+}
+
+export interface CancelResult {
+  /** 'quoted' — here is what you would get back. 'cancelled' — it is done. */
+  status: 'quoted' | 'cancelled' | 'failed';
+  refundCents?: number;
+  currency?: string;
+  /** The provider's handle for this pending cancellation, for the confirm. */
+  cancellationRef?: string;
+  error?: string;
+  raw?: unknown;
 }
 
 export const isConfigured = (envKey: string) =>
