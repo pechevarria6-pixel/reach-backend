@@ -864,24 +864,22 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           </div>
         </div>
       )}
+      {/* "Jump back in" is gone. It offered a way into the first group and a
+          way to start another, and the screen already carries both: the
+          actions list at the top names every trip waiting on somebody, the
+          Upcoming trips row is right there, and the Groups tab is one tap
+          away in the nav. A returning person does not need a fourth door
+          into the same rooms.
+          The first visit is a different screen with a different problem, and
+          "Three ways to start" is the answer to it — nothing to jump back
+          into, and the most committing thing in the app is not a good first
+          move. That stays. */}
+      {groups.length===0&&(<>
       <div style={{padding:"0 20px 10px"}}>
-        <span className="sl">{groups.length>0?"Jump back in":"Three ways to start"}</span>
+        <span className="sl">Three ways to start</span>
       </div>
-      {(groups.length>0?[
-        {emoji:"✈️",text:groups[0].name+" · "+(groups[0].plans?.length||0)+" plan"+(((groups[0].plans?.length||0)!==1)?"s":""),cta:"Open →",action:()=>push("groupDetail",{groupId:groups[0].id})},
-        // Always "plan another", never "see all".
-        //
-        // With more than one group this used to read "3 trips on the go. See
-        // all →" and switch to the Groups tab — which the bottom nav already
-        // does from every screen, and which the "Upcoming trips · See all →"
-        // header eighty lines up already does with the same words. Three ways
-        // to the same tab on one screen, two of them labelled identically.
-        //
-        // A card is the most expensive slot on this screen. Spending it on a
-        // journey the nav bar makes in one tap leaves the person who has come
-        // back with nothing here they could not already do.
-        {emoji:"➕",text:"Plan another — on your own or with people.",cta:"Start one →",action:()=>push("createGroup")},
-      ]:[
+      {([
+
         // A first visit used to offer exactly one thing, and it was the most
         // committing thing in the app: name a group, pick people, start a
         // plan. Nobody's first move should cost that much. These are ordered
@@ -899,6 +897,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           </div>
         </div>
       ))}
+      </>)}
       <div style={{padding:"14px 20px 6px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <span className="sl">Near you</span>
         {user?.location&&<span style={{fontSize:11,color:C.t3}}>📍 {user.location}</span>}
@@ -6275,8 +6274,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // to the trip, not to the day-by-day plan, so they are carried over
       // exactly as they were.
       const rows=afterRebuild(plan.itinerary,itineraryRows(d.itinerary,oneEvening));
+      // The day around the evening, offered rather than assumed.
+      //
+      // The generate path keeps these as `dayOffer` and shows "let's make a
+      // day of it"; this path dropped them on the floor, so rebuilding a
+      // night out quietly removed the offer. A night out answered with a
+      // whole day is the app deciding how long somebody's evening is, and
+      // losing the choice is the same decision made the other way.
+      const offered=oneEvening?daytimeRows(d.itinerary):[];
       if(!rows.length)throw new Error("Nothing came back — try again");
-      updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows}:x)}));
+      updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows,dayOffer:offered}:x)}));
       const saved=await saveItineraryToServer(planId,rows);
       toast(saved===false?"Built, but couldn't save — try again":`${d.itinerary.length} days planned 🗺️`);
     }catch(e){
