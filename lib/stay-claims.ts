@@ -60,6 +60,35 @@ export function withoutStayClaim(text: string): { text: string | null; removed: 
   const claim = stayClaim(text);
   if (!claim) return { text, removed: null };
 
+  // A trailing phrase with no comma in front of it: "Breakfast at Milt's
+  // Stop & Eat before checkout". The breakfast is real and the checkout is
+  // not, and clause-splitting on commas alone would have thrown the whole
+  // line away for want of a comma.
+  const trailing = /\s+(?:before|after|then|on the way to|ahead of)\s+[^,;]*$/i.exec(text);
+  if (trailing && stayClaim(trailing[0]) && !stayClaim(text.slice(0, trailing.index))) {
+    return { text: text.slice(0, trailing.index).trim(), removed: claim };
+  }
+
+  // A locative tail with no comma either: "An afternoon doing nothing in
+  // particular back at the hotel pool". The afternoon is a true sentence
+  // about a real day — it is the phrasing the generator is told to use when
+  // it has no venue — and the pool is the only invented part.
+  const tail = /\s+(?:back\s+)?(?:at|in|by)\s+(?:the|your)\s+[^,;]*$/i.exec(text);
+  if (tail && stayClaim(tail[0]) && !stayClaim(text.slice(0, tail.index))) {
+    const head = text.slice(0, tail.index).trim().replace(/[,;]\s*$/, '');
+    if (head.split(/\s+/).filter(Boolean).length >= 4) return { text: head, removed: claim };
+  }
+
+  // And the mirror image: "Check out of the hotel and head to the airport or
+  // next stop" — the leaving is invented, the airport is real.
+  const lead = /^[^,;]*?\s+and\s+/i.exec(text);
+  if (lead && stayClaim(lead[0]) && !stayClaim(text.slice(lead[0].length))) {
+    const rest = text.slice(lead[0].length).trim();
+    if (rest.split(/\s+/).filter(Boolean).length >= 4) {
+      return { text: rest.charAt(0).toUpperCase() + rest.slice(1), removed: claim };
+    }
+  }
+
   const clauses = text.split(/([,;]\s*)/);
   const kept: string[] = [];
   for (let i = 0; i < clauses.length; i += 2) {

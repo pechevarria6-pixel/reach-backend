@@ -64,3 +64,31 @@ test('an ordinary day is left completely alone', () => {
   assert.equal(stayClaim(day), null);
   assert.equal(withoutStayClaim(day).text, day);
 });
+
+test('a real breakfast survives an invented checkout', () => {
+  // "Breakfast at Milt's Stop & Eat before checkout" — the breakfast is a
+  // real place on a real morning; the checkout is a hotel nobody booked.
+  // Splitting on commas alone threw the whole line away for want of a comma.
+  const { text, removed } = withoutStayClaim("Breakfast at Milt's Stop & Eat before checkout");
+  assert.equal(removed, 'checkout');
+  assert.equal(text, "Breakfast at Milt's Stop & Eat");
+});
+
+test('a true sentence before an invented tail is kept', () => {
+  // "An afternoon doing nothing in particular" is the exact phrasing the
+  // generator is told to use when it has no venue to name. It is a true
+  // sentence about a real day; the pool is the only invented part.
+  const { text } = withoutStayClaim('An afternoon doing nothing in particular back at the hotel pool');
+  assert.equal(text, 'An afternoon doing nothing in particular');
+});
+
+test('a true sentence after an invented lead is kept', () => {
+  const { text } = withoutStayClaim('Check out of the hotel and head to the airport or next stop');
+  assert.equal(text, 'Head to the airport or next stop');
+});
+
+test('a short leftover is still refused', () => {
+  // Four words is the floor. "back at the hotel pool" has nothing in front of
+  // it, and a two-word fragment on a screen reads as a bug, which it is.
+  assert.equal(withoutStayClaim('back at the hotel pool').text, null);
+});
