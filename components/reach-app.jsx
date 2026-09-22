@@ -654,7 +654,16 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   // you" is a thing to rescue, "you haven't paid" is an accusation.
   const solo=g=>(g?.memberIds||[]).length<=1;
   const actions=[
-    ...allPlans.filter(p=>p.status==="approved").map(p=>({
+    // Home said "Moab, Utah, USA is ready to book" five days into its own
+    // dates, next to a plan screen that had just learned to say the opposite:
+    // two screens disagreeing about the same trip, which is how this app's
+    // bugs usually look.
+    //
+    // A trip that has started is not dropped from this list. There may still
+    // be a table to ring about, and hiding the trip hides that too — it just
+    // stops being described as something to book ahead.
+    ...allPlans.filter(p=>p.status==="approved"
+      &&tripTiming({startDate:p.startDate,endDate:p.endDate},todayISO)!=="over").map(p=>({
       // "This is the last step" is a promise the next screen cannot always
       // keep: a trip can be approved and still have nothing priced to
       // charge for, in which case checkout correctly refuses and the person
@@ -665,9 +674,15 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       // and not here, so a trip somebody is taking on their own was told
       // "Everyone's in" by their own home screen — a sentence about other
       // people, on a plan that has none.
-      type:"book",rank:0,text:`${p.title} is ready to book`,
-      sub:solo(p.group)?"You're all set — let's see what we can get booked":"Everyone's in — let's see what we can get booked",
-      plan:p,cta:"Book →"})),
+      type:"book",rank:0,
+      text:tripTiming({startDate:p.startDate,endDate:p.endDate},todayISO)==="on_now"
+        ?`${p.title} is on now`
+        :`${p.title} is ready to book`,
+      sub:tripTiming({startDate:p.startDate,endDate:p.endDate},todayISO)==="on_now"
+        ?"Anything still open is on the trip"
+        :solo(p.group)?"You're all set — let's see what we can get booked":"Everyone's in — let's see what we can get booked",
+      plan:p,
+      cta:tripTiming({startDate:p.startDate,endDate:p.endDate},todayISO)==="on_now"?"Open →":"Book →"})),
     ...allPlans.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
       type:"vote",rank:1,text:`${p.group.name} is deciding on ${p.title}`,
       sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →"})),
