@@ -8,6 +8,7 @@ import { planSections, daysAway, today, countdown, groupSchedule, byName, monthG
 import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle, bookedClaim, bookedWording } from "@/lib/checkout";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
+import { afterRebuild } from "@/lib/itinerary-rebuild";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
@@ -6215,7 +6216,23 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan");
       // A restaurant-type plan is the night out. Labelled as an evening
       // rather than a day, same as the generate path.
-      const rows=itineraryRows(d.itinerary,oneEvening);
+      // The flights, the stay and the transfers survive a rebuild.
+      //
+      // This was `itineraryRows(...)` alone, and saving an itinerary replaces
+      // it wholesale — so pressing "Plan my days for me" on an existing trip
+      // deleted the three lines Reach can actually book and left only the
+      // restaurants and walks, which it cannot. The generate path builds
+      // `[...fixedCostRows(trip), ...itineraryRows(...)]`; this path had the
+      // second half and not the first, and the two quietly disagreed.
+      //
+      // A real plan in the table shows the damage: Moab, thirteen nights,
+      // $1,474 a head, thirty-nine lines and not one of them bookable, with
+      // $893 of flights and accommodation missing from its own budget.
+      //
+      // Rebuilding the days is not a reason to unbook the trip. These belong
+      // to the trip, not to the day-by-day plan, so they are carried over
+      // exactly as they were.
+      const rows=afterRebuild(plan.itinerary,itineraryRows(d.itinerary,oneEvening));
       if(!rows.length)throw new Error("Nothing came back — try again");
       updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows}:x)}));
       const saved=await saveItineraryToServer(planId,rows);
