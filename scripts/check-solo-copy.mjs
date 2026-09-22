@@ -80,10 +80,6 @@ const REVIEWED = [
     why: 'voting screens. A group of one gets the same flow with the voting UI absent and enable_voting false (reach-app.jsx, "Solo mode is first-class"), so no solo plan ever reaches a vote.',
   },
   {
-    match: /Waiting for the group/,
-    why: 'the awaiting_approval label in BOOKING_STATE, a lookup table with no access to the plan. Solo plans no longer enter that queue: /api/bookings sets executeNow for a group of one, after a solo trip was told it was waiting on others who did not exist.',
-  },
-  {
     match: /A few people still need to chip in|Everyone has already paid/,
     why: 'the funding flow. A solo plan\'s share is the whole target, so paying it funds the plan outright and the waiting phase is unreachable; the reminder toast needs somebody to remind.',
   },

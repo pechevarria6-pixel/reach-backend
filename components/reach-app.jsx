@@ -2964,7 +2964,10 @@ const BOOKING_STATE={
   // run of the guard that bans exactly that phrase, because the guard could
   // not see a string with an apostrophe in it.
   pending:{label:"Yours to book",tone:"gold"},
-  awaiting_approval:{label:"Waiting for the group",tone:"plain"},
+  // Quoted and held, booked when somebody presses Book with the money in.
+  // Not "Waiting for the group": solo plans come through this state too, and
+  // there is no group to wait for.
+  awaiting_approval:{label:"Ready to book",tone:"plain"},
   redirected:{label:"Finish on their site",tone:"gold"},
   failed:{label:"Couldn't book",tone:"red"},
   cancelled:{label:"Cancelled",tone:"red"},

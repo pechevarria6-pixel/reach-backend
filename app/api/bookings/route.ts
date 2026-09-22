@@ -58,24 +58,20 @@ export async function POST(req: NextRequest) {
 
   const dryRun = body.dryRun === true;      // quote-only pass for the review screen
 
-  // Default flow is PROPOSE: quote every item and store it as awaiting the
-  // group's approval. Nothing books until POST /api/bookings/[id]/approve.
+  // Default flow is PROPOSE: quote every item and store it as awaiting
+  // approval. Nothing books until POST /api/bookings/[id]/approve, for a
+  // group of one as much as a group of ten.
   //
-  // Except when there is no group. A solo trip put everything in that queue
-  // too and told the one person on it that it was waiting on the others —
-  // there are no others, and nothing was ever going to arrive to release it.
-  // This was meant to be handled by the caller passing executeNow, and no
-  // caller ever did, so it is decided here where the plan is already loaded
-  // and the answer cannot be forgotten.
-  //
-  // Solo by the flag or by arithmetic: a group of one is a group of one
-  // whether or not the plan was created through the solo flow.
-  const { count: heads } = await ctx.db
-    .from('group_members')
-    .select('user_id', { count: 'exact', head: true })
-    .eq('group_id', ctx.plan.group_id as string);
-  const alone = (ctx.plan as { solo_mode?: boolean }).solo_mode === true || (heads ?? 0) <= 1;
-  const executeNow = body.executeNow === true || alone;
+  // A solo plan used to book here, on the grounds that there was nobody to
+  // wait for. But this route is what checkout calls to *price* a trip, on
+  // opening, before anybody has paid — so a solo trip with its traveller
+  // details filled in would have bought its flight the moment the screen
+  // loaded, with Reach's money and no approval, and the hotel failed on every
+  // solo trip because the lead guest is only named at approval. What a solo
+  // trip was actually waiting on was the one person on it pressing Book after
+  // paying, which approval already is. The "waiting on the others" wording
+  // was fixed where it was said.
+  const executeNow = body.executeNow === true;
   const results: BookingItemResult[] = [];
 
   // No airline issues a ticket without a legal name, a date of birth and a
