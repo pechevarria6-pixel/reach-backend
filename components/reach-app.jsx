@@ -1118,6 +1118,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   },[]);
   const [filter,setFilter]=useState("All");
   const [localRecs,setLocalRecs]=useState([]);
+  // What is on day by day for the week ahead — quizzes, karaoke, a festival
+  // — gathered from listings that were never on the same calendar.
+  const [week,setWeek]=useState([]);
   const [loading,setLoading]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [reason,setReason]=useState(null);
@@ -1171,6 +1174,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
         // How much there is here at all. A thin list shuffled daily is still
         // a thin list, and saying so beats implying a deep catalogue.
         setThin(!!data.thin);
+        setWeek(data.week||[]);
         if(data.events?.length){
           setLocalRecs(data.events);
           // Cache in sessionStorage so reload is instant
@@ -1479,6 +1483,58 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* What is on, day by day. The harvest has known about the Wednesday
+          quiz and the Thursday karaoke all along; they sat in the table as
+          prose and never reached a calendar. A recurring night is repeated
+          onto each of its days — that is what weekly means — and a one-off
+          appears on its date. Days with nothing on are shown as nothing on,
+          because that is a true and useful answer and skipping them says
+          there is no Thursday. */}
+      {week.some(d=>d.events.length>0)&&(
+        <div style={{margin:"0 0 16px"}}>
+          <div style={{padding:"0 20px 8px"}}>
+            <span className="sl">On this week</span>
+          </div>
+          <div style={{display:"flex",gap:10,padding:"0 20px 4px",overflowX:"auto",scrollbarWidth:"none"}}>
+            {week.map(d=>{
+              const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+              const quiet=d.events.length===0;
+              return(
+                <div key={d.day} style={{minWidth:132,maxWidth:170,flexShrink:0,
+                  background:quiet?"transparent":C.s1,
+                  border:`1px solid ${quiet?C.border:C.accentBorder}`,
+                  borderRadius:14,padding:"10px 12px"}}>
+                  <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",
+                    letterSpacing:".06em",marginBottom:6}}>
+                    {names[d.weekday]} {Number(d.day.slice(8,10))}
+                  </div>
+                  {quiet
+                    ?<div style={{fontSize:12,color:C.t3,lineHeight:1.45}}>Nothing listed</div>
+                    :d.events.slice(0,3).map((e,i)=>(
+                      <div key={e.id||i} style={{marginBottom:6}}>
+                        <a href={e.booking_url||undefined} target="_blank" rel="noopener noreferrer"
+                          style={{fontSize:12.5,color:C.t1,lineHeight:1.35,textDecoration:"none",display:"block"}}>
+                          {String(e.title).slice(0,42)}
+                        </a>
+                        <div style={{fontSize:10.5,color:C.t3,marginTop:1}}>
+                          {e.venue_name?String(e.venue_name).slice(0,22):""}
+                          {/* Said out loud, because "every week" is the
+                              difference between a thing you missed and a
+                              thing you can still go to. */}
+                          {e.recurring?" · every week":""}
+                        </div>
+                      </div>
+                    ))}
+                  {d.events.length>3&&(
+                    <div style={{fontSize:11,color:C.t3}}>+{d.events.length-3} more</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

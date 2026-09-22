@@ -21,6 +21,9 @@ import { byDistance } from '@/lib/discovery/distance';
 import { whereFrom } from '@/lib/discovery/where';
 import { tasteFrom } from '@/lib/discovery/taste';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
+import { whatsOn } from '@/lib/discovery/whats-on';
+import { parseWhen } from '@/lib/discovery/when';
+import { today } from '@/lib/calendar';
 
 export const maxDuration = 30;
 
@@ -158,9 +161,29 @@ export async function GET(req: NextRequest) {
   // — the honest answer while the sweep and harvest fill a new area in.
   const thin = events.length < THIN_POOL;
 
+  // What is on, day by day, for the week ahead.
+  //
+  // The harvest knows about quizzes on Wednesdays and a folk festival on the
+  // 26th, and nothing ever gathered them onto the same days: a one-off sits
+  // in the table with a date and a weekly thing sits there with a weekday
+  // and no date at all. A recurring day is read from the listing's own words
+  // rather than stored, so this needs no migration and works on every row
+  // already in the table.
+  const day = today();
+  const week = whatsOn(events.map(e => ({
+    id: e.id,
+    title: e.title,
+    starts_on: e.date,
+    every_weekday: e.date ? null : parseWhen(e.meta, day).everyWeekdayIndex,
+    venue_name: e.venue,
+    booking_url: e.url,
+    interest: e.category,
+  })), day, 7);
+
   return NextResponse.json({
     events, reason: 'ok', city, sources, personal,
     pool: events.length,
     thin,
+    week,
   });
 }
