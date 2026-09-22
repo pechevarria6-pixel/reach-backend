@@ -694,6 +694,16 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       type:"plan",rank:3,text:`${p.title} has no days yet`,
       sub:"We can write the whole thing in about 20 seconds",plan:p,cta:"Plan →"})),
   ].sort((a,b)=>a.rank-b.rank).slice(0,4);
+
+  // A trip is named once on this screen.
+  //
+  // "4 things waiting on you" and "Upcoming trips" were drawn from the same
+  // plans, so Moab and the Raleigh dinner each appeared twice, a few inches
+  // apart, under two headings. The top list is the one with something to do
+  // in it — it says what is waiting and carries the button — so anything it
+  // names comes out of the strip below rather than the other way round.
+  const spokenFor=new Set(actions.map(a=>a.plan?.id).filter(Boolean));
+  const alsoComing=upcoming.filter(p=>!spokenFor.has(p.id));
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"14px 20px 12px"}}>
@@ -785,15 +795,15 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
           ))}
         </div>
       )}
-      {(upcoming.length>0||groups.length>0)&&(
+      {(alsoComing.length>0||groups.length>0)&&(
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 20px 10px"}}>
         <span className="sl">Upcoming trips</span>
         <span style={{fontSize:12,color:C.accentText,cursor:"pointer"}} onClick={()=>setTab("groups")}>See all →</span>
       </div>
       )}
-      {(upcoming.length>0||groups.length>0)&&(
+      {(alsoComing.length>0||groups.length>0)&&(
       <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
-        {upcoming.map(plan=>(
+        {alsoComing.map(plan=>(
           <div key={plan.id} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
             style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
               // A picture of the place they are actually going. The gradient
