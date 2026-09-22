@@ -1512,7 +1512,13 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
                     {names[d.weekday]} {Number(d.day.slice(8,10))}
                   </div>
                   {quiet
-                    ?<div style={{fontSize:12,color:C.t3,lineHeight:1.45}}>Nothing listed</div>
+                    {/* "Nothing we've found", not "nothing on". The pool is
+                        whatever the sources returned — seventy things for
+                        Raleigh — and a quiet day in it is our gap, not a
+                        fact about the city. Phrasing our own thin data as a
+                        statement about a place is a mistake this app has
+                        made before and been told about. */}
+                    ?<div style={{fontSize:12,color:C.t3,lineHeight:1.45}}>Nothing we've found yet</div>
                     :d.events.slice(0,3).map((e,i)=>(
                       <div key={e.id||i} style={{marginBottom:6}}>
                         <a href={e.booking_url||undefined} target="_blank" rel="noopener noreferrer"
