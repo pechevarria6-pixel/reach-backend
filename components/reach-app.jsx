@@ -6854,8 +6854,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                               book something and cannot say what or where is
                               the same fault as a table it wanted and gave
                               you no way to get. */}
+                          {/* "Yours to book", not "Reserve ahead".
+                              "Reserve ahead" is a claim about the venue's
+                              policy, and nothing here has checked it. Pasta
+                              Jay's in Moab is walk-in only and the plan said
+                              reserve ahead; Vic's Italian takes no
+                              reservations at all and the plan said the same.
+                              The column that would settle it —
+                              discovery_venues.reservation_platform — is in a
+                              migration that has not been run, so at present
+                              the honest answer for every one of them is that
+                              this is the traveller's to sort and here is
+                              their site.
+                              When that migration lands, a venue we know
+                              takes bookings can say so again. */}
                           {item.booking_mode==="ahead"&&(item.venue_name||item.venue_website||item.venue_phone)&&(
-                            <span className="pill pill-a">Reserve ahead</span>
+                            <span className="pill pill-a">Yours to book</span>
                           )}
                           </>}
                           {item.booking_mode==="walk_in"&&(
