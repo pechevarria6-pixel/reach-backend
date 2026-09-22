@@ -187,10 +187,50 @@ function charged(row: CheckoutRow): boolean {
 }
 
 
+/**
+ * The same journey booked twice.
+ *
+ * Puerto Vallarta holds two confirmed Duffel orders — MHW2Y3 and SFYVFK —
+ * both RDU → PVR on 2026-11-02, $138.09 and $135.02. Neither carries an
+ * itinerary_item_id, because both predate the bridge that links a booking to
+ * the line it was made from, so `dedupe` cannot tell they are one flight: it
+ * falls back to the name, and "American Airlines · RDU → PVR" is not
+ * "Duffel Airways · RDU → PVR".
+ *
+ * The plan's funding target is the sum of the two. Somebody would be charged
+ * $273.11 to take one flight.
+ *
+ * The route and the date are what make it the same journey, whoever is
+ * flying it, so that is what this reads. Nothing is cancelled here — those
+ * are live orders at an airline and only a person may decide which one
+ * goes — but the screen stops being quiet about it.
+ */
+const ROUTE = /\b([A-Z]{3})\s*(?:→|->|-)\s*([A-Z]{3})\b[^\d]*(\d{4}-\d{2}-\d{2})/;
+
+export function journeyOf(row: CheckoutRow): string | null {
+  const d = typeof row.detail === 'string' ? row.detail : '';
+  const m = ROUTE.exec(d);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+}
+
+/** Groups of confirmed rows that are the same journey. One entry per clash. */
+export function doubleBooked(rows: CheckoutRow[] | null | undefined): CheckoutRow[][] {
+  const byJourney = new Map<string, CheckoutRow[]>();
+  for (const r of rows ?? []) {
+    if (r?.status !== 'confirmed') continue;
+    const key = journeyOf(r);
+    if (!key) continue;
+    byJourney.set(key, [...(byJourney.get(key) ?? []), r]);
+  }
+  return [...byJourney.values()].filter(g => g.length > 1);
+}
+
 export interface CheckoutState {
   rows: CheckoutRow[];
   /** Rows the provider refused. The pay button stays shut while any exist. */
   broken: CheckoutRow[];
+  /** Confirmed bookings that are the same journey. Never empty-checked away. */
+  clashes: CheckoutRow[][];
   totalCents: number;
   canPay: boolean;
   /** Why the button is off, in words for the screen. Null when it is on. */
@@ -263,6 +303,7 @@ export function checkoutState(rows: CheckoutRow[], opts: { ignoreBroken?: boolea
   return {
     rows: deduped,
     broken,
+    clashes: doubleBooked(deduped),
     totalCents,
     canPay,
     nothingToCharge,

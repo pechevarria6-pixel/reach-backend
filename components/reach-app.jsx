@@ -8321,6 +8321,32 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
             not be made used to leave "Trip item (details coming) — Couldn't
             book" on the screen with nothing to do about it, and the pay
             button live above it. */}
+        {/* The same journey booked twice. Puerto Vallarta holds two
+            confirmed Duffel orders for one flight — RDU → PVR on the 2nd,
+            $138.09 and $135.02 — and the funding target is the sum of both.
+            Neither has an itinerary_item_id, so dedupe cannot tell they are
+            one flight: it falls back to the name, and the airlines differ.
+            Nothing is cancelled from here. Those are live orders at an
+            airline, and which one goes is a person's decision — but the
+            screen does not take money for two of something quietly. */}
+        {checkout.clashes.map((group,i)=>(
+          <div key={`clash${i}`} style={{margin:"0 0 10px",padding:"12px 14px",background:C.amberDim,
+            border:`1px solid ${C.amber}`,borderRadius:14,textAlign:"left"}}>
+            <div style={{fontSize:12.5,color:C.t1,fontWeight:600,marginBottom:5}}>
+              {group.length} bookings for the same journey
+            </div>
+            {group.map((b,j)=>(
+              <div key={b.id||j} style={{fontSize:12,color:C.t2,lineHeight:1.5}}>
+                {itemTitle(b,lineTitle(b))}
+                {typeof b.price_cents==="number"?` — ${fmt(b.price_cents)}`:""}
+              </div>
+            ))}
+            <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.45}}>
+              Both are in the total below, because both are really booked. Cancel
+              the one you do not want from the trip's bookings first.
+            </div>
+          </div>
+        ))}
         {checkout.broken.length>0&&!skipBroken&&(
           <div style={{margin:"0 0 10px",padding:"12px 14px",background:C.amberDim,
             border:`1px solid ${C.border}`,borderRadius:14,textAlign:"left"}}>

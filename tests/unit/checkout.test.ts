@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { itemTitle, dedupe, checkoutState, hasOwnName } from '../../lib/checkout.ts';
+import { itemTitle, dedupe, checkoutState, hasOwnName, doubleBooked, journeyOf } from '../../lib/checkout.ts';
 
 // The three rows behind the 18 September screenshot, as they sit in the
 // database: three different reservations, one vertical, no prices.
@@ -282,4 +282,59 @@ test('whether a row is named is a fact about the row, not about the copy', () =>
   assert.equal(hasOwnName({ vertical: 'activity', detail: '  ' }), false);
   assert.equal(hasOwnName({ vertical: 'activity', detail: 'Pottery class' }), true);
   assert.equal(hasOwnName({ vertical: 'hotel', detail: { name: 'Best Western' } }), true);
+});
+
+// The two live Duffel orders on Puerto Vallarta, verbatim from the table.
+const PVR = [
+  { id: 'a', vertical: 'flight', status: 'confirmed', provider: 'duffel',
+    price_cents: 13809, detail: 'American Airlines · RDU → PVR · 2026-11-02' },
+  { id: 'b', vertical: 'flight', status: 'confirmed', provider: 'duffel',
+    price_cents: 13502, detail: 'Duffel Airways · RDU → PVR · 2026-11-02' },
+];
+
+test('the same journey booked twice is noticed', () => {
+  // MHW2Y3 and SFYVFK: one flight, two confirmed orders, and the plan's
+  // funding target is the sum of both. Neither carries an
+  // itinerary_item_id, so dedupe falls back to the name — and the airline
+  // names differ, so it cannot tell.
+  const clashes = doubleBooked(PVR);
+  assert.equal(clashes.length, 1);
+  assert.equal(clashes[0].length, 2);
+});
+
+test('the route and the date are what make it the same journey', () => {
+  assert.equal(journeyOf(PVR[0]), 'RDU-PVR-2026-11-02');
+  assert.equal(journeyOf(PVR[1]), 'RDU-PVR-2026-11-02', 'the airline is not the journey');
+});
+
+test('a different day is a different journey', () => {
+  const clashes = doubleBooked([
+    PVR[0],
+    { ...PVR[1], detail: 'Duffel Airways · RDU → PVR · 2026-11-09' },
+  ]);
+  assert.equal(clashes.length, 0, 'the return leg is not a duplicate');
+});
+
+test('only confirmed rows clash', () => {
+  // A failed attempt and a booking are not two bookings — that is the retry
+  // path working, and flagging it would cry wolf on every recovered error.
+  const clashes = doubleBooked([PVR[0], { ...PVR[1], status: 'failed' }]);
+  assert.equal(clashes.length, 0);
+});
+
+test('a row with no route in it is never a clash', () => {
+  assert.equal(journeyOf({ vertical: 'restaurant', detail: 'Dinner at Pasta Jay\'s' }), null);
+  assert.equal(doubleBooked([
+    { vertical: 'restaurant', status: 'confirmed', detail: 'Dinner at Pasta Jay\'s' },
+    { vertical: 'restaurant', status: 'confirmed', detail: 'Dinner at Zax Pizza' },
+  ]).length, 0);
+});
+
+test('checkoutState carries the clash so a screen can say so', () => {
+  const s = checkoutState(PVR);
+  assert.equal(s.clashes.length, 1);
+  // Both are still listed and both are still in the total: they are real
+  // orders at an airline and the money really is committed until somebody
+  // cancels one. The screen's job is to say so, not to quietly subtract it.
+  assert.equal(s.totalCents, 27311);
 });
