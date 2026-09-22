@@ -5889,6 +5889,71 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
 }
 
 // ─── PLAN DETAIL ──────────────────────────────────────────────────────────────
+// ─── How you actually sort one line out ──────────────────────────────────
+// The ticket link, the venue's own site, the phone number. Defined once
+// because it had already been written once, on the itinerary row, and the
+// Budget tab listed the very same items as prices with nothing to tap —
+// "Reach will book these" and "You pay on the day", both read-only, both
+// naming places whose website and phone number we hold.
+//
+// That is the fault this codebase makes most often: a fact the app holds
+// stopping one layer short. Here it stopped one *tab* short. Anything that
+// renders a bookable line renders this, so a second copy cannot drift from
+// the first.
+function ItemActions({item,markGot,tight}){
+  if(!item)return null;
+  const ticketed=item.type==="event"&&item.venue_website;
+  const site=item.type!=="event"&&item.venue_website&&!item.filled;
+  const phone=item.type==="restaurant"&&item.venue_phone;
+  if(!ticketed&&!site&&!phone)return null;
+  const gap=tight?6:8;
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:gap}}>
+      {/* A ticket is bought from whoever sells it. Reach cannot sell one, and
+          the honest complete answer is to hand somebody to the page that can. */}
+      {ticketed&&(item.filled
+        ?<span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,fontWeight:600,color:C.green}}>
+          ✓ Tickets sorted
+        </span>
+        :<>
+          <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
+            style={{display:"inline-flex",alignItems:"center",gap:6,background:C.accent,color:C.onAccent,
+              fontSize:12.5,fontWeight:700,padding:"8px 14px",borderRadius:999,textDecoration:"none"}}>
+            🎟️ Get tickets{item.venue_name?` · ${item.venue_name}`:""} →
+          </a>
+          {/* Reach cannot know somebody bought a ticket on a site it does not
+              run, so it asks — and once told, stops asking. */}
+          {markGot&&(
+            <button onClick={()=>markGot(item)}
+              style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
+                fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+              I've got them</button>
+          )}
+        </>)}
+      {/* Anything we hold an address for gets a way in — a place's own site
+          for a table or a class. Every verified venue has one. */}
+      {site&&(
+        <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
+          style={{display:"inline-flex",alignItems:"center",gap:6,
+            border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:600,
+            padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
+          {item.venue_name||"Their site"} →
+        </a>
+      )}
+      {/* Most restaurants are not on a booking platform. For those the phone
+          is the answer, and it is the one we hold most often. */}
+      {phone&&(
+        <a href={`tel:${String(item.venue_phone).replace(/[^0-9+]/g,"")}`}
+          style={{display:"inline-flex",alignItems:"center",gap:6,
+            border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:600,
+            padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
+          📞 {item.venue_phone}
+        </a>
+      )}
+    </div>
+  );
+}
+
 function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
@@ -6255,6 +6320,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     const ok=await saveItineraryToServer(planId,next);
     if(ok===false)toast("Couldn't save that — try again in a moment");
   };
+  // The lines Reach cannot book, that somebody still has to. A ticket from
+  // whoever sells it, a table the restaurant takes by phone. Reach booking it
+  // means there is nothing to do; `filled` means somebody has already said
+  // they did it; and without a website or a number there is nothing to offer
+  // but a sentence, which is what the old screen was.
+  const needsYou=(plan.itinerary||[]).filter(i=>
+    i.booking_mode!=="reach"&&i.booking_mode!=="walk_in"&&!i.filled
+    &&(i.venue_website||i.venue_phone));
+
   // The itinerary's own estimate, used only until there are real booking rows
   // to price against. Once there are, the server's figure wins: it is the one
   // a card is actually charged for, and two screens disagreeing about the
@@ -6509,6 +6583,36 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 )}
               </div>
             )}
+            {/* What is left for a person to do, on the tab they land on.
+                Everything Reach cannot book — a ticket somebody else sells, a
+                table the restaurant takes by phone — was only actionable on
+                the Itinerary tab, several taps away and only if you thought to
+                look. The plan told you a table was wanted and left finding it
+                to you.
+                Each line carries the same ItemActions the itinerary row does,
+                so this is a shorter route to the same buttons rather than a
+                second set that can disagree with them. It disappears when
+                there is nothing outstanding, because a checklist of nothing
+                is its own kind of noise. */}
+            {needsYou.length>0&&(
+              <div style={{padding:"0 20px 14px"}}>
+                <div className="sl" style={{marginBottom:10}}>
+                  {plural(needsYou.length,"thing","things")} still {needsYou.length===1?"needs":"need"} you
+                </div>
+                <div style={{background:C.s2,borderRadius:14,padding:"4px 14px",border:`1px solid ${C.border}`}}>
+                  {needsYou.map((item,i)=>(
+                    <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                      <div style={{fontSize:13,color:C.t1,lineHeight:1.4}}>{item.title}</div>
+                      {item.time&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{item.time}</div>}
+                      <ItemActions item={item} markGot={markGot} tight/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:8}}>
+                  Reach books what it can. These are the ones somebody else sells or takes by phone.
+                </div>
+              </div>
+            )}
             {plan.itinerary.length>0&&(
               <div style={{padding:"0 20px 14px"}}>
                 <div className="sl" style={{marginBottom:10}}>Bookings</div>
@@ -6708,57 +6812,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           </span>
                         </div>
                       )}
-                      {/* Anything we hold an address for gets a way in. A
-                          ticket page for an event, the place's own site for
-                          a table or a class — from here they are the same
-                          thing: where somebody goes to sort it out. Every
-                          verified venue has one, and none of them reached a
-                          screen until now. */}
-                      {item.type!=="event"&&item.venue_website&&!item.filled&&(
-                        <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
-                          style={{display:"inline-flex",alignItems:"center",gap:6,marginTop:8,
-                            border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:600,
-                            padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
-                          {item.venue_name||"Their site"} →
-                        </a>
-                      )}
-                      {item.type==="event"&&item.venue_website&&(
-                        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8,flexWrap:"wrap"}}>
-                          {item.filled
-                            ?<span style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:12.5,
-                                fontWeight:600,color:C.green}}>
-                              ✓ Tickets sorted
-                            </span>
-                            :<>
-                              <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
-                                style={{display:"inline-flex",alignItems:"center",gap:6,
-                                  background:C.accent,color:C.onAccent,fontSize:12.5,fontWeight:700,
-                                  padding:"8px 14px",borderRadius:999,textDecoration:"none"}}>
-                                🎟️ Get tickets{item.venue_name?` · ${item.venue_name}`:""} →
-                              </a>
-                              {/* The other half of the handoff. Reach cannot
-                                  know somebody bought a ticket on a site it
-                                  does not run, so it asks — and once told,
-                                  stops asking and lets the plan finish. */}
-                              <button onClick={()=>markGot(item)}
-                                style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
-                                  fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
-                                I've got them</button>
-                            </>}
-                        </div>
-                      )}
-                      {item.type==="restaurant"&&item.venue_phone&&(
-                        <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,color:C.t2}}>
-                          <span style={{flexShrink:0}}>📞</span>
-                          <span>
-                            {item.venue_name?`${item.venue_name} books by phone: `:"Books by phone: "}
-                            <a href={`tel:${String(item.venue_phone).replace(/[^0-9+]/g,"")}`}
-                              style={{color:C.accentText,fontWeight:600,textDecoration:"none"}}>
-                              {item.venue_phone}
-                            </a>
-                          </span>
-                        </div>
-                      )}
+                      {/* One definition, in ItemActions. The Budget tab
+                          lists these same items and had no way to act on any
+                          of them; it renders this now, so the two cannot
+                          drift apart the way hand-written field lists in this
+                          file have three times. */}
+                      <ItemActions item={item} markGot={markGot}/>
                       {/* A real payment note runs to a sentence — "cards at the
                           restaurant, cash only for drinks and cover" — so it is
                           a line, not a pill. Cash-only gets the warm colour
@@ -6970,11 +7029,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               // about a different thing entirely, printed as if it described
               // the line being charged for. When it happens is the useful
               // fact on a cost line anyway.
+              // `it` carries the whole item through. This mapped to four
+              // fields and dropped the rest, so a tab that lists the places
+              // you have to book yourself printed their names and prices and
+              // not the website or phone number sitting on the same row.
               const fixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0)
-                .map(i=>({l:i.title,d:i.time,c:i.cost_cents}));
+                .map(i=>({l:i.title,d:i.time,c:i.cost_cents,it:i}));
               // Everything you pay for yourself, as it happens.
               const variable=items.filter(i=>i.booking_mode!=="reach"&&i.cost_cents>0)
-                .map(i=>({l:i.title,d:i.time,c:i.cost_cents,pay:i.payment_note}));
+                .map(i=>({l:i.title,d:i.time,c:i.cost_cents,pay:i.payment_note,it:i}));
               const sum=a=>a.reduce((t,x)=>t+(x.c||0),0);
               const fixedTotal=sum(fixed), varTotal=sum(variable);
               const heads=plan.participants.length||1;
@@ -7002,6 +7065,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                         {r.pay&&/cash only/i.test(r.pay)&&(
                           <div style={{fontSize:11,color:C.amber,marginTop:2}}>💵 {r.pay}</div>
                         )}
+                        {/* The way to sort it out, on the tab that tells you
+                            what it costs. "Cash only" above is a fact that
+                            asks somebody to do something; until now this
+                            screen stated it and offered nothing to do. */}
+                        <ItemActions item={r.it} markGot={markGot} tight/>
                       </div>
                       <div style={{fontSize:13,color:C.t2,flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{money(r.c)}</div>
                     </div>

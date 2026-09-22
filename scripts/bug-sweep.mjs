@@ -102,9 +102,22 @@ for (const file of FILES) {
     // guard inside an IIFE, or the stack renderer legitimately drawing
     // nothing when no screen is pushed.
     if (isComponentFile) {
+      // Screens, not every capitalised function. The harm this rule names is
+      // "an empty screen with no way back" — a view that fills the phone and
+      // offers nothing, which is what shipped after a trip was confirmed. A
+      // component rendered inline returning null is ordinary React: it is how
+      // a row says it has no ticket link to show.
+      //
+      // "Screen" or "Flow" in the name is not the test, because
+      // CheckoutScreenV2 is a screen and would fail it, and that is the one
+      // where a blank render costs the most. What makes something a screen is
+      // that the router renders it on its own.
+      const routed = new Set([...src.matchAll(/screen==="[A-Za-z]+"\)\s*return\s*<([A-Za-z0-9]+)/g)].map(m => m[1]));
+      routed.add('ReachApp');
       for (const top of ast.body) {
         const d = top.type === 'ExportDefaultDeclaration' || top.type === 'ExportNamedDeclaration' ? top.declaration : top;
         if (d?.type !== 'FunctionDeclaration' || !d.id || !/^[A-Z]/.test(d.id.name)) continue;
+        if (!routed.has(d.id.name)) continue;
         // Statements directly in the component body, not inside a nested
         // function — those are callbacks and may return null freely.
         for (const stmt of d.body.body) {
