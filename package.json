@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run verify && next build",
     "start": "next start",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
@@ -12,7 +12,7 @@
     "test:e2e": "playwright test",
     "doctor": "node scripts/doctor.mjs",
     "check:scopes": "node scripts/check-scopes.mjs",
-    "verify": "npm run bug-sweep && npm run check:scopes && npm run check:responses && npm run check:writes && npm run check:queries && npm run check:promises && npm run check:contrast && npm run check:vocabulary && npm run check:client-fetch && npm run check:idempotency && npm run check:spelling && npm run check:tests && npm run type-check && npm run test:unit && npm run build",
+    "verify": "npm run bug-sweep && npm run check:scopes && npm run check:responses && npm run check:writes && npm run check:queries && npm run check:promises && npm run check:contrast && npm run check:vocabulary && npm run check:client-fetch && npm run check:idempotency && npm run check:spelling && npm run check:tests && npm run type-check && npm run test:unit",
     "check:queries": "node scripts/check-queries.mjs",
     "check:responses": "node scripts/check-responses.mjs",
     "bug-sweep": "node scripts/bug-sweep.mjs",
@@ -23,7 +23,8 @@
     "check:idempotency": "node scripts/check-idempotency.mjs",
     "check:spelling": "node scripts/check-spelling.mjs",
     "check:tests": "node scripts/check-tests.mjs",
-    "check:writes": "node scripts/check-writes.mjs"
+    "check:writes": "node scripts/check-writes.mjs",
+    "build:only": "next build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

@@ -461,3 +461,33 @@ the remaining regeneration waits for the window. Working as designed.
 Suite: 496 unit, 73 e2e.
 
 ---
+
+## T3 — the build gate — 2026-09-21 21:0x UTC
+
+`npm run build` now runs `verify` before `next build`. Vercel runs `build`,
+so **a red build cannot deploy**, whatever anybody types locally.
+
+One trap in the way first: `verify` already ended with `npm run build`, so
+the obvious `build: verify && next build` would have recursed for ever.
+Restructured — `verify` is the checks, `type-check` and the unit suite;
+`build` is `verify && next build`; `build:only` is the escape hatch the
+agent never uses.
+
+**Proven, not assumed.** Planted a deliberately failing unit test:
+
+```
+build exit=1        ℹ fail 1
+```
+
+`next build` never ran. Removed it; `build exit=0`, 504 tests passing.
+
+`.husky/pre-push` runs verify as the early-warning layer. It exists because
+this discipline failed twice in one day: `npm run verify | grep … && git
+commit` reports grep's exit code, not the suite's, and shipped over a red
+build — the second time one commit **after** committing the fix for it. A
+hook and a build command cannot be piped through anything.
+
+→ OWNER: confirm Vercel → Settings → Build Command is `npm run build` (the
+Next.js default). If it is overridden to `next build`, the gate is bypassed.
+
+---

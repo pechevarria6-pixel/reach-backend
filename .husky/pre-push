@@ -1,0 +1,9 @@
+#!/bin/sh
+# The early-warning layer. The gate that actually matters is `build`, which
+# runs verify before next build — Vercel runs that, so a red build cannot
+# deploy no matter what anybody types locally.
+#
+# This exists because twice in one day a commit shipped over a failing
+# verify: `npm run verify | grep ... && git commit` reports grep's exit code,
+# not the suite's. A hook cannot be piped through anything.
+npm run verify
