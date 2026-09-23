@@ -23,7 +23,6 @@ import { tasteFrom } from '@/lib/discovery/taste';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
 import { whatsOn } from '@/lib/discovery/whats-on';
 import { parseWhen } from '@/lib/discovery/when';
-import { today } from '@/lib/calendar';
 
 export const maxDuration = 30;
 
@@ -169,7 +168,9 @@ export async function GET(req: NextRequest) {
   // and no date at all. A recurring day is read from the listing's own words
   // rather than stored, so this needs no migration and works on every row
   // already in the table.
-  const day = today();
+  // The reader's day, from where they are — not the server's, which is UTC
+  // and turned "tonight" into tomorrow from 8pm Eastern.
+  const day = dayWhere(lng);
   const week = whatsOn(events.map(e => ({
     id: e.id,
     title: e.title,

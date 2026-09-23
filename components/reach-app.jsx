@@ -1882,14 +1882,13 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   // Add this experience directly to a group as a plan
   const addToGroup=async(group)=>{
     setSaving(true);
-    const today=new Date();
     const eventDateStr=fixedDate?formatDates(fixedDate):(exp.meta?.split("·")[0]?.trim()||"");
     const np={
       id:"p"+Date.now(),
       title:exp.title,
       status:"planning",
-      dates:eventDateStr||(bookDate||today.toISOString().split("T")[0])+(bookTime?" at "+bookTime:""),
-      startDate:fixedDate||bookDate||today.toISOString().split("T")[0],
+      dates:eventDateStr||(bookDate||today())+(bookTime?" at "+bookTime:""),
+      startDate:fixedDate||bookDate||today(),
       endDate:null,
       budget:parseInt((exp.price||"0").replace(/[^0-9]/g,""))||0,
       type:getType(),
@@ -1926,7 +1925,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   const submitBooking=async(group)=>{
     if(submitting)return;
     setSubmitting(true);
-    const when=fixedDate||bookDate||new Date().toISOString().split("T")[0];
+    const when=fixedDate||bookDate||today();
     const np={
       id:"p"+Date.now(),
       title:exp.title,
@@ -2148,7 +2147,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     <div style={{marginBottom:14}}>
                       <div style={{fontSize:12,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Date</div>
                       <input aria-label="Date you booked" type="date" className="inp" value={bookDate}
-                        min={new Date().toISOString().split("T")[0]}
+                        min={today()}
                         onChange={e=>setBookDate(e.target.value)} style={{color:C.t1}}/>
                     </div>
                   )}
@@ -4531,7 +4530,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
                 <div style={{flex:1}}>
                   <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Which night</div>
                   <input aria-label="Which night" type="date" className="inp" value={startDate}
-                    min={new Date().toISOString().split("T")[0]}
+                    min={today()}
                     onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
                 </div>
                 <div style={{flex:1}}>
@@ -4554,7 +4553,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
             <div style={{flex:1}}>
               <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Departure</div>
               <input aria-label="First day" type="date" className="inp" value={startDate}
-                min={new Date().toISOString().split("T")[0]}
+                min={today()}
                 onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
             </div>
             <div style={{flex:1}}>
@@ -6271,7 +6270,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 </div>
                 <div style={{marginBottom:12}}>
                   <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Date</div>
-                  <input aria-label="Date" type="date" className="inp" value={eventDate} min={new Date().toISOString().split("T")[0]} onChange={e=>setEventDate(e.target.value)} style={{color:C.t1}}/>
+                  <input aria-label="Date" type="date" className="inp" value={eventDate} min={today()} onChange={e=>setEventDate(e.target.value)} style={{color:C.t1}}/>
                 </div>
                 {planType==="restaurant"&&(
                   <div style={{marginBottom:14}}>
@@ -6307,14 +6306,18 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                   <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
                     {["This weekend","Next weekend","In 2 weeks","In a month"].map(preset=>(
                       <button key={preset} onClick={()=>{
+                        // Always a Friday to a Sunday, in the person's own
+                        // days. "In 2 weeks" used to be twelve days out
+                        // whatever today was — a Tuesday-to-Thursday weekend
+                        // when asked on a Saturday — and the dates were UTC,
+                        // so after 8pm Eastern "This weekend" slid a day.
                         const d=new Date();
-                        const day=d.getDay();
-                        const daysToFri=preset.includes("Next")?12-day:5-day<0?5-day+7:5-day;
-                        const offset=preset.includes("2 weeks")?12:preset.includes("month")?26:daysToFri;
-                        const fri=new Date(d.getTime()+offset*86400000);
-                        const sun=new Date(fri.getTime()+2*86400000);
-                        setStartDate(fri.toISOString().split("T")[0]);
-                        setEndDate(sun.toISOString().split("T")[0]);
+                        const toFri=(5-d.getDay()+7)%7;
+                        const offset=toFri+(preset.includes("Next")?7:preset.includes("2 weeks")?14:preset.includes("month")?28:0);
+                        const fri=new Date(d.getFullYear(),d.getMonth(),d.getDate()+offset);
+                        const sun=new Date(fri.getFullYear(),fri.getMonth(),fri.getDate()+2);
+                        setStartDate(today(fri));
+                        setEndDate(today(sun));
                       }} style={{padding:"7px 14px",borderRadius:20,border:`1px solid ${C.border}`,background:C.s2,color:C.t2,fontSize:12,fontWeight:500,cursor:"pointer"}}>
                         {preset}
                       </button>
@@ -6324,7 +6327,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 <div style={{display:"flex",gap:10,marginBottom:12}}>
                   <div style={{flex:1}}>
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>{isWeekend?"Friday":"Departure"}</div>
-                    <input aria-label="First day" type="date" className="inp" value={startDate} min={new Date().toISOString().split("T")[0]} onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
+                    <input aria-label="First day" type="date" className="inp" value={startDate} min={today()} onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
                   </div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>{isWeekend?"Sunday":"Return"}</div>
@@ -7076,8 +7079,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // overlap maths stays about this trip.
   const sayImFlexible=async()=>{
     const from=new Date();
-    const to=new Date(Date.now()+120*86400000);
-    await submitRanges([{start:from.toISOString().slice(0,10),end:to.toISOString().slice(0,10)}],
+    const to=new Date(from.getFullYear(),from.getMonth(),from.getDate()+120);
+    await submitRanges([{start:today(from),end:today(to)}],
       "Noted — you're easy either way");
   };
 
@@ -9771,7 +9774,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
           <div className="sl" style={{marginBottom:8}}>Date of birth</div>
           <input aria-label="Date of birth" className="inp" type="date" value={dobDraft}
-            max={new Date().toISOString().slice(0,10)}
+            max={today()}
             onChange={ev=>setDocDraft(x=>({...x,__dob:ev.target.value}))}/>
           {!dobValid&&(
             <div style={{fontSize:12,color:C.red,marginTop:8}}>
