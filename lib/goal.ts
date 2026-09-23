@@ -446,3 +446,14 @@ export function placeFromGoal(goal: string | null | undefined): string | null {
   }
   return null;
 }
+
+/**
+ * Where an evening happens: the place they named, then the place their
+ * screen shows, then home. A trip departs from home; an evening happens
+ * where it happens. "Birthday dinner in Charlotte" was planned in Raleigh
+ * because only home was ever used.
+ */
+export function nightCityFor(named: string | null, shown: string | null, home: string | null): string | null {
+  const clean = (v: string | null) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 120) : null);
+  return clean(named) ?? clean(shown) ?? clean(home);
+}

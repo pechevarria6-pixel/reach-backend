@@ -4948,6 +4948,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           goalBlurb:prefs?.goalBlurb||null,
           userLat:userLocation?.lat||null,
           userLng:userLocation?.lng||null,
+          nightPlace:userLocation?.city||userLocation?.formatted||null, // "Out around …", for an evening
           tripPrefs:prefs,
           mode:extra.mode||"trip",
           nightPrefs:extra.nightPrefs||{},

@@ -204,3 +204,12 @@ test('being away wins over the dinner that is somewhere inside it', () => {
 test('neither described leaves the question asked', () => {
   assert.equal(modeFromGoal('something nice'), null);
 });
+
+import { nightCityFor } from '../../lib/goal.ts';
+// Production plan 4fbd6ac9: "Birthdays dinner in Charlotte…", planned in Raleigh.
+test('an evening happens where they said, then where they are, then home', () => {
+  assert.equal(nightCityFor('Charlotte', 'Raleigh', 'Raleigh'), 'Charlotte');
+  assert.equal(nightCityFor(null, 'Aberdeen', 'Raleigh'), 'Aberdeen');
+  assert.equal(nightCityFor(null, null, 'Raleigh'), 'Raleigh');
+  assert.equal(nightCityFor('  ', '', null), null);
+});

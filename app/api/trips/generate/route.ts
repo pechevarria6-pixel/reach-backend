@@ -13,7 +13,7 @@ import {
   optionsGate, notYetAnswered, isUndecided, type GroupAnswers,
 } from '@/lib/group-answers';
 import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
-import { placeFromGoal } from '@/lib/goal';
+import { placeFromGoal, nightCityFor } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
 import { realPlacesAmong } from '@/lib/discovery/is-place';
 import { within } from '@/lib/deadline';
@@ -116,6 +116,10 @@ export async function POST(req: NextRequest) {
   const {
     groupId, startDate, endDate, budgetPerPerson,
     departureCity, departureAirport,
+    // The place the night-out screen shows ("Out around …") — a picked place
+    // or this device, which for an evening is where they are, not where
+    // they live.
+    nightPlace = null,
     detailTripId = null, // if set, generate full itinerary for one trip
     // A night out is not a short trip. No flights, no hotel, one evening, and
     // the only thing it needs asking that the taste quiz has not already
@@ -308,6 +312,13 @@ export async function POST(req: NextRequest) {
   const fromGoal = said ? null : placeFromGoal(goal);
   if (fromGoal) console.log('[generate] took the place from what they wrote', { place: fromGoal });
   const fixedPlace = said ?? fromGoal;
+
+  // Where an evening happens: the place they named, then the place on their
+  // screen, then home. Home was all it ever used — "Birthday dinner in
+  // Charlotte to celebrate my buddy who loves greek food" was planned at
+  // Raleigh venues, because the night prompt read only departureCity. A trip
+  // still departs from home; an evening happens where it happens.
+  const nightCity = nightCityFor(fixedPlace, typeof nightPlace === 'string' ? nightPlace : null, departureCity ?? null);
 
   // Two model calls a go, and real money each time. Nothing stopped one
   // account doing this in a loop — a stuck retry, a leaning finger — and the
@@ -1100,7 +1111,9 @@ you have made up; a day that is simply a good day is allowed to be one.`;
 
   // ── STAGE 1: Fast — just destinations + cost estimates, NO itinerary ───────
   const nightWhere = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
-  const prompt = isNightPlan ? `You are Reach. Generate exactly 3 options for ONE NIGHT OUT near ${departureCity || 'the user'}. BE FAST — overviews and honest costs, no itinerary yet.
+  const prompt = isNightPlan ? `You are Reach. Generate exactly 3 options for ONE NIGHT OUT in ${nightCity || 'the user\'s city'}. BE FAST — overviews and honest costs, no itinerary yet.
+${nightCity ? `ALL THREE MUST BE IN ${nightCity.toUpperCase()}. Every "destination" and "city" is there — not anywhere they live or anywhere nearby.` : ''}
+${goal ? `WHAT THE NIGHT IS FOR, IN THEIR WORDS: ${goal}` : ''}
 
 ${solo ? 'ONE PERSON, on their own.' : `GROUP: ${groupSize} people.`}
 WHEN: ${startDate || 'soon'}${nightPrefs.time ? ` around ${nightPrefs.time}` : ''}
@@ -1287,7 +1300,9 @@ Return JSON only, shaped exactly like this:
     // are put right here; being at the wrong place earns one more attempt,
     // because three holidays somewhere else is not a choice, it is being
     // ignored.
-    const rule = { location: fixedPlace };
+    // For an evening, the place it must be is the one worked out above, so an
+    // evening at home when they asked for Charlotte earns the same retry.
+    const rule = { location: isNightPlan ? nightCity : fixedPlace };
     if (trips?.length) {
       let report = applyRules(trips, rule);
       trips = report.trips;
