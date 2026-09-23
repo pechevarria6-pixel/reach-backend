@@ -166,6 +166,11 @@ export async function GET(req: NextRequest) {
         kind: f.meta.split(' · ')[0] || null,
         street: f.venue,
         last_seen_at: now,
+        // Only when the map has them. An upsert of null would wipe a phone
+        // the platforms job found on the venue's own page.
+        ...(f.osm?.phone ? { phone: f.osm.phone } : {}),
+        ...(f.osm?.hours ? { opening_hours: f.osm.hours } : {}),
+        ...(f.osm?.tags && Object.keys(f.osm.tags).length ? { osm_tags: f.osm.tags } : {}),
       });
     }
 
@@ -183,9 +188,20 @@ export async function GET(req: NextRequest) {
     let writeFailed = false;
     for (const batch of [toRead, notToRead]) {
       if (!batch.length) continue;
-      const { error: wrote } = await db
+      let { error: wrote } = await db
         .from('discovery_venues')
         .upsert(batch, { onConflict: 'osm_type,osm_id,interest' });
+      // opening_hours and osm_tags arrive in sql/venue-hours-2026-09-23.sql.
+      // Until it runs, save the venues without them rather than not at all.
+      if (wrote && (wrote.code === 'PGRST204' || /opening_hours|osm_tags/.test(wrote.message || ''))) {
+        console.error('[discovery/sweep] hours not stored — run sql/venue-hours-2026-09-23.sql');
+        ({ error: wrote } = await db.from('discovery_venues').upsert(
+          (batch as Record<string, unknown>[]).map(r => {
+            const { opening_hours: _h, osm_tags: _t, ...rest } = r;
+            return rest;
+          }),
+          { onConflict: 'osm_type,osm_id,interest' }));
+      }
       if (wrote) {
         console.error('[discovery/sweep] could not write venues', { area: name, error: wrote.message });
         writeFailed = true;

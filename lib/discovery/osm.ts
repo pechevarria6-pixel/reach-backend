@@ -12,6 +12,7 @@
 // What it gives us is venues, not dates: "Stockbridge Ceramics, a pottery,
 // here, with this website". Turning that into "Wednesday, 7pm, £45" is the
 // harvest step, and it is slow, so it does not happen in a request.
+import { dialable } from './phone.ts';
 import type { Finding, SourceResult, Seeker } from './types.ts';
 import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor } from './taste.ts';
@@ -68,7 +69,10 @@ export function overpassQuery(interests: string[], box: string, perKind = 15, ti
   const blocks = interests
     .map(tagsFor)
     .filter(selectors => selectors.length)
-    .map(selectors => `(\n${selectors.map(sel => `  nwr[${sel}](${box});`).join('\n')}\n);\nout center ${perKind};`)
+    // Only places with a website. The cap below is per kind, and the no-website
+    // skip used to happen after it — so the fifteen slots went mostly to
+    // places we then threw away, and Puerto Vallarta held three places to eat.
+    .map(selectors => `(\n${selectors.map(sel => `  nwr[${sel}][~"^(website|contact:website|url)$"~"."](${box});`).join('\n')}\n);\nout center ${perKind};`)
     .join('\n');
   // The server's own limit, which it enforces by refusing. At fifteen seconds
   // Aberdeen, New Jersey came back 504 after twelve; given room, the same
@@ -253,6 +257,17 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
       // mapped as a building outline still knows where it is.
       lat: el.lat ?? el.center?.lat ?? null,
       lng: el.lon ?? el.center?.lon ?? null,
+      // Kept rather than thrown away: hours, a number to ring, and the tags
+      // that say what they serve and what they take. Vic's Italian carries
+      // "Mo-Th 11:00-22:00;Fr-Sa 11:00-23:00;Su 11:00-21:00" and a phone,
+      // and the itinerary was told every stop is "open that evening" with
+      // nothing behind it.
+      osm: {
+        phone: dialable(tags.phone || tags['contact:phone'], tags['addr:country'] || null),
+        hours: tags.opening_hours || null,
+        tags: Object.fromEntries(Object.entries(tags).filter(([k]) =>
+          /^(cuisine|diet:|payment:|reservation|takeaway|outdoor_seating|wheelchair|drink:|smoking)/.test(k))),
+      },
     };
     // A caterer or a campus can carry a tag we asked for. Neither is a night out.
     if (canTurnUp(name, [what]) && notRuledOut(`${finding.title} ${finding.meta}`, seeker.avoid)) findings.push(finding);

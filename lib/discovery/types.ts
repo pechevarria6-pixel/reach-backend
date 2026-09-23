@@ -29,6 +29,8 @@ export interface Finding {
   /** Where it actually is, when the source knows. Null when it does not. */
   lat?: number | null;
   lng?: number | null;
+  /** What the map says about a venue beyond its name: kept by the sweep. */
+  osm?: { phone?: string | null; hours?: string | null; tags?: Record<string, string> | null };
   /**
    * A picture of the actual place, when there is one.
    *
