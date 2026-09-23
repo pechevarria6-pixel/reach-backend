@@ -245,7 +245,9 @@ export async function POST(req: NextRequest) {
           { status: 503 },
         );
       }
-      const gate = optionsGate(readiness.members, readiness.members.length === 1);
+      // Never solo here: isGroup was already decided from the member count, and
+      // somebody leaving between the two reads must not open the gate.
+      const gate = optionsGate(readiness.members, false);
       if (!gate.open) {
         return NextResponse.json({
           error: notYetAnswered(gate.waitingOn, 'Reach finds your trips once everyone has.'),
@@ -500,6 +502,15 @@ export async function POST(req: NextRequest) {
       const { data: planRow } = await supabase
         .from('plans').select('group_id, solo_mode, type, destination_style').eq('id', answersPlanId).maybeSingle();
 
+      // A trip id is a claim about which trip this is for, and the ids travel
+      // in email and share links. Any id that is not a plan in THIS group is
+      // refused: a random one skipped the readiness gate (no row, no group to
+      // wait on) and another group's got that group's answers — by name —
+      // written into somebody else's days.
+      if (!planRow || String(planRow.group_id) !== String(groupId)) {
+        return NextResponse.json({ error: 'That trip is not in this group.' }, { status: 404 });
+      }
+
       // A group trip nobody has picked a destination for has no place to
       // write days about — its title is "Where next?" or somebody's sentence.
       // Writing an itinerary for it would be writing one for nowhere.
@@ -526,7 +537,9 @@ export async function POST(req: NextRequest) {
         try {
           const readiness = await planReadiness(
             supabase, answersPlanId, String(planRow.group_id),
-            planRow.solo_mode === true,
+            // The flag is set by whoever created the plan; the member count
+            // is the fact. A group of three saved as solo does not skip the wait.
+            planRow.solo_mode === true && !isGroup,
           );
           if (!readiness.allReady) {
             return NextResponse.json({
@@ -1317,7 +1330,12 @@ Return JSON only, shaped exactly like this:
       const said: string[] = [
         ...standing.map((x: { text: string }) => x.text),
         ...Object.values(groupAnswers?.byUser ?? {}).flatMap(u => [
-          u.summary ?? '', String(u.answers.mustDo ?? ''), String(u.answers.noWayText ?? ''),
+          u.summary ?? '', String(u.answers.mustDo ?? ''),
+          // What somebody typed as a hard no is stored in noWayJose as
+          // "custom:…" (noWayText was only ever the quiz's input box), and it
+          // is the most private thing anybody says here.
+          ...([] as unknown[]).concat(u.answers.noWayJose ?? [], u.answers.noWay ?? [])
+            .map(String).map(v => v.startsWith('custom:') ? v.slice(7) : v),
         ]),
       ].filter(Boolean);
       const who = {

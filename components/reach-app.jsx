@@ -4492,7 +4492,9 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
               ✨ AI reads everyone's preferences
             </div>
             <div style={{fontSize:12,color:C.t2,lineHeight:1.6}}>
-              Combines your quiz answers with all {group.memberIds?.length||0} members' food, music, and activity preferences.
+              {(group.memberIds?.length||0)>1
+                ?`Combines your quiz answers with all ${group.memberIds.length} members' food, music, and activity preferences.`
+                :"Combines these answers with your food, music, and activity preferences."}
             </div>
           </div>
         </div>

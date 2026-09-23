@@ -100,6 +100,11 @@ export async function POST(req: NextRequest) {
     ).catch(() => null);
   }
 
+  const { count: headCount, error: headErr } = await supabase
+    .from('group_members').select('user_id', { count: 'exact', head: true }).eq('group_id', body.group_id);
+  if (headErr) console.error('[plans] could not count the group — not marking it solo', { code: headErr.code });
+  const soloGroup = !headErr && (headCount ?? 0) <= 1;
+
   const row: Record<string, unknown> = {
     group_id: body.group_id,
     title: body.title,
@@ -115,7 +120,9 @@ export async function POST(req: NextRequest) {
     destination_style: body.destination_style || null,
     dealbreakers: body.dealbreakers || [],
     vote_options: body.vote_options || [],
-    solo_mode: body.solo_mode === true,
+    // The caller's flag, but only for a group that really is one person —
+    // the trip generator used to skip the wait for a group saved as solo.
+    solo_mode: body.solo_mode === true && soloGroup,
     why_chosen: body.why_chosen?.length ? body.why_chosen : null,
     // Never the picture without the credit: a photograph is somebody's work.
     ...(photo ? { image_url: photo.url, image_credit: credit(photo), image_source: photo.source } : {}),

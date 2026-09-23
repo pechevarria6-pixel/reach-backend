@@ -304,3 +304,15 @@ test("a tie on pace goes to the slower one", () => {
   assert.equal(groupFraming(three).pace, 'relaxed');
   assert.equal(groupFraming(answersFrom([])).pace, null);
 });
+
+import { attributes as saysWho } from '../../lib/group-answers.ts';
+test('a typed hard no, said back word for word, is caught', () => {
+  const who = { names: ['Sam'], said: ['no flights over four hours please, I get sick'], title: 'Where next?' };
+  assert.equal(saysWho('Keeps to no flights over four hours please, as asked', who), true);
+});
+test('"will" and "may" are words, not Will and May', () => {
+  const who = { names: ['Will', 'May'], said: [], title: 'Where next?' };
+  assert.equal(saysWho('We will hike the ridge in May weather', who), true);   // "May" capitalised reads as the name
+  assert.equal(saysWho('We will hike the ridge and may swim', who), false);
+  assert.equal(saysWho('Will wanted the beach', who), true);
+});

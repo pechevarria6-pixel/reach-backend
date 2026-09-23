@@ -313,6 +313,12 @@ export function groupFraming(read: Pick<GroupAnswers, 'byUser'>): {
  * trip's own title is not private — everybody can see the title — so a trip
  * called "Kyle's fortieth" may still say it is for Kyle's fortieth.
  */
+/** First names that are also ordinary English words. */
+const WORD_NAMES = new Set(['will', 'may', 'june', 'april', 'august', 'mark', 'grace', 'hope', 'joy', 'faith',
+  'rose', 'art', 'bill', 'pat', 'ray', 'dawn', 'sky', 'summer', 'autumn', 'jack', 'don', 'sue', 'guy', 'rob',
+  'hunter', 'miles', 'chase', 'drew', 'harper', 'reed', 'wade', 'lane', 'river', 'brook', 'ivy', 'holly',
+  'robin', 'sunny', 'penny', 'max', 'frank', 'earnest', 'major', 'king', 'bay', 'star', 'honey', 'amber']);
+
 export function attributes(
   text: string,
   who: { names: string[]; said: string[]; title?: string | null },
@@ -324,8 +330,14 @@ export function attributes(
   for (const raw of who.names) {
     const n = String(raw || '').trim();
     if (n.length < 2) continue;
-    const re = new RegExp(`\\b${esc(n)}\\b`, 'i');
-    if (re.test(title)) continue;
+    // Matched case-blind, "We will hike" was dropped in a group with a Will
+    // in it. A name that is also an everyday word only counts capitalised;
+    // any other name counts however it is written ("which marco asked for").
+    const cap = n.charAt(0).toUpperCase() + n.slice(1).toLowerCase();
+    const re = WORD_NAMES.has(n.toLowerCase())
+      ? new RegExp(`\\b${esc(cap)}\\b`)
+      : new RegExp(`\\b${esc(n)}\\b`, 'i');
+    if (new RegExp(`\\b${esc(n)}\\b`, 'i').test(title)) continue;
     if (re.test(t)) return true;
   }
   const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
