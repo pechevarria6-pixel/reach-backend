@@ -97,9 +97,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const base = appUrl(req);
   // Straight to the questions for this trip: /home opens them from ?answer=.
+  // A vote opens on the trip's Vote tab: /home opens it from ?vote=.
+  const voteUrl = `/home?vote=${encodeURIComponent(params.planId)}&group=${encodeURIComponent(String(plan.group_id))}`;
   const url = kind === 'prefs'
     ? `${base}/home?answer=${encodeURIComponent(params.planId)}`
-    : `${base}/home`;
+    : kind === 'vote' ? `${base}${voteUrl}` : `${base}/home`;
   // Each person's own share, the same figure checkout will charge them. This
   // used to quote the first person's even split of the budget to everybody,
   // which was wrong for anyone sitting something out and for any priced trip.
@@ -127,6 +129,23 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       title: `${first} is waiting on you`,
       body: `Say what you want from ${what} — the ideas are built once everyone has answered.`,
       url: `/home?answer=${encodeURIComponent(params.planId)}`,
+      planId: params.planId,
+    }, pushSender());
+    inApp = delivery.inApp;
+    pushed = delivery.pushed.length;
+    emailTo = (people || []).filter(p => delivery.unreached.includes(p.id));
+  } else if (kind === 'vote') {
+    // The same for a vote: in the app first, email only for whoever no
+    // phone notification reached. Never says who has voted for what.
+    const what = plan.title === 'Where next?'
+      ? (plan.type === 'restaurant' ? 'your next night out' : 'your next trip')
+      : plan.title;
+    const options = ((plan.vote_options as string[]) || []).slice(0, 3);
+    const delivery = await notifyUsers(db, outstanding, {
+      kind: 'vote',
+      title: 'Your vote is still to come',
+      body: `${options.length ? `${options.join(' · ')} — ` : ''}vote on ${what}.`,
+      url: voteUrl,
       planId: params.planId,
     }, pushSender());
     inApp = delivery.inApp;
@@ -181,7 +200,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   return NextResponse.json({
     // People reached by anything at all, and how: bell, phone, email.
-    notified: kind === 'prefs' ? outstanding.length : notified,
+    notified: kind === 'prefs' || (kind === 'vote' && inApp) ? outstanding.length : notified,
     inApp, pushed, emailed: notified,
     attempted: (people || []).length, failed: failures.length,
   });

@@ -21,6 +21,11 @@ import { locate } from '@/lib/discovery/geocode';
 import { normalise } from '@/lib/discovery/verify';
 import { withoutStayClaim } from '@/lib/stay-claims';
 import { isFiller, fillerClaim, corruptionAt, beforeCorruption } from '@/lib/filler';
+import { randomUUID } from 'node:crypto';
+import { ideasFrom, findDecision, isOrganiser, type SavedIdeas, type TripIdea } from '@/lib/trip-vote';
+import { readSavedIdeas, saveIdeas, attachDays, clearVotes, membersOf, organiserOf, firstName } from '@/lib/trip-ideas-store';
+import { notifyUsers } from '@/lib/notify-user';
+import { pushSender } from '@/lib/push';
 import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
@@ -138,6 +143,10 @@ export async function POST(req: NextRequest) {
     // against it first; with this set, the options wait for all of them and
     // are built from all of them.
     planId: groupPlanId = null,
+    // "Get three different ideas": the organiser throwing away a saved set
+    // and everybody's votes on it. Without this a Find on a plan that
+    // already has ideas shows those ideas and builds nothing.
+    regenerate = false,
   } = body;
   // `let`: a group trip's own answers fill these when the caller did not
   // send them — which is every time somebody other than the organiser
@@ -206,6 +215,10 @@ export async function POST(req: NextRequest) {
   }
 
   let groupPlan: { id: string; created_by: string | null; type: string | null; solo_mode: boolean | null; title: string | null } | null = null;
+  // Whether plans.trip_options exists yet (sql/trip-options-2026-09-23.sql),
+  // and which saved set a regenerate is replacing.
+  let ideasAvailable = false;
+  let replacing: string | null = null;
   let groupAnswers: GroupAnswers | null = null;
   if (groupPlanId) {
     const { data: row } = await supabase
@@ -232,6 +245,36 @@ export async function POST(req: NextRequest) {
         { error: 'Somebody has already picked where this trip goes.', alreadyDecided: true },
         { status: 409 },
       );
+    }
+
+    // ── One set of ideas per trip ─────────────────────────────────────
+    // The ideas are saved on the plan and the whole group votes on them, so
+    // a second Find shows the saved three rather than building three more
+    // over a vote in progress — and costs nothing. Only the organiser can
+    // ask for different ones, because that throws everybody's votes away.
+    if (!detailTripId && isGroup) {
+      const read = await readSavedIdeas(supabase, groupPlan.id);
+      if ('error' in read) {
+        // Building anyway could put a second set over a vote in progress.
+        console.error('[generate] refused: could not check for saved ideas', { plan: groupPlan.id, code: read.error });
+        return NextResponse.json(
+          { error: "We couldn't check for this trip's ideas just now — try again in a moment." },
+          { status: 503 },
+        );
+      }
+      ideasAvailable = read.available;
+      const decision = findDecision({
+        saved: read.ideas,
+        regenerate: regenerate === true,
+        organiser: isOrganiser({ role: ctx.role, createdBy: groupPlan.created_by, userId: ctx.user.id }),
+      });
+      if (decision.action === 'refuse') {
+        return NextResponse.json({ error: decision.error }, { status: decision.status });
+      }
+      if (decision.action === 'show' && read.ideas) {
+        return NextResponse.json({ success: true, trips: read.ideas.options, ideas: publicIdeas(read.ideas), saved: true, shared: true });
+      }
+      if (decision.action === 'generate') replacing = decision.replacing;
     }
 
     // The options, and the days of each option, wait for everybody — gated
@@ -477,7 +520,16 @@ export async function POST(req: NextRequest) {
   if (detailTripId) {
     // city and country_code are carried through stage 1 precisely so the
     // place can be looked up rather than parsed back out of a display name.
-    const { destination, vibe, costs, city: tripCity, country_code: tripCountry } = body.tripData || {};
+    // The days of one of a group trip's saved ideas are written from the
+    // idea as saved — the place, the vibe, the costs everybody is looking at
+    // — not from whatever the caller sent, and are saved back onto it so
+    // every member sees them.
+    let ideaForDays: TripIdea | null = null;
+    if (groupPlan && isGroup && !detailIsPlan) {
+      const read = await readSavedIdeas(supabase, groupPlan.id);
+      ideaForDays = read.ideas?.options.find(o => o.id === String(detailTripId)) ?? null;
+    }
+    const { destination, vibe, costs, city: tripCity, country_code: tripCountry } = (ideaForDays ?? body.tripData ?? {}) as Record<string, any>;
 
     // What this group asked for, for THIS trip.
     //
@@ -1160,7 +1212,12 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           .filter((v): v is string => !!v && !!v.trim()))];
         if (venues.length) title = venues.length === 1 ? `An evening at ${venues[0]}` : `${venues[0]} & ${venues[venues.length - 1]}`;
       }
-      return NextResponse.json({ itinerary: days, ...(title ? { title } : {}), ...(isNightPlan && foodGap.length ? { foodGap } : {}) });
+      // Onto the saved idea, so everybody voting sees the same days. Never
+      // fails the request: whoever asked still gets the days.
+      const savedToIdeas = ideaForDays && groupPlan
+        ? await attachDays(supabase, groupPlan.id, ideaForDays.id, days)
+        : false;
+      return NextResponse.json({ itinerary: days, savedToIdeas, ...(title ? { title } : {}), ...(isNightPlan && foodGap.length ? { foodGap } : {}) });
     } catch (e: any) {
       report(e, { where: 'trips/generate', extra: { destination, nights, status: e?.status } });
       console.error('[trips itinerary] generation failed', {
@@ -1490,10 +1547,44 @@ Return JSON only, shaped exactly like this:
       trip.music_scene = trip.food_scene;
     }));
 
+    const meta = { groupSize, nights, budget: effectiveBudget, departure, departureAirport: departureCode };
+
+    // ── Saved on the trip, for the whole group ───────────────────────
+    // A group's ideas go on the plan and the vote opens: every member sees
+    // these three, votes on their own phone, and the organiser picks. Until
+    // the migration has run they are shown to whoever found them only, and
+    // the response says so rather than letting the screen imply otherwise.
+    if (groupPlan && isGroup && ideasAvailable) {
+      const ideas = ideasFrom(trips as unknown as Array<Record<string, unknown>>, {
+        set: randomUUID(), foundBy: ctx.user.id, foundAt: new Date().toISOString(),
+        mode: isNightPlan ? 'night' : 'trip',
+      });
+      const saved = await saveIdeas(supabase, groupPlan.id, ideas, replacing);
+      if (saved.outcome === 'saved') {
+        if (replacing) await clearVotes(supabase, groupPlan.id);
+        await tellTheGroup(supabase, groupPlan.id, String(groupId), groupPlan.created_by, ctx.user.id, isNightPlan, !!replacing, ideas.options.length);
+        return NextResponse.json({ success: true, trips: ideas.options, ideas: publicIdeas(ideas), saved: false, shared: true, meta });
+      }
+      if (saved.outcome === 'taken') {
+        // Somebody else's Find landed first. Theirs are the group's ideas;
+        // these three are dropped rather than shown beside them.
+        if (!saved.ideas) {
+          return NextResponse.json(
+            { error: 'Somebody has already picked where this trip goes.', alreadyDecided: true },
+            { status: 409 },
+          );
+        }
+        return NextResponse.json({ success: true, trips: saved.ideas.options, ideas: publicIdeas(saved.ideas), saved: true, shared: true, meta });
+      }
+      // 'unavailable' or 'error': fall through, unshared.
+    }
+
     return NextResponse.json({
       success: true,
       trips,
-      meta: { groupSize, nights, budget: effectiveBudget, departure, departureAirport: departureCode },
+      // A group's ideas that could not be saved are on this phone only.
+      shared: !(groupPlan && isGroup) ? null : false,
+      meta,
     });
   } catch (e: any) {
     console.error('[trips generate] generation failed', {
@@ -1507,4 +1598,35 @@ Return JSON only, shaped exactly like this:
       { status },
     );
   }
+}
+
+/** The saved set as a screen sees it. */
+function publicIdeas(ideas: SavedIdeas) {
+  return { set: ideas.set, mode: ideas.mode, foundAt: ideas.foundAt };
+}
+
+/**
+ * "Your trip ideas are ready — vote", to everybody but whoever found them,
+ * who is looking at them already. Opens the trip's Vote tab.
+ */
+async function tellTheGroup(
+  db: import('@supabase/supabase-js').SupabaseClient,
+  planId: string, groupId: string, createdBy: string | null, finderId: string,
+  night: boolean, fresh: boolean, count: number,
+): Promise<void> {
+  const members = await membersOf(db, groupId);
+  if (!members) return;
+  const others = members.map(m => m.userId).filter(id => id !== finderId);
+  if (!others.length) return;
+  const organiser = organiserOf(members, createdBy);
+  const kind = night ? 'ideas for the night' : 'trip ideas';
+  const picks = organiser ? `${firstName(organiser.name)} makes the pick once you've voted.` : "The pick is made once you've voted.";
+  const { stored } = await notifyUsers(db, others, {
+    kind: 'ideas_ready',
+    title: fresh ? `New ${kind} are ready — vote again` : `Your ${kind} are ready — vote`,
+    body: `${count === 3 ? 'Three' : count === 2 ? 'Two' : count} ideas, built from everyone's answers. ${picks}`,
+    url: `/home?vote=${encodeURIComponent(planId)}&group=${encodeURIComponent(groupId)}`,
+    planId,
+  }, pushSender());
+  if (!stored) console.error('[generate] the group was not told about the ideas in the app', { planId });
 }

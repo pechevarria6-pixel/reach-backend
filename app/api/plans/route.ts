@@ -7,6 +7,7 @@ import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
 import { placesFor } from '@/lib/discovery/real-places';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
+import { waitingTripIn, WAITING_STATUSES } from '@/lib/trip-vote';
 
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),
@@ -105,6 +106,18 @@ export async function POST(req: NextRequest) {
   if (headErr) console.error('[plans] could not count the group — not marking it solo', { code: headErr.code });
   const soloGroup = !headErr && (headCount ?? 0) <= 1;
 
+  // ── One group trip waiting on its destination at a time ─────────────
+  // A second "Plan a trip together" while one is still gathering answers or
+  // being voted on asked everybody the same questions twice and split the
+  // group across two trips, neither of which could ever be found. The
+  // caller is given the one that exists instead, and the client opens it.
+  // sql/trip-options-2026-09-23.sql adds the index that makes this hold for
+  // two requests at the same instant; this is the answer somebody reads.
+  if (undecided && !soloGroup) {
+    const existing = await waitingTrip(supabase, body.group_id);
+    if (existing) return alreadyWaiting(existing);
+  }
+
   const row: Record<string, unknown> = {
     group_id: body.group_id,
     title: body.title,
@@ -151,6 +164,13 @@ export async function POST(req: NextRequest) {
     attempt = await supabase.from('plans').insert(row).select().single();
   }
   const { data: plan, error } = attempt;
+
+  // Lost the race to another request making the same group trip: the
+  // unique index refused this one. Theirs is the trip.
+  if (error?.code === '23505' && undecided) {
+    const existing = await waitingTrip(supabase, body.group_id);
+    if (existing) return alreadyWaiting(existing);
+  }
 
   if (error || !plan) {
     console.error('[plans POST] insert failed', error);
@@ -212,4 +232,28 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({ plan }, { status: 201 });
+}
+
+async function waitingTrip(db: import('@supabase/supabase-js').SupabaseClient, groupId: string): Promise<string | null> {
+  const { data, error } = await db.from('plans')
+    .select('id, destination_style, status, created_at')
+    .eq('group_id', groupId).eq('destination_style', UNDECIDED)
+    .in('status', [...WAITING_STATUSES]);
+  if (error) {
+    // Not a reason to refuse somebody their trip: the index, once it is
+    // there, is what holds the line.
+    console.error('[plans POST] could not check for a group trip already waiting', { groupId, code: error.code });
+    return null;
+  }
+  return waitingTripIn((data ?? []).map(r => ({
+    id: String(r.id), destination_style: r.destination_style, status: r.status, created_at: r.created_at,
+  })));
+}
+
+function alreadyWaiting(planId: string) {
+  return NextResponse.json({
+    error: 'This group already has a trip waiting on everyone — here it is.',
+    code: 'already_waiting',
+    planId,
+  }, { status: 409 });
 }

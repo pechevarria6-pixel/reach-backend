@@ -8,6 +8,10 @@ import { track } from '@/lib/track';
 import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
+import { mayPick, readIdeas } from '@/lib/trip-vote';
+import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
+import { notifyUsers } from '@/lib/notify-user';
+import { pushSender } from '@/lib/push';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -32,6 +36,10 @@ const UpdatePlanSchema = z.object({
   // pressing "Pick this" on different options at once is two concurrent
   // requests, and read-then-write would let both through. Never stored.
   only_if_undecided: z.boolean().nullish(),
+  // Which of the saved ideas (plans.trip_options) is being picked. The
+  // place, the budget and the reasons are then taken from the idea as the
+  // group saw it, not from whatever the caller sent. Never stored.
+  pick_option: z.string().max(200).nullish(),
 });
 
 // GET /api/plans/[id] — get a single plan with itinerary and votes
@@ -94,7 +102,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   const user = ctx.user;
 
   const { data: plan } = await supabase.from('plans')
-    .select('group_id, start_date, end_date, created_by').eq('id', params.planId).single();
+    .select('group_id, start_date, end_date, created_by, destination_style').eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
 
   const { data: membership } = await supabase
@@ -103,8 +111,64 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
 
   // Handle status-specific timestamps
   // confirmDateChange is a decision about this request, not a column.
-  const { confirmDateChange: _confirm, only_if_undecided: onlyIfUndecided, ...fields } = body as Record<string, unknown>;
+  const { confirmDateChange: _confirm, only_if_undecided: onlyIfUndecided, pick_option: pickOption, ...fields } = body as Record<string, unknown>;
   const updates: any = { ...fields };
+
+  // ── Deciding where a group trip goes ──────────────────────────────────
+  // The pick is made for everybody, so in a group it is the organiser's —
+  // whoever set the trip up, or an admin — and nobody else's, whatever
+  // their screen offers. It used to be whoever tapped "Pick this" first.
+  // Anything that would decide an undecided trip counts: picking, clearing
+  // "undecided", or moving its status (closing the vote).
+  const undecidedNow = plan.destination_style === UNDECIDED;
+  const deciding = onlyIfUndecided === true || pickOption != null
+    || (undecidedNow && ('destination_style' in updates || 'status' in updates));
+  let others: string[] = [];
+  if (deciding) {
+    const members = await membersOf(supabase, String(plan.group_id));
+    if (!members) {
+      // Deciding for a group on a guess about who is in it is not an option.
+      console.error('[plans PATCH] refused a pick: could not read the group', { planId: params.planId });
+      return NextResponse.json({ error: "We couldn't check who is in this group — try again in a moment." }, { status: 503 });
+    }
+    if (!mayPick({ role: membership.role, createdBy: plan.created_by, userId: user.id, memberCount: members.length })) {
+      const organiser = organiserOf(members, plan.created_by ?? null);
+      return NextResponse.json({
+        error: `Only ${organiser ? firstName(organiser.name) : 'whoever set this trip up'} can make the pick — your vote is what counts toward it.`,
+        notOrganiser: true,
+      }, { status: 403 });
+    }
+    others = members.map(m => m.userId).filter(id => id !== user.id);
+  }
+
+  // The idea as the group saw it. When it is saved, it is the source of the
+  // place and the budget; the caller's copy is only used on a database that
+  // has not had sql/trip-options-2026-09-23.sql yet.
+  if (pickOption != null) {
+    const { data: row, error: readErr } = await supabase.from('plans').select('trip_options').eq('id', params.planId).maybeSingle();
+    if (readErr && !notMigrated(readErr)) {
+      console.error('[plans PATCH] could not read the saved ideas for the pick', { planId: params.planId, code: readErr.code });
+      return NextResponse.json({ error: "We couldn't read this trip's ideas just now — try again." }, { status: 503 });
+    }
+    if (readErr) console.error(`[plans PATCH] picking from the caller's copy: plans.trip_options is not there yet — run ${MIGRATION}`);
+    const ideas = readIdeas((row as { trip_options?: unknown } | null)?.trip_options);
+    if (ideas) {
+      const idea = ideas.options.find(o => o.id === String(pickOption));
+      if (!idea) return NextResponse.json({ error: "That isn't one of this trip's ideas any more — have a look at the current ones." }, { status: 409 });
+      updates.title = idea.destination;
+      updates.destination_city = idea.city || null;
+      updates.destination_country = idea.country_code ? String(idea.country_code).toUpperCase() : null;
+      updates.budget_cents = Math.round((Number(idea.total_per_person) || 0) * 100);
+      updates.why_chosen = (idea.used_suggestions || []).length ? idea.used_suggestions : null;
+    }
+  }
+  if (onlyIfUndecided === true) {
+    updates.destination_style = null;
+    // The vote is over. Back to planning, where the three checks — overview,
+    // budget, book — decide when it is ready; "approved" would read as money
+    // already in.
+    updates.status = 'planning';
+  }
   if ('why_chosen' in updates) updates.why_chosen = (updates.why_chosen as string[] | null)?.length ? updates.why_chosen : null;
   if ('destination_country' in updates && updates.destination_country) {
     updates.destination_country = String(updates.destination_country).toUpperCase();
@@ -216,6 +280,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     attempt = await write();
   }
   const { data: updated, error: writeError } = attempt;
+  if (onlyIfUndecided === true && !writeError && updated && others.length) {
+    // Everybody hears where they are going — the organiser is looking at it.
+    await notifyUsers(supabase, others, {
+      kind: 'trip_picked',
+      title: `${updated.title} it is`,
+      body: 'Picked for the group. Open the trip to see the plan.',
+      url: `/home?vote=${encodeURIComponent(params.planId)}&group=${encodeURIComponent(String(plan.group_id))}`,
+      planId: params.planId,
+    }, pushSender());
+  }
   if (onlyIfUndecided === true && !writeError && !updated) {
     // Nothing matched: somebody else picked first. Theirs stands, and this
     // person is told so rather than silently overwriting it.

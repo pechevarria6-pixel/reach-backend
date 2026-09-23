@@ -841,13 +841,16 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
       plan:p,
       cta:tripTiming({startDate:p.startDate,endDate:p.endDate},todayISO)==="on_now"?"Open →":"Book →"})),
     ...live.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
-      type:"vote",rank:1,text:`${p.group.name} is deciding on ${p.title}`,
-      sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →"})),
+      type:"vote",rank:1,text:`${p.group.name} is deciding on ${tripCalled(p)}`,
+      sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →",
+      go:()=>push("planDetail",{planId:p.id,groupId:p.group.id,initialTab:"vote"})})),
     // A group trip waits for everybody's answers before any trip is found.
     // The person it is waiting on is asked here, by name of the trip; once
     // all have answered, anyone can find the trips. Until the report is in,
     // neither is claimed.
     ...deciding.flatMap(p=>{
+      // Being voted on: the vote line above is its one entry.
+      if(p.status==="voting")return [];
       const h=heard[p.id];
       if(!h)return [];
       const mine=(h.members||[]).find(m=>m.userId===user?.id);
@@ -2677,7 +2680,16 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                     </span>
                   )}
                 </div>
-                {plan.status==="voting"&&plan.options.length>0&&(
+                {/* A group trip's ideas: named, not counted. The group list
+                    does not carry the votes, and a row of zeros under a
+                    vote that has votes in it would be a count that is wrong.
+                    The count is on the trip's Vote tab. */}
+                {plan.status==="voting"&&plan.hasIdeas&&plan.options.length>0&&(
+                  <div style={{background:C.s2,borderRadius:12,padding:10,marginBottom:10,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+                    <span style={{color:C.t1,fontWeight:600}}>Voting on: </span>{plan.options.join(" · ")}
+                  </div>
+                )}
+                {plan.status==="voting"&&!plan.hasIdeas&&plan.options.length>0&&(
                   <div style={{background:C.s2,borderRadius:12,padding:10,marginBottom:10}}>
                     <div style={{fontSize:11,color:C.t3,marginBottom:8,textTransform:"uppercase",letterSpacing:".06em"}}>Vote in progress</div>
                     {plan.options.map(opt=>(
@@ -4814,6 +4826,489 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
 }
 
 
+// ─── One trip idea, as a card ─────────────────────────────────────────────
+// The same card everywhere an idea is chosen from: a solo trip's options, a
+// group's saved ideas on the trip screen, and the plan's Vote tab. What can
+// be done with it — pick it, vote for it, veto it — is passed in, because
+// that differs by who is looking and is decided on the server.
+function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,groupSize=1,enriching=0,noDaysNote,children}){
+  const [allDays,setAllDays]=useState(false);
+  const voted=highlight;
+  const nights=startDate&&endDate?Math.round((new Date(endDate)-new Date(startDate))/86400000):0;
+  return(
+    <div style={{margin:"0 20px 20px"}}>
+      <div style={{background:C.s1,border:"2px solid "+(voted?C.accentText:C.border),borderRadius:20,overflow:"hidden",transition:"border-color .2s"}}>
+        {/* Trip header */}
+        <div style={{padding:"18px 18px 14px",background:voted?C.accentDim:C.s2}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:32,marginBottom:6}}>{trip.emoji}</div>
+              <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:4}}>
+                {/* The name a vote goes by, which tells two ideas at one place apart. */}
+                {trip.title||trip.destination}
+              </div>
+              <div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginBottom:8}}>
+                {trip.tagline}
+              </div>
+              {trip.why_this_group&&(
+                <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>
+                  ✨ {trip.why_this_group}
+                </div>
+              )}
+            </div>
+            <div style={{textAlign:"right",marginLeft:12}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:28,color:voted?C.accentText:C.t1}}>
+                ${trip.total_per_person?.toLocaleString()}
+              </div>
+              <div style={{fontSize:11,color:C.t3}}>per person, est.</div>
+              <div style={{fontSize:11,color:C.t3}}>{nightOut?"one evening":plural(nights,"night")}</div>
+            </div>
+          </div>
+          <div style={{display:"inline-block",background:C.s3,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.t2,marginTop:8}}>
+            {trip.vibe}
+          </div>
+          {/* What this option does about what somebody actually
+              asked for, by name. The model has been writing these
+              all along and no screen showed them, so the answer to
+              "why is this here" stayed in the database. A person
+              who reads their own words back knows they were
+              listened to; a generic "great for your group" is what
+              every other travel site says. */}
+          {(trip.used_suggestions||[]).length>0&&(
+            <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10.5,color:C.t3,textTransform:"uppercase",
+                letterSpacing:".06em",marginBottom:6}}>Because you said</div>
+              {trip.used_suggestions.slice(0,3).map((line,i)=>(
+                <div key={i} style={{display:"flex",gap:7,marginBottom:4}}>
+                  <span style={{color:C.accentText,flexShrink:0,fontSize:12}}>›</span>
+                  <span style={{fontSize:12,color:C.t2,lineHeight:1.5}}>{line}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Cost breakdown */}
+        <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
+          <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
+            Full cost breakdown per person
+          </div>
+          {[
+            {icon:"✈️",label:"Flights",cost:trip.costs?.flights?.per_person,detail:trip.costs?.flights?.details},
+            {icon:"🏨",label:"Hotel",cost:trip.costs?.accommodation?.per_person,detail:trip.costs?.accommodation?.example},
+            {icon:"🚗",label:"Transport",cost:trip.costs?.ground_transport?.per_person,detail:trip.costs?.ground_transport?.details},
+            {icon:"🍽️",label:"Food & drinks",cost:trip.costs?.food_drink?.per_person,detail:trip.costs?.food_drink?.details},
+            {icon:"🎯",label:"Activities & events",cost:trip.costs?.activities?.per_person,detail:trip.costs?.activities?.details},
+            {icon:"🛡️",label:"Insurance & misc",cost:trip.costs?.misc?.per_person,detail:trip.costs?.misc?.details},
+          ].filter(c=>c.cost).map((c,j)=>(
+            <div key={j} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:8}}>
+              <span style={{fontSize:16,width:22,flexShrink:0,marginTop:1}}>{c.icon}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,color:C.t1,fontWeight:500}}>{c.label}</div>
+                <div style={{fontSize:11,color:C.t3,lineHeight:1.4}}>{c.detail}</div>
+              </div>
+              <div style={{fontSize:14,fontWeight:600,color:C.t1,flexShrink:0}}>${c.cost}</div>
+            </div>
+          ))}
+          <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border,display:"flex",justifyContent:"space-between"}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Total per person, est.</div>
+            <div style={{fontSize:16,fontWeight:700,color:voted?C.accentText:C.t1}}>${trip.total_per_person?.toLocaleString()}</div>
+          </div>
+          {groupSize>1&&(
+            <div style={{fontSize:12,color:C.t3,textAlign:"right",marginTop:2}}>
+              ${(trip.total_per_person*(groupSize||2))?.toLocaleString()} total for the group
+            </div>
+          )}
+          {/* Said once, plainly. These are estimates: nobody has
+              priced a room or a seat for this trip, and a number
+              shown without that word reads as one somebody quoted. */}
+          <div style={{fontSize:11,color:C.t3,marginTop:8,lineHeight:1.4}}>
+            Estimates, to plan against — not quotes. Real prices come from
+            the airline and the hotel when you book.
+          </div>
+        </div>
+
+        {!nightOut&&<RealTrip trip={trip} startDate={startDate} endDate={endDate} seats={Math.max(1,groupSize||1)}/>}
+
+        {/* Itinerary preview */}
+        <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
+          <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
+            Day-by-day
+          </div>
+          {/* A slot is {plan, booking, payment} now. Rendering it
+              straight would print [object Object]. */}
+          {(trip.itinerary||[]).length===0&&(
+            <div style={{fontSize:12,color:C.t3,lineHeight:1.6}}>
+              {noDaysNote||(enriching>0?"Writing these days now…":"No day plan for this one — you can build it after you pick it.")}
+            </div>
+          )}
+          {(trip.itinerary||[]).slice(0,allDays?undefined:2).map((day,j)=>{
+            const txt=v=>typeof v==="string"?v:(v?.plan||"");
+            const pay=v=>typeof v==="string"?null:(v?.payment||null);
+            const cashOnly=[day.morning,day.afternoon,day.evening]
+              .map(pay).filter(Boolean).find(x=>/cash only/i.test(x));
+            return(
+            <div key={j} style={{marginBottom:12,paddingBottom:12,borderBottom:j<1?"1px solid "+C.border:"none"}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.accentText,marginBottom:6}}>
+                Day {day.day} · {day.title}
+              </div>
+              <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>
+                ☀️ {txt(day.morning)}<br/>
+                🌤️ {txt(day.afternoon)}<br/>
+                🌙 {txt(day.evening)}
+              </div>
+              {cashOnly&&(
+                <div style={{fontSize:11,color:C.amber,marginTop:5}}>💵 {cashOnly}</div>
+              )}
+              {day.insider_tip&&(
+                <div style={{fontSize:11,color:C.t3,marginTop:4,fontStyle:"italic",background:C.s2,padding:"6px 10px",borderRadius:8}}>
+                  💡 {day.insider_tip}
+                </div>
+              )}
+            </div>
+            );
+          })}
+          {/* The whole trip, not a teaser of it. Choosing between three
+              trips on two days of each was choosing on a third of it. */}
+          {(trip.itinerary||[]).length>2&&(
+            <button onClick={()=>setAllDays(a=>!a)}
+              style={{background:"none",border:"none",padding:0,fontSize:12,color:C.accentText,fontWeight:600,cursor:"pointer"}}>
+              {allDays?"Show fewer days":`Show all ${trip.itinerary.length} days`}
+            </button>
+          )}
+        </div>
+
+        {/* Scene info */}
+        {(trip.food_scene||trip.music_scene)&&(
+          <div style={{padding:"12px 18px",borderBottom:"1px solid "+C.border,display:"flex",gap:12}}>
+            {trip.food_scene&&(
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,color:C.t3,marginBottom:3}}>🍽️ Food scene</div>
+                <div style={{fontSize:12,color:C.t2,lineHeight:1.4}}>{trip.food_scene}</div>
+              </div>
+            )}
+            {trip.music_scene&&(
+              <div style={{flex:1}}>
+                <div style={{fontSize:11,color:C.t3,marginBottom:3}}>🎵 Music scene</div>
+                <div style={{fontSize:12,color:C.t2,lineHeight:1.4}}>{trip.music_scene}</div>
+              </div>
+            )}
+          </div>
+        )}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ─── Picking one of a group trip's ideas ──────────────────────────────────
+// The trip row is updated in place, and only while it is still undecided —
+// checked in the same write, so two picks at once cannot both land. The
+// server takes the place and the budget from the idea as it was saved and
+// refuses anybody but the organiser; this sends its own copy only for a
+// database that has not had sql/trip-options-2026-09-23.sql yet.
+//
+// Returns true when the pick landed. The days are then written from the
+// idea's own, or built if it has none, and saved onto the trip.
+async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refreshGroup,saveItineraryToServer,toast}){
+  // Only ever set from an id the server gave back, but a pick against a
+  // local one would be a 404 somebody reads as "picked".
+  if(!planId||isTempId(planId)){toast("This trip is still saving — try again in a moment");return false;}
+  const nightOut=plan?.type==="restaurant";
+  const startDate=plan?.startDate||null;
+  const endDate=nightOut?startDate:(plan?.endDate||null);
+  let res,body;
+  try{
+    res=await fetch(`/api/plans/${planId}`,{
+      method:"PATCH",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        pick_option:trip.id,
+        title:trip.destination,
+        destination_city:trip.city||null,
+        destination_country:trip.country_code||null,
+        budget_cents:Math.round((Number(trip.total_per_person)||0)*100),
+        why_chosen:(trip.used_suggestions||[]).length?trip.used_suggestions:null,
+        // Clears "undecided" and closes the vote: back to planning, where the
+        // three checks — overview, budget, book — say when it is ready.
+        only_if_undecided:true,
+      }),
+    });
+    body=await res.json().catch(()=>({}));
+  }catch(e){
+    console.error("[pick] could not pick",e);
+    toast("Couldn't save that pick — check your connection and try again");
+    return false;
+  }
+  if(!res.ok){
+    console.error("[pick] refused",res.status,body);
+    toast(body.error||"Couldn't save that pick — try again");
+    // Somebody else picked first, or the ideas moved on. Show what stands.
+    if(body.alreadyDecided||res.status===409){if(refreshGroup)await refreshGroup(groupId);}
+    return body.alreadyDecided?"decided":false;
+  }
+  const saved=body.plan||{};
+  updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id!==planId?p:{...p,
+    title:saved.title||trip.destination,
+    status:saved.status||"planning",
+    destinationCity:saved.destination_city??trip.city??null,
+    destinationCountry:saved.destination_country??trip.country_code??null,
+    budget:Math.round((saved.budget_cents??0)/100)||trip.total_per_person||p.budget,
+    destStyle:saved.destination_style??null,
+    imageUrl:saved.image_url||p.imageUrl||null,
+    imageCredit:saved.image_credit||p.imageCredit||null,
+    aiData:trip,
+  })}));
+  const hasDays=(trip.itinerary||[]).length>0;
+  toast(hasDays?`${saved.title||trip.destination} it is!`:`${saved.title||trip.destination} it is! Writing the days… ✨`);
+  try{
+    let rows=[];
+    if(hasDays){
+      rows=nightOut
+        ?itineraryRows(trip.itinerary,true)
+        :[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
+      const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
+      updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
+    }else{
+      const r=await fetch("/api/trips/generate",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          groupId,startDate,endDate,
+          detailTripId:trip.id,planId,
+          tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs,city:trip.city,country_code:trip.country_code},
+          mode:nightOut?"night":"trip",
+          // Empty: the server reads the evening's answers off the trip.
+          nightPrefs:{},
+          departureCity:departure?.city||null,
+          departureAirport:departure?.airport||null,
+        }),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(r.ok&&(d.itinerary||[]).length){
+        rows=nightOut
+          ?itineraryRows(d.itinerary,true)
+          :[...fixedCostRows(trip),...itineraryRows(d.itinerary)];
+        updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows}:p)}));
+      }else{
+        console.error("[pick] itinerary for the pick failed",r.status,d);
+        toast(d.error||"Couldn't build the day-by-day plan — you can add days yourself");
+      }
+    }
+    if(rows.length&&saveItineraryToServer)await saveItineraryToServer(planId,rows);
+  }catch(e){
+    console.error("[pick] itinerary for the pick failed",e);
+    toast("Couldn't build the day-by-day plan — try again, or add days yourself");
+  }
+  return true;
+}
+
+// ─── A group trip's ideas, voted on together ─────────────────────────────
+// Every member sees the same saved ideas (plans.trip_options), votes on their
+// own phone, and can change the vote until the pick. Vetoes are counted, and
+// nobody is told whose. Only the organiser picks — the server decides who
+// that is and says so in `mayPick` — and ties are theirs to call.
+//
+// Group trips only: somebody on their own picks straight from the cards.
+function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,saveItineraryToServer,departure,rev=0,enriching=0,enrichFailed=false,onRegenerate,onPicked}){
+  const [v,setV]=useState(null);
+  const [loadErr,setLoadErr]=useState(false);
+  const [busy,setBusy]=useState(null);
+  const [picking,setPicking]=useState(null);
+  const [nudging,setNudging]=useState(false);
+  const [confirmNew,setConfirmNew]=useState(false);
+  const load=async()=>{
+    if(!planId||isTempId(planId))return;
+    try{
+      const r=await fetch(`/api/plans/${planId}/vote`);
+      const d=await r.json().catch(()=>null);
+      if(!r.ok||!d)throw new Error(d?.error||String(r.status));
+      setV(d);setLoadErr(false);
+    }catch(e){
+      console.error("[tripIdeas] could not load the vote",e);
+      setLoadErr(true);
+    }
+  };
+  // Live while it is open: somebody else's vote, and the days of each idea
+  // as they are written, arrive without anybody having to come back.
+  useEffect(()=>{
+    load();
+    const t=setInterval(load,15000);
+    return()=>clearInterval(t);
+  },[planId,rev]);
+
+  if(!v){
+    return(
+      <div style={{padding:"16px 20px",fontSize:13,color:C.t2}}>
+        {loadErr
+          ?<>Couldn't load the ideas just now.{" "}
+            <button onClick={load} style={{background:"none",border:"none",padding:0,color:C.accentText,fontWeight:600,cursor:"pointer",fontSize:13}}>Try again</button></>
+          :"Loading the ideas…"}
+      </div>
+    );
+  }
+  const night=v.ideas?.mode==="night"||plan?.type==="restaurant";
+  const kind=night?"ideas for the night":"trip ideas";
+  if(!v.ideas){
+    return(
+      <div style={{padding:"16px 20px",fontSize:13,color:C.t2,lineHeight:1.6}}>
+        {v.decided?"This one's decided — where it's going is at the top of the trip.":`No ${kind} have been found for this yet.`}
+      </div>
+    );
+  }
+  const options=v.ideas.options||[];
+  const organiser=v.organiser;
+  const orgName=organiser?.isYou?"you":(organiser?.name||"the organiser");
+  const counts=v.counts||{};
+  const standings=options.map(o=>`${o.title} ${counts[o.title]||0}`).join(" · ");
+  const closed=v.status!=="voting"||v.decided;
+
+  const cast=async(o)=>{
+    if(busy||closed||isTempId(planId))return;
+    setBusy(o.title);
+    try{
+      const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({option:o.title})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Your vote didn't save — try again");
+      toast(v.myVote?`Changed your vote to ${o.title}`:`Voted for ${o.title}`);
+    }catch(e){console.error("[tripIdeas] vote failed",e);toast(e.message);}
+    await load();
+    setBusy(null);
+  };
+  const veto=async(o,on)=>{
+    if(busy||closed||isTempId(planId))return;
+    setBusy(o.title);
+    try{
+      const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({veto:o.title,on})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"That veto didn't save — try again");
+    }catch(e){console.error("[tripIdeas] veto failed",e);toast(e.message);}
+    await load();
+    setBusy(null);
+  };
+  const pick=async(o)=>{
+    if(picking)return;
+    setPicking(o.id);
+    const ok=await pickTripIdea(o,{planId,groupId,plan,departure,updateGroup,refreshGroup,saveItineraryToServer,toast});
+    setPicking(null);
+    if(ok&&onPicked)onPicked();
+    else if(!ok)load();
+  };
+  const nudge=async()=>{
+    if(nudging||isTempId(planId))return;
+    setNudging(true);
+    try{
+      const r=await fetch(`/api/plans/${planId}/notify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"vote"})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
+      toast(d.notified?`Reminded ${plural(d.notified,"person","people")}`:(d.message||"Everyone has voted"));
+    }catch(e){console.error("[tripIdeas] vote nudge failed",e);toast(e.message);}
+    setNudging(false);
+  };
+
+  // Where it stands, said once, for who is reading it.
+  const standing=v.everyoneVoted
+    ?(v.leader
+      ?`Everyone has voted — most votes: ${v.leader}.`
+      :v.tied.length?`Everyone has voted, and it's a tie between ${namesList(v.tied)}.`:"Everyone has voted.")
+    :`${v.voted} of ${v.members} have voted${v.stillToVote?.length?` — still to vote: ${namesList(v.stillToVote)}`:""}.`;
+  const next=v.mayPick
+    ?(v.tied.length?"It's your call — pick the one the group goes with.":v.leader?`Pick ${v.leader} to go with the vote, or any of them — it's your call.`:"Pick one when you're ready — the votes are here to help.")
+    :v.myVote
+      ?`Waiting for ${orgName} to pick — the votes so far: ${standings}. You can change your vote until then.`
+      :`Vote for the one you want. ${organiser?.name||"The organiser"} makes the pick.`;
+
+  return(
+    <div>
+      <div style={{padding:"0 20px 14px"}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:6}}>
+          {night?"Which night?":"Where should we go?"}
+        </div>
+        <div style={{fontSize:13.5,color:C.t1,lineHeight:1.6,marginBottom:4}}>{standing}</div>
+        <div style={{fontSize:13,color:C.t2,lineHeight:1.6}}>{next}</div>
+        {/* Only when somebody else is still to vote — nobody is nudged about their own. */}
+        {!closed&&(v.stillToVote||[]).some(n=>n!=="you")&&(
+          <button className="bsm bsm-p" style={{marginTop:10}} disabled={nudging} onClick={nudge}>
+            {nudging?"Sending…":"Nudge whoever hasn't voted"}
+          </button>
+        )}
+        <div style={{fontSize:12,color:C.t3,marginTop:10,lineHeight:1.5}}>
+          The group sees how many votes and vetoes each has — never who cast them.
+        </div>
+        {enriching>0&&(
+          <div style={{display:"flex",alignItems:"center",gap:9,marginTop:10,fontSize:12.5,color:C.t2}}>
+            <div style={{width:14,height:14,border:`2px solid ${C.accentText}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
+            Writing the days for each, so everyone can see what they're voting on…
+          </div>
+        )}
+        {enrichFailed&&enriching===0&&(
+          <div style={{fontSize:12.5,color:C.t2,marginTop:10}}>
+            ⚠️ Couldn't write the days for some of these. They're written for whichever one is picked.
+          </div>
+        )}
+      </div>
+
+      {options.map(o=>{
+        const mine=v.myVote===o.title;
+        const vetoed=(v.myVetoes||[]).includes(o.title);
+        const n=counts[o.title]||0;
+        const x=(v.vetoes||{})[o.title]||0;
+        return(
+          <TripIdeaCard key={o.id} trip={o} highlight={mine} nightOut={night}
+            startDate={plan?.startDate} endDate={night?plan?.startDate:plan?.endDate}
+            groupSize={(group?.memberIds||[]).length} enriching={enriching}
+            noDaysNote={enriching>0?"Writing these days now…":"The days get written for whichever one is picked."}>
+            <div style={{padding:"14px 18px"}}>
+              <div style={{fontSize:12.5,color:C.t2,marginBottom:10}}>
+                {plural(n,"vote")}{x>0?` · ${plural(x,"veto","vetoes")}`:""}{v.leader===o.title?" · most votes":""}
+              </div>
+              {!closed&&(
+                <div style={{display:"flex",gap:8,marginBottom:v.mayPick?8:0}}>
+                  {v.vetoesAvailable&&(
+                    <button disabled={!!busy||mine} onClick={()=>veto(o,!vetoed)}
+                      style={{flex:1,padding:"12px 8px",borderRadius:12,border:"1px solid rgba(239,68,68,.4)",
+                        background:vetoed?"rgba(239,68,68,.18)":"rgba(239,68,68,.08)",color:C.red,fontSize:13,fontWeight:600,
+                        cursor:busy||mine?"default":"pointer",opacity:mine?.5:1}}>
+                      {busy===o.title?"…":vetoed?"Vetoed · undo":"Veto"}
+                    </button>
+                  )}
+                  <button disabled={!!busy||mine} onClick={()=>cast(o)}
+                    style={{flex:1,padding:"12px 8px",borderRadius:12,border:"1px solid "+(mine?C.accentText:C.border),
+                      background:mine?C.accentDim:"none",color:mine?C.accentText:C.t2,fontSize:13,fontWeight:600,
+                      cursor:busy||mine?"default":"pointer"}}>
+                    {busy===o.title?"…":mine?"✓ Your vote":v.myVote?"Change vote to this":"Vote for this"}
+                  </button>
+                </div>
+              )}
+              {v.mayPick&&!closed&&(
+                <button className="bp" disabled={!!picking} onClick={()=>pick(o)}>
+                  {picking===o.id?"Picking…":`Pick ${o.title}`}
+                </button>
+              )}
+            </div>
+          </TripIdeaCard>
+        );
+      })}
+
+      {v.mayPick&&!closed&&onRegenerate&&(
+        <div style={{padding:"0 20px 40px"}}>
+          {confirmNew?(
+            <div style={{padding:14,background:C.amberDim,border:`1px solid ${C.amber}`,borderRadius:14}}>
+              <div style={{fontSize:13,color:C.t1,lineHeight:1.5,marginBottom:10}}>
+                Three different ideas replace these for everyone, and everybody's votes and vetoes are cleared.
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <button className="bp" style={{flex:1}} onClick={()=>{setConfirmNew(false);onRegenerate();}}>Get three different ideas</button>
+                <button className="bs" style={{flex:1}} onClick={()=>setConfirmNew(false)}>Keep these</button>
+              </div>
+            </div>
+          ):(
+            <button className="bs" style={{width:"100%"}} onClick={()=>setConfirmNew(true)}>↺ Get three different ideas</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // A group trip waits on everybody. The owner's rule: group trip quizzes
 // wait on each other, so that every option is built from everybody's input.
 // So for a group, the organiser's answers do not go straight to the model —
@@ -4821,7 +5316,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
 // same questions, and "Find our trips" opens once they all have. `planId`
 // is that trip, when this screen is opened to wait on it or to find its
 // options. A solo trip has nobody to wait for and works as it always has.
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,refreshGroup}){
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,refreshGroup,regenerate=false}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
   // it is what the person filled in a moment ago on the way here.
@@ -4851,14 +5346,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   },[nudgeWait]);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
-  // Which option cards are showing every day rather than the first two.
-  const [allDays,setAllDays]=useState({});
   const [budget,setBudget]=useState("");
   const [trips,setTrips]=useState(null);
-  const [vetoes,setVetoes]=useState({});
-  const [votes,setVotes]=useState({});
-  const [myVote,setMyVote]=useState(null);
-  const [myVetoes,setMyVetoes]=useState(new Set());
+  // Bumped when the saved ideas have changed under the vote — new ones
+  // found, or their days written — so the vote reloads now, not on its poll.
+  const [ideasRev,setIdeasRev]=useState(0);
   const [generating,setGenerating]=useState(false);
   const [error,setError]=useState(null);
   const [tripPrefs,setTripPrefs]=useState({});
@@ -4931,10 +5423,18 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // from two identical dates, got zero, and asked for a zero-day itinerary.
   const [nightAnswers,setNightAnswers]=useState({});
   const [enrichFailed,setEnrichFailed]=useState(false);
+  // Opened from the Vote tab's "Get three different ideas": ask once, as
+  // soon as the trip is here. Above the guard, because it is a hook.
+  const regenAsked=useRef(false);
+  useEffect(()=>{
+    if(!regenerate||regenAsked.current)return;
+    const wp=(group?.plans||[]).find(p=>p.id===waitPlanId);
+    if(!wp||wp.status!=="voting")return;
+    regenAsked.current=true;
+    findOurTrips(wp,{regenerate:true});
+  },[regenerate,group,waitPlanId]);
 
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
-
-  const nights=startDate&&endDate?Math.round((new Date(endDate)-new Date(startDate))/86400000):0;
 
   // `extra` carries what a night out needs and a trip does not: which shape of
   // plan this is, and the two answers the taste quiz cannot already supply.
@@ -4968,10 +5468,26 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           nightPrefs:extra.nightPrefs||{},
           // A group trip: waits for, and is built from, everybody's answers.
           planId:extra.planId||null,
+          // The organiser swapping the saved ideas for three different ones.
+          regenerate:extra.regenerate===true,
         }),
       });
       if(res.ok){
         const data=await res.json();
+        if(extra.planId&&data.shared&&data.trips?.length){
+          // Saved on the trip, and the vote is open: everybody sees these
+          // same ideas on their own phone. `saved` means they were already
+          // there (somebody else found them, or found them first), so
+          // nothing more is built.
+          updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===extra.planId
+            ?{...p,status:"voting",hasIdeas:true,options:data.trips.map(t=>t.title)}:p)}));
+          setTrips(null);
+          setStep("wait");
+          setIdeasRev(r=>r+1);
+          if(data.saved)toast(`These are the ${extra.mode==="night"?"ideas for the night":"trip ideas"} the group is voting on`);
+          else enrichWithItineraries(data.trips,sd||startDate,ed||endDate,extra);
+          return;
+        }
         if(data.trips&&data.trips.length>0){
           setTrips(data.trips);
           setStep(2);
@@ -5001,6 +5517,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // Somebody's answers were taken back, or the list moved: show the
         // server's own view of who it is waiting on.
         if(extra.planId)loadAnswered(extra.planId);
+        // Somebody picked while this was being asked: show what stands.
+        if(extra.planId&&err.alreadyDecided&&refreshGroup)refreshGroup(groupId);
       }
     }catch(e){
       setError("Network error — check your connection and try again");
@@ -5008,22 +5526,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     }finally{setGenerating(false);}
   };
 
-  const veto=(tripId)=>{
-    setMyVetoes(v=>{
-      const next=new Set(v);
-      next.has(tripId)?next.delete(tripId):next.add(tripId);
-      return next;
-    });
-  };
-
-  const vote=(tripId)=>{
-    if(myVote===tripId){setMyVote(null);setVotes(v=>({...v,[tripId]:Math.max(0,(v[tripId]||1)-1)}));}
-    else{
-      if(myVote)setVotes(v=>({...v,[myVote]:Math.max(0,(v[myVote]||1)-1)}));
-      setMyVote(tripId);
-      setVotes(v=>({...v,[tripId]:(v[tripId]||0)+1}));
-    }
-  };
+  // Vote and Veto used to live here, on this phone only: they counted on the
+  // screen of whoever found the trips and nowhere else, and whoever tapped
+  // "Pick this" first decided for the group. A group's ideas are now saved
+  // on the trip and voted on by everyone (TripIdeas); somebody on their own
+  // just picks.
 
 
   // Writes the day-by-day plan for every option, in parallel, and attaches it
@@ -5068,6 +5575,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     }));
     setTrips(prev=>(prev||[]).map((t,i)=>results[i]?{...t,itinerary:results[i].itinerary,venueTitle:results[i].title||null}:t));
     setEnriching(0);
+    // A group's days were saved onto its ideas by the server; show them.
+    if(extra.planId)setIdeasRev(r=>r+1);
   };
 
   const selectTrip=async(trip)=>{
@@ -5179,103 +5688,16 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     push("planDetail",{planId:realId,groupId});
   };
 
-  // Picking one of a group trip's options. The trip row is updated in
-  // place, and only while it is still undecided — checked in the same write,
-  // so two people picking different options at once cannot both land.
+  // Picking one of a group trip's ideas — only reached here when the ideas
+  // could not be saved for the group (before sql/trip-options-2026-09-23.sql)
+  // and only offered to the organiser, whom the server alone allows.
   const pickForGroupTrip=async(trip)=>{
     const id=waitPlanId;
-    // Only ever set from an id the server gave back, but a pick against a
-    // local one would be a 404 somebody reads as "picked".
-    if(!id||isTempId(id)){toast("This trip is still saving — try again in a moment");return;}
     setBuildingItinerary(trip.id);
-    let res,body;
-    try{
-      res=await fetch(`/api/plans/${id}`,{
-        method:"PATCH",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          title:trip.venueTitle||trip.destination,
-          destination_city:trip.city||null,
-          destination_country:trip.country_code||null,
-          budget_cents:Math.round((Number(trip.total_per_person)||0)*100),
-          // Clears "undecided": the trip has a place now.
-          destination_style:null,
-          // No status. A picked group trip stays "planning" on purpose, where
-          // the old path set "approved": the three checks — overview, budget,
-          // book — are what say it is ready, and TripProgress reads
-          // "approved" as money already in.
-          why_chosen:(trip.used_suggestions||[]).length?trip.used_suggestions:null,
-          only_if_undecided:true,
-        }),
-      });
-      body=await res.json().catch(()=>({}));
-    }catch(e){
-      console.error("[groupTrip] could not pick",e);
-      toast("Couldn't save that pick — check your connection and try again");
-      setBuildingItinerary(null);
-      return;
-    }
-    if(!res.ok){
-      console.error("[groupTrip] pick refused",res.status,body);
-      toast(body.error||"Couldn't save that pick — try again");
-      setBuildingItinerary(null);
-      // Somebody else picked first. Theirs stands; show it.
-      if(body.alreadyDecided){
-        if(refreshGroup)await refreshGroup(groupId);
-        push("planDetail",{planId:id,groupId});
-      }
-      return;
-    }
-    const saved=body.plan||{};
-    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id!==id?p:{...p,
-      title:saved.title||trip.destination,
-      destinationCity:saved.destination_city??trip.city??null,
-      destinationCountry:saved.destination_country??trip.country_code??null,
-      budget:Math.round((saved.budget_cents??0)/100)||trip.total_per_person||p.budget,
-      destStyle:saved.destination_style??null,
-      imageUrl:saved.image_url||p.imageUrl||null,
-      imageCredit:saved.image_credit||p.imageCredit||null,
-      aiData:trip,
-    })}));
-    toast(trip.destination+" it is! Writing the days… ✨");
-    try{
-      let rows=[];
-      if(trip.itinerary?.length){
-        rows=nightOut
-          ?itineraryRows(trip.itinerary,true)
-          :[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
-        const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
-        updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===id?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
-      }else{
-        const r=await fetch("/api/trips/generate",{
-          method:"POST",headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({
-            groupId,startDate,endDate,
-            detailTripId:trip.id,planId:id,
-            tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
-            mode:nightOut?"night":"trip",
-            nightPrefs:nightOut?nightAnswers:{},
-            departureCity:departure?.city||null,
-            departureAirport:departure?.airport||null,
-          }),
-        });
-        const d=await r.json().catch(()=>({}));
-        if(r.ok&&(d.itinerary||[]).length){
-          rows=nightOut
-            ?itineraryRows(d.itinerary,true)
-            :[...fixedCostRows(trip),...itineraryRows(d.itinerary)];
-          updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===id?{...p,itinerary:rows}:p)}));
-        }else{
-          console.error("[groupTrip] itinerary for the pick failed",r.status,d);
-          toast(d.error||"Couldn't build the day-by-day plan — you can add days yourself");
-        }
-      }
-      if(rows.length&&saveItineraryToServer)await saveItineraryToServer(id,rows);
-    }catch(e){
-      console.error("[groupTrip] itinerary for the pick failed",e);
-      toast("Couldn't build the day-by-day plan — try again, or add days yourself");
-    }
+    const wp=(group.plans||[]).find(p=>p.id===id)||{type:nightOut?"restaurant":"trip",startDate,endDate};
+    const ok=await pickTripIdea(trip,{planId:id,groupId,plan:wp,departure,updateGroup,refreshGroup,saveItineraryToServer,toast});
     setBuildingItinerary(null);
-    push("planDetail",{planId:id,groupId});
+    if(ok)push("planDetail",{planId:id,groupId});
   };
 
   // What the trip is called in a sentence. "Where next?" is a fine title on
@@ -5320,7 +5742,20 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       soloMode:false,
     };
     updateGroup(groupId,g=>({...g,plans:[...g.plans,np]}));
-    const realId=savePlanToServer?await savePlanToServer(groupId,np,{quiet:true}):null;
+    // One group trip waits on everyone at a time. If this group already has
+    // one, the server says which, and that is the trip to open — its wait,
+    // or its vote if the ideas are in — rather than a second set of the
+    // same questions.
+    let alreadyWaiting=null;
+    const realId=savePlanToServer?await savePlanToServer(groupId,np,{quiet:true,onAlreadyWaiting:id=>{alreadyWaiting=id;}}):null;
+    if(alreadyWaiting){
+      if(refreshGroup)await refreshGroup(groupId);
+      setNightOut(night);
+      setWaitPlanId(alreadyWaiting);
+      setStep("wait");
+      toast(`${group.name} already has a ${night?"night out":"trip"} being decided — here it is`);
+      return;
+    }
     if(!realId||isTempId(realId)){
       // A group trip that only exists on this phone cannot be answered by
       // anybody else, so it is not left on the screen looking as if it can.
@@ -5402,17 +5837,22 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
   // Everybody has answered: the options, from all of them. Dates, budget and
   // kind come from the trip itself, so any member can press this.
-  const findOurTrips=(p)=>{
+  // With `regenerate`, the organiser asking for three different ideas in
+  // place of the saved ones, which clears everybody's votes. Without it, a
+  // trip that already has ideas shows those — the server builds nothing.
+  const findOurTrips=(p,opts={})=>{
     if(!p||generating)return;
     const night=p.type==="restaurant";
     const sd=p.startDate||"";
     const ed=night?sd:(p.endDate||"");
-    setStartDate(sd);setEndDate(ed);setBudget(p.budget?String(p.budget):"");
-    generate(sd,ed,p.budget||null,{},{mode:night?"night":"trip",planId:waitPlanId});
+    setStartDate(sd);setEndDate(ed);setBudget(p.budget?String(p.budget):"");setNightOut(night);
+    generate(sd,ed,p.budget||null,{},{mode:night?"night":"trip",planId:waitPlanId,regenerate:opts.regenerate===true});
   };
 
-  const activeTrips=(trips||[]).filter(t=>!myVetoes.has(t.id));
-  const vetoedTrips=(trips||[]).filter(t=>myVetoes.has(t.id));
+  // The trip this screen is about, and whether this person organises it —
+  // only to decide what to offer. The server decides who may pick.
+  const waitPlan=(group.plans||[]).find(p=>p.id===waitPlanId)||null;
+  const iOrganise=group.role==="admin"||(!!waitPlan?.createdBy&&waitPlan.createdBy===me);
 
   return(
     <div className="sc">
@@ -5427,7 +5867,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {step===0
               ?"Tell us about it"
               :step==="wait"
-              ?"Everyone answers first"
+              ?(waitPlan?.status==="voting"?"Vote on the ideas":"Everyone answers first")
               :step===1
                 ?(nightOut?"Finding you a night out…":"Finding your perfect trips…")
                 :(nightOut?"Pick your night":"Pick your trip")}
@@ -5528,6 +5968,28 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                 This trip already has its destination.
               </div>
               <button className="bp" onClick={()=>push("planDetail",{planId:wp.id,groupId})}>Open the trip</button>
+            </div>
+          );
+        }
+        // The ideas are found and saved on the trip: everybody votes on the
+        // same ones, here or on the trip's Vote tab, and the organiser picks.
+        if(wp.status==="voting"){
+          return(
+            <div style={{flex:1,overflowY:"auto",paddingBottom:30}}>
+              <div style={{fontSize:12.5,color:C.t3,margin:"0 20px 8px"}}>
+                {tripName(wp)}{wp.dates?` · ${wp.dates}`:""}
+              </div>
+              {error&&(
+                <div style={{margin:"0 20px 12px",padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
+                  borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
+                  {error}
+                </div>
+              )}
+              <TripIdeas planId={wp.id} groupId={groupId} group={group} plan={wp} toast={toast}
+                updateGroup={updateGroup} refreshGroup={refreshGroup} saveItineraryToServer={saveItineraryToServer}
+                departure={departure} rev={ideasRev} enriching={enriching} enrichFailed={enrichFailed}
+                onRegenerate={()=>findOurTrips(wp,{regenerate:true})}
+                onPicked={()=>push("planDetail",{planId:wp.id,groupId})}/>
             </div>
           );
         }
@@ -5660,16 +6122,23 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       )}
 
       {/* ── STEP 2: Results ── */}
+      {/* Somebody on their own picks straight from these — no voting, since
+          there is nobody to vote with. A group's ideas are saved on the trip
+          and voted on by everyone (TripIdeas, on the wait step); they only
+          land here when the database could not keep them yet, and then this
+          says so rather than implying the group can see them. */}
       {step===2&&trips&&(
         <div style={{flex:1,overflowY:"auto",scrollbarWidth:"none"}}>
           <div style={{padding:"0 20px 12px"}}>
             <div style={{fontSize:14,color:C.t2,lineHeight:1.6}}>
-              Three trips built around what {group.name} actually said.{" "}
-              <span style={{color:C.red}}>Veto</span> anything you won't do,{" "}
-              <span style={{color:C.accentText}}>vote</span> for the one you want.
+              {waitPlanId
+                ?(iOrganise
+                  ?"These ideas aren't saved for the group yet, so only you can see them. Pick one and everyone sees where it's going."
+                  :`These ideas aren't saved for the group yet, so only you can see them — and only whoever set up this ${nightOut?"night out":"trip"} can pick one. Tell them which you'd go for.`)
+                :`${trips.length===3?"Three":trips.length} ${nightOut?"nights out":"trips"} built around what you said. Pick the one you want.`}
             </div>
             {/* The days are being written while people read. Say so, rather
-                than letting three cards quietly grow a section. */}
+                than letting the cards quietly grow a section. */}
             {enrichFailed&&enriching===0&&(
               <div style={{display:"flex",alignItems:"center",gap:9,marginTop:10,fontSize:12.5,color:C.t2}}>
                 <span>⚠️</span>
@@ -5679,227 +6148,23 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {enriching>0&&(
               <div style={{display:"flex",alignItems:"center",gap:9,marginTop:10,fontSize:12.5,color:C.t2}}>
                 <div style={{width:14,height:14,border:`2px solid ${C.accentText}`,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
-                Writing the days for all three, so you can see what you're voting on…
+                Writing the days for each, so you can see what you're choosing between…
               </div>
             )}
           </div>
 
-          {activeTrips.map((trip,i)=>{
-            const voted=myVote===trip.id;
-            const voteCount=votes[trip.id]||0;
-            return(
-              <div key={trip.id} style={{margin:"0 20px 20px"}}>
-                <div style={{background:C.s1,border:"2px solid "+(voted?C.accentText:C.border),borderRadius:20,overflow:"hidden",transition:"border-color .2s"}}>
-
-                  {/* Trip header */}
-                  <div style={{padding:"18px 18px 14px",background:voted?C.accentDim:C.s2}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:32,marginBottom:6}}>{trip.emoji}</div>
-                        <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:4}}>
-                          {trip.venueTitle||trip.destination}
-                        </div>
-                        <div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginBottom:8}}>
-                          {trip.tagline}
-                        </div>
-                        {trip.why_this_group&&(
-                          <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>
-                            ✨ {trip.why_this_group}
-                          </div>
-                        )}
-                      </div>
-                      <div style={{textAlign:"right",marginLeft:12}}>
-                        <div style={{fontFamily:"var(--font-display)",fontSize:28,color:voted?C.accentText:C.t1}}>
-                          ${trip.total_per_person?.toLocaleString()}
-                        </div>
-                        <div style={{fontSize:11,color:C.t3}}>per person, est.</div>
-                        <div style={{fontSize:11,color:C.t3}}>{nights} nights</div>
-                      </div>
-                    </div>
-                    <div style={{display:"inline-block",background:C.s3,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.t2,marginTop:8}}>
-                      {trip.vibe}
-                    </div>
-                    {/* What this option does about what somebody actually
-                        asked for, by name. The model has been writing these
-                        all along and no screen showed them, so the answer to
-                        "why is this here" stayed in the database. A person
-                        who reads their own words back knows they were
-                        listened to; a generic "great for your group" is what
-                        every other travel site says. */}
-                    {(trip.used_suggestions||[]).length>0&&(
-                      <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
-                        <div style={{fontSize:10.5,color:C.t3,textTransform:"uppercase",
-                          letterSpacing:".06em",marginBottom:6}}>Because you said</div>
-                        {trip.used_suggestions.slice(0,3).map((line,i)=>(
-                          <div key={i} style={{display:"flex",gap:7,marginBottom:4}}>
-                            <span style={{color:C.accentText,flexShrink:0,fontSize:12}}>›</span>
-                            <span style={{fontSize:12,color:C.t2,lineHeight:1.5}}>{line}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Cost breakdown */}
-                  <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
-                    <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
-                      Full cost breakdown per person
-                    </div>
-                    {[
-                      {icon:"✈️",label:"Flights",cost:trip.costs?.flights?.per_person,detail:trip.costs?.flights?.details},
-                      {icon:"🏨",label:"Hotel",cost:trip.costs?.accommodation?.per_person,detail:trip.costs?.accommodation?.example},
-                      {icon:"🚗",label:"Transport",cost:trip.costs?.ground_transport?.per_person,detail:trip.costs?.ground_transport?.details},
-                      {icon:"🍽️",label:"Food & drinks",cost:trip.costs?.food_drink?.per_person,detail:trip.costs?.food_drink?.details},
-                      {icon:"🎯",label:"Activities & events",cost:trip.costs?.activities?.per_person,detail:trip.costs?.activities?.details},
-                      {icon:"🛡️",label:"Insurance & misc",cost:trip.costs?.misc?.per_person,detail:trip.costs?.misc?.details},
-                    ].filter(c=>c.cost).map((c,j)=>(
-                      <div key={j} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:8}}>
-                        <span style={{fontSize:16,width:22,flexShrink:0,marginTop:1}}>{c.icon}</span>
-                        <div style={{flex:1}}>
-                          <div style={{fontSize:13,color:C.t1,fontWeight:500}}>{c.label}</div>
-                          <div style={{fontSize:11,color:C.t3,lineHeight:1.4}}>{c.detail}</div>
-                        </div>
-                        <div style={{fontSize:14,fontWeight:600,color:C.t1,flexShrink:0}}>${c.cost}</div>
-                      </div>
-                    ))}
-                    <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border,display:"flex",justifyContent:"space-between"}}>
-                      <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Total per person, est.</div>
-                      <div style={{fontSize:16,fontWeight:700,color:voted?C.accentText:C.t1}}>${trip.total_per_person?.toLocaleString()}</div>
-                    </div>
-                    {group.memberIds?.length>1&&(
-                      <div style={{fontSize:12,color:C.t3,textAlign:"right",marginTop:2}}>
-                        ${(trip.total_per_person*(group.memberIds?.length||2))?.toLocaleString()} total for the group
-                      </div>
-                    )}
-                    {/* Said once, plainly. These are estimates: nobody has
-                        priced a room or a seat for this trip, and a number
-                        shown without that word reads as one somebody quoted. */}
-                    <div style={{fontSize:11,color:C.t3,marginTop:8,lineHeight:1.4}}>
-                      Estimates, to plan against — not quotes. Real prices come from
-                      the airline and the hotel when you book.
-                    </div>
-                  </div>
-
-                  {!nightOut&&<RealTrip trip={trip} startDate={startDate} endDate={endDate} seats={Math.max(1,(group.memberIds||[]).length)}/>}
-
-                  {/* Itinerary preview */}
-                  <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
-                    <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
-                      Day-by-day
-                    </div>
-                    {/* A slot is {plan, booking, payment} now. Rendering it
-                        straight would print [object Object]. */}
-                    {(trip.itinerary||[]).length===0&&(
-                      <div style={{fontSize:12,color:C.t3,lineHeight:1.6}}>
-                        {enriching>0?"Writing these days now…":"No day plan for this one — you can build it after you pick it."}
-                      </div>
-                    )}
-                    {(trip.itinerary||[]).slice(0,allDays[trip.id]?undefined:2).map((day,j)=>{
-                      const txt=v=>typeof v==="string"?v:(v?.plan||"");
-                      const pay=v=>typeof v==="string"?null:(v?.payment||null);
-                      const cashOnly=[day.morning,day.afternoon,day.evening]
-                        .map(pay).filter(Boolean).find(x=>/cash only/i.test(x));
-                      return(
-                      <div key={j} style={{marginBottom:12,paddingBottom:12,borderBottom:j<1?"1px solid "+C.border:"none"}}>
-                        <div style={{fontSize:12,fontWeight:700,color:C.accentText,marginBottom:6}}>
-                          Day {day.day} · {day.title}
-                        </div>
-                        <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>
-                          ☀️ {txt(day.morning)}<br/>
-                          🌤️ {txt(day.afternoon)}<br/>
-                          🌙 {txt(day.evening)}
-                        </div>
-                        {cashOnly&&(
-                          <div style={{fontSize:11,color:C.amber,marginTop:5}}>💵 {cashOnly}</div>
-                        )}
-                        {day.insider_tip&&(
-                          <div style={{fontSize:11,color:C.t3,marginTop:4,fontStyle:"italic",background:C.s2,padding:"6px 10px",borderRadius:8}}>
-                            💡 {day.insider_tip}
-                          </div>
-                        )}
-                      </div>
-                      );
-                    })}
-                    {/* The whole trip, not a teaser of it. Choosing between three
-                        trips on two days of each was choosing on a third of it. */}
-                    {(trip.itinerary||[]).length>2&&(
-                      <button onClick={()=>setAllDays(a=>({...a,[trip.id]:!a[trip.id]}))}
-                        style={{background:"none",border:"none",padding:0,fontSize:12,color:C.accentText,fontWeight:600,cursor:"pointer"}}>
-                        {allDays[trip.id]?"Show fewer days":`Show all ${trip.itinerary.length} days`}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Scene info */}
-                  {(trip.food_scene||trip.music_scene)&&(
-                    <div style={{padding:"12px 18px",borderBottom:"1px solid "+C.border,display:"flex",gap:12}}>
-                      {trip.food_scene&&(
-                        <div style={{flex:1}}>
-                          <div style={{fontSize:11,color:C.t3,marginBottom:3}}>🍽️ Food scene</div>
-                          <div style={{fontSize:12,color:C.t2,lineHeight:1.4}}>{trip.food_scene}</div>
-                        </div>
-                      )}
-                      {trip.music_scene&&(
-                        <div style={{flex:1}}>
-                          <div style={{fontSize:11,color:C.t3,marginBottom:3}}>🎵 Music scene</div>
-                          <div style={{fontSize:12,color:C.t2,lineHeight:1.4}}>{trip.music_scene}</div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  <div style={{padding:"14px 18px",display:"flex",gap:8}}>
-                    <button onClick={()=>veto(trip.id)}
-                      style={{flex:1,padding:"12px 8px",borderRadius:12,
-                        border:"1px solid rgba(239,68,68,.4)",
-                        background:"rgba(239,68,68,.08)",
-                        color:C.red,fontSize:13,fontWeight:600,
-                        cursor:"pointer"}}>
-                      ❌ Veto
-                    </button>
-                    <button onClick={()=>vote(trip.id)}
-                      style={{flex:1,padding:"12px 8px",borderRadius:12,
-                        border:"1px solid "+(voted?C.accentText:C.border),
-                        background:voted?C.accentDim:"none",
-                        color:voted?C.accentText:C.t2,fontSize:13,fontWeight:600,
-                        cursor:"pointer"}}>
-                      {voted?"❤️ Voted":"🤍 Vote"}
-                      {voteCount>0&&" ("+voteCount+")"}
-                    </button>
-                    <button onClick={()=>selectTrip(trip)}
-                      disabled={!!buildingItinerary}
-                      style={{flex:1,padding:"12px 8px",borderRadius:12,
-                        background:buildingItinerary===trip.id?"rgba(108,99,255,.5)":C.accent,
-                        color:"white",border:"none",
-                        fontSize:13,fontWeight:600,
-                        cursor:buildingItinerary?"not-allowed":"pointer"}}>
-                      {buildingItinerary===trip.id?"Building… ✨":"✓ Pick this"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {/* Vetoed trips */}
-          {vetoedTrips.length>0&&(
-            <div style={{padding:"0 20px 16px"}}>
-              <div style={{fontSize:12,color:C.t3,marginBottom:10}}>Vetoed by you</div>
-              {vetoedTrips.map(trip=>(
-                <div key={trip.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:C.s2,borderRadius:14,marginBottom:8,opacity:.6}}>
-                  <span style={{fontSize:24}}>{trip.emoji}</span>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:14,color:C.t2,textDecoration:"line-through"}}>{trip.destination}</div>
-                  </div>
-                  <button onClick={()=>veto(trip.id)}
-                    style={{fontSize:12,color:C.accentText,background:"none",border:"none",cursor:"pointer"}}>
-                    Undo
+          {trips.map(trip=>(
+            <TripIdeaCard key={trip.id} trip={trip} nightOut={nightOut} startDate={startDate} endDate={endDate}
+              groupSize={(group.memberIds||[]).length} enriching={enriching}>
+              {(!waitPlanId||iOrganise)&&(
+                <div style={{padding:"14px 18px"}}>
+                  <button className="bp" onClick={()=>selectTrip(trip)} disabled={!!buildingItinerary}>
+                    {buildingItinerary===trip.id?"Building… ✨":"✓ Pick this"}
                   </button>
                 </div>
-              ))}
-            </div>
-          )}
+              )}
+            </TripIdeaCard>
+          ))}
 
           {/* Regenerate */}
           <div style={{padding:"0 20px 40px"}}>
@@ -5907,7 +6172,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
               // A group trip goes back to its wait, where "Find our trips"
               // builds three more from the same answers. Back to the quiz
               // would make a second trip.
-              setStep(waitPlanId?"wait":0);setTrips(null);setVetoes({});setVotes({});setMyVote(null);setMyVetoes(new Set());}}>
+              setStep(waitPlanId?"wait":0);setTrips(null);}}>
               ↺ Generate different options
             </button>
           </div>
@@ -7024,13 +7289,27 @@ function readLocalReview(id){try{return JSON.parse(localStorage.getItem(reviewKe
 function writeLocalReview(id,v){try{localStorage.setItem(reviewKey(id),JSON.stringify(v));}catch{}}
 const STEP_LABEL={overview:"Overview",budget:"Budget",bookings:"Book"};
 
-function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab}){
+function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab,departure}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
   // Opens where the caller asked. "See my itinerary" after a payment means
   // the itinerary, not the overview.
   // "itinerary" was a tab; the days now live on the Book step.
-  const [atab,setAtab]=useState(initialTab==="itinerary"?"bookings":(initialTab||"overview"));
+  // A group trip whose ideas are out for a vote opens on the vote: it is the
+  // one thing that trip is waiting on.
+  const [atab,setAtab]=useState(initialTab==="itinerary"?"bookings"
+    :(initialTab||(plan?.hasIdeas&&plan?.status==="voting"&&plan?.destStyle==="undecided"?"vote":"overview")));
+  // The Vote tab goes once the pick is made — somebody arriving from
+  // "<place> it is", or watching when the organiser picks, lands on the
+  // overview rather than on a tab that is not there. Above the guard below,
+  // because it is a hook.
+  const ideasDecided=!!plan?.hasIdeas&&plan?.destStyle!=="undecided";
+  useEffect(()=>{
+    // Not before the plan has loaded: a notification opens this screen
+    // before the groups arrive, and it asked for the vote.
+    if(!plan)return;
+    if(atab==="vote"&&(ideasDecided||(plan.options||[]).length===0))setAtab("overview");
+  },[atab,ideasDecided,!!plan,plan?.options?.length]);
   const [myVote,setMyVote]=useState(null);
   const [loading,setLoading]=useState(false);
 
@@ -7592,7 +7871,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // Three steps, in order, then the trip is ready to go. Every tab can be
   // read at any time — checking the overview means reading the days on Book —
   // but each can only be signed off once the one before it is.
-  const tabs=[(!soloTrip&&plan.options.length>0)?"vote":null,"overview","budget","bookings"].filter(Boolean);
+  // Not once a group trip's ideas are decided: the vote is over, and where
+  // it went is the trip's title.
+  const tabs=[(!soloTrip&&plan.options.length>0&&!ideasDecided)?"vote":null,"overview","budget","bookings"].filter(Boolean);
 
   return(
     <div className="sc" style={{paddingBottom:0}}>
@@ -7623,7 +7904,18 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             {/* A group trip with no destination yet is waiting for everyone's
                 answers. Whoever has not answered is asked; everyone else is
                 taken to the wait, where the trips are found once all are in. */}
-            {plan.destStyle==="undecided"&&(()=>{
+            {plan.destStyle==="undecided"&&plan.status==="voting"&&plan.hasIdeas&&(
+              <div style={{margin:"0 20px 14px",padding:"14px",background:C.accentDim,
+                border:`1px solid ${C.accentText}`,borderRadius:14}}>
+                <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>
+                  The {plan.type==="restaurant"?"ideas for the night":"trip ideas"} are in
+                </div>
+                <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55}}>
+                  Everyone votes on the Vote tab, and whoever set this up makes the pick. Until then there are no days to plan.
+                </div>
+              </div>
+            )}
+            {plan.destStyle==="undecided"&&!(plan.status==="voting"&&plan.hasIdeas)&&(()=>{
               const ms=prefs?.members||[];
               const mine=ms.find(m=>m.userId===me);
               const allHere=!prefs?.solo&&ms.length>0&&ms.every(m=>m.answered);
@@ -7827,9 +8119,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               </div>
             )}
             <div style={{padding:"0 20px"}}>
-              {plan.status==="planning"&&!soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
+              {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
               {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
-              {plan.status==="voting"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
+              {plan.status==="voting"&&plan.destStyle!=="undecided"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
             </div>
             {(plan.status==="approved"||plan.status==="booked")&&plan.itinerary.length>0
@@ -8181,7 +8473,18 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               :null}
           </div>
         )}
-        {atab==="vote"&&plan.options.length>0&&(
+        {/* A group trip's saved ideas: every member sees the same ones,
+            votes here, and the organiser picks (TripIdeas). */}
+        {atab==="vote"&&plan.hasIdeas&&(
+          <div style={{padding:"16px 0"}}>
+            <TripIdeas planId={planId} groupId={groupId} group={group} plan={plan} toast={toast}
+              updateGroup={updateGroup} refreshGroup={refreshGroup} saveItineraryToServer={saveItineraryToServer}
+              departure={departure}
+              onRegenerate={()=>push("groupTrip",{groupId,planId,regenerate:true})}
+              onPicked={()=>setAtab("overview")}/>
+          </div>
+        )}
+        {atab==="vote"&&!plan.hasIdeas&&plan.options.length>0&&(
           <div style={{padding:"16px 20px"}}>
             <div className="pt" style={{fontSize:22,marginBottom:6}}>Where should we go?</div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:18,flexWrap:"wrap"}}>
@@ -10351,6 +10654,16 @@ export default function ReachApp({realUser,onSignOut}={}){
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         if(/^[0-9a-f-]{36}$/i.test(planId)&&/^[0-9a-f-]{36}$/i.test(groupId||""))push("groupTrip",{groupId,planId});
       }
+      // From "Your trip ideas are ready — vote", "Everyone has voted" and
+      // "<place> it is": the trip, on its Vote tab (which gives way to the
+      // overview once the pick is made).
+      if(params.get("vote")){
+        const planId=params.get("vote"), groupId=params.get("group");
+        params.delete("vote");params.delete("group");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        if(/^[0-9a-f-]{36}$/i.test(planId)&&/^[0-9a-f-]{36}$/i.test(groupId||""))push("planDetail",{planId,groupId,initialTab:"vote"});
+      }
       // Back from a payment provider's own page. Stripe appends payment_intent
       // and redirect_status to the address checkout gave it. Reopen that
       // checkout to record it, and clear the address first so a refresh or a
@@ -10706,6 +11019,11 @@ export default function ReachApp({realUser,onSignOut}={}){
     accommodation:p.accommodation,
     vibe:p.vibe,
     destStyle:p.destination_style,
+    // Whether a group trip's ideas are saved on it for everyone to vote on
+    // (plans.trip_options). The ideas themselves are read by the vote.
+    hasIdeas:Array.isArray(p.trip_options?.options)&&p.trip_options.options.length>0,
+    // Who set it up — one half of who organises it; the server decides.
+    createdBy:p.created_by||null,
     // Why this trip, as the group was shown when they chose it. Without
     // reading it back, the reasons survived until the first reload.
     aiData:p.why_chosen?.length?{used_suggestions:p.why_chosen}:null,
@@ -10839,7 +11157,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   // `quiet`: the caller says what failed itself. A group trip that could not
   // be saved is taken back off the screen, so "it's only on this device"
   // would be describing a plan that is not there.
-  const savePlanToServer=async(groupId,plan,{quiet=false}={})=>{
+  const savePlanToServer=async(groupId,plan,{quiet=false,onAlreadyWaiting=null}={})=>{
     try{
       // Structured only. Every screen that creates a plan sets startDate and
       // endDate, so splitting the display label apart again — which broke the
@@ -10881,6 +11199,13 @@ export default function ReachApp({realUser,onSignOut}={}){
         return saved.id;
       }
       const err=await res.json().catch(()=>null);
+      // The group already has a trip waiting on everyone. Not a failure: the
+      // caller opens that one, and the copy made on this device goes.
+      if(res.status===409&&err?.code==="already_waiting"&&err.planId&&onAlreadyWaiting){
+        setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans:g.plans.filter(p=>p.id!==plan.id)}:g));
+        onAlreadyWaiting(err.planId);
+        return null;
+      }
       console.error("[savePlanToServer]",res.status,err);
       if(!quiet)showToast("Couldn't save that plan — it's only on this device");
     }catch(e){

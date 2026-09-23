@@ -18,9 +18,17 @@ export function everyoneIn(memberIds: string[], answeredIds: string[]): boolean 
   return memberIds.every(id => answered.has(id));
 }
 
-async function claimOnce(db: SupabaseClient, planId: string, userId: string): Promise<boolean> {
+/**
+ * First write wins: true for exactly one caller per (action, key), however
+ * many arrive at once. Also used for "Everyone has voted", keyed on the set
+ * of ideas (lib/trip-vote.ts).
+ */
+export async function claimOnce(
+  db: SupabaseClient, planId: string, userId: string,
+  action: string = EVERYONE_IN_ACTION, key: string = planId,
+): Promise<boolean> {
   const first = () => db.from('audit_logs').select('id')
-    .eq('action', EVERYONE_IN_ACTION).eq('resource_id', planId)
+    .eq('action', action).eq('resource_id', key)
     .order('created_at', { ascending: true }).order('id', { ascending: true }).limit(1);
   const before = await first();
   if (before.error) {
@@ -30,7 +38,7 @@ async function claimOnce(db: SupabaseClient, planId: string, userId: string): Pr
   }
   if (before.data?.length) return false;
   const { data: mine, error } = await db.from('audit_logs')
-    .insert({ user_id: userId, action: EVERYONE_IN_ACTION, resource: 'plans', resource_id: planId, success: true })
+    .insert({ user_id: userId, action, resource: 'plans', resource_id: key, success: true, metadata: { plan: planId } })
     .select('id').single();
   if (error || !mine) {
     console.error('[everyone-in] could not record the announcement — not sending', { planId, code: error?.code });
