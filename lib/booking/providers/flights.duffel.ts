@@ -15,6 +15,7 @@
 //     that to agree on anything — so book() re-requests rather than trusting
 //     a stored price
 import type { BookingProvider, BookingItemRequest, BookingItemResult, CancelResult } from '../types.ts';
+import { commitFetch, overMax, OutcomeUnknown } from '../types.ts';
 import {
   amountToCents, offerExpired, duffelGender, toDuffelPassenger,
   describeOffer, flightIdent, describeConditions, departed, offerKey, offerOption, isOrderId, airlineSite, type DuffelPassenger,
@@ -323,6 +324,13 @@ export const duffelFlights: BookingProvider = {
     const q = await this.quote(req);
     if (q.status !== 'quoted' || !q.providerRef) return q;
 
+    // Never more than the group paid in. This prices the offer again, and
+    // used to pay whatever came back: a fare that rose in the seconds after
+    // approval checked it was paid for by Reach, with nobody told.
+    if (overMax(q.priceCents, req.maxPriceCents)) {
+      return fail(`The fare went up to $${((q.priceCents ?? 0) / 100).toFixed(2)} while this was being booked, which is more than the group paid in for it. Nothing was bought — check the new price and book it again.`);
+    }
+
     const raw = q.raw as { expiresAt?: string | null; passengerIds?: string[] } | undefined;
     if (offerExpired(raw?.expiresAt)) {
       // Should not happen — the quote was made a moment ago — but an offer
@@ -381,7 +389,9 @@ export const duffelFlights: BookingProvider = {
       return fail('Refusing to issue a real ticket: the Duffel key is in live mode.');
     }
 
-    const res = await fetch(`${BASE}/air/orders`, {
+    // The one call that buys a ticket. A timeout or a 5xx from here may
+    // still have made the order, and is thrown as such (commitFetch).
+    const res = await commitFetch(`${BASE}/air/orders`, {
       method: 'POST',
       headers: headers(),
       body: JSON.stringify({
@@ -406,6 +416,8 @@ export const duffelFlights: BookingProvider = {
     }
 
     const order = json?.data;
+    // Accepted, and no order we can read: the ticket may well be issued.
+    if (!order?.id) throw new OutcomeUnknown('Duffel accepted the order and its answer could not be read.');
     return {
       vertical: 'flight', mode: 'native', status: 'confirmed', provider: 'duffel',
       providerRef: order?.booking_reference || order?.id,

@@ -52,6 +52,13 @@ export interface BookingItemRequest {
    * provider can always be traced back to the row that asked for it.
    */
   reference?: string;
+  /**
+   * The most the group has paid in for this, set by approval: book() refuses
+   * to pay a provider more. Duffel's book() prices the offer again and used
+   * to pay whatever came back, so a fare that rose between the check and the
+   * order was paid for out of Reach's pocket. Never stored.
+   */
+  maxPriceCents?: number;
   // Vertical-specific payloads (only the relevant one is set)
   flight?: {
     origin: string;        // IATA, e.g. "SFO"
@@ -151,3 +158,51 @@ export interface CancelResult {
 
 export const isConfigured = (envKey: string) =>
   typeof process.env[envKey] === 'string' && process.env[envKey]!.length > 0;
+
+/**
+ * Thrown by a provider's book() when the order may exist and we cannot tell:
+ * the request was sent and the answer never came, or came back as a server
+ * error. Approval leaves such a row mid-booking and reports it, rather than
+ * marking it failed — a failed row leaves the total and can be booked again,
+ * which is a second order if the first one went through.
+ *
+ * Anything thrown before the order is sent is an ordinary failure.
+ */
+export class OutcomeUnknown extends Error {
+  readonly outcomeUnknown = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'OutcomeUnknown';
+  }
+}
+
+/** Whether an error says the provider may have taken the order. */
+export function isOutcomeUnknown(e: unknown): boolean {
+  return e instanceof OutcomeUnknown || (!!e && typeof e === 'object' && (e as { outcomeUnknown?: unknown }).outcomeUnknown === true);
+}
+
+/**
+ * The commit call to a provider — the one that buys something. A network
+ * failure or a 5xx after it was sent means the order may exist; a 4xx is the
+ * provider saying no, and nothing was bought.
+ */
+export async function commitFetch(url: string, init: RequestInit): Promise<Response> {
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch (e) {
+    throw new OutcomeUnknown(`No answer from the provider after the order was sent: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (res.status >= 500) throw new OutcomeUnknown(`The provider answered ${res.status} after the order was sent.`);
+  return res;
+}
+
+/**
+ * Whether a price is above the most approval said the group had paid in for
+ * it. No ceiling set (a caller that is not approval) is never over.
+ */
+export function overMax(priceCents: number | null | undefined, maxPriceCents: number | null | undefined): boolean {
+  const max = Number(maxPriceCents);
+  if (!Number.isFinite(max) || max <= 0) return false;
+  return Number(priceCents) > max;
+}

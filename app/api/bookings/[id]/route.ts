@@ -9,9 +9,18 @@
 // and where the old ops queue used to confirm its own rows. The frontend
 // only ever watches `status`, so none of those callers can tell each other
 // apart, which is the point.
+//
+// Only for what the person books themselves — a redirect or a concierge
+// request. Any member could set any status on any row, including a flight
+// Reach bought or one mid-booking: a stuck row "unstuck" to failed dropped
+// out of the total and was bought a second time, and a row moved while the
+// provider was answering lost approval its claim. Reach's own purchases are
+// settled by approval and cancel, never by somebody saying so.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
+import { reachBuys } from '@/lib/booking/charged';
+import { atVersion, midClaim } from '@/lib/booking/claim';
 
 const supabase = createServerClient;
 
@@ -23,14 +32,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const { data: booking } = await supabase()
-    .from('bookings').select('plan_id').eq('id', params.id).maybeSingle();
+    .from('bookings').select('plan_id, status, mode, provider, approved_at, updated_at').eq('id', params.id).maybeSingle();
   if (!booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
 
   // Anyone signed in could previously mark any booking confirmed.
   const ctx = await requirePlanMember(booking.plan_id);
   if (isFail(ctx)) return ctx.error;
 
-  const { data, error } = await ctx.db
+  if (midClaim(booking)) {
+    return NextResponse.json({ error: 'Somebody is booking this right now.' }, { status: 409 });
+  }
+  if (reachBuys(booking)) {
+    return NextResponse.json({ error: 'Reach books this one itself, so how it went comes from the booking, not from here.' }, { status: 409 });
+  }
+
+  const { data, error } = await atVersion(ctx.db
     .from('bookings')
     .update({
       status: body.status,
@@ -39,12 +55,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       fulfilled_by: ctx.user.id,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', params.id)
+    .eq('id', params.id), booking.updated_at)
     .select()
-    .single();
+    .maybeSingle();
   if (error) {
     console.error('[bookings PATCH] update failed', { id: params.id, error });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+  if (!data) return NextResponse.json({ error: 'This changed while you were looking — reopen it.' }, { status: 409 });
   return NextResponse.json({ booking: data });
 }

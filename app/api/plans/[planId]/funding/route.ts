@@ -7,7 +7,7 @@
 // The share is computed here, not in the client. The client used to divide by
 // `plan.participants.length` — a field the API never returned — so it fell
 // back to 1 and asked every member to pay for the entire trip.
-import { NOT_CHARGED } from '@/lib/booking/charged';
+import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { report } from '@/lib/report';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
@@ -15,19 +15,23 @@ import { planShares } from '@/lib/money';
 import { planSkips, partySize } from '@/lib/participation';
 import { netCollectedCents } from '@/lib/booking/approval';
 import { staleForParty } from '@/lib/booking/party';
+import { midClaim } from '@/lib/booking/claim';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { track } from '@/lib/track';
 
 async function fundingStatus(
   db: SupabaseClient, planId: string, groupId: string, userId: string, budgetCents: number
 ) {
-  // Target = sum of every non-failed booking priced on this plan
-  const { data: bookings } = await db
+  // Target = every live booking on this plan that Reach itself buys. A
+  // ticket or a table somebody buys on the seller's own site is not in it —
+  // checkout does not show it in the total, so nobody is charged for it.
+  const { data: rows } = await db
     .from('bookings')
-    .select('id,price_cents,status')
+    .select('id,price_cents,status,mode,provider')
     .eq('plan_id', planId)
     .not('status', 'in', NOT_CHARGED);
-  const targetCents = (bookings || []).reduce((s, b) => s + (b.price_cents || 0), 0);
+  const bookings = chargedRows(rows);
+  const targetCents = bookings.reduce((s, b) => s + (b.price_cents || 0), 0);
 
   const { data: contributions } = await db
     .from('contributions').select('*').eq('plan_id', planId);
@@ -56,7 +60,7 @@ async function fundingStatus(
   // short for good, and approval refused it for ever. With the budget out of
   // it after the first payment, a share only rises when real bookings do.
   const guessCents = collectedCents > 0 ? 0 : Math.max(0, budgetCents || 0);
-  const myShareCents = planShares(bookings || [], guessCents, memberIds, skips)[userId] ?? 0;
+  const myShareCents = planShares(bookings, guessCents, memberIds, skips)[userId] ?? 0;
 
   const myPaidCents = netCollectedCents(contributions, userId);
 
@@ -66,12 +70,24 @@ async function fundingStatus(
     .eq('plan_id', planId)
     .in('status', ['failed']);
 
+  // Sent to the provider and never answered (approval's outcome_unknown):
+  // it may be bought, so it stays in the total and cannot be booked again.
+  // Named here so it is not a row nobody can see that blocks for ever.
+  const { data: open } = await db
+    .from('bookings')
+    .select('id,vertical,detail,status,approved_at,updated_at,error')
+    .eq('plan_id', planId)
+    .in('status', ['booking', 'awaiting_approval'])
+    .not('error', 'is', null);
+  const inDoubt = (open || []).filter(b => midClaim(b) && /^outcome unknown/.test(String(b.error)));
+
   return {
     targetCents,
     collectedCents,
     // Named so checkout can say what did not happen. A booking that failed
     // after somebody paid is the most important thing on the screen.
     failed: (failedBookings || []).map(b => ({ vertical: b.vertical, priceCents: b.price_cents || 0 })),
+    inDoubt: inDoubt.map(b => ({ id: b.id, vertical: b.vertical, detail: b.detail ?? null })),
     funded: targetCents > 0 && collectedCents >= targetCents,
     memberCount: memberIds.length,
     myShareCents,
@@ -200,7 +216,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // two-seat fare is not a share of the three-seat fare that will actually
   // be charged, so no money is taken against it until it is priced again.
   const { data: waiting, error: waitingError } = await ctx.db.from('bookings')
-    .select('id, vertical, status, request_payload')
+    .select('id, vertical, status, mode, request_payload')
     .eq('plan_id', params.planId).eq('status', 'awaiting_approval');
   if (waitingError) {
     console.error('[funding] could not read the bookings waiting', { planId: params.planId, code: waitingError.code });

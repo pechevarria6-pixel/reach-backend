@@ -5,7 +5,7 @@
 // it returns has none in it.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { readinessOf, blockingMessage, type Readiness } from '@/lib/essentials';
-import type { Person } from '@/lib/booking/approval';
+import { onTheTrip, type Person } from '@/lib/booking/approval';
 
 export interface GroupReadiness {
   travelers: Readiness[];
@@ -56,7 +56,16 @@ export function withoutTravelerDetails<T extends { travelers?: unknown[] }>(item
  * explanation, because the safe answer to "is everyone ready" when we cannot
  * tell is no.
  */
-export async function groupReadiness(db: SupabaseClient, groupId: string): Promise<GroupReadiness> {
+export async function groupReadiness(
+  db: SupabaseClient, groupId: string,
+  /** Only these people — a solo plan's traveller (see tripTravellerIds). */
+  only?: string[] | null,
+): Promise<GroupReadiness> {
+  // A solo plan whose traveller is gone from the record: nobody can be put on
+  // a flight, and an empty list is not "everyone is ready".
+  if (only && only.length === 0) {
+    return { travelers: [], ready: false, blocking: 'Nobody on this trip can be named on a booking.' };
+  }
   const full = await db
     .from('group_members')
     .select('user_id, users(id, name, first_name, last_name, date_of_birth, gender, phone)')
@@ -83,7 +92,10 @@ export async function groupReadiness(db: SupabaseClient, groupId: string): Promi
     return { travelers: [], ready: false, blocking: 'We could not check who is ready to fly just now.' };
   }
 
-  const travelers = (data ?? []).map(m => {
+  const keep = only ? new Set(only) : null;
+  const travelers = (data ?? [])
+    .filter(m => !keep || keep.has(String((m as Record<string, unknown>).user_id)))
+    .map(m => {
     const row = m as Record<string, unknown>;
     const u = joined(row);
     return readinessOf(String(row.user_id), displayName(u), {
@@ -142,4 +154,24 @@ export async function bookingTravellers(
         email: s(u.email),
       };
     });
+}
+
+type TripPlan = { group_id?: unknown; solo_mode?: unknown; created_by?: unknown };
+
+/**
+ * The people a plan's bookings are for, from their saved details: the group,
+ * less anybody sitting this one out — or, on a solo plan, its creator alone
+ * (onTheTrip in lib/booking/approval.ts says why). The one reader for quote,
+ * stale check and approval, so they cannot disagree about who is going.
+ */
+export async function travellersFor(
+  db: SupabaseClient, plan: TripPlan, sittingOut: string[] = [],
+): Promise<Person[]> {
+  return onTheTrip(plan, await bookingTravellers(db, String(plan.group_id), sittingOut));
+}
+
+/** For groupReadiness: only the solo traveller on a solo plan, else everyone. */
+export function tripTravellerIds(plan: TripPlan): string[] | null {
+  if (plan.solo_mode !== true) return null;
+  return typeof plan.created_by === 'string' && plan.created_by ? [plan.created_by] : [];
 }

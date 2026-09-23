@@ -4,6 +4,9 @@
 // POST { key } → make that one the choice. Re-priced now, so the plan's
 //        total and the booking's price are the new one's, and pinned, so
 //        approval books this hotel or these flights and not the cheapest.
+// POST { reprice: true } → the same choice, priced again for who is going
+//        now: how a quote refused as `stale_quotes` or `party_changed`, or
+//        priced by a provider Reach no longer books through, is put right.
 //
 // Reach picks a hotel and a flight so nobody has to; nobody has to keep
 // them either. A change is only offered while it is a quote — nothing has
@@ -19,6 +22,10 @@ import { flightOptions } from '@/lib/booking/providers/flights.duffel';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
 import { partySize } from '@/lib/participation';
 import { roomsFor } from '@/lib/booking/party';
+import { atVersion, changeRefusal } from '@/lib/booking/claim';
+import { travellersFor } from '@/lib/essentials-server';
+import { airlineOnly } from '@/lib/booking/approval';
+import { airlineHandoff } from '@/lib/booking/duffel-map';
 
 /**
  * The request sized for who is going now, not who was going when it was
@@ -38,13 +45,18 @@ async function sizedNow(
   };
 }
 
-const CHANGEABLE = new Set(['quoted', 'awaiting_approval']);
+const CHANGEABLE = ['quoted', 'awaiting_approval'];
 const SWAPPABLE = new Set(['hotel', 'flight']);
-const Choose = z.object({ key: z.string().min(1).max(200) });
+const Choose = z.object({
+  key: z.string().min(1).max(200).nullish(),
+  reprice: z.literal(true).nullish(),
+}).refine(b => !!b.key || b.reprice === true);
 
 async function load(id: string) {
   const { data: booking, error } = await createServerClient()
-    .from('bookings').select('id, plan_id, vertical, status, request_payload, response_payload, price_cents, detail').eq('id', id).maybeSingle();
+    .from('bookings')
+    .select('id, plan_id, vertical, status, mode, provider, approved_at, updated_at, request_payload, response_payload, price_cents, detail')
+    .eq('id', id).maybeSingle();
   if (error) {
     console.error('[options] could not read booking', { id, code: error.code });
     return { fail: NextResponse.json({ error: 'Could not read that booking just now.' }, { status: 500 }) };
@@ -58,10 +70,6 @@ async function load(id: string) {
   return { booking, ctx };
 }
 
-const lockedMessage = (status: string) => status === 'confirmed'
-  ? 'This is already booked. To change it, cancel it first — then pick another.'
-  : 'This one cannot be changed right now.';
-
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const got = await load(params.id);
   if (got.fail) return got.fail;
@@ -69,9 +77,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const request = await sizedNow(ctx.db, ctx.plan, booking.request_payload as BookingItemRequest);
   const current = { detail: booking.detail, priceCents: booking.price_cents, status: booking.status,
     raw: booking.response_payload ?? null };
-  if (!CHANGEABLE.has(booking.status)) {
-    return NextResponse.json({ current, options: [], changeable: false, why: lockedMessage(booking.status) });
-  }
+  const refused = changeRefusal(booking);
+  if (refused) return NextResponse.json({ current, options: [], changeable: false, why: refused });
   const found = booking.vertical === 'hotel' ? await hotelOptions(request) : await flightOptions(request);
   return NextResponse.json({ current, options: found.options, changeable: true, why: found.error });
 }
@@ -82,45 +89,72 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { booking, ctx } = got;
   const parsed = Choose.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: 'Which one?' }, { status: 400 });
-  if (!CHANGEABLE.has(booking.status)) {
-    return NextResponse.json({ error: lockedMessage(booking.status) }, { status: 409 });
-  }
+  const refused = changeRefusal(booking);
+  if (refused) return NextResponse.json({ error: refused }, { status: 409 });
 
   const request = await sizedNow(ctx.db, ctx.plan, booking.request_payload as BookingItemRequest);
+  // `reprice` keeps the choice as it is — the same hotel, the same flights
+  // — and only prices it again. A hotel or flight priced before either was
+  // pinned has nothing to keep, and is priced afresh.
+  const key = parsed.data.key
+    ?? (booking.vertical === 'hotel' ? request.hotel?.hotelId : request.flight?.offerKey)
+    ?? undefined;
   if (booking.vertical === 'hotel' && request.hotel) {
-    request.hotel = { ...request.hotel, hotelId: parsed.data.key, rateId: undefined };
+    request.hotel = { ...request.hotel, hotelId: key, rateId: undefined };
   } else if (booking.vertical === 'flight' && request.flight) {
-    request.flight = { ...request.flight, offerKey: parsed.data.key };
+    request.flight = { ...request.flight, offerKey: key };
   } else {
     return NextResponse.json({ error: 'This booking has nothing to change.' }, { status: 400 });
   }
 
   // Priced again now. The option list is a minute old and a fare can move;
   // the price stored is the one the provider gives for the choice today.
-  const result = await PROVIDERS[booking.vertical as Vertical].quote(request);
+  let result = await PROVIDERS[booking.vertical as Vertical].quote(request);
   if (result.status !== 'quoted') {
     return NextResponse.json({ error: result.error || 'That one could not be priced — try another.' }, { status: 409 });
   }
-  if (booking.vertical === 'hotel' && (result.raw as { hotelId?: string } | undefined)?.hotelId !== parsed.data.key) {
+  if (booking.vertical === 'hotel' && key && (result.raw as { hotelId?: string } | undefined)?.hotelId !== key) {
     return NextResponse.json({ error: 'That hotel has no rooms for these dates any more — try another.' }, { status: 409 });
   }
+  // The same rule the first quote follows (/api/bookings): a flight with
+  // somebody on it whose passport marker automatic booking cannot carry is
+  // handed to the airline, with no price and in nobody's share.
+  if (booking.vertical === 'flight' && request.flight) {
+    let toAirline: boolean;
+    try {
+      toAirline = airlineOnly(await travellersFor(ctx.db, ctx.plan));
+    } catch (e) {
+      console.error('[options] could not read who is travelling', { id: params.id, error: e instanceof Error ? e.message : String(e) });
+      return NextResponse.json({ error: 'Could not check who is travelling just now — try again in a moment.' }, { status: 500 });
+    }
+    if (toAirline) result = airlineHandoff(result, request.flight);
+  }
 
-  const { data: updated, error } = await ctx.db.from('bookings').update({
+  // Taken only on the row as it was read: an approval that claimed it in the
+  // meantime, or another change, wins, and this one is refused.
+  const { data: updated, error } = await atVersion(ctx.db.from('bookings').update({
     request_payload: request,
     response_payload: result.raw ?? null,
+    // Whoever priced it now is who books it: a flight priced by Kiwi and
+    // picked again here is Duffel's from now on, which is what lets
+    // approval book it.
+    provider: result.provider,
+    mode: result.mode,
     provider_ref: result.providerRef ?? null,
+    redirect_url: result.redirectUrl ?? null,
     price_cents: result.priceCents ?? null,
     currency: result.currency ?? 'USD',
     detail: result.detail ?? null,
     error: null,
     updated_at: new Date().toISOString(),
-  }).eq('id', params.id).in('status', [...CHANGEABLE]).select('id, detail, price_cents, status').maybeSingle();
+  }).eq('id', params.id).in('status', CHANGEABLE), booking.updated_at)
+    .select('id, detail, price_cents, status, mode').maybeSingle();
   if (error) {
     console.error('[options] could not save the new choice', { id: params.id, code: error.code });
     return NextResponse.json({ error: 'Could not save that — try again in a moment.' }, { status: 500 });
   }
-  // Approved in the moment between reading and writing: nothing changed.
-  if (!updated) return NextResponse.json({ error: lockedMessage('confirmed') }, { status: 409 });
+  // Claimed or changed in the moment between reading and writing: nothing changed.
+  if (!updated) return NextResponse.json({ error: 'This changed while you were looking — reopen it.' }, { status: 409 });
   // A price rise approval was holding for the old choice is not a price for
   // this one, and accepting it later would put the wrong fare on the row.
   // Before sql/wave1-bookings-2026-09-22.sql the column does not exist and

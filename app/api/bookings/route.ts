@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PROVIDERS } from '@/lib/booking/registry';
 import { report } from '@/lib/report';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { groupReadiness, withoutTravelerDetails, bookingTravellers } from '@/lib/essentials-server';
+import { groupReadiness, withoutTravelerDetails, travellersFor, tripTravellerIds } from '@/lib/essentials-server';
 import { partySize } from '@/lib/participation';
 import { airlineOnly } from '@/lib/booking/approval';
 import { airlineHandoff } from '@/lib/booking/duffel-map';
@@ -86,7 +86,8 @@ export async function POST(req: NextRequest) {
   // provider — and so nobody's card is touched for a seat that cannot exist.
   let flightsBlocked: string | null = null;
   if ((body.items as BookingItemRequest[]).some(i => i.vertical === 'flight')) {
-    const { ready, blocking } = await groupReadiness(ctx.db, ctx.plan.group_id as string);
+    // Whoever the trip is for — on a solo plan, its own traveller only.
+    const { ready, blocking } = await groupReadiness(ctx.db, ctx.plan.group_id as string, tripTravellerIds(ctx.plan));
     if (!ready) flightsBlocked = blocking;
   }
 
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
   let toAirline = false;
   if (!flightsBlocked && (body.items as BookingItemRequest[]).some(i => i.vertical === 'flight')) {
     try {
-      toAirline = airlineOnly(await bookingTravellers(ctx.db, ctx.plan.group_id as string));
+      toAirline = airlineOnly(await travellersFor(ctx.db, ctx.plan));
     } catch {
       flightsBlocked = 'We could not check who is travelling just now.';
     }

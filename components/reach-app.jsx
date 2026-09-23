@@ -9,6 +9,7 @@ import { planSections, daysAway, today, countdown, groupSchedule, byName, monthG
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle, bookedClaim, bookedWording } from "@/lib/checkout";
+import { approveOutcome } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild } from "@/lib/itinerary-rebuild";
 import { ticketSources } from "@/lib/tickets";
@@ -9283,6 +9284,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   const plan=group?.plans?.find(p=>p.id===planId);
   // phases: loading | review | pay | approving | waiting | priceUp | done | error
   const [phase,setPhase]=useState("loading");
+  // Bookings priced for a different number of people than are going: the
+  // "reprice" screen prices exactly these again (options { reprice: true }).
+  const [repriceIds,setRepriceIds]=useState([]);
   const [nudging,setNudging]=useState(false);
   const [funding,setFunding]=useState(null);
   const [bookings,setBookings]=useState([]);
@@ -9457,6 +9461,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     try{
       const r=await fetchWithin(`/api/plans/${planId}/funding`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})},15000,"setting up your payment");
       const d=await r.json().catch(()=>({}));
+      // Priced for a different number of people than are going. Nothing was
+      // charged; this used to be a toast with nothing on screen to fix it.
+      if(r.status===409&&d.code==="stale_quotes"&&Array.isArray(d.stale)){
+        setRepriceIds(d.stale.map(x=>x.id)); setMsg(d.error||""); setPhase("reprice"); setBusy(false); return;
+      }
       if(!r.ok||!d.clientSecret)throw new Error(d.error||"Couldn't start the payment \u2014 try again.");
       setClientSecret(d.clientSecret); setPhase("pay");
     }catch(e){ toast(e.message); }
@@ -9568,23 +9577,31 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     // so somebody could believe a hotel was booked when the request had been
     // refused. Failures are counted and reported.
     const failed=[];
+    let unsure=0;
     for(const b of waiting){
+      let o;
       try{
         // The one that actually books. A provider that hangs here leaves somebody
         // staring at "approving" with their money already collected, so it gets
-        // the longest deadline and still gets one.
-        const r=await fetchWithin(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(acceptNewPrice?{acceptNewPrice:true}:{})},45000,"the booking");
-        if(r.status===402){ setPhase("waiting"); return; }
-        if(r.status===409){ setPhase("priceUp"); return; }
-        if(!r.ok){
-          const err=await r.json().catch(()=>({}));
-          console.error("[checkout] approval refused",{bookingId:b.id,status:r.status,err});
-          failed.push(b);
-        }
+        // the longest deadline and still gets one — longer than the server's
+        // own 60 seconds, so a booking that went through is never read here
+        // as one that failed.
+        const r=await fetchWithin(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(acceptNewPrice?{acceptNewPrice:true}:{})},70000,"the booking");
+        o=approveOutcome(r.status,await r.json().catch(()=>({})));
       }catch(e){
-        console.error("[checkout] approval failed",{bookingId:b.id},e);
-        failed.push(b);
+        // No answer is not a refusal: the server may still be booking it.
+        console.error("[checkout] approval did not answer",{bookingId:b.id},e);
+        o={kind:"unknown",message:"We didn't hear back in time, so this may still be going through. Don't book it again — open the trip in a minute to see."};
       }
+      // Each answer to the screen it belongs on (lib/booking/approve-outcome.ts).
+      if(o.kind==="notFunded"){ setPhase("waiting"); return; }
+      if(o.kind==="priceUp"){ setPhase("priceUp"); return; }
+      if(o.kind==="reprice"){ setRepriceIds([b.id]); setMsg(o.message||""); setPhase("reprice"); return; }
+      // Booked, or another press is booking it: the list read below shows which.
+      if(o.kind==="booked"||o.kind==="busy")continue;
+      if(o.kind==="unknown")unsure++;
+      console.error("[checkout] approval refused",{bookingId:b.id,kind:o.kind,message:o.message});
+      failed.push(o.message);
     }
     // The list fetched before approving says "Quoted" for everything, because
     // that is what it was. Read it again so the screen shows what happened.
@@ -9594,7 +9611,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       setBookings((aj&&(aj.bookings||aj))||fresh);
     }catch(e){ console.error("[checkout] could not re-read the bookings after approving",e); setBookings(fresh); }
     if(failed.length){
-      fail(`Your payment is recorded, but ${failed.length} of ${waiting.length} booking${waiting.length===1?"":"s"} couldn't be confirmed. Nothing has been double-charged. We'll follow up — you don't need to do anything.`);
+      // What each one said, not a promise that somebody will follow up: a
+      // traveller missing their details has something to do, and a booking
+      // we did not hear back about must not be booked again.
+      fail(`Your payment is recorded, but ${failed.length} of ${waiting.length} booking${waiting.length===1?"":"s"} ${unsure===failed.length?"may not have":"couldn't be"} finished. ${[...new Set(failed.filter(Boolean))].join(" ")}`);
       return;
     }
     setPhase("done");
@@ -9728,6 +9748,31 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>One of your bookings costs a bit more than when we quoted it. Still book it?</div>
     <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
     <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Let me think</div>
+  </div></div>);
+
+  // Priced for a different number of people than are going now. Priced
+  // again here, as the same hotel and the same flights, and then checkout
+  // reloads with the new total — nothing is charged or booked until then.
+  if(phase==="reprice")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
+    <div style={{fontSize:40,marginBottom:12}}>🔁</div>
+    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>This needs pricing again</div>
+    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>{msg||"Part of this trip was priced for a different number of people. Nothing has been charged or booked."}</div>
+    <button disabled={busy} onClick={async()=>{
+      if(busy)return;
+      setBusy(true);
+      const problems=[];
+      for(const id of repriceIds){
+        try{
+          const r=await fetchWithin(`/api/bookings/${id}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reprice:true})},30000,"pricing it again");
+          const d=await r.json().catch(()=>({}));
+          if(!r.ok)problems.push(d.error||"Couldn't price that again.");
+        }catch(e){ console.error("[checkout] reprice failed",{id},e); problems.push(e.message||"Couldn't price that again."); }
+      }
+      setBusy(false);
+      if(problems.length){ toast(problems[0]); return; }
+      setRepriceIds([]); setPhase("loading"); load();
+    }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>{busy?"Pricing…":"Price it again"}</button>
+    <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
   </div></div>);
 
   if(phase==="approving")return(<div className="sc"><div style={{padding:"80px 24px",textAlign:"center"}}>

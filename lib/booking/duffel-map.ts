@@ -297,15 +297,24 @@ export function isOrderId(ref: unknown): boolean {
 /**
  * The airline's own site, from what the airline itself told Duffel.
  *
- * Duffel gives each airline a conditions-of-carriage page, which lives on the
- * airline's domain; its origin is the airline's site. Nothing is guessed
- * from a name. Null when the airline gave no such page.
+ * Duffel gives each airline a conditions-of-carriage page, and its origin is
+ * usually the airline's site — but not always: some airlines keep that page
+ * on a help centre (help.…, support.…, a Zendesk) or a file host (a CDN, an
+ * S3 bucket), and the note then sent people to "{airline}'s own site" at a
+ * PDF server. Those hosts are not a place to buy a ticket, so they give
+ * null, and the handoff falls back to a flight search that sells every
+ * airline on the route. Nothing is guessed from a name.
  */
+const NOT_A_SHOP = /^(help|support|faq|cdn\d*|static|assets?|media|files?|docs?|content|img|images|s3|storage|legal)\./i;
+const FILE_HOSTS = /(\.|^)(cloudfront\.net|amazonaws\.com|akamaized\.net|azureedge\.net|blob\.core\.windows\.net|cloudinary\.com|ctfassets\.net|contentful\.com|zendesk\.com|freshdesk\.com|salesforce\.com|force\.com|googleusercontent\.com|storage\.googleapis\.com|sharepoint\.com|box\.com|dropbox\.com|duffel\.com)$/i;
+
 export function airlineSite(conditionsUrl: unknown): string | null {
   if (typeof conditionsUrl !== 'string') return null;
   try {
     const u = new URL(conditionsUrl);
-    return u.protocol === 'https:' ? u.origin : null;
+    if (u.protocol !== 'https:') return null;
+    if (NOT_A_SHOP.test(u.hostname) || FILE_HOSTS.test(u.hostname)) return null;
+    return u.origin;
   } catch {
     return null;
   }

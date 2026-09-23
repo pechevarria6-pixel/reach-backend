@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
+import { holdsSomething } from '@/lib/booking/claim';
 
 // GET /api/groups/[id] — get a single group with members and plans
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
@@ -89,10 +90,12 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
 
   const planIds = (plans ?? []).map(p => p.id);
   if (planIds.length) {
-    const { data: held, error: heldErr } = await supabase
-      .from('bookings').select('id, status, plan_id')
+    // Including a booking at the provider this minute — see holdsSomething.
+    const { data: rows, error: heldErr } = await supabase
+      .from('bookings').select('id, status, plan_id, approved_at, updated_at')
       .in('plan_id', planIds)
-      .in('status', ['confirmed', 'redirected', 'pending']);
+      .in('status', ['confirmed', 'redirected', 'pending', 'booking', 'awaiting_approval']);
+    const held = (rows ?? []).filter(holdsSomething);
     if (heldErr) {
       console.error('[groups] could not read what the trips are holding', { group: params.id, code: heldErr.code });
       return NextResponse.json({ error: "We couldn't check this group's bookings — nothing was deleted" }, { status: 500 });

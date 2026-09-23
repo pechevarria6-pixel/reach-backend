@@ -4,7 +4,7 @@
 //   1. /hotels/rates  → rates for a hotel/city (quote)
 //   2. /rates/prebook → lock a rate, returns prebookId
 //   3. /rates/book    → commit, returns confirmation
-import { type BookingProvider, type BookingItemRequest, type BookingItemResult, isConfigured } from '../types.ts';
+import { type BookingProvider, type BookingItemRequest, type BookingItemResult, isConfigured, commitFetch, overMax, OutcomeUnknown } from '../types.ts';
 import { headcount, occupancies } from '../party.ts';
 
 /**
@@ -15,6 +15,53 @@ import { headcount, occupancies } from '../party.ts';
 function occupancyOf(req: BookingItemRequest) {
   const rooms = Math.max(1, req.hotel?.rooms || 1);
   return occupancies(headcount(req, rooms * 2), rooms);
+}
+
+type Money = { amount?: number | string; currency?: string };
+type LiteRate = Record<string, unknown> & {
+  name?: string; offerId?: string; rateId?: string; boardName?: string; occupancyNumber?: number | string;
+  retailRate?: { total?: Money[] };
+};
+type LiteRoomType = { offerId?: string; offerRetailRate?: Money; rates?: LiteRate[] };
+
+/**
+ * What the whole offer costs — every room in it.
+ *
+ * The quote read `rates[0].retailRate.total`, and in LiteAPI v3 `rates` holds
+ * one rate per occupancy: rates[0] is the first room only. The offerId that
+ * prebook is given books every room, so a group of three in two rooms paid
+ * for one room and Reach bought two. The offer's own total is
+ * `offerRetailRate`; without it, one rate per occupancy is added up. A room
+ * with no price we can read makes the whole offer unpriced — a total missing
+ * a room is the same bug again.
+ */
+export function offerTotal(roomType: LiteRoomType | null | undefined, rooms: number): { cents: number; currency: string } | null {
+  if (!roomType) return null;
+  const cents = (m: Money | undefined) => {
+    const n = Number(m?.amount);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
+  };
+  const offer = cents(roomType.offerRetailRate);
+  if (offer !== null) return { cents: offer, currency: roomType.offerRetailRate?.currency || 'USD' };
+
+  const rates = roomType.rates ?? [];
+  const perRoom = new Map<number, LiteRate>();
+  for (const r of rates) {
+    const n = Number(r.occupancyNumber);
+    if (Number.isFinite(n) && n >= 1 && !perRoom.has(n)) perRoom.set(n, r);
+  }
+  const want = Math.max(1, Math.floor(rooms || 1));
+  // Rates that do not say which room they are for can only be trusted for a
+  // single room.
+  const picked = perRoom.size ? [...perRoom.values()] : want === 1 ? rates.slice(0, 1) : [];
+  if (picked.length < want) return null;
+  let total = 0;
+  for (const r of picked) {
+    const c = cents(r.retailRate?.total?.[0]);
+    if (c === null) return null;
+    total += c;
+  }
+  return total > 0 ? { cents: total, currency: picked[0].retailRate?.total?.[0]?.currency || 'USD' } : null;
 }
 
 const BASE = process.env.LITEAPI_BASE || 'https://api.liteapi.travel/v3.0';
@@ -31,6 +78,19 @@ async function liteFetch(path: string, init?: RequestInit) {
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error?.description || json?.message || `LiteAPI ${res.status}`);
+  return json;
+}
+
+/** liteFetch for the one call that books: an unanswered order is not a refused one. */
+async function liteCommit(path: string, init: RequestInit) {
+  const res = await commitFetch(`${BASE}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': KEY(), ...(init.headers || {}) },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error?.description || json?.message || `LiteAPI ${res.status}`);
+  // Accepted, and nothing we can read: the room may well be booked.
+  if (json === null) throw new OutcomeUnknown('LiteAPI accepted the booking and its answer could not be read.');
   return json;
 }
 
@@ -76,12 +136,15 @@ export async function hotelOptions(req: BookingItemRequest, limit = 6) {
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Could not search hotels.', options: [] };
   }
-  const priced = ((data?.data ?? []) as { hotelId?: string; roomTypes?: { offerId?: string; rates?: { name?: string; boardName?: string; retailRate?: { total?: { amount?: number }[] } }[] }[] }[])
+  const rooms = occupancyOf(req).length;
+  const priced = ((data?.data ?? []) as { hotelId?: string; roomTypes?: LiteRoomType[] }[])
     .map(x => {
       const rt = x.roomTypes?.[0]; const r = rt?.rates?.[0];
-      const amount = r?.retailRate?.total?.[0]?.amount;
-      return x.hotelId && amount ? {
-        hotelId: x.hotelId, priceCents: Math.round(Number(amount) * 100),
+      // Every room, as the quote prices it — an option cheaper by a room is
+      // not cheaper.
+      const total = offerTotal(rt, rooms);
+      return x.hotelId && total ? {
+        hotelId: x.hotelId, priceCents: total.cents,
         room: titleCase(r?.name), board: r?.boardName || null,
       } : null;
     })
@@ -124,11 +187,7 @@ export const liteApiHotels: BookingProvider = {
     const data = await liteFetch('/hotels/rates', { method: 'POST', body: JSON.stringify(body) });
     // The hotel that was priced, and no other. A pinned hotel with no rates is
     // unavailable; it is never quietly swapped for whichever hotel came first.
-    type Rate = Record<string, unknown> & {
-      name?: string; offerId?: string; rateId?: string;
-      retailRate?: { total?: { amount?: number | string; currency?: string }[] };
-    };
-    const hotels = (data?.data ?? []) as { hotelId?: string; roomTypes?: { offerId?: string; rates?: Rate[] }[] }[];
+    const hotels = (data?.data ?? []) as { hotelId?: string; roomTypes?: LiteRoomType[] }[];
     const match = h.hotelId ? hotels.find(x => x.hotelId === h.hotelId) : hotels[0];
     if (h.hotelId && !match) {
       return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'That hotel has no rooms left for these dates.' };
@@ -143,7 +202,11 @@ export const liteApiHotels: BookingProvider = {
     if (!first) {
       return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'No rates available' };
     }
-    const amount = first?.retailRate?.total?.[0]?.amount;
+    const total = offerTotal(roomType, (body.occupancies as unknown[]).length);
+    if (!total) {
+      // A price that leaves out a room is not a price for this stay.
+      return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'The hotel did not give a price for every room.' };
+    }
 
     // Which hotel this is, by name. The quote used to describe itself as
     // "lp81ecd · 2026-11-02 → 2026-11-09" — LiteAPI's id — so the trip's
@@ -161,8 +224,8 @@ export const liteApiHotels: BookingProvider = {
       // What prebook is given. The rate's own id is kept in `raw` for the
       // record, but it is not what books a room.
       providerRef: roomType?.offerId || first.offerId || first.rateId,
-      priceCents: amount ? Math.round(Number(amount) * 100) : undefined,
-      currency: first?.retailRate?.total?.[0]?.currency || 'USD',
+      priceCents: total.cents,
+      currency: total.currency,
       detail: hotel
         ? [hotel.name, hotel.stars ? `${hotel.stars}★` : null, room, `${h.checkin} → ${h.checkout}`].filter(Boolean).join(' · ')
         : `A hotel in ${h.city} · ${h.checkin} → ${h.checkout}`,
@@ -208,9 +271,20 @@ export const liteApiHotels: BookingProvider = {
     if (!prebookId) {
       return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'Prebook failed', raw: pre };
     }
+    // Prebook is where LiteAPI settles the price it will charge. Above what
+    // the group paid in, nothing is booked: the difference would be Reach's.
+    const held = Number(pre?.data?.price);
+    const heldCents = Number.isFinite(held) && held > 0 ? Math.round(held * 100) : null;
+    if (overMax(heldCents, req.maxPriceCents)) {
+      return {
+        vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi',
+        error: `The hotel's price went up to $${((heldCents ?? 0) / 100).toFixed(2)} while this was being booked, which is more than the group paid in for it. Nothing was booked — check the new price and book it again.`,
+      };
+    }
 
-    // Step 2: commit
-    const booked = await liteFetch('/rates/book', {
+    // Step 2: commit — the call that buys the room. A timeout or a 5xx from
+    // here may still have made the booking, and is thrown as such.
+    const booked = await liteCommit('/rates/book', {
       method: 'POST',
       body: JSON.stringify({
         prebookId,

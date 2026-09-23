@@ -19,6 +19,8 @@
 // So the order here is deliberate — name the rows properly first, then
 // collapse only what is genuinely the same row.
 
+import { reachBuys } from './booking/charged.ts';
+
 export type CheckoutRow = {
   id?: string;
   vertical: string;
@@ -185,7 +187,9 @@ const settled = (row: CheckoutRow) => row.status !== 'failed' && row.status !== 
  */
 function charged(row: CheckoutRow): boolean {
   if (!settled(row)) return false;
-  return !isConcierge(row) && row.mode !== 'redirect';
+  // The server's own rule, so the total on this screen is the total Stripe
+  // is asked for.
+  return reachBuys(row);
 }
 
 

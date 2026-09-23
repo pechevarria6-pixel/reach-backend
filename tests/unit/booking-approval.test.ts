@@ -164,8 +164,8 @@ test('two approvals of one booking: exactly one reaches the provider', async () 
   const row = { id: 'b1', status: 'awaiting_approval', approved_at: null };
   const db = oneRow(row, { bookingAllowed: true });
   const [a, b] = await Promise.all([
-    claimBooking(db, 'b1', 'u1', new Date('2026-09-23T10:00:00.000Z')),
-    claimBooking(db, 'b1', 'u2', new Date('2026-09-23T10:00:00.001Z')),
+    claimBooking(db, 'b1', 'u1', null, new Date('2026-09-23T10:00:00.000Z')),
+    claimBooking(db, 'b1', 'u2', null, new Date('2026-09-23T10:00:00.001Z')),
   ]);
   assert.deepEqual([a.ok, b.ok].sort(), [false, true]);
   assert.equal(row.status, 'booking');
@@ -176,8 +176,8 @@ test('two approvals of one booking: exactly one reaches the provider', async () 
 test('before the migration the claim is taken on approved_at, still only once', async () => {
   const row = { id: 'b1', status: 'awaiting_approval', approved_at: null };
   const db = oneRow(row, { bookingAllowed: false });
-  const a = await claimBooking(db, 'b1', 'u1', new Date('2026-09-23T10:00:00.000Z'));
-  const b = await claimBooking(db, 'b1', 'u2', new Date('2026-09-23T10:00:00.001Z'));
+  const a = await claimBooking(db, 'b1', 'u1', null, new Date('2026-09-23T10:00:00.000Z'));
+  const b = await claimBooking(db, 'b1', 'u2', null, new Date('2026-09-23T10:00:00.001Z'));
   assert.equal(a.ok, true);
   assert.equal(a.ok && a.claim.how, 'stamp');
   assert.equal(b.ok, false);
@@ -187,7 +187,7 @@ test('before the migration the claim is taken on approved_at, still only once', 
 test('the outcome is written only onto a row the claim still holds', async () => {
   const row: RowState = { id: 'b1', status: 'awaiting_approval', approved_at: null };
   const db = oneRow(row, { bookingAllowed: true });
-  const got = await claimBooking(db, 'b1', 'u1', new Date('2026-09-23T10:00:00.000Z'));
+  const got = await claimBooking(db, 'b1', 'u1', null, new Date('2026-09-23T10:00:00.000Z'));
   assert.ok(got.ok);
   const claim = (got as { claim: Parameters<typeof finishClaim>[2] }).claim;
   // Somebody else moved it while we were at the provider.

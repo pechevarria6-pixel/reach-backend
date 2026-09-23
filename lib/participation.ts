@@ -34,6 +34,11 @@ export async function planSkips(db: SupabaseClient, planId: string): Promise<Ski
  * How many people a plan is for. plans.participants was read for this and is
  * not a column, so every plan was two people: a solo trip quoted two seats,
  * a group of four quoted two. One for a solo plan, otherwise the group.
+ *
+ * It must agree with who approval names — onTheTrip in
+ * lib/booking/approval.ts, a solo plan's creator alone — or every flight and
+ * hotel on the plan is refused as priced for a different party, for good.
+ * Change one, change both; tests/unit/booking-path.test.ts holds them together.
  */
 export async function partySize(
   db: SupabaseClient, plan: { group_id?: unknown; solo_mode?: boolean | null },

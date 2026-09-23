@@ -144,3 +144,71 @@ export function airlineOnly(people: { gender?: string | null }[]): boolean {
     return g !== '' && g !== 'male' && g !== 'female';
   });
 }
+
+/**
+ * Funding, with this booking counted at the price it is about to be bought at.
+ *
+ * The check used each row's stored price. A rise under the $25 / 5% line is
+ * not asked about, so it went through with the group funded for the old
+ * fare and Reach paying the difference — and the booking's price then rose
+ * to the new one, so the next row in "book everything" was refused 402 after
+ * the first was already bought. Counting this row at the higher of the two
+ * settles it before anything is bought.
+ */
+export function fundingAt(
+  rows: { id?: unknown; price_cents?: unknown }[] | null | undefined,
+  contribs: Contribution[] | null | undefined,
+  bookingId: string,
+  priceCents: number,
+): Funding {
+  const at = Math.max(0, Math.round(Number(priceCents) || 0));
+  let seen = false;
+  const priced = (rows ?? []).map(r => {
+    if (String(r.id) !== bookingId) return r;
+    seen = true;
+    return { ...r, price_cents: Math.max(Number(r.price_cents) || 0, at) };
+  });
+  if (!seen && at > 0) priced.push({ id: bookingId, price_cents: at });
+  return fundingOf(priced, contribs);
+}
+
+/**
+ * Who a plan's bookings are for.
+ *
+ * A solo plan is its creator's trip, whoever else is in the group it sits in.
+ * The quote was sized for one (partySize) and approval named every member —
+ * so the day somebody joined, every flight and hotel on a solo trip was
+ * refused as "priced for 1, now 2" for good, other members' missing details
+ * blocked it, and another member's passport marker sent the traveller's own
+ * flight to the airline. Quote, stale check and approval all read this.
+ *
+ * A solo plan whose creator is gone from the record names nobody, rather
+ * than guessing which member it was for.
+ */
+export function onTheTrip<T extends { userId: string }>(
+  plan: { solo_mode?: unknown; created_by?: unknown },
+  people: T[],
+): T[] {
+  if (plan.solo_mode !== true) return people;
+  const me = typeof plan.created_by === 'string' && plan.created_by ? plan.created_by : null;
+  return me ? people.filter(p => p.userId === me) : [];
+}
+
+/**
+ * What to tell somebody about a purchase that cannot be booked as it stands,
+ * with a way forward that exists. "Price it again from checkout" named a
+ * button nobody had built.
+ *
+ * Hotels and flights are priced again from the trip's itinerary, where each
+ * has "See the hotel · change it" / "See the flights · change them" — the
+ * options route, which now prices with the provider Reach books through. An
+ * activity has no such panel: approval sets the row aside as failed, and the
+ * next open of checkout prices its line afresh.
+ */
+export function repriceAdvice(vertical: string, fromItinerary: boolean): string {
+  if (vertical === 'hotel') return 'Open the trip\'s itinerary and use "See the hotel · change it" to price it again.';
+  if (vertical === 'flight') return 'Open the trip\'s itinerary and use "See the flights · change them" to price it again.';
+  return fromItinerary
+    ? 'It has been set aside, and opening checkout again prices it afresh.'
+    : 'It has been set aside. Nobody has paid for it, and it can be booked directly with whoever runs it.';
+}

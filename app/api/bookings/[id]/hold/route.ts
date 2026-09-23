@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
+import { atVersion, midClaim } from '@/lib/booking/claim';
 
 const Body = z.object({ hold: z.boolean() });
 
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!parsed.success) return NextResponse.json({ error: 'Hold it or book it?' }, { status: 400 });
 
   const { data: booking, error: readErr } = await createServerClient()
-    .from('bookings').select('id, plan_id, status').eq('id', params.id).maybeSingle();
+    .from('bookings').select('id, plan_id, status, approved_at, updated_at').eq('id', params.id).maybeSingle();
   if (readErr) {
     console.error('[hold] could not read booking', { id: params.id, code: readErr.code });
     return NextResponse.json({ error: 'Could not read that booking just now.' }, { status: 500 });
@@ -30,6 +31,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
   const ctx = await requirePlanMember(booking.plan_id);
   if (isFail(ctx)) return ctx.error;
+
+  // Mid-booking (before M1 it still reads awaiting_approval): holding it
+  // now moved it to 'quoted' under an approval at the provider, which lost
+  // its claim and cancelled an order that was ours.
+  if (midClaim(booking)) {
+    return NextResponse.json({ error: 'Somebody is booking this right now.' }, { status: 409 });
+  }
 
   const from = parsed.data.hold ? 'awaiting_approval' : 'quoted';
   const to = parsed.data.hold ? 'quoted' : 'awaiting_approval';
@@ -46,9 +54,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'Somebody has already paid towards this trip, so what it covers is set.' }, { status: 409 });
   }
 
-  const { data: updated, error } = await ctx.db.from('bookings')
+  const { data: updated, error } = await atVersion(ctx.db.from('bookings')
     .update({ status: to, updated_at: new Date().toISOString() })
-    .eq('id', params.id).eq('status', from).select('id, status').maybeSingle();
+    .eq('id', params.id).eq('status', from), booking.updated_at).select('id, status').maybeSingle();
   if (error) {
     console.error('[hold] could not save', { id: params.id, code: error.code });
     return NextResponse.json({ error: 'Could not save that — try again in a moment.' }, { status: 500 });

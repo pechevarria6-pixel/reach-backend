@@ -15,9 +15,15 @@ New endpoints:
   GET/POST /api/plans/[planId]/funding           member shares via Stripe PI
   GET/POST /api/plans/[planId]/ledger            expenses + minimal settle-up
   GET  /api/plans/[planId]/live                  AeroAPI flight status (AEROAPI_KEY)
-Approve endpoint now enforces: (1) plan fully funded (402 with shortfall if
-not; skipFundingCheck:true to override), (2) price re-quote — rises >5%/$25
-return 409 requiring re-approval with acceptNewPrice:true.
+Approve endpoint enforces, with no override: (1) everybody on the booking
+has their travel details (400 travellers_missing) and it was priced for as
+many people as are going (409 party_changed); (2) a price re-quote — a rise
+over 5% or $25 is held and answered 409 price_changed, and acceptNewPrice:true
+accepts only that held price; (3) the plan is funded, net of refunds, with
+this booking at the price just checked (402 not_funded) — and the provider
+may not charge more than that; (4) one claim per booking, so two presses
+cannot both book. The full contract is at the top of
+app/api/bookings/[id]/approve/route.ts.
 Stripe webhook addition needed: on payment_intent.succeeded with
 metadata.kind === "reach_contribution", mark the contribution succeeded.
 
@@ -37,7 +43,7 @@ One pipeline, five verticals, three fulfillment modes.
 4. Deploy: npx vercel --prod --force
 
 ## API — approval-gated flow
-POST /api/bookings                { planId, groupId, travelers, items[], dryRun?, executeNow? }
+POST /api/bookings                { planId, items[], dryRun? }
                                   Default: quotes every item and stores it as
                                   awaiting_approval. Nothing books yet.
 POST /api/bookings/[id]/approve   Human trigger. Executes the item:

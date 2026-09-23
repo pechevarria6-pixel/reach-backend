@@ -6,7 +6,7 @@
 // Every id here is a `users.id` UUID. `paid_by` used to hold a Clerk id while
 // `split_between` held UUIDs from the member list, so the payer and the people
 // splitting the bill were never the same person and settle-up was nonsense.
-import { NOT_CHARGED } from '@/lib/booking/charged';
+import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { apportion, evenSplit, planShares, settleUp } from '@/lib/money';
@@ -53,7 +53,7 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
   const [{ data: expenses }, { data: contributions }, { data: bookings }, skips] = await Promise.all([
     ctx.db.from('expenses').select('*').eq('plan_id', params.planId),
     ctx.db.from('contributions').select('*').eq('plan_id', params.planId).eq('status', 'succeeded'),
-    ctx.db.from('bookings').select('id,price_cents,status').eq('plan_id', params.planId)
+    ctx.db.from('bookings').select('id,price_cents,status,mode,provider').eq('plan_id', params.planId)
       .not('status', 'in', NOT_CHARGED),
     planSkips(ctx.db, params.planId),
   ]);
@@ -78,7 +78,7 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
     // Collected money is owed in proportion to each person's share, so
     // somebody who sat out the dinner is not down for a slice of it. With
     // nobody sitting anything out this is the even split it always was.
-    const owed = planShares(bookings || [], Number(ctx.plan.budget_cents) || 0, members, skips);
+    const owed = planShares(chargedRows(bookings), Number(ctx.plan.budget_cents) || 0, members, skips);
     apportion(target, members.map(id => owed[id] || 0)).forEach((share, i) => add(members[i], -share));
     for (const c of contributions || []) add(c.user_id, c.amount_cents);
   }

@@ -15,7 +15,7 @@
 // re-opening checkout adds what is missing and touches nothing else.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { groupReadiness } from '@/lib/essentials-server';
+import { groupReadiness, tripTravellerIds } from '@/lib/essentials-server';
 import { type Gateway } from '@/lib/booking/providers/flights.duffel';
 import { arrivalFor } from '@/lib/booking/arrival';
 import { partySize as countParty } from '@/lib/participation';
@@ -24,7 +24,7 @@ import { rentalLine } from '@/lib/ground';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
 import { findProduct } from '@/lib/booking/providers/viator-search';
 import { roomsFor } from '@/lib/booking/party';
-import { failuresByLine } from '@/lib/booking/failures';
+import { failuresByLine, lockedByPayment } from '@/lib/booking/failures';
 
 export const maxDuration = 60;
 
@@ -223,7 +223,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // Everything the itinerary says Reach books and that is not on the list
   // already. Types no provider can quote stay in, so the loop below can say
   // why rather than dropping them where nobody sees it.
-  const candidates = (items ?? []).filter((i: Item) =>
+  let candidates: Item[] = (items ?? []).filter((i: Item) =>
     i.booking_mode === 'reach' && !alreadyBooked.has(i.id));
 
   // Nothing is booked ahead for dates that have already come. Moab began on
@@ -242,27 +242,52 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     });
   }
 
-  // Nothing is added to what people have already paid for.
+  // Lines tried before, whose booking failed or was cancelled. Read first:
+  // the payment lock below lets them through, and their old rows are then
+  // released.
+  const triedBefore = new Set<string>();
+  let superseded: { id: string; itinerary_item_id: string | null }[] = [];
+  if (candidates.length) {
+    const { data: stale, error: staleError } = await ctx.db
+      .from('bookings')
+      .select('id, itinerary_item_id')
+      .eq('plan_id', params.planId)
+      .in('itinerary_item_id', (candidates as Item[]).map(i => i.id))
+      .in('status', ['failed', 'cancelled']);
+    if (staleError) {
+      console.error('[bookable] could not look for superseded attempts', { planId: params.planId, error: staleError.message });
+    }
+    superseded = (stale ?? []) as typeof superseded;
+    for (const r of superseded) if (r.itinerary_item_id) triedBefore.add(String(r.itinerary_item_id));
+  }
+
+  // Nothing new is added to what people have already paid for.
   //
   // Every booking added here raises the total, and with it everybody's
   // share — so after somebody has paid, a new line opened at checkout left
-  // the plan short of money it had been told was complete, and approval
-  // refused it for good. Said instead, per line, with what to do about it.
+  // the plan short of money it had been told was complete. Said instead,
+  // per line. Two kinds of line are not new money and still go through
+  // (lockedByPayment): one whose booking failed, whose share is already
+  // paid in and would otherwise sit there with nothing to buy, and a table
+  // or a ticket, which Reach never charges for.
   // A failed read is treated as paid: the safe answer for a lock is locked.
+  const lockedOut: { title: string; why: string }[] = [];
   if (candidates.length) {
     const { data: paid, error: paidError } = await ctx.db.from('contributions')
       .select('id').eq('plan_id', params.planId).eq('status', 'succeeded').limit(1);
     if (paidError) console.error('[bookable] could not check for payments', { planId: params.planId, code: paidError.code });
     if (paidError || paid?.length) {
-      return NextResponse.json({
-        created: 0, failed: 0, failures: [], alreadyBooked: alreadyBooked.size,
-        skipped: (candidates as Item[]).map(i => ({
+      const locked = new Set((candidates as Item[]).filter(i => lockedByPayment(i, triedBefore)).map(i => i.id));
+      for (const i of candidates as Item[]) {
+        if (!locked.has(i.id)) continue;
+        lockedOut.push({
           title: i.title,
           why: paidError
             ? 'we could not check the payments just now, so nothing new was added — open checkout again in a moment'
-            : 'money has already been paid towards this trip, and it only covers what was on the list then — so this one is yours to book directly',
-        })),
-      });
+            : "people have already paid for this trip and this wasn't part of what they paid for, so Reach won't add it to what they owe — it's yours to book directly",
+        });
+      }
+      candidates = candidates.filter(i => !locked.has(i.id));
     }
   }
 
@@ -276,23 +301,15 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   //
   // The superseded attempt keeps its error and its history; it is marked
   // cancelled and unlinked, which is what it is once a new one replaces it.
-  const retrying = (candidates as Item[]).map(i => i.id);
-  if (retrying.length) {
-    const { data: stale, error: staleError } = await ctx.db
+  // Only for lines that are about to be priced again.
+  const retrying = new Set((candidates as Item[]).map(i => i.id));
+  const release = superseded.filter(r => r.itinerary_item_id && retrying.has(String(r.itinerary_item_id)));
+  if (release.length) {
+    const { error } = await ctx.db
       .from('bookings')
-      .select('id')
-      .eq('plan_id', params.planId)
-      .in('itinerary_item_id', retrying)
-      .in('status', ['failed', 'cancelled']);
-    if (staleError) {
-      console.error('[bookable] could not look for superseded attempts', { planId: params.planId, error: staleError.message });
-    } else if (stale?.length) {
-      const { error } = await ctx.db
-        .from('bookings')
-        .update({ status: 'cancelled', itinerary_item_id: null })
-        .in('id', stale.map(r => r.id));
-      if (error) console.error('[bookable] could not release a superseded attempt', { planId: params.planId, error: error.message });
-    }
+      .update({ status: 'cancelled', itinerary_item_id: null })
+      .in('id', release.map(r => r.id));
+    if (error) console.error('[bookable] could not release a superseded attempt', { planId: params.planId, error: error.message });
   }
 
   // Where the trip is. destination_style is a style — "city", "beach" — and
@@ -315,7 +332,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const partySize = await countParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null });
 
   const requests: (BookingItemRequest & { itineraryItemId: string; title: string })[] = [];
-  const skipped: { title: string; why: string }[] = [];
+  const skipped: { title: string; why: string }[] = [...lockedOut];
   const ids = { planId: params.planId, groupId: String(ctx.plan.group_id) };
 
   // A flight line is skipped for a reason with a name attached to it:
@@ -324,7 +341,9 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // when the itinerary actually has a flight on it.
   const hasFlight = (candidates as Item[]).some(i => i.type === 'flight');
   const flightWhy = hasFlight
-    ? (await groupReadiness(ctx.db, String(ctx.plan.group_id))).blocking ?? null
+    // Only whoever the trip is for: a solo plan is not held up by somebody
+    // else in the group who is not coming.
+    ? (await groupReadiness(ctx.db, String(ctx.plan.group_id), tripTravellerIds(ctx.plan))).blocking ?? null
     : null;
 
   // Where a flight would go, and where it would leave from. Both are asked

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { toDateOrNull } from '@/lib/dates';
 import { tidyLegacy } from '@/lib/checkout';
+import { holdsSomething } from '@/lib/booking/claim';
 import { impactOfDateChange, describeImpact, needsConfirmation, stillWorksFor } from '@/lib/date-change';
 import { z } from 'zod';
 import { track } from '@/lib/track';
@@ -442,7 +443,7 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
   // have any way to see.
   const { data: held, error: readErr } = await supabase
     .from('bookings')
-    .select('id, status, vertical, detail')
+    .select('id, status, vertical, detail, approved_at, updated_at')
     .eq('plan_id', params.planId)
     .not('status', 'in', '("failed","cancelled")');
 
@@ -451,7 +452,10 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({ error: "We couldn't check this trip's bookings — nothing was deleted" }, { status: 500 });
   }
 
-  const real = (held ?? []).filter(b => ['confirmed', 'redirected', 'pending'].includes(String(b.status)));
+  // Including a booking at the provider this minute ('booking', or before
+  // M1 the stamp on an awaiting row): deleting the trip under it left an
+  // order nobody could see.
+  const real = (held ?? []).filter(holdsSomething);
   if (real.length) {
     return NextResponse.json({
       error: 'This trip still has something booked. Cancel those first and the trip will delete cleanly.',

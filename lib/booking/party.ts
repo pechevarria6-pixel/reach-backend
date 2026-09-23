@@ -85,7 +85,7 @@ export function partyChange(
   return null;
 }
 
-type Row = { id?: unknown; vertical?: unknown; status?: unknown; request_payload?: unknown };
+type Row = { id?: unknown; vertical?: unknown; status?: unknown; mode?: unknown; request_payload?: unknown };
 const SEATS_AND_ROOMS = new Set(['flight', 'hotel']);
 
 /**
@@ -96,11 +96,16 @@ const SEATS_AND_ROOMS = new Set(['flight', 'hotel']);
  * share of the three-seat fare that will actually be charged. Only rows that
  * say what they were sized for are judged — a hotel from before `party`
  * existed does not say, and guessing would lock a plan nobody can unlock.
+ *
+ * Only what Reach buys. A flight handed to the airline's own site costs the
+ * group nothing through Reach, and stopped everybody paying for the hotel
+ * the moment somebody joined.
  */
 export function staleForParty<T extends Row>(rows: T[] | null | undefined, party: number): T[] {
   return (rows ?? []).filter(r => {
     if (r.status !== 'awaiting_approval') return false;
     if (!SEATS_AND_ROOMS.has(String(r.vertical))) return false;
+    if (r.mode === 'redirect' || r.mode === 'concierge') return false;
     const req = (r.request_payload ?? null) as Partial<BookingItemRequest> | null;
     const sized = r.vertical === 'flight'
       ? quotedParty(req)

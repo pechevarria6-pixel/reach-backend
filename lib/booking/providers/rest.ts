@@ -1,5 +1,5 @@
 // ─── Remaining four verticals in one module ──────────────────────────────
-import { type BookingProvider, type BookingItemRequest, type BookingItemResult, isConfigured } from '../types.ts';
+import { type BookingProvider, type BookingItemRequest, type BookingItemResult, isConfigured, commitFetch, overMax, OutcomeUnknown } from '../types.ts';
 import { reservationUrl, type Platform } from '../reservations.ts';
 import { headcount } from '../party.ts';
 
@@ -51,9 +51,17 @@ export const viatorActivities: BookingProvider = {
   async book(req): Promise<BookingItemResult> {
     const q = await this.quote(req);
     if (q.status !== 'quoted') return q;
+    // Priced again just now; never paid above what the group paid in.
+    if (overMax(q.priceCents, req.maxPriceCents)) {
+      return {
+        vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator',
+        error: `The price went up to $${((q.priceCents ?? 0) / 100).toFixed(2)} while this was being booked, which is more than the group paid in for it. Nothing was booked — check the new price and book it again.`,
+      };
+    }
     const a = req.activity!;
     const lead = req.travelers[0];
-    const res = await fetch(`${VIATOR}/bookings/book`, {
+    // The call that books. Unanswered, or a 5xx, may still have booked it.
+    const res = await commitFetch(`${VIATOR}/bookings/book`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'exp-api-key': process.env.VIATOR_API_KEY!, 'Accept': 'application/json;version=2.0' },
       body: JSON.stringify({
@@ -66,7 +74,8 @@ export const viatorActivities: BookingProvider = {
         partnerBookingRef: req.reference ? `reach_${req.reference}` : `reach_${req.planId}_${Date.now()}`,
       }),
     });
-    const json = await res.json();
+    const json = await res.json().catch(() => null);
+    if (res.ok && json === null) throw new OutcomeUnknown('Viator accepted the booking and its answer could not be read.');
     const ref = json?.bookingRef || json?.bookingReference;
     return {
       vertical: 'activity', mode: 'native',

@@ -8,7 +8,7 @@
 // The values themselves go to one place only: /api/profile, to their owner.
 import { NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { groupReadiness } from '@/lib/essentials-server';
+import { groupReadiness, tripTravellerIds } from '@/lib/essentials-server';
 import { planReadiness, waitingSentence, answersSentence } from '@/lib/plan-readiness';
 import { voteTitles } from '@/lib/trip-vote';
 
@@ -16,7 +16,9 @@ export async function GET(_req: Request, { params }: { params: { planId: string 
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
 
-  const readiness = await groupReadiness(ctx.db, ctx.plan.group_id as string);
+  // Who can be ticketed for this trip: a solo plan's own traveller, not
+  // everybody who happens to be in the group it sits in.
+  const readiness = await groupReadiness(ctx.db, ctx.plan.group_id as string, tripTravellerIds(ctx.plan));
 
   // Two different questions about the same group, answered together because
   // a screen asking one usually wants the other: who can be ticketed, and

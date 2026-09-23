@@ -112,11 +112,17 @@ test('LiteAPI prices two rooms, two and one, for a party of three', async () => 
   process.env.LITEAPI_KEY = 'sand_unit';
   const { seen, restore } = stubFetch(u => u.includes('/data/hotel')
     ? { data: { name: 'Hotel Uno' } }
-    : { data: [{ hotelId: 'lp1', roomTypes: [{ offerId: 'o1', rates: [{ name: 'double', retailRate: { total: [{ amount: 400, currency: 'USD' }] } }] }] }] });
+    // LiteAPI v3 answers one rate per occupancy, and the offer's own total.
+    : { data: [{ hotelId: 'lp1', roomTypes: [{ offerId: 'o1', offerRetailRate: { amount: 700, currency: 'USD' }, rates: [
+        { name: 'double', occupancyNumber: 1, retailRate: { total: [{ amount: 400, currency: 'USD' }] } },
+        { name: 'double', occupancyNumber: 2, retailRate: { total: [{ amount: 300, currency: 'USD' }] } },
+      ] }] }] });
   try {
     const r = await liteApiHotels.quote({ ...base, vertical: 'hotel', party: 3,
       hotel: { hotelId: 'lp1', checkin: '2099-11-02', checkout: '2099-11-05', rooms: roomsFor(3) } });
     assert.equal(r.status, 'quoted');
+    // Both rooms: the offerId prebook is given books both.
+    assert.equal(r.priceCents, 70000);
     const ask = seen.find(s => s.url.includes('/hotels/rates'));
     assert.deepEqual(ask?.body.occupancies, [{ adults: 2 }, { adults: 1 }]);
   } finally { restore(); }

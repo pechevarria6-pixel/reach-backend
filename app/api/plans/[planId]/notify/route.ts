@@ -12,7 +12,7 @@
 // are built: it emails whoever has not answered for this trip yet.
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
-import { NOT_CHARGED } from '@/lib/booking/charged';
+import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
@@ -139,9 +139,9 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   let shares: Record<string, number> = {};
   if (kind === 'funding') {
     const { data: planBookings } = await db
-      .from('bookings').select('id,price_cents,status').eq('plan_id', params.planId)
+      .from('bookings').select('id,price_cents,status,mode,provider').eq('plan_id', params.planId)
       .not('status', 'in', NOT_CHARGED);
-    shares = planShares(planBookings || [], plan.budget_cents || 0, memberIds, await planSkips(db, params.planId));
+    shares = planShares(chargedRows(planBookings), plan.budget_cents || 0, memberIds, await planSkips(db, params.planId));
   }
 
   // A trip waiting on answers nudges in the app: everybody's bell, and their

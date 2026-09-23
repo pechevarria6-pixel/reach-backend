@@ -20,3 +20,27 @@ export function failuresByLine(requests: Req[], results: Res[]): { title: string
       error: r.error ?? 'could not be quoted',
     }));
 }
+
+// ─── What a payment locks ────────────────────────────────────────────────
+// Once somebody has paid, /bookable stops adding new lines to the plan:
+// each one raises the total under money paid against the old one. It
+// turned away every line, and two of them wrongly:
+//
+//   * a line whose booking failed. Its money is already in — the failed row
+//     simply left the total — and turning it away left that money held with
+//     nothing to spend it on and the person told to "book it directly".
+//   * a table or a ticket. Somebody books those on the seller's own site;
+//     they are never in the total, so they cannot move it.
+
+/** Itinerary types that become a booking Reach never charges for. */
+const NEVER_CHARGED = new Set(['restaurant', 'event']);
+
+/**
+ * Whether money already paid stops this line being priced now. `triedBefore`
+ * holds the lines with a failed or cancelled booking on this plan.
+ */
+export function lockedByPayment(item: { id: string; type?: string | null }, triedBefore: Set<string>): boolean {
+  if (triedBefore.has(item.id)) return false;
+  if (NEVER_CHARGED.has(String(item.type))) return false;
+  return true;
+}
