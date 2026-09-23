@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
+import { namesList } from "@/lib/group-answers";
 import { itemsFromRows } from "@/lib/contracts/itinerary-item";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
@@ -733,12 +734,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       const go=(screen)=>()=>push(screen,{planId:p.id,groupId:p.group.id});
       if(mine&&!mine.answered)return [{
         type:"answer",rank:1,text:`Say what you want from ${tripCalled(p)}`,
-        sub:"No trips are found until everyone going has answered",plan:p,cta:"Answer →",go:go("planPrefs")}];
+        sub:`No ${p.type==="restaurant"?"nights out are":"trips are"} found until everyone going has answered`,plan:p,cta:"Answer →",go:go("planPrefs")}];
       const everyoneIn=(h.members||[]).length>0&&h.members.every(m=>m.answered);
       // `deciding` is groups only already; said again where the sentence is.
       if(everyoneIn&&!solo(p.group))return [{
         type:"find",rank:1,text:`Everyone has answered for ${tripCalled(p)}`,
-        sub:"Find the trips — built from what each of you said",plan:p,cta:"Find →",go:go("groupTrip")}];
+        sub:`Find the ${p.type==="restaurant"?"nights out":"trips"} — built from what each of you said`,plan:p,cta:"Find →",go:go("groupTrip")}];
       return [];
     }),
     ...allPlans.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)>0&&!solo(p.group)).map(p=>({
@@ -3375,9 +3376,10 @@ const TASTE_QUESTIONS=[
     // Last, and open. Everything above is a list somebody picks from, which
     // is quick and never says the one thing they actually want. This is where
     // "my sister is turning forty" and "I want to eat hot dogs" go, and both
-    // are read: generation quotes every member's answer back attributed, so
-    // the model hears the whole group rather than whoever pressed the button,
-    // and Discover matches the words against what is on.
+    // are read: generation hears every member's answer, so the model hears
+    // the whole group rather than whoever pressed the button — unnamed for a
+    // group, and never said back to the others — and Discover matches the
+    // words against what is on.
     id:"tripSummary",icon:"💭",free:true,optional:true,
     title:"What's this trip about?",
     sub:"Anything you're hoping happens. Skip it if nothing comes to mind.",
@@ -3392,9 +3394,9 @@ const TASTE_COLUMN={
   diningVibe:"dining_vibe", drinkStyle:"drink_style",
   budgetRange:"budget_range", dietary:"dietary_needs", noWayJose:"no_way_jose",
   // Free text, in their own words. Read by trip generation — where every
-  // member's is quoted back attributed, so the model hears the group and not
-  // only whoever pressed the button — and by Discover, where "hot dogs"
-  // should find National Hot Dog Day.
+  // member's goes in, so the model hears the group and not only whoever
+  // pressed the button; unnamed for a group, never said back to the others —
+  // and by Discover, where "hot dogs" should find National Hot Dog Day.
   tripSummary:"trip_summary",
 };
 
@@ -3425,10 +3427,41 @@ const QUIZ_DONE="reach_quiz_done";
 // The trip's kind and dates are already decided by whoever set it up, so
 // those are not asked again. Everything else is, and it starts from what
 // this person said last time rather than from blank.
-function PlanPreferencesScreen({onBack,planId,groupId,groups,toast,replace,userLocation,departure,setPlaceOverride,saveDeparture}){
+function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refreshGroup,toast,replace,userLocation,departure,setPlaceOverride,saveDeparture}){
   const group=(groups||[]).find(g=>g.id===groupId)
     ||(groups||[]).find(g=>(g.plans||[]).some(p=>p.id===planId))||null;
   const plan=group?(group.plans||[]).find(p=>p.id===planId)||null:null;
+  // Arriving from the email link, the trip may not be in what has loaded:
+  // the groups may still be on their way, or this group's plans may have been
+  // read before the trip was made. This screen used to say "One moment…" for
+  // ever in that case. Once the groups are in, it asks the server which group
+  // the trip is in and reloads that group; if that does not find it, it says
+  // so, with the way back.
+  const [lookup,setLookup]=useState("idle"); // idle · looking · missing
+  useEffect(()=>{
+    if(plan||groupsLoading||lookup!=="idle")return;
+    if(!planId||isTempId(planId)){setLookup("missing");return;}
+    setLookup("looking");
+    (async()=>{
+      try{
+        const r=await fetch(`/api/plans/${planId}`);
+        if(!r.ok)throw new Error(String(r.status));
+        const d=await r.json();
+        const gid=d.plan?.group_id;
+        if(gid&&refreshGroup&&(groups||[]).some(g=>g.id===gid)){
+          await refreshGroup(gid);
+          // Found or not, the render after the refresh decides; if the plan
+          // is still not there, the next pass lands on "missing".
+          setLookup("refreshed");
+          return;
+        }
+        setLookup("missing");
+      }catch(e){
+        console.error("[plan preferences] could not find the trip from the link",e);
+        setLookup("missing");
+      }
+    })();
+  },[plan,groupsLoading,planId,lookup]);
   const [initial,setInitial]=useState(null);
   // Kept whole, so an answer the old form collected (a must-do) is not
   // dropped by saving through the quiz, which does not ask it.
@@ -3502,8 +3535,22 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,toast,replace,userL
     setSaving(false);
   };
 
-  if(loading||(!group&&!(groups||[]).length))return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>One moment…</div></div>);
-  if(!group||!plan)return <NotLoaded what="This trip" onBack={onBack}/>;
+  if(!plan&&(groupsLoading||lookup==="idle"||lookup==="looking"))return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>One moment…</div></div>);
+  if(!group||!plan)return(
+    <div className="sc">
+      <ScreenHeader onBack={onBack} label="Back"/>
+      <div style={{padding:"48px 28px",textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:12}}>🧭</div>
+        <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>We couldn't open this trip</div>
+        <div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginBottom:20}}>
+          It may have been deleted, or you may not be in the group it belongs to.
+          Ask whoever sent the link to check it, or find the trip from home.
+        </div>
+        <button className="bp" onClick={onBack}>Back to home</button>
+      </div>
+    </div>
+  );
+  if(loading)return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>One moment…</div></div>);
 
   const night=plan.type==="restaurant";
   return(
@@ -3902,7 +3949,7 @@ function DepartureLine({departure,saveDeparture}){
 // the same order — so everybody's answers are about the same thing.
 // `initial` is what this person already said for this trip, to edit rather
 // than redo. `finishLabel` replaces the generate button's words.
-function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known,fixed,initial,finishLabel,finishNote,busy}){
+function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known,fixed,initial,finishLabel,finishNote,busy,goalNote}){
   const [qStep,setQStep]=useState(0);
   const [startDate,setStartDate]=useState(fixed?.startDate||known?.startDate||"");
   const [endDate,setEndDate]=useState(fixed?.endDate||known?.endDate||"");
@@ -4197,7 +4244,10 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   // The mode is named too. It is the one thing we act on before they reach a
   // screen that shows it, so saying it is the difference between the quiz
   // having listened and the quiz having guessed.
-  const goalLine=[goalMode?(goalMode==="night"?"a night out":"a trip"):null,readBack]
+  // Not when the kind is fixed: a member answering for somebody else's trip
+  // did not decide what it is, and "From what you said: a night out" on a
+  // plan that is a trip reads their own sentence back wrong.
+  const goalLine=[!fixed&&goalMode?(goalMode==="night"?"a night out":"a trip"):null,readBack]
     .filter(Boolean).join(" · ")||null;
 
   // A hard no they wrote is ticked on the list rather than only applied
@@ -4468,6 +4518,15 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
               {quizQ.title}
             </div>
             {quizQ.sub&&<div style={{fontSize:13,color:C.t2}}>{quizQ.sub}</div>}
+            {/* Said where they are writing it, not after: for a group trip
+                this sentence is the one answer everybody sees. */}
+            {goalNote&&quizQ.id==="goalBlurb"&&(
+              <div style={{marginTop:10,padding:"8px 12px",background:C.amberDim,
+                border:`1px solid ${C.amber}`,borderRadius:12,fontSize:12.5,
+                color:C.t1,lineHeight:1.5,textAlign:"left"}}>
+                {goalNote}
+              </div>
+            )}
             {quizQ.noWay&&(
               <div style={{marginTop:8,padding:"6px 14px",
                 background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",
@@ -4638,8 +4697,21 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   const [answered,setAnswered]=useState(null);
   const [answeredErr,setAnsweredErr]=useState(false);
   const [starting,setStarting]=useState(false);
+  // State alone does not stop a double-tap: both taps run before the
+  // re-render that would disable the button, and each would make a trip and
+  // email the whole group. A ref is set synchronously, on the first tap.
+  const startingRef=useRef(false);
   const [asking,setAsking]=useState(false);
   const [askNote,setAskNote]=useState(null);
+  // Seconds until "Nudge them by email" can go again. The server holds the
+  // same minute (lib/nudge); this is so the button says so rather than being
+  // pressed into a refusal.
+  const [nudgeWait,setNudgeWait]=useState(0);
+  useEffect(()=>{
+    if(nudgeWait<=0)return;
+    const t=setTimeout(()=>setNudgeWait(w=>Math.max(0,w-1)),1000);
+    return()=>clearTimeout(t);
+  },[nudgeWait]);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
   // Which option cards are showing every day rather than the first two.
@@ -4986,6 +5058,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           budget_cents:Math.round((Number(trip.total_per_person)||0)*100),
           // Clears "undecided": the trip has a place now.
           destination_style:null,
+          // No status. A picked group trip stays "planning" on purpose, where
+          // the old path set "approved": the three checks — overview, budget,
+          // book — are what say it is ready, and TripProgress reads
+          // "approved" as money already in.
           why_chosen:(trip.used_suggestions||[]).length?trip.used_suggestions:null,
           only_if_undecided:true,
         }),
@@ -5071,8 +5147,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // destination yet — and asks everybody else the same questions. Nothing is
   // sent to the model until all of them have answered.
   const startGroupTrip=async(dates,tripBudget,prefs,extra={})=>{
-    if(starting)return;
+    if(startingRef.current)return;
+    startingRef.current=true;
     setStarting(true);setError(null);
+    try{await startingGroupTrip(dates,tripBudget,prefs,extra);}
+    finally{startingRef.current=false;setStarting(false);}
+  };
+  const startingGroupTrip=async(dates,tripBudget,prefs,extra={})=>{
     const night=extra.mode==="night";
     const goal=(prefs?.goalBlurb||"").trim();
     // Their own words, cut at a word, or nothing pretending to be a place.
@@ -5103,8 +5184,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       // A group trip that only exists on this phone cannot be answered by
       // anybody else, so it is not left on the screen looking as if it can.
       updateGroup(groupId,g=>({...g,plans:g.plans.filter(p=>p.id!==np.id)}));
-      setError("Couldn't start this trip for the group — nothing was saved or sent. Try again.");
-      setStarting(false);
+      setError(`Couldn't start this ${night?"night out":"trip"} for the group — nothing was saved or sent. Try again.`);
       return;
     }
     // Their own answers, recorded against the trip the same way everybody
@@ -5131,7 +5211,6 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     setNightAnswers(extra.nightPrefs||{});
     setWaitPlanId(realId);
     setStep("wait");
-    setStarting(false);
     // Ask the others, once, now.
     askTheOthers(realId);
   };
@@ -5140,7 +5219,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // emailed, or that email is not on, with the link to share by hand beside
   // it either way.
   const askTheOthers=async(id)=>{
-    if(asking||!id||isTempId(id))return;
+    if(asking||nudgeWait>0||!id||isTempId(id))return;
     setAsking(true);
     try{
       const r=await fetch(`/api/plans/${id}/notify`,{
@@ -5148,9 +5227,17 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         body:JSON.stringify({kind:"prefs"}),
       });
       const d=await r.json().catch(()=>({}));
+      if(r.status===429){
+        // Somebody (maybe this person, a moment ago) already nudged them.
+        setNudgeWait(Math.min(60,Math.max(1,Number(d.retryAfterSeconds)||60)));
+        setAskNote(d.error||"They were just emailed — you can nudge them again in a minute.");
+        setAsking(false);
+        return;
+      }
       if(!r.ok)throw new Error(d.error||"Couldn't send those emails.");
       if(d.notified){
         const short=(d.attempted||0)>d.notified;
+        setNudgeWait(60);
         setAskNote(`Emailed ${plural(d.notified,"person","people")} to ask.${short?" Not everyone could be emailed — pass the link on to the rest.":""}`);
       }else setAskNote(d.message||"Everyone else has already answered.");
     }catch(e){
@@ -5159,11 +5246,12 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     }
     setAsking(false);
   };
-  const shareAnswerLink=(id)=>{
+  const shareAnswerLink=(id,night)=>{
     const where=typeof window!=="undefined"?window.location.origin:"";
     const link=`${where}/home?answer=${encodeURIComponent(id)}`;
-    const msg=`We're planning a trip on Reach, and it waits for everyone's answers before it finds anywhere. Say what you want from it: ${link}`;
-    if(navigator.share){navigator.share({title:"Say what you want from this trip",text:msg}).catch(()=>{});}
+    const kind=night?"night out":"trip";
+    const msg=`We're planning a ${kind} on Reach, and it waits for everyone's answers before it finds anywhere. Say what you want from it: ${link}`;
+    if(navigator.share){navigator.share({title:`Say what you want from this ${kind}`,text:msg}).catch(()=>{});}
     else{navigator.clipboard?.writeText(msg);toast("Copied — paste away");}
   };
 
@@ -5220,7 +5308,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   Then everyone in {group.name} answers these same questions, and
                   Reach only looks for trips once all of you have — so every
                   option is built from what each of you said. The group sees
-                  who has answered, never what anybody said.
+                  who has answered, never what anybody said — except one thing:
+                  what you write first becomes the trip's name, and everyone sees that.
                 </div>
               </div>
             </div>
@@ -5267,6 +5356,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             // what the next screen then refuses.
             finishLabel={isSolo?undefined:(starting?"Starting…":"Save and ask the others")}
             finishNote={isSolo?undefined:`No trips are found until everyone in ${group.name} has answered these same questions.`}
+            goalNote={isSolo?undefined:`What you write here becomes the trip's name, which everyone in ${group.name} sees — and it's in the email asking them to answer. Everything else you answer stays private.`}
             busy={starting}
             onGenerate={(dates,tripBudget,prefs,extra)=>{
               if(!isSolo){startGroupTrip(dates,tripBudget,prefs,extra);return;}
@@ -5304,13 +5394,43 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         const allAnswered=!isSolo&&members.length>0&&members.every(m=>m.answered);
         const othersOut=members.some(m=>!m.answered&&m.userId!==me);
         const first=n=>String(n||"").trim().split(/\s+/)[0]||"Someone";
+        const nightWait=wp.type==="restaurant";
+        const stillToAnswer=members.filter(m=>!m.answered);
+        const haveAnswered=members.filter(m=>m.answered);
+        const nameOf=m=>m.userId===me?"you":first(m.name);
         return(
           <div style={{flex:1,overflowY:"auto",padding:"0 20px 30px"}}>
-            <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:6}}>{tripName(wp)}</div>
-            <div style={{fontSize:13,color:C.t2,lineHeight:1.6,marginBottom:14}}>
-              {wp.dates?`${wp.dates} · `:""}No trips are found until everyone going has
-              answered the same questions. The group sees who has answered, never what they said.
+            <div style={{fontSize:12.5,color:C.t3,marginBottom:4}}>
+              {tripName(wp)}{wp.dates?` · ${wp.dates}`:""}
             </div>
+            {/* The owner's words: why nothing has been found yet, said first
+                and said plainly. A group trip only — the wait never shows for
+                somebody on their own. */}
+            {!isSolo&&(
+              <>
+                <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,lineHeight:1.2,marginBottom:8}}>
+                  {allAnswered?"Everyone has answered":"Waiting on everyone's answers"}
+                </div>
+                <div style={{fontSize:14,color:C.t2,lineHeight:1.6,marginBottom:14}}>
+                  {allAnswered
+                    ?`Everyone's in — your ${nightWait?"nights out":"trips"} will be built from all of your answers.`
+                    :`Your three ${nightWait?"ideas for the night":"trip ideas"} are built from what every one of you wants, so we wait until everyone has answered. Nothing gets picked on one person's say-so.`}
+                </div>
+                {members.length>0&&!allAnswered&&(
+                  <div style={{fontSize:13.5,color:C.t1,lineHeight:1.6,marginBottom:12}}>
+                    {stillToAnswer.length>0&&(
+                      <div><strong>Still to answer:</strong> {namesList(stillToAnswer.map(nameOf))}</div>
+                    )}
+                    {haveAnswered.length>0&&(
+                      <div style={{color:C.t2}}><strong style={{color:C.t1}}>Answered:</strong> {namesList(haveAnswered.map(nameOf))}</div>
+                    )}
+                  </div>
+                )}
+                <div style={{fontSize:12,color:C.t3,lineHeight:1.5,marginBottom:14}}>
+                  The group sees who has answered, never what anybody said.
+                </div>
+              </>
+            )}
 
             {answeredErr&&!answered&&(
               <div style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
@@ -5324,21 +5444,6 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
               <div style={{fontSize:12.5,color:C.t3,marginBottom:12}}>Checking who has answered…</div>
             )}
 
-            {members.length>0&&(
-              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
-                {members.map(m=>(
-                  <div key={m.userId} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                    padding:"10px 12px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:12}}>
-                    <span style={{fontSize:13.5,color:C.t1,fontWeight:500}}>
-                      {first(m.name)}{m.userId===me?" (you)":""}
-                    </span>
-                    <span style={{fontSize:12,fontWeight:600,color:m.answered?C.green:C.t3}}>
-                      {m.answered?"✓ Answered":"Not yet"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
 
             {/* The person being waited on sees the way to stop being
                 waited on, first. */}
@@ -5352,13 +5457,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {othersOut&&(
               <div style={{marginBottom:14}}>
                 <div style={{display:"flex",gap:8}}>
-                  <button className="bs" style={{flex:1}} disabled={asking}
+                  <button className="bs" style={{flex:1}} disabled={asking||nudgeWait>0}
                     onClick={()=>askTheOthers(waitPlanId)}>
-                    {asking?"Sending…":"Nudge them by email"}
+                    {asking?"Sending…":nudgeWait>0?`Nudge again in ${nudgeWait}s`:"Nudge them by email"}
                   </button>
                   {/* Opens the phone's share sheet, or copies — it hands the
                       link over rather than sending anything itself. */}
-                  <button className="bs" style={{flex:1}} onClick={()=>shareAnswerLink(waitPlanId)}>
+                  <button className="bs" style={{flex:1}} onClick={()=>shareAnswerLink(waitPlanId,nightWait)}>
                     Pass on the link
                   </button>
                 </div>
@@ -5377,12 +5482,12 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
             {/* No override. The owner's rule is that it waits. */}
             <button className="bp" disabled={!allAnswered||generating} onClick={()=>findOurTrips(wp)}>
-              {wp.type==="restaurant"?"✨ Find our nights out":"✨ Find our trips"}
+              {allAnswered?"":"🔒 "}{nightWait?"Find our nights out":"Find our trips"}
             </button>
             <div style={{fontSize:12,color:C.t3,marginTop:8,lineHeight:1.5,textAlign:"center"}}>
               {allAnswered
-                ?"Everyone has answered. Anyone in the group can press this."
-                :(answered?.waiting||"This opens once everyone has answered.")}
+                ?"Anyone in the group can press this."
+                :"Unlocks when everyone's in"}
             </div>
           </div>
         );
@@ -5859,8 +5964,16 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   },[planType,startDate,endDate]);
 
   // Load AI recs when vibe+dest+budget are set (trips only)
+  //
+  // Never for a group. These are places suggested from one person's answers
+  // on one person's form, and the owner's rule is that a group's trip ideas
+  // are built from everybody's — so a group is offered the group trip, which
+  // waits for them all, instead (the card on the Vibe step). /api/recommendations
+  // is not told the group and cannot tell, so the rule is held here; the
+  // options themselves are held on the server, which refuses to build a
+  // group's trips without a group trip behind them.
   useEffect(()=>{
-    if(!isTrip||!vibe||!dest||!budget)return;
+    if(!isTrip||!isSoloGroup||!vibe||!dest||!budget)return;
     const timer=setTimeout(async()=>{
       try{
         setLoadingRecs(true);
@@ -6197,9 +6310,22 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                     <button className="bsm bsm-p" onClick={()=>{onBack();push("profile");}}>Add your town →</button>
                   </div>
                 )}
-                {aiRecs.length>0&&(
+                {isTrip&&!isSoloGroup&&(
+                  <div style={{marginTop:16,background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}>
+                    <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:5}}>Want Reach to find the places?</div>
+                    <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
+                      For {selGroup?.name||"a group"}, Reach finds trips from what every one of you
+                      wants: everybody answers the same questions, then you get three trip ideas.
+                      Or carry on here and name the places yourself.
+                    </div>
+                    <button className="bsm bsm-p" onClick={()=>{clearDraft();(replace||push)("groupTrip",{groupId:gid});}}>
+                      Plan it as a group trip →
+                    </button>
+                  </div>
+                )}
+                {isSoloGroup&&aiRecs.length>0&&(
                   <div style={{marginTop:16}}>
-                    <div className="sl" style={{marginBottom:10}}>✨ AI picks for your group</div>
+                    <div className="sl" style={{marginBottom:10}}>✨ AI picks for you</div>
                     <div style={{display:"flex",gap:10,overflowX:"auto",scrollbarWidth:"none",paddingBottom:4}}>
                       {aiRecs.slice(0,3).map((r,i)=>(
                         <div key={i} style={{minWidth:160,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,flexShrink:0}}>
@@ -7352,28 +7478,32 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               const ms=prefs?.members||[];
               const mine=ms.find(m=>m.userId===me);
               const allHere=!prefs?.solo&&ms.length>0&&ms.every(m=>m.answered);
+              const kind=plan.type==="restaurant"?"night out":"trip";
               return(
                 <div style={{margin:"0 20px 14px",padding:"14px",background:C.accentDim,
                   border:`1px solid ${C.accentText}`,borderRadius:14}}>
                   <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>
-                    {mine&&!mine.answered?"Say what you want from this trip":allHere?"Everyone has answered":"Where this goes is still open"}
+                    {mine&&!mine.answered?`Say what you want from this ${kind}`:allHere?"Everyone has answered":"Where this goes is still open"}
                   </div>
                   <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
                     {mine&&!mine.answered
-                      ?"The same questions everyone going answers. No trips are found until all of you have."
+                      ?`The same questions everyone going answers. No ${kind==="trip"?"trips are":"nights out are"} found until all of you have.`
                       :allHere
-                        ?"Find the trips — each one built from what all of you said."
-                        :(prefs?.waiting||"No trips are found until everyone going has answered.")}
+                        ?`Find the ${kind==="trip"?"trips":"nights out"} — each one built from what all of you said.`
+                        :(prefs?.waiting||`No ${kind==="trip"?"trips are":"nights out are"} found until everyone going has answered.`)}
                   </div>
                   <button className="bp" onClick={()=>mine&&!mine.answered
                     ?push("planPrefs",{planId,groupId})
                     :push("groupTrip",{groupId,planId})}>
-                    {mine&&!mine.answered?"Answer the questions":allHere?"Find our trips":"See who has answered"}
+                    {mine&&!mine.answered?"Answer the questions":allHere?(kind==="trip"?"Find our trips":"Find our nights out"):"See who has answered"}
                   </button>
                 </div>
               );
             })()}
-            <TripProgress
+            {/* Not while the trip has no destination: its first step is "plan
+                the days", and there is no place to write days about yet — the
+                server refuses it. The card above is the step that trip is on. */}
+            {plan.destStyle!=="undecided"&&<TripProgress
               plan={plan} group={group} soloTrip={soloTrip} votesIn={totalV}
               busy={building||nudging}
               onAction={async(stage)=>{
@@ -7394,7 +7524,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 }
                 if(stage==="funded"){push("checkout",{planId,groupId});return;}
                 if(stage==="booked"){push("checkout",{planId,groupId});return;}
-              }}/>
+              }}/>}
             <div style={{display:"flex",gap:10,padding:"0 20px 14px"}}>
               {[{l:soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},(plan.startDate&&plan.startDate===plan.endDate)?{l:"When",v:dayLabel(plan.startDate)||"—",e:"🌃"}:{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
                 <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
@@ -7404,10 +7534,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
               ))}
             </div>
-            {/* Why this trip, in the group's own words. It was on the card
-                they chose from and then disappeared the moment they chose —
-                so the one screen everybody comes back to said nothing about
-                why the trip is what it is. */}
+            {/* Why this trip. It was on the card they chose from and then
+                disappeared the moment they chose — so the one screen everybody
+                comes back to said nothing about why the trip is what it is.
+                For a group these lines are in general terms, never whose wish
+                or whose words: the prompt says so and the server takes out any
+                line that names somebody (PRIVATE_ANSWERS_RULE in
+                lib/group-answers). */}
             {(plan.aiData?.used_suggestions||[]).length>0&&(
               <div style={{padding:"0 20px 14px"}}>
                 <div className="sl" style={{marginBottom:10}}>Why this trip</div>
@@ -7986,10 +8119,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   The group is waiting on you
                 </div>
                 <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
-                  Three questions about this trip. Your profile stays as it is.
+                  The same questions everyone going answers, about this {plan.type==="restaurant"?"night out":"trip"} only. Your profile stays as it is.
                 </div>
                 <button className="bp" onClick={()=>push("planPrefs",{planId})}>
-                  Say what you want from this trip
+                  Say what you want from this {plan.type==="restaurant"?"night out":"trip"}
                 </button>
               </div>
             )}
@@ -10045,8 +10178,15 @@ export default function ReachApp({realUser,onSignOut}={}){
       // From the email asking what somebody wants from a group trip: straight
       // to that trip's questions. Cleared for the same reasons as above; the
       // screen finds the group once the groups have loaded.
-      if(params.get("answer")){
-        const planId=params.get("answer");
+      // If sign-in came in between and dropped the address, the middleware
+      // kept the trip in a short-lived cookie; it is read once and cleared.
+      let fromCookie=null;
+      try{
+        const m=document.cookie.match(/(?:^|;\s*)reach_answer=([0-9a-f-]{36})/i);
+        if(m){fromCookie=m[1];document.cookie="reach_answer=; Path=/; Max-Age=0; SameSite=Lax; Secure";}
+      }catch(e){console.error("[answer link] could not read the trip kept through sign-in",e);}
+      if(params.get("answer")||fromCookie){
+        const planId=params.get("answer")||fromCookie;
         params.delete("answer");
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
@@ -10744,7 +10884,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     // takes the prompt off the home screen. Without it the card stays up
     // telling somebody to do the thing they have just done.
     if(screen==="taste")return <TasteQuizScreen {...cp} {...props} onSaved={syncUser} required={quizRequired&&stack.length<=1}/>;
-    if(screen==="planPrefs")return <PlanPreferencesScreen {...cp} {...props}/>;
+    if(screen==="planPrefs")return <PlanPreferencesScreen {...cp} {...props} groupsLoading={groupsLoading}/>;
     if(screen==="createGroup")return <CreateGroupScreen {...cp} {...props}/>;
     if(screen==="groupTrip")return <GroupTripScreen {...cp} {...props}/>;
     if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props} user={user} departure={departure}/>;

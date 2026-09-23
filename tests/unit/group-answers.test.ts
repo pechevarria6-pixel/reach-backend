@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   answersFrom, wantedBlock, readGroupAnswers, optionsGate, notYetAnswered,
-  isUndecided, UNDECIDED,
+  isUndecided, UNDECIDED, answersBlock, standingWishesBlock, groupFraming,
+  attributes, PRIVATE_ANSWERS_RULE,
 } from '../../lib/group-answers.ts';
 import { answersSentence, planReadiness } from '../../lib/plan-readiness.ts';
 
@@ -210,4 +211,96 @@ test('readiness says who has answered, strictly, beside the lenient ready', asyn
   assert.equal(r.allReady, false);
   assert.deepEqual(r.waitingOn, ['Marco']);
   assert.equal(optionsGate(r.members, false).open, false);
+});
+
+// ─── Answers are private within a group ──────────────────────────────────
+// Everything the model writes for a group trip is shown to all of them, and
+// each was told the others see that they answered, never what they said.
+
+test("a group's prompt carries everybody's answers with nobody's name and nothing quoted", () => {
+  const read = answersFrom([organiser, marco, sam]);
+  const block = answersBlock(read, { group: true });
+  // Every wish is still there to plan around…
+  assert.match(block, /Ski week for Kyle's fortieth/);
+  assert.match(block, /Somewhere I can actually rest/);
+  assert.match(block, /must do: see the sunrise/);
+  assert.match(block, /will not: longFlights, hostels/);
+  // …but not whose it is, and not as a quotation to repeat.
+  for (const name of ['Peter', 'Marco', 'Sam']) assert.doesNotMatch(block, new RegExp(`\\b${name}\\b`));
+  assert.doesNotMatch(block, /"Ski week/);
+  assert.equal((block.match(/^- One of them: /gm) || []).length, 3);
+});
+
+test("a group's prompt tells the model never to name who asked for what, or quote anyone", () => {
+  const block = answersBlock(answersFrom([organiser, marco]), { group: true });
+  assert.ok(block.includes(PRIVATE_ANSWERS_RULE));
+  assert.match(PRIVATE_ANSWERS_RULE, /never name who asked for something/);
+  assert.match(PRIVATE_ANSWERS_RULE, /never quote anyone/);
+  assert.match(PRIVATE_ANSWERS_RULE, /used_suggestions/);
+  // Asked for in general terms, with the example the owner gave.
+  assert.match(PRIVATE_ANSWERS_RULE, /a beach within a short\s+flight/);
+  // And the instruction that broke the promise is gone.
+  assert.doesNotMatch(block, /by name/i);
+});
+
+test("one person travelling alone still has their own words to plan around", () => {
+  const read = answersFrom([organiser]);
+  const block = answersBlock(read, { group: false });
+  assert.match(block, /- Peter: "Ski week for Kyle's fortieth"/);
+  assert.ok(!block.includes(PRIVATE_ANSWERS_RULE));
+});
+
+test("standing wishes are unnamed for a group and never asked to be attributed", () => {
+  const said = [{ name: 'Priya', text: 'Somewhere my sister can see snow' }, { name: 'Sam', text: '' }];
+  const group = standingWishesBlock(said, { group: true });
+  assert.doesNotMatch(group, /Priya|Sam/);
+  assert.doesNotMatch(group, /naming the person/);
+  assert.ok(group.includes(PRIVATE_ANSWERS_RULE));
+  const solo = standingWishesBlock(said.slice(0, 1), { group: false });
+  assert.match(solo, /Priya said: "Somewhere my sister can see snow"/);
+  assert.equal(standingWishesBlock([{ name: 'Sam', text: ' ' }], { group: true }), '');
+});
+
+test('what comes back naming somebody, or repeating their words, is caught', () => {
+  const who = {
+    names: ['Sam', 'Marco', 'Peter'],
+    said: ["I won't fly more than four hours on any plane"],
+    title: "Ski week for Kyle's fortieth",
+  };
+  assert.equal(attributes("Sam won't fly more than 4 hours — this is a short hop", who), true);
+  assert.equal(attributes('A quiet stay, which marco asked for', who), true);
+  assert.equal(attributes("Nobody fly more than four hours on any plane here", who), true);
+  assert.equal(attributes('A beach within a short flight', who), false);
+  // "Samuel" is not "Sam", and a word inside another word is not a name.
+  assert.equal(attributes('Samuel Beckett country', who), false);
+  // The title is shown to everyone, so a name in it is not a secret.
+  assert.equal(attributes("A ski town for Kyle's fortieth", { ...who, names: [...who.names, 'Kyle'] }), false);
+});
+
+test("a group trip leads with everybody's kinds of trip and stay, and the group's pace", () => {
+  const read = answersFrom([
+    { ...organiser, answers: { tripType: ['nature'], accommodation: ['rental'], pace: 'packed' } },
+    { ...marco, answers: { tripType: ['beach', 'custom:spa'], accommodation: ['hotel'], pace: 'relaxed' } },
+    { ...sam, answers: { tripType: ['nature'], pace: 'packed' } },
+  ]);
+  const f = groupFraming(read);
+  assert.deepEqual(f.tripTypes.sort(), ['beach', 'nature', 'spa']);
+  assert.deepEqual(f.accommodation.sort(), ['hotel', 'rental']);
+  // The most common pace.
+  assert.equal(f.pace, 'packed');
+});
+
+test("a tie on pace goes to the slower one", () => {
+  const tie = answersFrom([
+    { ...organiser, answers: { pace: 'packed' } },
+    { ...marco, answers: { pace: 'balanced' } },
+  ]);
+  assert.equal(groupFraming(tie).pace, 'balanced');
+  const three = answersFrom([
+    { ...organiser, answers: { pace: 'packed' } },
+    { ...marco, answers: { pace: 'relaxed' } },
+    { ...sam, answers: { pace: 'balanced' } },
+  ]);
+  assert.equal(groupFraming(three).pace, 'relaxed');
+  assert.equal(groupFraming(answersFrom([])).pace, null);
 });

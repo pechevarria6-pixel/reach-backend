@@ -8,7 +8,10 @@ import {
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote } from '@/lib/generation-rules';
 import { planReadiness } from '@/lib/plan-readiness';
-import { readGroupAnswers, wantedBlock as wantedBlockFor, optionsGate, notYetAnswered, isUndecided, type GroupAnswers } from '@/lib/group-answers';
+import {
+  readGroupAnswers, answersBlock, standingWishesBlock, groupFraming, attributes,
+  optionsGate, notYetAnswered, isUndecided, type GroupAnswers,
+} from '@/lib/group-answers';
 import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
@@ -157,11 +160,52 @@ export async function POST(req: NextRequest) {
   if (groupPlanId != null && !UUID.test(String(groupPlanId))) {
     return NextResponse.json({ error: 'planId must be the id of a saved plan' }, { status: 400 });
   }
-  let groupPlan: { id: string; created_by: string | null; type: string | null; solo_mode: boolean | null } | null = null;
+
+  // How many people are in this group, counted from the table — never from
+  // the plan's solo_mode, which the client sets, and never from anything in
+  // the request. A group of one is somebody travelling alone; anything more
+  // is a group, and a group's trip is found from everybody's answers.
+  const { count: memberCount, error: countError } = await supabase
+    .from('group_members').select('user_id', { count: 'exact', head: true })
+    .eq('group_id', groupId);
+  if (countError || memberCount == null) {
+    console.error('[generate] could not count the group', { groupId, code: countError?.code });
+    return NextResponse.json(
+      { error: 'We could not check who is in this group — try again in a moment.' },
+      { status: 503 },
+    );
+  }
+  const isGroup = memberCount > 1;
+
+  // New places from answers — the three options, or the days of one of them
+  // (a local id, not a saved plan) — as against rebuilding the days of a
+  // trip that already exists.
+  const detailIsPlan = detailTripId != null && UUID.test(String(detailTripId));
+  const fromAnswers = !detailIsPlan;
+
+  // The server end of the owner's rule. The client only asks with a planId
+  // for a group, but a browser still running an older bundle does not, and
+  // "is this a group" on the client is a guess from whatever it has loaded.
+  // Without a group trip to wait on, there is nobody's answers to wait for —
+  // so a group gets nothing here built from one person's say-so. That
+  // includes the days of an option, which would otherwise be a way to have
+  // any destination written up from standing profiles alone.
+  if (isGroup && fromAnswers && !groupPlanId) {
+    console.error('[generate] refused: a group asked without a group trip', {
+      groupId, stage: detailTripId ? 'itinerary' : 'options', members: memberCount,
+    });
+    return NextResponse.json({
+      error: "A trip for a group is found from everyone's answers. Start it with "
+        + '"Plan a Trip Together" and Reach finds the options once everyone has answered.',
+      needsGroupTrip: true,
+    }, { status: 409 });
+  }
+
+  let groupPlan: { id: string; created_by: string | null; type: string | null; solo_mode: boolean | null; title: string | null } | null = null;
   let groupAnswers: GroupAnswers | null = null;
   if (groupPlanId) {
     const { data: row } = await supabase
-      .from('plans').select('id, group_id, created_by, type, solo_mode, destination_style')
+      .from('plans').select('id, group_id, created_by, type, solo_mode, destination_style, title')
       .eq('id', String(groupPlanId)).maybeSingle();
     // Membership was checked against groupId; the plan has to be in that same
     // group, or a member of one group could read another group's answers
@@ -172,6 +216,7 @@ export async function POST(req: NextRequest) {
     groupPlan = {
       id: String(row.id), created_by: row.created_by ? String(row.created_by) : null,
       type: row.type ? String(row.type) : null, solo_mode: row.solo_mode === true,
+      title: row.title ? String(row.title) : null,
     };
     if (groupPlan.type === 'restaurant') isNightPlan = true;
 
@@ -185,9 +230,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Only the options stage is gated here. The days of each option are
-    // gated below, by the rule that was already there for them.
-    if (!detailTripId && !groupPlan.solo_mode) {
+    // The options, and the days of each option, wait for everybody — gated
+    // on how many people are in the group, not on the plan's solo_mode flag,
+    // which is the client's to set. Rebuilding a saved plan's days is gated
+    // below, by the rule that was already there for it.
+    if (isGroup && fromAnswers) {
       let readiness;
       try {
         readiness = await planReadiness(supabase, groupPlan.id, String(groupId), false);
@@ -362,9 +409,11 @@ export async function POST(req: NextRequest) {
     ...(groupAnswers?.vetoes ?? []),
   // "custom:" is how the quiz stores a typed answer, not part of the answer.
   ].map((v: unknown) => String(v).replace(/^custom:/, '').trim()).filter(Boolean))];
-  // Everyone's own answers for this trip, by name, for the options prompt.
-  // The itinerary stage builds its own from the same reader below.
-  const groupWanted = !detailTripId && groupAnswers ? wantedBlockFor(groupAnswers.lines) : '';
+  // Everyone's own answers for this trip, for the options prompt. The
+  // itinerary stage builds its own from the same reader below. For a group
+  // they go in unnamed, under the rule that nobody's are ever said back:
+  // everything the model writes here is shown to all of them.
+  const groupWanted = !detailTripId && groupAnswers ? answersBlock(groupAnswers, { group: isGroup }) : '';
   const dietaryNeeds = [...new Set(prefs.map((p: any) => p.dietary_needs).filter((d: any) => d && d !== 'none'))];
   const cuisines = [...new Set(prefs.flatMap((p: any) => p.cuisines || []))];
   const musicGenres = [...new Set(prefs.flatMap((p: any) => p.music_genres || []))];
@@ -377,32 +426,26 @@ export async function POST(req: NextRequest) {
   const nightlife = [...new Set(prefs.map((p: any) => p.nightlife_style).filter(Boolean))];
   const concertTypes = [...new Set(prefs.flatMap((p: any) => p.concert_types || []))];
 
-  // What each of them said in their own words, with their name on it.
+  // What each of them said about trips in general, in their own words.
   //
-  // Everything above is a set of tick-boxes flattened across the group, which
-  // loses who wanted what — and the one thing somebody actually cares about
-  // is rarely on a list. "My sister is turning forty" cannot be inferred from
-  // cuisines. Attributed, because a plan that answers a named person is one
-  // they recognise as theirs.
-  const suggestions = prefs
-    .map((p: any) => ({ name: String(p.name || '').trim().split(/\s+/)[0], text: String(p.trip_summary || '').trim() }))
-    .filter((x: { name: string; text: string }) => x.text)
-    .map((x: { name: string; text: string }) => `${x.name || 'Someone'} said: "${x.text.slice(0, 300)}"`);
-  const saidBlock = suggestions.length
-    ? `\nWHAT THEY EACH SAID THEY WANT — in their own words:\n${suggestions.join('\n')}\n
-These are standing answers about trips in general. Where one disagrees with
-what they said THIS trip is, this trip wins — a note about snow does not
-override "in Aspen to celebrate Kyle", and an option whose used_suggestions
-only mentions a standing answer has ignored the thing actually being planned.
+  // Everything above is a set of tick-boxes flattened across the group, and
+  // the one thing somebody actually cares about is rarely on a list. "My
+  // sister is turning forty" cannot be inferred from cuisines. For somebody
+  // travelling alone it is theirs to have said back to them; for a group it
+  // goes in unnamed and is never repeated, because the options are read by
+  // everyone and nobody was told their words would be shown to the others.
+  const standing = prefs.map((p: any) => ({
+    name: String(p.name || '').trim().split(/\s+/)[0], text: String(p.trip_summary || '').trim(),
+  }));
+  const saidBlock = standingWishesBlock(standing, { group: isGroup });
 
-Answer these. For every option, used_suggestions lists which of them it acts
-on and how, naming the person: "Priya wanted somewhere her sister could see
-snow — this is a ski town". If an option genuinely acts on none of them, send
-an empty array rather than inventing one. Do not repeat a wish back as though
-quoting it were the same as planning around it.\n`
-    : '';
-  const tripTypes = (tripPrefs.tripType || []).join(', ') || 'any';
-  const tripPace = tripPrefs.pace || 'balanced';
+  // The trip the options lead with. For a group trip that is everybody's
+  // answers together — every kind of trip anybody asked for, every kind of
+  // stay, and the group's pace — not the organiser's, which used to fill
+  // these three lines while everybody else sat in a block further down.
+  const together = isGroup && groupAnswers ? groupFraming(groupAnswers) : null;
+  const tripTypes = (together?.tripTypes.length ? together.tripTypes : (tripPrefs.tripType || [])).join(', ') || 'any';
+  const tripPace = together?.pace || tripPrefs.pace || 'balanced';
   // No default. This read `|| 'hotel'`, so a group who never said where they
   // wanted to stay was described to the model as staying in a hotel — and the
   // model, correctly following its brief, wrote the days around one. A real
@@ -413,7 +456,7 @@ quoting it were the same as planning around it.\n`
   // this line.
   //
   // Empty is the honest value, and the prompt says what to do with it.
-  const tripAccommodation = (tripPrefs.accommodation || []).join(', ');
+  const tripAccommodation = (together?.accommodation.length ? together.accommodation : (tripPrefs.accommodation || [])).join(', ');
   const departure = departureCity || 'a major US city';
   const departureCode = departureAirport || 'nearest major airport';
 
@@ -510,7 +553,8 @@ quoting it were the same as planning around it.\n`
       const read = groupAnswers && groupPlan?.id === answersPlanId
         ? groupAnswers
         : await readGroupAnswers(supabase, answersPlanId);
-      wantedBlock = wantedBlockFor(read.lines);
+      // The days are read by the whole group too, so the same rule holds.
+      wantedBlock = answersBlock(read, { group: isGroup });
       // A thing somebody said to avoid is a constraint, not a hint.
       tripVetoes.push(...read.vetoes);
     }
@@ -1077,14 +1121,15 @@ Read it properly. If it names a place, that place IS the destination and all
 three options are there at three budgets — "ski trip with the boys in Aspen"
 means Aspen, three ways, not Aspen and two other mountains. If it names an
 occasion, every option should be somewhere that occasion makes sense, and
-why_this_group should say so in a way the person who wrote it would
+why_this_group should say so in a way ${isGroup ? 'the whole group' : 'the person who wrote it'} would
 recognise. If it names people, plan for those people.
 
-Every option's used_suggestions must say how it serves THIS — "Aspen, the
-mountain Kyle asked for, at the cheaper end of the season" — before it
+Every option's used_suggestions must say how it serves THIS — ${isGroup
+  ? '"Aspen at the cheaper end of the season — the ski week this trip is for"'
+  : '"Aspen, the mountain you asked for, at the cheaper end of the season"'} — before it
 mentions any standing answer. An empty used_suggestions when they have told
 you what the trip is for means you did not use it.
-` : ''}WHAT THIS TRIP IS FOR (standing preferences below yield to it): ${tripTypes}
+` : ''}WHAT THIS TRIP IS FOR${together ? " — everything anybody going asked for" : ''} (standing preferences below yield to it): ${tripTypes}
 PACE: ${tripPace}
 STAY: ${tripAccommodation}
 FOOD: ${cuisines.slice(0, 5).join(', ') || 'varied'}
@@ -1162,7 +1207,9 @@ Return JSON only, shaped exactly like this:
 "tagline":"Ten words on why this group","vibe":"Vibe label",
 "why_this_group":"One sentence tied to their preferences",
 "food_scene":"One line, replaced","music_scene":"One line, replaced",
-"total_per_person":1850,"tier":"saver","used_suggestions":["Priya wanted somewhere her sister could see snow — this is a ski town"],
+"total_per_person":1850,"tier":"saver","used_suggestions":[${isGroup
+  ? '"Somewhere with snow for a birthday — this is a ski town"'
+  : '"Somewhere your sister can see snow — this is a ski town"'}],
 "costs":{"flights":{"per_person":400,"details":"..."},
 "accommodation":{"per_person":500,"details":"...","example":"Hotel or area"},
 "ground_transport":{"per_person":100,"details":"..."},
@@ -1259,6 +1306,36 @@ Return JSON only, shaped exactly like this:
             : 'No trips came back. Try adjusting your budget or dates.' },
         { status: 502 },
       );
+    }
+
+    // ── Nobody's answers, said back to the group ─────────────────────
+    // The prompt says never to name who asked for what or quote anybody;
+    // this checks it listened. A line that names somebody in the group, or
+    // repeats a run of what somebody wrote, is taken out — the option still
+    // stands, it just does not say whose wish it answers.
+    if (isGroup) {
+      const said: string[] = [
+        ...standing.map((x: { text: string }) => x.text),
+        ...Object.values(groupAnswers?.byUser ?? {}).flatMap(u => [
+          u.summary ?? '', String(u.answers.mustDo ?? ''), String(u.answers.noWayText ?? ''),
+        ]),
+      ].filter(Boolean);
+      const who = {
+        names: prefs.map((p: any) => String(p.name || '').trim().split(/\s+/)[0]).filter(Boolean),
+        said, title: groupPlan?.title ?? null,
+      };
+      let removed = 0;
+      for (const trip of trips) {
+        const lines = trip.used_suggestions ?? [];
+        const kept = lines.filter(l => !attributes(l, who));
+        removed += lines.length - kept.length;
+        trip.used_suggestions = kept;
+        if (attributes(trip.why_this_group, who)) { trip.why_this_group = ''; removed++; }
+        if (attributes(trip.tagline, who)) { trip.tagline = ''; removed++; }
+      }
+      if (removed) {
+        console.error('[trips generate] took out lines that said who asked for what', { plan: groupPlan?.id, removed });
+      }
     }
 
     // ── The scene, counted rather than remembered ────────────────────

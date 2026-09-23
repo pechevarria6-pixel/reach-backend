@@ -17,6 +17,7 @@ import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { sendVoteNeeded, sendFundingNeeded, sendAnswersNeeded, type SendResult } from '@/lib/email';
 import { planShares } from '@/lib/money';
 import { planSkips } from '@/lib/participation';
+import { claimNudge, releaseNudge } from '@/lib/nudge';
 import { z } from 'zod';
 
 const Schema = z.object({ kind: z.enum(['vote', 'funding', 'prefs']) });
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const { data: plan } = await db
     .from('plans')
-    .select('id, title, group_id, budget_cents, vote_options')
+    .select('id, title, group_id, budget_cents, vote_options, type')
     .eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
 
@@ -73,6 +74,22 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     });
   }
 
+  // Once a minute per trip, whoever presses it: every press is an email in
+  // somebody's inbox. Claimed here, after we know there is somebody to email,
+  // so a press that would send nothing does not use up the minute.
+  let claimId: string | null = null;
+  if (kind === 'prefs') {
+    const claim = await claimNudge(db, params.planId, ctx.user.id);
+    if (!claim.allowed) {
+      console.log('[notify] nudged less than a minute ago', { planId: params.planId, retryAfter: claim.retryAfterSeconds });
+      return NextResponse.json({
+        error: 'They were just emailed — you can nudge them again in a minute.',
+        retryAfterSeconds: claim.retryAfterSeconds,
+      }, { status: 429, headers: { 'Retry-After': String(claim.retryAfterSeconds) } });
+    }
+    claimId = claim.claimId ?? null;
+  }
+
   const { data: people } = await db
     .from('users').select('id, email').in('id', outstanding);
 
@@ -105,8 +122,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       ? await sendAnswersNeeded(person.email, {
           // "is planning Where next?" reads as a typo. A trip with no
           // destination yet is just their next trip.
-          planTitle: plan.title === 'Where next?' ? 'their next trip' : plan.title,
+          planTitle: plan.title === 'Where next?'
+            ? (plan.type === 'restaurant' ? 'their next night out' : 'their next trip')
+            : plan.title,
           groupName: group?.name || 'Your group', url,
+          night: plan.type === 'restaurant',
         })
       : await sendFundingNeeded(person.email, {
           planTitle: plan.title, groupName: group?.name || 'Your group',
@@ -118,6 +138,9 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       failures.push(result.reason || 'error');
     }
   }
+
+  // Nothing went, so nothing was nudged: the next press may try again now.
+  if (!notified) await releaseNudge(db, claimId);
 
   if (!notified && failures.length) {
     // Every send failed for the same reason, and it is almost always the key.

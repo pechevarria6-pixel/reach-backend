@@ -26,8 +26,25 @@ const withClerk = clerkMiddleware((auth, req) => {
   // sign-in screen. Redirect explicitly, and send them back where they were
   // headed once they're in.
   const { userId, redirectToSignIn } = auth();
-  if (!userId) return redirectToSignIn({ returnBackUrl: req.url });
+  if (!userId) {
+    const res = redirectToSignIn({ returnBackUrl: req.url });
+    // The email asking somebody what they want from a group trip links to
+    // /home?answer=<trip>. The address above should come back through
+    // sign-in intact, but sign-in has more than one way out — a new
+    // account goes through onboarding, a password manager lands on /home —
+    // and any of them drops the query. The trip is remembered beside it for
+    // an hour, so the app can still open the right questions afterwards.
+    const answer = req.nextUrl.searchParams.get('answer');
+    if (answer && ANSWER_ID.test(answer)) {
+      res.headers.append('Set-Cookie', `${ANSWER_COOKIE}=${answer}; Path=/; Max-Age=3600; SameSite=Lax; Secure`);
+    }
+    return res;
+  }
 });
+
+/** The trip a signed-out member was asked to answer for — see above. */
+const ANSWER_COOKIE = 'reach_answer';
+const ANSWER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const config = {
   matcher: [

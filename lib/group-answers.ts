@@ -22,7 +22,10 @@
 // the other.
 //
 // Nothing here ever goes back to the group. Readiness is names; the answers
-// go to the model and nowhere else.
+// go to the model and nowhere else — and, for a group, they go to it without
+// names, with an instruction never to say who asked for what, because
+// whatever the model writes is shown to every one of them. See
+// PRIVATE_ANSWERS_RULE below.
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /**
@@ -52,8 +55,14 @@ export interface AnswerRow {
 }
 
 export interface GroupAnswers {
-  /** One line per person who answered: "- Marco: … · … ". */
+  /** One line per person who answered: "- Marco: … · … ". Solo only. */
   lines: string[];
+  /**
+   * The same lines with nobody's name on them and nothing in quote marks:
+   * "- One of them: hoping for: … · … ". What a group's prompt carries,
+   * because everything the model writes is read by the whole group.
+   */
+  privateLines: string[];
   /** Everything anybody said to avoid. A constraint, never a hint. */
   vetoes: string[];
   /** Whose answers went in, by id — for the log, never for the screen. */
@@ -101,6 +110,7 @@ function money(v: unknown): number | null {
  */
 export function answersFrom(rows: AnswerRow[] | null | undefined): GroupAnswers {
   const lines: string[] = [];
+  const privateLines: string[] = [];
   const vetoes: string[] = [];
   const userIds: string[] = [];
   const budgets: number[] = [];
@@ -114,6 +124,9 @@ export function answersFrom(rows: AnswerRow[] | null | undefined): GroupAnswers 
 
     const said = String(r.summary_text || a.goalBlurb || '').trim();
     if (said) parts.push(`"${said.slice(0, 300)}"`);
+    // The unnamed line carries the wish, not the sentence: out of quote
+    // marks, and labelled as something to plan around rather than repeat.
+    const unnamed: string[] = said ? [`hoping for (in their words — never repeat them): ${said.slice(0, 300)}`] : [];
 
     const types = list(a.tripType);
     if (types.length) parts.push(`kind of trip: ${types.join(', ')}`);
@@ -145,10 +158,14 @@ export function answersFrom(rows: AnswerRow[] | null | undefined): GroupAnswers 
       byUser[String(r.user_id)] = { summary: said || null, answers: a };
     }
     if (parts.length) lines.push(`- ${who}: ${parts.join(' · ')}`);
+    const rest = said ? parts.slice(1) : parts;
+    unnamed.push(...rest);
+    if (unnamed.length) privateLines.push(`- One of them: ${unnamed.join(' · ')}`);
   }
 
   return {
     lines,
+    privateLines,
     vetoes: [...new Set(vetoes)],
     userIds,
     lowestBudget: budgets.length ? Math.min(...budgets) : null,
@@ -156,12 +173,173 @@ export function answersFrom(rows: AnswerRow[] | null | undefined): GroupAnswers 
   };
 }
 
-/** The block the prompt carries. Empty when nobody said anything usable. */
+/**
+ * The block a solo prompt carries: the one person's own answers, which the
+ * plan may say back to them. Empty when nothing usable was said.
+ *
+ * Never for a group — see answersBlock.
+ */
 export function wantedBlock(lines: string[]): string {
   if (!lines.length) return '';
-  return `\nWHAT EACH OF THEM ASKED FOR, FOR THIS TRIP — these are the
-answers that matter most here, because they were given about this trip and not
-about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
+  return `\nWHAT THEY ASKED FOR, FOR THIS TRIP — these are the answers that
+matter most here, because they were given about this trip and not about trips
+in general. Plan around them:\n${lines.join('\n')}\n`;
+}
+
+/**
+ * Answers are private within a group.
+ *
+ * Everybody was told so — on the quiz, on the wait, in the email: the group
+ * sees that you have answered, never what you said. And everything the model
+ * writes for a group trip is shown to all of them: used_suggestions on every
+ * option card, saved as the trip's why_chosen on its Overview, the days
+ * themselves. So a model told to "plan around them by name" put "Sam won't
+ * fly more than 4 hours" in front of the whole group, and the promise was
+ * broken by our own prompt.
+ *
+ * The group's wishes still shape every option. They are described the way a
+ * friend who heard everybody out would put it — "a beach within a short
+ * flight" — never who wanted it, never in anybody's words.
+ */
+export const PRIVATE_ANSWERS_RULE = `THESE ANSWERS ARE PRIVATE WITHIN THE GROUP. Everything you write is shown to
+every one of them, and each was promised the others would never see what they
+said. So, everywhere in your answer — used_suggestions, why_this_group,
+tagline, every plan line and tip:
+- never name who asked for something, and never attribute a wish, a budget
+  or a hard no to anybody ("one of you", "someone" is attribution too)
+- never quote anyone, or repeat their words back
+- describe what the group wants in general terms: "a beach within a short
+  flight", never "[name] won't fly more than 4 hours"; "kept to the lower end of
+  what the group is spending", never whose budget that is.`;
+
+/**
+ * The block a prompt carries for everybody's answers to this trip.
+ *
+ * A group gets the unnamed lines and the rule above; one person travelling
+ * alone gets their own words, which are theirs to have read back.
+ */
+export function answersBlock(
+  read: Pick<GroupAnswers, 'lines' | 'privateLines'>,
+  opts: { group: boolean },
+): string {
+  if (!opts.group) return wantedBlock(read.lines);
+  if (!read.privateLines.length) return '';
+  return `\nWHAT THE GROUP ASKED FOR, FOR THIS TRIP — one line per person, unnamed on
+purpose. These are the answers that matter most here, because they were given
+about this trip and not about trips in general. Plan around all of them
+together:\n${read.privateLines.join('\n')}\n\n${PRIVATE_ANSWERS_RULE}\n`;
+}
+
+/**
+ * Each member's standing "what are trips about for you" answer, for the
+ * options prompt. Named and quotable for one person; for a group, unnamed,
+ * and under the same rule as this trip's answers.
+ */
+export function standingWishesBlock(
+  said: Array<{ name: string; text: string }>,
+  opts: { group: boolean },
+): string {
+  const usable = said.filter(x => x.text.trim());
+  if (!usable.length) return '';
+  const lines = opts.group
+    ? usable.map(x => `- One of them, in general: ${x.text.trim().slice(0, 300)}`)
+    : usable.map(x => `${x.name || 'Someone'} said: "${x.text.trim().slice(0, 300)}"`);
+  const how = opts.group
+    ? `Answer these. For every option, used_suggestions lists which of these wishes
+it acts on and how, in general terms and naming nobody: "somewhere with snow
+for a birthday — this is a ski town". If an option genuinely acts on none of
+them, send an empty array rather than inventing one.
+
+${PRIVATE_ANSWERS_RULE}`
+    : `Answer these. For every option, used_suggestions lists which of them it acts
+on and how: "somewhere your sister can see snow — this is a ski town". If an
+option genuinely acts on none of them, send an empty array rather than
+inventing one. Do not repeat a wish back as though quoting it were the same as
+planning around it.`;
+  return `\nWHAT THEY SAID THEY WANT FROM TRIPS IN GENERAL:\n${lines.join('\n')}\n
+These are standing answers about trips in general. Where one disagrees with
+what they said THIS trip is, this trip wins — a note about snow does not
+override "in Aspen to celebrate a birthday", and an option whose
+used_suggestions only mentions a standing answer has ignored the thing
+actually being planned.
+
+${how}\n`;
+}
+
+/**
+ * The group's trip, from everybody's answers rather than the organiser's.
+ *
+ * The lines the options prompt leads with — what the trip is for, where they
+ * would stay, the pace — were filled from whoever set the trip up, with
+ * everyone else's answers in a block further down. For a group those are
+ * everybody's: every kind of trip anybody asked for, every kind of place
+ * anybody would stay, and the pace most of them chose. A tie goes to the
+ * slower pace, because a packed week somebody asked not to have is worse
+ * than a quiet one somebody would have filled.
+ *
+ * Empty fields mean nobody said, and the caller keeps what it had.
+ */
+const PACE_ORDER = ['relaxed', 'balanced', 'packed'];
+export function groupFraming(read: Pick<GroupAnswers, 'byUser'>): {
+  tripTypes: string[]; accommodation: string[]; pace: string | null;
+} {
+  const types = new Set<string>();
+  const stay = new Set<string>();
+  const paces = new Map<string, number>();
+  for (const { answers: a } of Object.values(read.byUser || {})) {
+    for (const t of list(a.tripType)) types.add(t);
+    for (const s of list(a.accommodation)) stay.add(s);
+    const p = a.pace ? word(a.pace) : '';
+    if (p) paces.set(p, (paces.get(p) ?? 0) + 1);
+  }
+  const rank = (p: string) => {
+    const i = PACE_ORDER.indexOf(p);
+    return i === -1 ? 1 : i; // something unrecognised sits in the middle
+  };
+  let pace: string | null = null;
+  for (const [p, n] of paces) {
+    const best = pace ? paces.get(pace)! : -1;
+    if (n > best || (n === best && rank(p) < rank(pace!))) pace = p;
+  }
+  return { tripTypes: [...types], accommodation: [...stay], pace };
+}
+
+/**
+ * What came back, read against the same promise.
+ *
+ * The prompt tells the model never to say who asked for what. This checks it
+ * did as it was told: a line naming anybody in the group, or repeating six
+ * words in a row of what somebody wrote, is dropped. A name that is in the
+ * trip's own title is not private — everybody can see the title — so a trip
+ * called "Kyle's fortieth" may still say it is for Kyle's fortieth.
+ */
+export function attributes(
+  text: string,
+  who: { names: string[]; said: string[]; title?: string | null },
+): boolean {
+  const t = String(text || '');
+  if (!t.trim()) return false;
+  const title = String(who.title || '').toLowerCase();
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const raw of who.names) {
+    const n = String(raw || '').trim();
+    if (n.length < 2) continue;
+    const re = new RegExp(`\\b${esc(n)}\\b`, 'i');
+    if (re.test(title)) continue;
+    if (re.test(t)) return true;
+  }
+  const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+  const hay = ` ${words(t).join(' ')} `;
+  const titleWords = ` ${words(title).join(' ')} `;
+  for (const s of who.said) {
+    const w = words(s);
+    for (let i = 0; i + 6 <= w.length; i++) {
+      const run = w.slice(i, i + 6).join(' ');
+      if (titleWords.includes(` ${run} `)) continue;
+      if (hay.includes(` ${run} `)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -181,7 +359,7 @@ export async function readGroupAnswers(
     .not('submitted_at', 'is', null);
   if (error) {
     console.error('[group answers] could not read what the group asked for', { plan: planId, code: error.code });
-    return { lines: [], vetoes: [], userIds: [], lowestBudget: null, byUser: {}, error: error.code || 'read failed' };
+    return { lines: [], privateLines: [], vetoes: [], userIds: [], lowestBudget: null, byUser: {}, error: error.code || 'read failed' };
   }
   return { ...answersFrom(data as AnswerRow[]), error: null };
 }

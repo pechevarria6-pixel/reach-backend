@@ -135,11 +135,15 @@ export function sendVoteNeeded(to: string, opts: { planTitle: string; groupName:
  * for exactly one thing, and says why it matters: the options are only built
  * once everybody has answered. Nobody else's answers are in it.
  */
-export function sendAnswersNeeded(to: string, opts: { planTitle: string; groupName: string; url: string }) {
-  return send(to, `${opts.groupName} wants to hear from you`, shell('What do you want from this trip?', `
+export function sendAnswersNeeded(to: string, opts: { planTitle: string; groupName: string; url: string; night?: boolean }) {
+  // A night out is not a trip, and an email calling it one is the first thing
+  // somebody reads about it.
+  const kind = opts.night ? 'night out' : 'trip';
+  const options = opts.night ? 'ideas for the night' : 'trip options';
+  return send(to, `${opts.groupName} wants to hear from you`, shell(`What do you want from this ${kind}?`, `
     <p style="font-size:15px;line-height:1.6;margin:0 0 14px;">
       <strong>${escape(opts.groupName)}</strong> is planning <strong>${escape(opts.planTitle)}</strong>,
-      and the trip options are only put together once everyone going has answered the same few questions.
+      and the ${options} are only put together once everyone going has answered the same few questions.
     </p>
     <p style="font-size:14px;line-height:1.6;color:#635539;margin:0 0 20px;">
       Your answers are yours — the group sees that you have answered, never what you said.
