@@ -10,6 +10,12 @@ import { z } from 'zod';
 import { requireUser, isFail } from '@/lib/auth';
 import { pushConfigured, publicKey } from '@/lib/push';
 
+// Read at request time. A GET that touches nothing from the request is
+// prerendered at build by default, and the answer to "are phone
+// notifications on" was frozen as whatever the build saw — no keys, so
+// "configured: false" for ever, even after the keys were added.
+export const dynamic = 'force-dynamic';
+
 const Sub = z.object({
   subscription: z.object({
     endpoint: z.string().url().max(1000),
