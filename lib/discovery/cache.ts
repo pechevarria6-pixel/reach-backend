@@ -168,11 +168,31 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   // on the seeker's interests it would be stored where nobody looks, which is
   // exactly what happened: twenty rows written and none ever read. Its gates
   // are the ones it was found by — near here, and not stale.
+  //
+  // Near and upcoming INSIDE the query. This fetched sixty rows from anywhere
+  // in the world, in no order, and only then kept the ones near the reader —
+  // measured: Raleigh holds 84 harvested classes within the box and 0 reached
+  // the screen; Miami 20 ticketed events and 0. The sixty slots went to other
+  // cities and to events that had already happened. Harvested rows hang off a
+  // venue, so the box is on the venue (an inner embed); ticketed rows carry
+  // their own point. The JS checks below stay as a second line.
+  const day = dayWhere(seeker.lng);
+  const near = box(seeker), far = box(seeker, TICKETED_MILES);
+  const upcoming = `starts_on.is.null,starts_on.gte.${day}`;
+  const HARVEST_COLUMNS = COLUMNS.replace('discovery_venues(', 'discovery_venues!inner(');
   const [harvested, external] = await Promise.all([
+    db.from('discovery_events').select(HARVEST_COLUMNS)
+      .eq('source', 'harvest').in('interest', asStored(keys)).gt('stale_after', fresh)
+      .gte('discovery_venues.lat', seeker.lat - near.dLat).lte('discovery_venues.lat', seeker.lat + near.dLat)
+      .gte('discovery_venues.lng', seeker.lng - near.dLng).lte('discovery_venues.lng', seeker.lng + near.dLng)
+      .or(upcoming)
+      .order('starts_on', { ascending: true, nullsFirst: false }).limit(60),
     db.from('discovery_events').select(COLUMNS)
-      .eq('source', 'harvest').in('interest', asStored(keys)).gt('stale_after', fresh).limit(60),
-    db.from('discovery_events').select(COLUMNS)
-      .neq('source', 'harvest').gt('stale_after', fresh).limit(60),
+      .neq('source', 'harvest').gt('stale_after', fresh)
+      .gte('lat', seeker.lat - far.dLat).lte('lat', seeker.lat + far.dLat)
+      .gte('lng', seeker.lng - far.dLng).lte('lng', seeker.lng + far.dLng)
+      .or(upcoming)
+      .order('starts_on', { ascending: true, nullsFirst: false }).limit(60),
   ]);
 
   const error = harvested.error ?? external.error;
@@ -234,6 +254,10 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
       return Math.abs(f.lat - seeker.lat) <= reach.dLat && Math.abs(f.lng - seeker.lng) <= reach.dLng;
     })
     .filter(f => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid))
+    // One event once. "Balloon Museum | Pop Air" was stored eighteen times
+    // under the same title, venue and date, and each copy took a slot.
+    .filter((f, i, all) => all.findIndex(g =>
+      g.title.toLowerCase() === f.title.toLowerCase() && g.venue === f.venue && g.date === f.date) === i)
     .slice(0, 40);
 
   return { source: 'harvest', status: 'ok', findings };

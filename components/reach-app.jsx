@@ -1189,11 +1189,18 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
         // a thin list, and saying so beats implying a deep catalogue.
         setThin(!!data.thin);
         setWeek(data.week||[]);
-        if(data.events?.length){
-          setLocalRecs(data.events);
-          // Cache in sessionStorage so reload is instant
-          try{sessionStorage.setItem("reach_nearby",JSON.stringify({events:data.events,city:data.city,ts:Date.now()}));}catch(e){}
-        }
+        // What came back is the answer, empty or not. An empty answer used to
+        // leave the last list on screen — another session's, or another
+        // city's — under this place's name.
+        setLocalRecs(data.events||[]);
+        try{
+          if(data.events?.length)sessionStorage.setItem("reach_nearby",JSON.stringify({
+            events:data.events,city:data.city,ts:Date.now(),
+            // Where it was for, so a cached list is only reused for the same place.
+            lat:lat!=null?Math.round(lat*100)/100:null,lng:lng!=null?Math.round(lng*100)/100:null,
+          }));
+          else sessionStorage.removeItem("reach_nearby");
+        }catch(e){}
       }else{
         console.error("[discover] nearby returned",res.status);
         setReason("provider_error");
@@ -1211,9 +1218,14 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     try{
       const cached=sessionStorage.getItem("reach_nearby");
       if(!cached)return false;
-      const {events,ts}=JSON.parse(cached);
-      // Use cache if less than 2 hours old
-      if(Date.now()-ts<7200000&&events?.length){
+      const {events,ts,lat,lng,city}=JSON.parse(cached);
+      // Only for the place it was fetched for. A list cached in Raleigh was
+      // shown as "near you" in Aberdeen until the refresh landed.
+      const here=userLocation||{};
+      const samePlace=here.lat!=null&&lat!=null
+        ?Math.abs(Math.round(here.lat*100)/100-lat)<0.02&&Math.abs(Math.round(here.lng*100)/100-lng)<0.02
+        :!!city&&city===(here.city||here.formatted);
+      if(samePlace&&Date.now()-ts<7200000&&events?.length){
         setLocalRecs(events);
         setLoaded(true);
         return true;
