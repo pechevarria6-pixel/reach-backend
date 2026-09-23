@@ -33,6 +33,10 @@ async function fundingStatus(
   const bookings = chargedRows(rows);
   const targetCents = bookings.reduce((s, b) => s + (b.price_cents || 0), 0);
 
+  // select('*'), never naming refunded_cents: before
+  // sql/wave1-refunds-2026-09-22.sql runs the column is not there, and naming
+  // it would fail the whole read. collectedCents counts a missing one as
+  // nothing refunded, and money handed back never counts towards the target.
   const { data: contributions } = await db
     .from('contributions').select('*').eq('plan_id', planId);
   // Net of anything Stripe has given back — the same figure approval checks

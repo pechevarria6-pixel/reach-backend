@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { apportion, evenSplit, planShares, settleUp } from '@/lib/money';
 import { planSkips } from '@/lib/participation';
+import { netPaidCents } from '@/lib/refunds';
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -73,14 +74,18 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
 
   // Contributions were fetched but never counted, so money already collected
   // for the trip did not reduce anyone's balance.
-  const target = (contributions || []).reduce((s, c) => s + c.amount_cents, 0);
+  //
+  // Net of refunds: a share Stripe has handed back is not money in the pot,
+  // and counting it would show the payer as owed money they already have.
+  // netPaidCents reads a missing refunded_cents column as nothing refunded.
+  const target = (contributions || []).reduce((s, c) => s + netPaidCents(c), 0);
   if (target > 0 && members.length > 0) {
     // Collected money is owed in proportion to each person's share, so
     // somebody who sat out the dinner is not down for a slice of it. With
     // nobody sitting anything out this is the even split it always was.
     const owed = planShares(chargedRows(bookings), Number(ctx.plan.budget_cents) || 0, members, skips);
     apportion(target, members.map(id => owed[id] || 0)).forEach((share, i) => add(members[i], -share));
-    for (const c of contributions || []) add(c.user_id, c.amount_cents);
+    for (const c of contributions || []) add(c.user_id, netPaidCents(c));
   }
 
   return NextResponse.json({

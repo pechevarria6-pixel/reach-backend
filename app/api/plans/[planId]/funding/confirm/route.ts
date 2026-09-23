@@ -24,10 +24,15 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // Stripe says the money moved. If this write does not land, the plan goes
   // on believing that share was never paid — so the person is asked for it
   // twice and the funding gate holds a trip that is actually funded.
+  //
+  // A refunded payment's intent still says succeeded at Stripe, so a screen
+  // confirming it again after the refund would have made the plan count
+  // money it had handed back. Refunded stays refunded.
   const { error: recorded } = await ctx.db.from('contributions')
     .update({ status: 'succeeded', updated_at: new Date().toISOString() })
     .eq('stripe_payment_intent', paymentIntentId)
-    .eq('user_id', ctx.user.id);
+    .eq('user_id', ctx.user.id)
+    .neq('status', 'refunded');
   if (recorded) {
     console.error('[funding] paid at Stripe but not recorded', { plan: params.planId, code: recorded.code });
     return NextResponse.json({ error: "Your payment went through — we couldn't record it. Don't pay again; tell us and we'll sort it." }, { status: 500 });

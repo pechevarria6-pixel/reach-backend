@@ -3,7 +3,7 @@ import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { appUrl } from '@/lib/app-url';
 import { stripe } from '@/lib/stripe';
 import { createServerClient } from '@/lib/supabase';
-import { refundOutcome } from '@/lib/refunds';
+import { refundOutcome, refundedCentsOf, collectedCents as sumCollected, isMissingColumn, REFUNDS_MIGRATION } from '@/lib/refunds';
 import { sendPaymentReceipt, sendFullyFunded } from '@/lib/email';
 import Stripe from 'stripe';
 import { track } from '@/lib/track';
@@ -41,9 +41,14 @@ export async function POST(req: NextRequest) {
         // second time for a share they have already paid. Logged, not
         // thrown: the webhook must answer 200 or Stripe retries for days,
         // and the funds-flow path is not being changed here.
+        //
+        // Never over a refund: Stripe retries this event for days, and one
+        // arriving after the payment was handed back would make the plan
+        // count that money again.
         const { error: markPaid } = await supabase.from('contributions')
           .update({ status: 'succeeded', updated_at: new Date().toISOString() })
-          .eq('stripe_payment_intent', intent.id);
+          .eq('stripe_payment_intent', intent.id)
+          .neq('status', 'refunded');
         if (markPaid) {
           console.error('[stripe webhook] MONEY TAKEN BUT NOT RECORDED', {
             intent: intent.id, plan: intent.metadata.plan_id, code: markPaid.code,
@@ -125,30 +130,55 @@ export async function POST(req: NextRequest) {
       const intentId = typeof charge.payment_intent === 'string'
         ? charge.payment_intent
         : charge.payment_intent?.id;
+      //
+      // charge.amount_refunded is the authority: it is the running total of
+      // every refund on the charge, whether it came from
+      // /api/plans/[planId]/funding/refund or from somebody pressing Refund
+      // in the Stripe dashboard. It is written as-is into refunded_cents
+      // rather than added to it, so a retried event writes the same number
+      // twice instead of counting a refund twice. Stripe does not promise
+      // order, so an older event (a smaller running total) arriving late
+      // never lowers what is already recorded.
       if (intentId) {
+        // select('*') so this read works before refunded_cents exists.
         const { data: contribution, error: readError } = await supabase
           .from('contributions')
-          .select('id, amount_cents, status')
+          .select('*')
           .eq('stripe_payment_intent', intentId)
           .maybeSingle();
         if (readError) {
           console.error('[webhooks/stripe] could not read the contribution for a refund', { intent: intentId, error: readError.message });
         } else if (contribution) {
-          const outcome = refundOutcome(contribution.amount_cents, charge.amount_refunded);
-          if (outcome.note) {
-            console.error('[webhooks/stripe] refund not fully reflected in the funding math', {
-              contribution: contribution.id, plan: charge.metadata?.plan_id, note: outcome.note,
-            });
-          }
-          if (outcome.status === 'refunded' && contribution.status !== 'refunded') {
-            const { error: writeError } = await supabase.from('contributions')
-              .update({ status: 'refunded', updated_at: new Date().toISOString() })
-              .eq('id', contribution.id);
-            if (writeError) {
-              // Stripe will retry this event, which is the point of saying so.
-              console.error('[webhooks/stripe] could not mark a contribution refunded', { contribution: contribution.id, error: writeError.message });
-              return NextResponse.json({ error: 'could not record the refund' }, { status: 500 });
+          const outcome = refundOutcome(
+            contribution.amount_cents,
+            Math.max(refundedCentsOf(contribution), Number(charge.amount_refunded) || 0),
+          );
+          const now = new Date().toISOString();
+          let { error: writeError } = await supabase.from('contributions')
+            .update({ status: outcome.status, refunded_cents: outcome.refundedCents, updated_at: now })
+            .eq('id', contribution.id);
+
+          // Before sql/wave1-refunds-2026-09-22.sql there is no column to
+          // hold an amount. A whole refund can still be said with the
+          // status, as it always was. Part of one cannot, and the plan goes
+          // on counting that money until the migration runs.
+          if (writeError && isMissingColumn(writeError)) {
+            if (outcome.partial) {
+              console.error(`[webhooks/stripe] a part refund cannot be recorded until ${REFUNDS_MIGRATION} runs — the plan still counts this money`, {
+                contribution: contribution.id, plan: charge.metadata?.plan_id,
+                refundedCents: outcome.refundedCents, amountCents: contribution.amount_cents,
+              });
+              writeError = null;
+            } else {
+              ({ error: writeError } = await supabase.from('contributions')
+                .update({ status: outcome.status, updated_at: now })
+                .eq('id', contribution.id));
             }
+          }
+          if (writeError) {
+            // Stripe will retry this event, which is the point of saying so.
+            console.error('[webhooks/stripe] could not record a refund on the contribution', { contribution: contribution.id, error: writeError.message });
+            return NextResponse.json({ error: 'could not record the refund' }, { status: 500 });
           }
         }
       }
@@ -176,11 +206,11 @@ async function announceIfFunded(
     const targetCents = chargedRows(bookings).reduce((s, b) => s + (b.price_cents || 0), 0);
     if (targetCents <= 0) return;
 
+    // Net of refunds, and select('*') so a missing refunded_cents column
+    // reads as nothing refunded rather than failing the read.
     const { data: contributions } = await supabase
-      .from('contributions').select('amount_cents,status').eq('plan_id', planId);
-    const collectedCents = (contributions || [])
-      .filter(c => c.status === 'succeeded')
-      .reduce((s, c) => s + c.amount_cents, 0);
+      .from('contributions').select('*').eq('plan_id', planId);
+    const collectedCents = sumCollected(contributions || []);
     if (collectedCents < targetCents) return;
 
     const { data: plan } = await supabase

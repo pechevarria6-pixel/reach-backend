@@ -46,9 +46,10 @@ export async function GET() {
     // holds zero rows, so this screen showed an empty payment history to
     // somebody who had paid — twice, in this database.
     //
-    // A refund is a status here rather than a partial amount: the webhook
-    // marks the whole contribution refunded, because a share is paid or it
-    // is not.
+    // A whole refund shows as the status 'refunded'. Part of one is recorded
+    // in refunded_cents (sql/wave1-refunds-2026-09-22.sql) and is not listed
+    // here yet: naming that column would fail this read until the migration
+    // runs, and this history shows what was paid, not what came back.
     db.from('contributions')
       .select('id, amount_cents, currency, status, created_at, plan_id')
       .eq('user_id', user.id).order('created_at', { ascending: false }).limit(10),

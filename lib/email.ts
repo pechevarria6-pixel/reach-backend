@@ -272,3 +272,21 @@ export function sendItinerary(to: string, opts: {
     <p style="margin-top:20px;"><a href="${escape(opts.url)}" style="${emailButtonStyle}">Open it in Reach</a></p>`),
   'itinerary');
 }
+
+// ── To whoever runs Reach ────────────────────────────────────────────────
+
+/**
+ * A booking failed after the group had paid for it. Nothing else tells a
+ * person: the screen said "we'll follow up" and no job, cron or inbox ever
+ * heard about it. This goes to the address the rest of these emails already
+ * give customers to write to, because that is the inbox somebody reads.
+ *
+ * `lines` come from paidFailureNotice in lib/refunds.ts, so what it says is
+ * tested there and not assembled here.
+ */
+export function sendPaidFailureAlert(opts: { subject: string; lines: string[] }) {
+  const body = opts.lines
+    .map(l => `<p style="font-size:14px;line-height:1.6;margin:0 0 8px;">${escape(l)}</p>`)
+    .join('');
+  return send(SUPPORT, opts.subject, shell('A paid booking failed', body), 'paid-failure alert');
+}

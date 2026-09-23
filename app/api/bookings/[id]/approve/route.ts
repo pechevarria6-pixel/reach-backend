@@ -51,6 +51,7 @@ import { atVersion, claimBooking, finishClaim, midClaim, M1 } from '@/lib/bookin
 import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 import { sendBookingConfirmation } from '@/lib/email';
 import { track } from '@/lib/track';
+import { reportPaidFailure } from '@/lib/paid-failure';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const supabase = createServerClient;
@@ -370,6 +371,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       status: 'failed', error: msg, updated_at: new Date().toISOString(),
     });
     if (error) console.error('[approve] a failed booking could not be marked failed', { bookingId: booking.id, error });
+    await reportPaidFailure(db, booking, msg);
     return refuse(502, { code: 'provider_failed', error: msg });
   }
 
@@ -395,6 +397,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       updated_at: new Date().toISOString(),
     });
     if (error) console.error('[approve] a failed booking could not be marked failed', { bookingId: booking.id, error });
+    await reportPaidFailure(db, booking, result.error);
     return refuse(502, { code: 'provider_failed', error: result.error || 'The provider refused this booking.' });
   }
 
