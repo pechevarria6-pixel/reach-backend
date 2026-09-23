@@ -318,3 +318,16 @@ test('a timestamp is still a day, not an undated plan', () => {
   assert.equal(planDay({ startDate: '2026-10-03T00:00:00+00:00' }), '2026-10-03');
   assert.equal(planDay({ startDate: '2026-13-03T00:00:00Z' }), null);
 });
+
+import { isLive } from '../../lib/calendar.ts';
+// Both from the table: past, and never marked completed.
+test('a dinner last Sunday is not a plan on', () => {
+  assert.equal(isLive({ status: 'planning', startDate: '2026-09-20' }, '2026-09-23'), false);
+  assert.equal(isLive({ status: 'approved', startDate: '2026-09-21', endDate: '2026-09-21' }, '2026-09-23'), false);
+});
+test('cancelled is not on; undated and upcoming and happening now are', () => {
+  assert.equal(isLive({ status: 'cancelled', startDate: '2026-12-01' }, '2026-09-23'), false);
+  assert.equal(isLive({ status: 'planning' }, '2026-09-23'), true);
+  assert.equal(isLive({ status: 'approved', startDate: '2026-10-10' }, '2026-09-23'), true);
+  assert.equal(isLive({ status: 'approved', startDate: '2026-09-17', endDate: '2026-09-30' }, '2026-09-23'), true);
+});

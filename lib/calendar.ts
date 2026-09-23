@@ -421,3 +421,16 @@ export function tripTiming(plan: DatedPlan, today: string): TripTiming | null {
 export function worthQuoting(plan: DatedPlan, today: string): boolean {
   return tripTiming(plan, today) === 'upcoming';
 }
+
+/**
+ * Whether a plan is still on: not completed or cancelled, and not over by its
+ * own dates. Nothing ever sets a plan to "completed" — the date is the fact we
+ * hold — so a dinner last Sunday counted as one of a group's "plans on" and
+ * still asked for votes and money on Home. Undated plans are live: they are
+ * still coming, even if nobody knows when. One definition, so the group card,
+ * Home's upcoming list and Home's actions cannot disagree.
+ */
+export function isLive(p: { status?: string | null; startDate?: unknown; endDate?: unknown }, todayISO: string): boolean {
+  if (p.status === 'completed' || p.status === 'cancelled') return false;
+  return tripTiming({ startDate: p.startDate, endDate: p.endDate }, todayISO) !== 'over';
+}

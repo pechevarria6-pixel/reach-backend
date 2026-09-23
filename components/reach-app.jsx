@@ -3,7 +3,7 @@ import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
 import { namesList } from "@/lib/group-answers";
 import { itemsFromRows } from "@/lib/contracts/itinerary-item";
-import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming } from "@/lib/calendar";
+import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
@@ -704,7 +704,7 @@ function NotificationsBell(){
   );
 }
 
-function HomeScreen({groups,um,push,toast,loading,user,setTab}){
+function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
   // The server has no idea what time it is where you are. Anything that reads
   // the clock waits for the browser rather than guessing and being corrected.
   const [mounted,setMounted]=useState(false);
@@ -716,45 +716,48 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   const [nearbyEvents,setNearbyEvents]=useState([]);
   const [nearbyState,setNearbyState]=useState("loading"); // loading|ready|denied|none
   const [nearbyReason,setNearbyReason]=useState(null);
-  useEffect(()=>{
-    // Every exit from here has to move the state off "loading". A swallowed
-    // throw left the strip reading "Looking for events near you…" forever,
-    // which is indistinguishable from a hung app.
+  // Where "near you" is: the app's own answer, the one Discover uses —
+  // a place somebody picked, then this device, then their home city. Home
+  // used to ask the browser for itself, label the list with the profile's
+  // home city whatever the coordinates said, and answer a refusal with
+  // "reload". Now a refusal falls back to the home city on its own.
+  const [hiddenRefs,setHiddenRefs]=useState(()=>new Set());
+  useEffect(()=>{(async()=>{
     try{
-      if(typeof navigator==="undefined"||!navigator.geolocation){
-        setNearbyState("denied");
-        return;
+      const r=await fetch("/api/recommendations/feedback");
+      if(r.ok){const d=await r.json();setHiddenRefs(new Set(d.hidden||[]));}
+    }catch(e){console.error("[home] could not read what you've ruled out",e);}
+  })();},[]);
+  useEffect(()=>{
+    let live=true;
+    const lat=userLocation?.lat, lng=userLocation?.lng;
+    const city=userLocation?.city||userLocation?.formatted||"";
+    if(lat==null&&!city){setNearbyState("denied");return;}
+    setNearbyState("loading");
+    (async()=>{
+      try{
+        const q=lat!=null&&lng!=null
+          ?`lat=${lat}&lng=${lng}&city=${encodeURIComponent(city)}`
+          :`city=${encodeURIComponent(city)}`;
+        const res=await fetch("/api/nearby?"+q);
+        if(!live)return;
+        if(res.ok){
+          const data=await res.json();
+          setNearbyEvents(data.events||[]);
+          setNearbyReason(data.reason||null);
+          setNearbyState(data.events?.length?"ready":"none");
+        }else{
+          console.error("[home] nearby returned",res.status);
+          setNearbyReason("provider_error");
+          setNearbyState("none");
+        }
+      }catch(e){
+        console.error("[home] nearby failed",e);
+        if(live){setNearbyReason("provider_error");setNearbyState("none");}
       }
-      navigator.geolocation.getCurrentPosition(
-        async function(pos){
-          try{
-            const lat=pos.coords.latitude;
-            const lng=pos.coords.longitude;
-            const res=await fetch("/api/nearby?lat="+lat+"&lng="+lng);
-            if(res.ok){
-              const data=await res.json();
-              setNearbyEvents(data.events||[]);
-              setNearbyReason(data.reason||null);
-              setNearbyState(data.events?.length?"ready":"none");
-            }else{
-              console.error("[home] nearby returned",res.status);
-              setNearbyReason("provider_error");
-              setNearbyState("none");
-            }
-          }catch(e){
-            console.error("[home] nearby failed",e);
-            setNearbyReason("provider_error");
-            setNearbyState("none");
-          }
-        },
-        function(err){ setNearbyState("denied"); },
-        {timeout:8000,enableHighAccuracy:false,maximumAge:300000}
-      );
-    }catch(e){
-      console.error("[home] geolocation unavailable",e);
-      setNearbyState("denied");
-    }
-  },[]);
+    })();
+    return()=>{live=false;};
+  },[userLocation?.lat,userLocation?.lng,userLocation?.city]);
   const allPlans=groups.flatMap(g=>g.plans.map(p=>({...p,group:g})));
   // Group trips still deciding where they go, and whether each has heard
   // from me and from everybody. Names and yes-or-no only, from the same
@@ -785,13 +788,16 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   const upcoming=[
     ...groupSchedule(groups,todayISO,500).map(r=>({...r.plan,group:r.group})),
     ...allPlans.filter(p=>!p.startDate&&p.status!=="completed"&&p.status!=="cancelled"),
-  ].filter(p=>p.status!=="completed"&&p.status!=="cancelled");
+  ].filter(p=>isLive(p,todayISO));
   // Everything waiting on somebody, not only votes. Ordered by how close the
   // trip is to finished rather than by age: the one nearly done pulls hardest,
   // and a list sorted by urgency means the top item is always the right one.
   // The wording is what is waiting rather than what is missing — "waiting on
   // you" is a thing to rescue, "you haven't paid" is an accusation.
   const solo=g=>(g?.memberIds||[]).length<=1;
+  // Only plans still on. The vote, pay and plan actions had no date check,
+  // so a dinner last Sunday still asked for votes and money here.
+  const live=allPlans.filter(p=>isLive(p,todayISO));
   const actions=[
     // Home said "Moab, Utah, USA is ready to book" five days into its own
     // dates, next to a plan screen that had just learned to say the opposite:
@@ -801,7 +807,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
     // A trip that has started is not dropped from this list. There may still
     // be a table to ring about, and hiding the trip hides that too — it just
     // stops being described as something to book ahead.
-    ...allPlans.filter(p=>p.status==="approved"
+    ...live.filter(p=>p.status==="approved"
       &&tripTiming({startDate:p.startDate,endDate:p.endDate},todayISO)!=="over").map(p=>({
       // "This is the last step" is a promise the next screen cannot always
       // keep: a trip can be approved and still have nothing priced to
@@ -822,7 +828,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         :solo(p.group)?"You're all set — let's see what we can get booked":"Everyone's in — let's see what we can get booked",
       plan:p,
       cta:tripTiming({startDate:p.startDate,endDate:p.endDate},todayISO)==="on_now"?"Open →":"Book →"})),
-    ...allPlans.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
+    ...live.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
       type:"vote",rank:1,text:`${p.group.name} is deciding on ${p.title}`,
       sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →"})),
     // A group trip waits for everybody's answers before any trip is found.
@@ -844,12 +850,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
         sub:`Find the ${p.type==="restaurant"?"nights out":"trips"} — built from what each of you said`,plan:p,cta:"Find →",go:go("groupTrip")}];
       return [];
     }),
-    ...allPlans.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)>0&&!solo(p.group)).map(p=>({
+    ...live.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)>0&&!solo(p.group)).map(p=>({
       type:"pay",rank:2,text:`${p.title} is waiting on everyone's share`,
       sub:`$${p.budget?.toLocaleString?.()||p.budget} each`,plan:p,cta:"Pay →"})),
     // Not a trip with no destination: there are no days to write for
     // nowhere, and the server says so if asked.
-    ...allPlans.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)===0).map(p=>({
+    ...live.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)===0).map(p=>({
       type:"plan",rank:3,text:`${p.title} has no days yet`,
       sub:"We can write the whole thing in about 20 seconds",plan:p,cta:"Plan →"})),
   ].sort((a,b)=>a.rank-b.rank).slice(0,4);
@@ -1077,9 +1083,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       </>)}
       <div style={{padding:"14px 20px 6px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
         <span className="sl">Near you</span>
-        {user?.location&&<span style={{fontSize:11,color:C.t3}}>📍 {user.location}</span>}
+        {(userLocation?.city||userLocation?.formatted)&&<span style={{fontSize:11,color:C.t3}}>📍 {userLocation.city||userLocation.formatted}</span>}
       </div>
-      {nearbyEvents.map((n,i)=>(
+      {/* Three, and the rest on Discover. Home showing the whole list was a
+          second, worse copy of Discover — and it ignored everything somebody
+          had said "not for me" to there. Same key Discover hides by. */}
+      {nearbyEvents.filter(n=>!hiddenRefs.has(`${String(n.source||"unknown").toLowerCase()}:local_${n.id}`)).slice(0,3).map((n,i)=>(
         <div key={i}
           onClick={()=>{ if(n.url)window.open(n.url,"_blank","noopener,noreferrer"); }}
           style={{margin:"0 20px 8px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,cursor:n.url?"pointer":"default"}}>
@@ -1097,11 +1106,17 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
       {nearbyState!=="ready"&&(
         <div style={{margin:"0 20px",padding:"14px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
           {nearbyState==="loading"?"Looking for things to do near you…"
-            :nearbyState==="denied"?"Allow location in your browser and reload to see events near you."
+            :nearbyState==="denied"?<>Reach doesn't know where you are yet. <button onClick={()=>setTab("discover")} style={{background:"none",border:"none",padding:0,color:C.accentText,fontWeight:600,cursor:"pointer"}}>Pick a place →</button></>
             :nearbyReason==="no_key"?"Event listings aren't switched on for this deployment yet."
             :nearbyReason==="provider_error"?"Couldn't reach the listings just now. Try again shortly."
             :"Nothing close by just yet. Reach looks again every night."}
         </div>
+      )}
+      {nearbyState==="ready"&&nearbyEvents.length>3&&(
+        <button onClick={()=>setTab("discover")}
+          style={{margin:"2px 20px 0",background:"none",border:"none",padding:0,color:C.accentText,fontSize:12.5,fontWeight:600,cursor:"pointer"}}>
+          More near you on Discover →
+        </button>
       )}
       <div style={{height:20}}/>
     </div>
@@ -2517,7 +2532,9 @@ function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
         <div style={{padding:"0 20px 8px"}}><span className="sl">All groups</span></div>
       )}
       {named.map(g=>{
-        const active=g.plans.filter(p=>p.status!=="completed");
+        // Still on, by date as well as status: nothing ever marks a plan
+        // completed, and this counted cancelled plans too.
+        const active=g.plans.filter(p=>isLive(p,today()));
         return(
           <SwipeToDelete key={g.id} group={g} onDelete={onDeleteGroup}>
           <div className="card" style={{cursor:"pointer"}} {...pressable} onClick={()=>push("groupDetail",{groupId:g.id})}>
@@ -11070,7 +11087,7 @@ export default function ReachApp({realUser,onSignOut}={}){
                 <div className="sc" style={{paddingBottom:20}}>{renderSub()}</div>
               ):(
                 <div className="sc">
-                  {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab}/>}
+                  {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab} userLocation={userLocation}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure} setPlaceOverride={setPlaceOverride}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading} onDeleteGroup={deleteGroupFromList}/>}
                   {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push} openSection={profileSection}/>}
