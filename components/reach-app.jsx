@@ -13,6 +13,7 @@ import { ticketSources } from "@/lib/tickets";
 import { byDay, dearestDay } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
+import { priceLabel } from "@/lib/discovery/price-label";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
@@ -1429,44 +1430,14 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
               color:filter===f?C.accentText:C.t2,
               fontSize:12,fontWeight:600,cursor:"pointer",
               whiteSpace:"nowrap",flexShrink:0}}>
-            {f==="Nearby"&&userLocation?"📍 "+f:f}
+            {f}
           </button>
         ))}
       </div>
 
-      {/* Nearby events strip (when location available) */}
-      {userLocation&&localRecs.length>0&&filter==="All"&&(
-        <div style={{marginBottom:16}}>
-          <div style={{padding:"0 20px 10px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span style={{fontSize:12,fontWeight:600,color:C.t3,textTransform:"uppercase",letterSpacing:".08em"}}>
-              📍 Near you in {city}
-            </span>
-            <button onClick={()=>setFilter("Nearby")}
-              style={{fontSize:12,color:C.accentText,background:"none",border:"none",cursor:"pointer"}}>
-              See all →
-            </button>
-          </div>
-          <div style={{display:"flex",gap:12,padding:"0 20px",overflowX:"auto",scrollbarWidth:"none",paddingBottom:4}}>
-            {localRecs.slice(0,5).map((n,i)=>(
-              <div key={i} style={{minWidth:160,background:C.s2,border:"1px solid "+C.border,
-                borderRadius:16,padding:14,flexShrink:0,cursor:"pointer"}}
-                onClick={()=>push("expDetail",{exp:{
-                  id:"local_"+n.id,title:n.title,sub:n.meta,emoji:n.emoji,
-                  price:n.price||null,category:n.category||"Event",tags:["Nearby"],
-                  url:n.url||null,date:n.date||null,venue:n.venue||null,
-                  bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
-                  isLocal:true,
-                },groups})}>
-                <div style={{fontSize:28,marginBottom:6}}>{n.emoji}</div>
-                <div style={{fontSize:13,fontWeight:600,color:C.t1,marginBottom:2,lineHeight:1.3}}>{n.title}</div>
-                <div style={{fontSize:11,color:C.t2,lineHeight:1.4}}>{n.meta}</div>
-                {n.dist&&<div style={{fontSize:11,color:C.accentText,marginTop:4}}>📍 {n.dist}</div>}
-                {n.price&&<div style={{fontSize:12,fontWeight:600,color:C.t1,marginTop:4}}>{n.price}</div>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* No "Near you" strip. The list below is already nearest first, so
+          the strip was its first five cards again, and its "See all →" went
+          to a "Nearby" filter that has never existed. */}
 
       {/* Loading state */}
       {loading&&(
@@ -1659,14 +1630,15 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
           <div style={{background:C.s1,padding:"12px 16px",display:"flex",
             justifyContent:"space-between",alignItems:"center"}}>
             <div>
-              <div style={{fontFamily:"var(--font-display)",fontSize:20,color:exp.price?C.t1:C.t2}}>
-                {/* Ticketmaster is no longer the only place this came from,
-                    so the card stopped naming it as though it were. */}
-                {exp.price||(exp.provider==="ticketmaster"?"Price on Ticketmaster":"Price at the door")}
+              {/* Only what we know — see lib/discovery/price-label.ts. This
+                  said "Price at the door" about parks, and "per person,
+                  all-in" under prices nobody had checked were either. */}
+              <div style={{fontFamily:"var(--font-display)",fontSize:20,color:priceLabel(exp).known?C.t1:C.t2}}>
+                {priceLabel(exp).line}
               </div>
               <div style={{fontSize:11,color:C.t2}}>
                 {exp.because?`Because you like ${String(exp.because).toLowerCase()}`
-                  :exp.isLocal?"Near you":"per person, all-in"}
+                  :exp.isLocal?"Near you":(priceLabel(exp).note||"")}
               </div>
             </div>
             {/* This used to be a "Share with group" button whose entire
