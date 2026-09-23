@@ -21,6 +21,8 @@
 // page we cannot read is recorded as unreadable and the venue still shows
 // with its link — exactly what it showed before.
 import Anthropic from '@anthropic-ai/sdk';
+import { stillToCome } from './when.ts';
+import { today } from '../calendar.ts';
 
 const UA = 'ReachDiscovery/1.0 (+https://www.alcanzar.io; hello@alcanzar.io)';
 // Reading one page should take seconds. A site that needs longer is one we
@@ -339,6 +341,8 @@ export async function harvestVenue(venue: { name: string; website: string }): Pr
         price_text: (e.price_text ?? '').trim(),
         booking_url: readUrl,
       }))
+      // Gone is gone. See stillToCome for why a past year is believed.
+      .filter(e => stillToCome(e, today()))
       .slice(0, 12);
 
     return { status: events.length ? 'ok' : 'nothing_found', events, readUrl };

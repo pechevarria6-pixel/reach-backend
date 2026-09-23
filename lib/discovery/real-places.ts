@@ -17,6 +17,8 @@
 // town, and the prompt says so plainly: name nothing you were not given.
 // "Dinner somewhere near the venue" is a true sentence. "Dinner at El Charro
 // Loco" is not, and we know it is not, because we looked.
+import { today } from '../calendar.ts';
+import { stillToCome } from './when.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Seeker } from './types.ts';
 import { locate } from './geocode.ts';
@@ -221,6 +223,7 @@ export async function placesFor(
         .from('discovery_events')
         .select('venue_id, title, when_text, starts_on')
         .in('venue_id', [...ids.keys()])
+        .gt('stale_after', new Date().toISOString())
         .limit(300);
       if (onErr) {
         console.error('[real-places] could not read what is on', { code: onErr.code });
@@ -230,6 +233,10 @@ export async function placesFor(
           if (!p) continue;
           const when = e.when_text || e.starts_on;
           if (!when) continue;
+          // The menu the itinerary is written from. A night that happened in
+          // 2020 offered as what is on this week is the model being handed a
+          // false fact, and it will repeat it faithfully.
+          if (!stillToCome(e, today())) continue;
           (p.whatsOn ??= []).push(`${e.title} — ${when}`);
         }
       }

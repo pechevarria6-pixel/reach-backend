@@ -347,3 +347,18 @@ test('somebody who named no cuisine is not given one', () => {
   const plain = tasteFrom({ favorite_activities: ['Comedy', 'Outdoors'] } as never);
   assert.equal([...plain.interests, ...plain.browse].some(k => k.endsWith(' restaurants')), false);
 });
+
+import { stillToCome } from '../../lib/discovery/when.ts';
+// Verbatim from discovery_events: read off a page last week, dated 2020 by
+// the reader, and — September 25 2026 being a Friday too — one re-read away
+// from being offered as this weekend.
+test('a night from 2020 is not what is on', () => {
+  assert.equal(stillToCome({ starts_on: '2020-09-25', when_text: 'Fri September 25 9:00pm' }, '2026-09-23'), false);
+});
+test('a weekly night stays, whatever old date it carries', () => {
+  assert.equal(stillToCome({ starts_on: '2025-09-07', when_text: 'Every Sunday' }, '2026-09-23'), true);
+});
+test('something coming up, or undated, stays', () => {
+  assert.equal(stillToCome({ starts_on: '2026-10-01', when_text: 'Oct 1' }, '2026-09-23'), true);
+  assert.equal(stillToCome({ starts_on: null, when_text: 'Ask at the bar' }, '2026-09-23'), true);
+});

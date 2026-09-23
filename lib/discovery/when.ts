@@ -99,3 +99,22 @@ export function parseWhen(text: unknown, today: string): WhenParsed {
   }
   return NONE;
 }
+
+
+/**
+ * Whether an event read off a venue's page is still to come — and so worth
+ * keeping or offering.
+ *
+ * 348 of 639 dated events in the table had already happened, four of them in
+ * 2020: "Emo Nights, Fri September 25", read last week off a page nobody had
+ * updated. The page reader dated it 2020, and that year is the only evidence
+ * it is old — September 25 2026 is also a Friday, so re-reading the text
+ * would bring a six-year-old party back as this weekend. So a past date is
+ * believed, and the event goes. A weekly thing ("Every Sunday") has no single
+ * date to be past, and stays.
+ */
+export function stillToCome(e: { starts_on?: string | null; when_text?: string | null }, today: string): boolean {
+  if (parseWhen(e.when_text, today).everyWeekdayIndex !== null) return true;
+  if (!e.starts_on) return true;   // undated: nothing says it has gone
+  return e.starts_on >= today;
+}
