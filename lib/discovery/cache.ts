@@ -179,7 +179,8 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   const day = dayWhere(seeker.lng);
   const near = box(seeker), far = box(seeker, TICKETED_MILES);
   const upcoming = `starts_on.is.null,starts_on.gte.${day}`;
-  const HARVEST_COLUMNS = COLUMNS.replace('discovery_venues(', 'discovery_venues!inner(');
+  // Written out rather than derived, so the client can type the rows.
+  const HARVEST_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues!inner(name, lat, lng, city, street)';
   const [harvested, external] = await Promise.all([
     db.from('discovery_events').select(HARVEST_COLUMNS)
       .eq('source', 'harvest').in('interest', asStored(keys)).gt('stale_after', fresh)
