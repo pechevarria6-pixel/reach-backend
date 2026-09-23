@@ -29,7 +29,9 @@ export const TripSchema = z.object({
   // rather than leaving the key out, and optional() rejects that outright —
   // losing the whole trip over a field nothing depends on.
   city: z.string().nullish(),
-  country_code: z.string().length(2).nullish(),
+  // A blank is no answer, not a wrong one: "" failed length(2) and took a
+  // whole night out's options with it.
+  country_code: z.preprocess(v => (typeof v === 'string' && !v.trim() ? null : v), z.string().length(2).nullish()),
   emoji: z.string(),
   tagline: z.string(),
   vibe: z.string(),
@@ -263,6 +265,36 @@ export function parseModelJSON<T>(raw: string, schema: z.ZodType<T>, label: stri
     return null;
   }
   return checked.data;
+}
+
+/**
+ * The trip options, each checked on its own.
+ *
+ * One option with a malformed field used to fail the whole response — a
+ * night out in Charlotte came back as four options, the fourth with a blank
+ * country code, and the person was told "No trips came back". A bad option
+ * is dropped and logged; the good ones stand.
+ */
+export function parseTrips(raw: string, label: string): z.infer<typeof TripSchema>[] | null {
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    console.error(`[${label}] JSON parse failed, len`, raw.length, 'tail:', raw.slice(-300));
+    return null;
+  }
+  const list = (data as { trips?: unknown })?.trips;
+  if (!Array.isArray(list)) {
+    console.error(`[${label}] no trips array in the response`);
+    return null;
+  }
+  const kept: z.infer<typeof TripSchema>[] = [];
+  list.forEach((t, i) => {
+    const one = TripSchema.safeParse(t);
+    if (one.success) kept.push(one.data);
+    else console.error(`[${label}] dropped option ${i} that did not validate:`, one.error.issues.slice(0, 2));
+  });
+  return kept.length ? kept : null;
 }
 
 export function textOf(res: { content: Array<{ type: string; text?: string }> }): string {

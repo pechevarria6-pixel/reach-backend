@@ -110,3 +110,20 @@ test('dinner then dessert and a last drink is one meal', () => {
   });
   assert.equal(dropped.length, 0);
 });
+
+import { parseTrips } from '../../lib/trip-schema.ts';
+const good = (id: string) => ({ id, destination: 'Greek night in South End', city: 'Charlotte', country_code: 'US', emoji: '🥙',
+  tagline: 't', vibe: 'v', why_this_group: 'w', food_scene: 'f', music_scene: 'm', total_per_person: 80, tier: 'on_budget',
+  costs: { flights: { per_person: 0, details: '' }, accommodation: { per_person: 0, details: '', example: 'South End' },
+    ground_transport: { per_person: 10, details: '' }, food_drink: { per_person: 60, details: '' },
+    activities: { per_person: 10, details: '' }, misc: { per_person: 0, details: '' } } });
+test('one malformed option does not sink the rest', () => {
+  const raw = JSON.stringify({ trips: [good('a'), good('b'), good('c'), { ...good('d'), country_code: 'USA' }] });
+  const out = parseTrips(raw, 'test');
+  assert.equal(out?.length, 3);
+});
+test('a blank country code is no answer, not a wrong one', () => {
+  const out = parseTrips(JSON.stringify({ trips: [{ ...good('a'), country_code: '' }] }), 'test');
+  assert.equal(out?.length, 1);
+  assert.equal(out?.[0].country_code, null);
+});

@@ -3,7 +3,7 @@ import { report } from '@/lib/report';
 import { requireGroupMember, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
 import {
-  TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA,
+  TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA, parseTrips,
   parseModelJSON, textOf, normalizeTrips, dropFillerDays,
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
@@ -1279,7 +1279,7 @@ Return JSON only, shaped exactly like this:
 
 
 
-    let parsed = parseModelJSON(textOf(response), TripsSchema, 'trips generate')?.trips;
+    let parsed = parseTrips(textOf(response), 'trips generate');
     // A live run came back with four trips, one destination twice, and every
     // trip's cost lines summing below its own headline total.
     // Repeated destinations are dropped as a model repeating itself — except
@@ -1316,7 +1316,7 @@ Return JSON only, shaped exactly like this:
           `${prompt}\n\n${correctionNote(report, rule)}`,
           TRIPS_JSON_SCHEMA, 'trips generate retry',
         );
-        const retried = parseModelJSON(textOf(retry), TripsSchema, 'trips generate retry')?.trips;
+        const retried = parseTrips(textOf(retry), 'trips generate retry');
         const secondTrips = retried ? normalizeTrips(retried, samePlaceIsFine) : undefined;
         if (secondTrips?.length) {
           report = applyRules(secondTrips, rule);
