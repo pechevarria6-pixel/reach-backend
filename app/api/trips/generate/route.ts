@@ -8,6 +8,7 @@ import {
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote } from '@/lib/generation-rules';
 import { planReadiness } from '@/lib/plan-readiness';
+import { readGroupAnswers, wantedBlock as wantedBlockFor, optionsGate, notYetAnswered, isUndecided, type GroupAnswers } from '@/lib/group-answers';
 import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
 import { placeFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
@@ -111,12 +112,12 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const {
     groupId, startDate, endDate, budgetPerPerson,
-    departureCity, departureAirport, tripPrefs = {},
+    departureCity, departureAirport,
     detailTripId = null, // if set, generate full itinerary for one trip
     // A night out is not a short trip. No flights, no hotel, one evening, and
     // the only thing it needs asking that the taste quiz has not already
     // stored is roughly where it should be.
-    mode = 'trip', nightPrefs = {},
+    mode = 'trip',
     // Where they already know they are going, if they do. With one, all three
     // options are that place at three budgets — somebody who has settled on
     // Breckenridge is choosing how to do it, not whether. Without one, three
@@ -125,11 +126,125 @@ export async function POST(req: NextRequest) {
     // What they wrote when asked what this trip is about. The most useful
     // thing on the form, because it is the only part not picked from a list.
     goalBlurb = null,
+    // The group trip these options are for. A group trip exists before it
+    // has a destination, so that everybody can answer the same questions
+    // against it first; with this set, the options wait for all of them and
+    // are built from all of them.
+    planId: groupPlanId = null,
   } = body;
+  // `let`: a group trip's own answers fill these when the caller did not
+  // send them — which is every time somebody other than the organiser
+  // presses "Find our trips", because the organiser's answers are theirs.
+  let tripPrefs: Record<string, any> = body.tripPrefs && typeof body.tripPrefs === 'object' ? body.tripPrefs : {};
+  let nightPrefs: Record<string, any> = body.nightPrefs && typeof body.nightPrefs === 'object' ? body.nightPrefs : {};
   // `let`, because a saved plan can correct a caller that did not say — see
   // the detail branch below.
   let isNightPlan = mode === 'night';
-  const goal = typeof goalBlurb === 'string' && goalBlurb.trim() ? goalBlurb.trim().slice(0, 500) : null;
+
+  // This reads every member's dietary needs, budget and preferences, so the
+  // caller has to actually be in the group.
+  if (!groupId) return NextResponse.json({ error: 'groupId required' }, { status: 400 });
+  const ctx = await requireGroupMember(groupId);
+  if (isFail(ctx)) return ctx.error;
+  const supabase = ctx.db;
+
+  // ── A group trip waits for everybody ───────────────────────────────
+  // The owner's rule: group trip quizzes wait on each other, so every option
+  // is built from everybody's input. Checked before the rate limit, because
+  // being told who the trip is waiting for should not cost anybody one of
+  // their generations for the hour.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (groupPlanId != null && !UUID.test(String(groupPlanId))) {
+    return NextResponse.json({ error: 'planId must be the id of a saved plan' }, { status: 400 });
+  }
+  let groupPlan: { id: string; created_by: string | null; type: string | null; solo_mode: boolean | null } | null = null;
+  let groupAnswers: GroupAnswers | null = null;
+  if (groupPlanId) {
+    const { data: row } = await supabase
+      .from('plans').select('id, group_id, created_by, type, solo_mode, destination_style')
+      .eq('id', String(groupPlanId)).maybeSingle();
+    // Membership was checked against groupId; the plan has to be in that same
+    // group, or a member of one group could read another group's answers
+    // into a prompt by naming its plan.
+    if (!row || String(row.group_id) !== String(groupId)) {
+      return NextResponse.json({ error: 'That trip is not in this group' }, { status: 404 });
+    }
+    groupPlan = {
+      id: String(row.id), created_by: row.created_by ? String(row.created_by) : null,
+      type: row.type ? String(row.type) : null, solo_mode: row.solo_mode === true,
+    };
+    if (groupPlan.type === 'restaurant') isNightPlan = true;
+
+    // Options are for a trip still deciding where it goes. Once somebody has
+    // picked, a fresh three would be three nobody can choose — picking only
+    // lands on an undecided trip — so they are not built, and not paid for.
+    if (!detailTripId && !isUndecided(row)) {
+      return NextResponse.json(
+        { error: 'Somebody has already picked where this trip goes.', alreadyDecided: true },
+        { status: 409 },
+      );
+    }
+
+    // Only the options stage is gated here. The days of each option are
+    // gated below, by the rule that was already there for them.
+    if (!detailTripId && !groupPlan.solo_mode) {
+      let readiness;
+      try {
+        readiness = await planReadiness(supabase, groupPlan.id, String(groupId), false);
+      } catch {
+        console.error('[generate] could not check who has answered', { plan: groupPlan.id });
+        return NextResponse.json(
+          { error: 'We could not check who has answered yet — try again in a moment.' },
+          { status: 503 },
+        );
+      }
+      const gate = optionsGate(readiness.members, readiness.members.length === 1);
+      if (!gate.open) {
+        return NextResponse.json({
+          error: notYetAnswered(gate.waitingOn, 'Reach finds your trips once everyone has.'),
+          waitingOn: gate.waitingOn,
+        }, { status: 409 });
+      }
+    }
+
+    const read = await readGroupAnswers(supabase, groupPlan.id);
+    if (read.error && !detailTripId) {
+      // Everybody has answered and we cannot read what they said. Building
+      // anyway would be building from nobody's answers after making them all
+      // wait, so this says so instead.
+      console.error('[generate] refused the options: could not read the answers', { plan: groupPlan.id, code: read.error });
+      return NextResponse.json(
+        { error: "We couldn't read everyone's answers just now — try again in a moment." },
+        { status: 503 },
+      );
+    }
+    groupAnswers = read;
+    console.log('[generate] built from the group\'s answers', {
+      plan: groupPlan.id, stage: detailTripId ? 'itinerary' : 'options', answered_by: read.userIds,
+    });
+
+    // Whoever set the trip up framed it — their first sentence is what the
+    // trip is. When somebody else presses the button their device does not
+    // have that sentence, and it is not theirs to be sent, so it comes from
+    // the table instead.
+    const framing = groupPlan.created_by ? read.byUser[groupPlan.created_by] : undefined;
+    if (framing) {
+      if (!Object.keys(tripPrefs).length) tripPrefs = framing.answers;
+      if (isNightPlan && !Object.keys(nightPrefs).length) {
+        const a = framing.answers;
+        nightPrefs = {
+          time: a.nightTime || '', where: a.nightWhere || '',
+          kind: Array.isArray(a.nightKind) ? a.nightKind : [],
+          food: Array.isArray(a.nightFood) ? a.nightFood : [],
+          energy: a.nightEnergy || null,
+        };
+      }
+    }
+  }
+
+  const framingGoal = groupPlan?.created_by ? groupAnswers?.byUser[groupPlan.created_by]?.summary ?? null : null;
+  const goalText = typeof goalBlurb === 'string' && goalBlurb.trim() ? goalBlurb : framingGoal;
+  const goal = typeof goalText === 'string' && goalText.trim() ? goalText.trim().slice(0, 500) : null;
 
   // Where they said it is.
   //
@@ -144,13 +259,6 @@ export async function POST(req: NextRequest) {
   const fromGoal = said ? null : placeFromGoal(goal);
   if (fromGoal) console.log('[generate] took the place from what they wrote', { place: fromGoal });
   const fixedPlace = said ?? fromGoal;
-
-  // This reads every member's dietary needs, budget and preferences, so the
-  // caller has to actually be in the group.
-  if (!groupId) return NextResponse.json({ error: 'groupId required' }, { status: 400 });
-  const ctx = await requireGroupMember(groupId);
-  if (isFail(ctx)) return ctx.error;
-  const supabase = ctx.db;
 
   // Two model calls a go, and real money each time. Nothing stopped one
   // account doing this in a loop — a stuck retry, a leaning finger — and the
@@ -183,7 +291,7 @@ export async function POST(req: NextRequest) {
   // successes is a limit a failing loop walks straight through.
   const { error: counted } = await supabase.from('audit_logs').insert({
     user_id: ctx.user.id, action, resource: 'groups', resource_id: groupId, success: true,
-    metadata: { mode, nights: null, plan: detailTripId ?? null },
+    metadata: { mode, nights: null, plan: detailTripId ?? groupPlan?.id ?? null },
   });
   if (counted) console.error(`[audit] could not record ${action} — this one is not counted`, { code: counted.code });
 
@@ -233,12 +341,30 @@ export async function POST(req: NextRequest) {
     return budgetPerPerson
       || (budgets.length > 0 ? Math.min(...budgets.map((b: string) => map[b] || fallback)) : fallback);
   };
-  let effectiveBudget = budgetFor(isNightPlan);
+  // A group trip is priced for the person with the least to spend. The
+  // standing answers were always read this way — the lowest bucket wins — and
+  // the per-trip ones are a better version of the same question: an option
+  // one of them cannot afford is not an option for the group.
+  const lowestAsked = groupAnswers?.lowestBudget ?? null;
+  const groupBudget = (night: boolean) => {
+    const own = budgetFor(night);
+    return lowestAsked && lowestAsked < own ? lowestAsked : own;
+  };
+  let effectiveBudget = groupBudget(isNightPlan);
+  if (lowestAsked && lowestAsked < budgetFor(isNightPlan)) {
+    console.log('[generate] priced for the lowest budget anybody gave', { plan: groupPlan?.id, budget: lowestAsked });
+  }
 
   const allVetoes = [...new Set([
     ...prefs.flatMap((p: any) => p.no_way_jose || []),
     ...(tripPrefs.noWayJose || []),
-  ])];
+    // What anybody going said, for this trip, that they will not do.
+    ...(groupAnswers?.vetoes ?? []),
+  // "custom:" is how the quiz stores a typed answer, not part of the answer.
+  ].map((v: unknown) => String(v).replace(/^custom:/, '').trim()).filter(Boolean))];
+  // Everyone's own answers for this trip, by name, for the options prompt.
+  // The itinerary stage builds its own from the same reader below.
+  const groupWanted = !detailTripId && groupAnswers ? wantedBlockFor(groupAnswers.lines) : '';
   const dietaryNeeds = [...new Set(prefs.map((p: any) => p.dietary_needs).filter((d: any) => d && d !== 'none'))];
   const cuisines = [...new Set(prefs.flatMap((p: any) => p.cuisines || []))];
   const musicGenres = [...new Set(prefs.flatMap((p: any) => p.music_genres || []))];
@@ -320,9 +446,26 @@ quoting it were the same as planning around it.\n`
     //
     // It also means an itinerary does not need rebuilding when a late answer
     // arrives, because a late answer cannot arrive.
-    if (isUuid) {
+    //
+    // The plan whose answers this is written from: the plan itself, or — for
+    // the days of one of a group trip's three options, which is not a plan
+    // of its own yet — the group trip it is an option for. Without the
+    // second, the days everybody compares the options on were written from
+    // standing profiles, after the whole group had been made to answer.
+    const answersPlanId = isUuid ? String(detailTripId) : groupPlan?.id ?? null;
+    if (answersPlanId) {
       const { data: planRow } = await supabase
-        .from('plans').select('group_id, solo_mode, type').eq('id', detailTripId).maybeSingle();
+        .from('plans').select('group_id, solo_mode, type, destination_style').eq('id', answersPlanId).maybeSingle();
+
+      // A group trip nobody has picked a destination for has no place to
+      // write days about — its title is "Where next?" or somebody's sentence.
+      // Writing an itinerary for it would be writing one for nowhere.
+      if (isUuid && isUndecided(planRow)) {
+        return NextResponse.json(
+          { error: "This trip doesn't have a destination yet. Find your trips first — the days get written for the one you pick." },
+          { status: 409 },
+        );
+      }
 
       // The plan already knows what it is, so a caller that forgets to say
       // cannot get a full day for an evening. That is exactly what happened:
@@ -331,7 +474,7 @@ quoting it were the same as planning around it.\n`
       // lunch at an izakaya. The client says it now as well; this is so it
       // does not matter if one ever stops.
       if (planRow?.type === 'restaurant' && !isNightPlan) {
-        console.error('[generate] plan is an evening but the request did not say — using the evening prompt', { plan: detailTripId });
+        console.error('[generate] plan is an evening but the request did not say — using the evening prompt', { plan: answersPlanId });
         isNightPlan = true;
         // An evening is one night, whatever dates were passed alongside it.
         nights = 1;
@@ -339,20 +482,17 @@ quoting it were the same as planning around it.\n`
       if (planRow?.group_id) {
         try {
           const readiness = await planReadiness(
-            supabase, String(detailTripId), String(planRow.group_id),
+            supabase, answersPlanId, String(planRow.group_id),
             planRow.solo_mode === true,
           );
           if (!readiness.allReady) {
-            const waiting = readiness.waitingOn;
             return NextResponse.json({
-              error: waiting.length === 1
-                ? `${waiting[0]} hasn't said what they want from this trip yet. The plan gets written once everyone has.`
-                : `${waiting.slice(0, -1).join(', ')} and ${waiting[waiting.length - 1]} haven't said what they want from this trip yet. The plan gets written once everyone has.`,
-              waitingOn: waiting,
+              error: notYetAnswered(readiness.waitingOn, 'The plan gets written once everyone has.'),
+              waitingOn: readiness.waitingOn,
             }, { status: 409 });
           }
         } catch {
-          console.error('[generate] could not check who has answered', { plan: detailTripId });
+          console.error('[generate] could not check who has answered', { plan: answersPlanId });
           return NextResponse.json(
             { error: 'We could not check who has answered yet — try again in a moment.' },
             { status: 503 },
@@ -361,42 +501,20 @@ quoting it were the same as planning around it.\n`
       }
     }
 
+    // Read through the same function the options stage uses, so an answer
+    // cannot reach one stage and miss the other. A failed read is logged
+    // there and writes the days without the block, as it always has here.
     let wantedBlock = '';
     const tripVetoes: string[] = [];
-    if (isUuid) {
-      const { data: said, error: saidError } = await supabase
-        .from('plan_preferences')
-        .select('summary_text, answers, users(name)')
-        .eq('plan_id', detailTripId)
-        .not('submitted_at', 'is', null);
-      if (saidError) {
-        console.error('[generate] could not read what the group asked for', { plan: detailTripId, code: saidError.code });
-      } else {
-        const lines: string[] = [];
-        for (const row of said ?? []) {
-          const r = row as Record<string, unknown>;
-          const raw = r.users as Record<string, unknown> | Record<string, unknown>[] | null;
-          const u = ((Array.isArray(raw) ? raw[0] : raw) ?? {}) as Record<string, unknown>;
-          const who = String(u.name || '').trim().split(/\s+/)[0] || 'Someone';
-          const a = (r.answers ?? {}) as Record<string, unknown>;
-          const parts: string[] = [];
-          if (r.summary_text) parts.push(String(r.summary_text));
-          if (a.mustDo) parts.push(`must do: ${String(a.mustDo)}`);
-          if (a.noWay) {
-            parts.push(`will not: ${String(a.noWay)}`);
-            // A thing somebody said to avoid is a constraint, not a hint.
-            tripVetoes.push(String(a.noWay));
-          }
-          if (parts.length) lines.push(`- ${who}: ${parts.join(' · ')}`);
-        }
-        if (lines.length) {
-          wantedBlock = `\nWHAT EACH OF THEM ASKED FOR, FOR THIS TRIP — these are the
-answers that matter most here, because they were given about this trip and not
-about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
-        }
-      }
+    if (answersPlanId) {
+      const read = groupAnswers && groupPlan?.id === answersPlanId
+        ? groupAnswers
+        : await readGroupAnswers(supabase, answersPlanId);
+      wantedBlock = wantedBlockFor(read.lines);
+      // A thing somebody said to avoid is a constraint, not a hint.
+      tripVetoes.push(...read.vetoes);
     }
-    const allVetoesHere = [...allVetoes, ...tripVetoes];
+    const allVetoesHere = [...new Set([...allVetoes, ...tripVetoes])];
     // The part of town is no longer asked for. It comes from where they
     // are, or the city they named in the first sentence, and from what they
     // want the room to be like — which is what energy and kind already say.
@@ -426,7 +544,7 @@ about trips in general. Plan around them by name:\n${lines.join('\n')}\n`;
         isNightPlan = true;
         nights = 1;
         // An evening's money, now that we know it is an evening.
-        effectiveBudget = budgetFor(true);
+        effectiveBudget = groupBudget(true);
       }
     } else if (act.length >= 2) {
       console.log('[generate] an act was named and not found — the evening will not claim a show', { act });
@@ -922,7 +1040,7 @@ MUSIC: ${musicGenres.slice(0, 4).join(', ') || 'mixed'}
 DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 A GOOD NIGHT OUT: ${nightlife.join(', ') || 'no preference'}
 DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
-DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}
+DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${groupWanted}
 ${allVetoes.length > 0 ? 'NEVER INCLUDE: ' + allVetoes.join(', ') : ''}
 
 Each option is a real evening in a named neighbourhood — "Dinner and a gig in
@@ -977,7 +1095,7 @@ DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
 DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 NIGHTLIFE: ${nightlife.join(', ') || 'no preference'}
 LIVE MUSIC THEY GO TO: ${concertTypes.slice(0, 4).join(', ') || 'no preference'}
-DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}
+DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${groupWanted}
 ${allVetoes.length > 0 ? 'VETOES (never include): ' + allVetoes.join(', ') : ''}
 
 Price diversity is required. Return exactly three options, one per tier, and

@@ -653,6 +653,26 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
     }
   },[]);
   const allPlans=groups.flatMap(g=>g.plans.map(p=>({...p,group:g})));
+  // Group trips still deciding where they go, and whether each has heard
+  // from me and from everybody. Names and yes-or-no only, from the same
+  // readiness report the trip's own screen reads.
+  const deciding=allPlans.filter(p=>p.destStyle==="undecided"&&!isTempId(p.id)
+    &&(p.group?.memberIds||[]).length>1&&p.status!=="cancelled");
+  const decidingKey=deciding.map(p=>p.id).join(",");
+  const [heard,setHeard]=useState({});
+  useEffect(()=>{
+    if(!decidingKey)return;
+    let live=true;
+    Promise.all(decidingKey.split(",").map(id=>
+      fetch(`/api/plans/${id}/readiness`).then(r=>r.ok?r.json():null).catch(()=>null)
+        .then(d=>[id,d?.preferences||null])))
+      .then(rows=>{if(live)setHeard(Object.fromEntries(rows.filter(([,v])=>v)));});
+    return()=>{live=false;};
+  },[decidingKey]);
+  // "Where next?" is a title, not something to say what you want from.
+  const tripCalled=p=>p.title&&p.title!=="Where next?"
+    ?p.title
+    :`${p.group?.name||"the group"}'s next ${p.type==="restaurant"?"night out":"trip"}`;
   // What is ahead, by date. This used to be chosen by status — booked, voting
   // or approved — so a plan still being planned, which is every plan when it
   // is first made, never appeared here, while a trip booked for last month
@@ -702,10 +722,31 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
     ...allPlans.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
       type:"vote",rank:1,text:`${p.group.name} is deciding on ${p.title}`,
       sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →"})),
-    ...allPlans.filter(p=>p.status==="planning"&&(p.itinerary?.length||0)>0&&!solo(p.group)).map(p=>({
+    // A group trip waits for everybody's answers before any trip is found.
+    // The person it is waiting on is asked here, by name of the trip; once
+    // all have answered, anyone can find the trips. Until the report is in,
+    // neither is claimed.
+    ...deciding.flatMap(p=>{
+      const h=heard[p.id];
+      if(!h)return [];
+      const mine=(h.members||[]).find(m=>m.userId===user?.id);
+      const go=(screen)=>()=>push(screen,{planId:p.id,groupId:p.group.id});
+      if(mine&&!mine.answered)return [{
+        type:"answer",rank:1,text:`Say what you want from ${tripCalled(p)}`,
+        sub:"No trips are found until everyone going has answered",plan:p,cta:"Answer →",go:go("planPrefs")}];
+      const everyoneIn=(h.members||[]).length>0&&h.members.every(m=>m.answered);
+      // `deciding` is groups only already; said again where the sentence is.
+      if(everyoneIn&&!solo(p.group))return [{
+        type:"find",rank:1,text:`Everyone has answered for ${tripCalled(p)}`,
+        sub:"Find the trips — built from what each of you said",plan:p,cta:"Find →",go:go("groupTrip")}];
+      return [];
+    }),
+    ...allPlans.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)>0&&!solo(p.group)).map(p=>({
       type:"pay",rank:2,text:`${p.title} is waiting on everyone's share`,
       sub:`$${p.budget?.toLocaleString?.()||p.budget} each`,plan:p,cta:"Pay →"})),
-    ...allPlans.filter(p=>p.status==="planning"&&(p.itinerary?.length||0)===0).map(p=>({
+    // Not a trip with no destination: there are no days to write for
+    // nowhere, and the server says so if asked.
+    ...allPlans.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)===0).map(p=>({
       type:"plan",rank:3,text:`${p.title} has no days yet`,
       sub:"We can write the whole thing in about 20 seconds",plan:p,cta:"Plan →"})),
   ].sort((a,b)=>a.rank-b.rank).slice(0,4);
@@ -800,12 +841,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             </span>
           </div>
           {actions.map((a,i)=>(
-            <div key={i} {...pressable} onClick={()=>{if(a.plan&&a.plan.id&&a.plan.group?.id)push("planDetail",{planId:a.plan.id,groupId:a.plan.group.id});}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderTop:i?"1px solid "+C.accentBorder:"none",cursor:"pointer"}}>
+            <div key={i} {...pressable} onClick={()=>{if(a.go)return a.go();if(a.plan&&a.plan.id&&a.plan.group?.id)push("planDetail",{planId:a.plan.id,groupId:a.plan.group.id});}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 0",borderTop:i?"1px solid "+C.accentBorder:"none",cursor:"pointer"}}>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,color:C.t1,fontWeight:500}}>{a.text}</div>
                 <div style={{fontSize:11,color:C.t2,marginTop:2}}>{a.sub}</div>
               </div>
-              <button className="bsm bsm-p" onClick={e=>{e.stopPropagation();a.plan&&push("planDetail",{planId:a.plan.id,groupId:a.plan.group?.id});}}>{a.cta}</button>
+              <button className="bsm bsm-p" onClick={e=>{e.stopPropagation();if(a.go)return a.go();a.plan&&push("planDetail",{planId:a.plan.id,groupId:a.plan.group?.id});}}>{a.cta}</button>
             </div>
           ))}
         </div>
@@ -3374,13 +3415,28 @@ const QUIZ_DONE="reach_quiz_done";
 // So every trip asks its own members. Short on purpose — three questions,
 // two of them skippable — because this is asked once per trip per person and
 // a long form is one nobody fills in.
-function PlanPreferencesScreen({onBack,planId,toast}){
-  const [summary,setSummary]=useState("");
-  const [mustDo,setMustDo]=useState("");
-  const [noWay,setNoWay]=useState("");
+// ─── What each member wants from this trip ──────────────────────────────
+// The same questions the organiser answered, from the same quiz, in the same
+// order (TripQuiz, whose steps come from lib/quiz-steps). This used to be a
+// three-box form of its own — what is it about, a must-do, a no — so the
+// organiser's answers and everybody else's were about different things, and
+// a group trip's options were in practice built from one person's quiz.
+//
+// The trip's kind and dates are already decided by whoever set it up, so
+// those are not asked again. Everything else is, and it starts from what
+// this person said last time rather than from blank.
+function PlanPreferencesScreen({onBack,planId,groupId,groups,toast,replace,userLocation,departure,setPlaceOverride,saveDeparture}){
+  const group=(groups||[]).find(g=>g.id===groupId)
+    ||(groups||[]).find(g=>(g.plans||[]).some(p=>p.id===planId))||null;
+  const plan=group?(group.plans||[]).find(p=>p.id===planId)||null:null;
+  const [initial,setInitial]=useState(null);
+  // Kept whole, so an answer the old form collected (a must-do) is not
+  // dropped by saving through the quiz, which does not ask it.
+  const [previous,setPrevious]=useState({});
   const [loading,setLoading]=useState(true);
   const [saving,setSaving]=useState(false);
   const [loadErr,setLoadErr]=useState(false);
+  const [saveErr,setSaveErr]=useState(null);
 
   // Editing what you said starts from what you said.
   useEffect(()=>{
@@ -3395,9 +3451,12 @@ function PlanPreferencesScreen({onBack,planId,toast}){
         if(!r.ok)throw new Error(String(r.status));
         const d=await r.json();
         if(!alive)return;
-        setSummary(d.summary||"");
-        setMustDo(d.answers?.mustDo||"");
-        setNoWay(d.answers?.noWay||"");
+        const a=d.answers&&typeof d.answers==="object"?d.answers:{};
+        setPrevious(a);
+        // The old form's "rather we didn't" was free text: it goes in the
+        // box for a typed hard no, so it is still on the screen to keep.
+        setInitial({...a,goalBlurb:d.summary||a.goalBlurb||"",
+          noWayText:typeof a.noWay==="string"?a.noWay:""});
       }catch(e){
         console.error("[plan preferences] could not load",e);
         if(alive)setLoadErr(true);
@@ -3407,77 +3466,80 @@ function PlanPreferencesScreen({onBack,planId,toast}){
     return()=>{alive=false;};
   },[planId]);
 
-  const save=async()=>{
+  const save=async(dates,budgetNum,prefs,extra={})=>{
     if(saving)return;
     // Saving against a local id would answer 404 and lose what they wrote.
     // Saying so is better than a generic failure they cannot act on.
     if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
-    setSaving(true);
+    setSaving(true);setSaveErr(null);
+    // The same shape the organiser's answers are stored in, so the server
+    // reads everybody's the same way.
+    const {nights:_n,...said}=prefs||{};
+    const answers={...previous,...said,
+      budgetPerPerson:parseInt(budgetNum)||null,
+      ...(extra.mode==="night"&&extra.nightPrefs?.time?{nightTime:extra.nightPrefs.time}:{})};
+    // Typed into the hard-no box now, so not also kept as the old field.
+    delete answers.noWay;
     try{
       const r=await fetch(`/api/plans/${planId}/preferences`,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          summary:summary.trim()||null,
-          answers:{mustDo:mustDo.trim()||null,noWay:noWay.trim()||null},
-        }),
+        body:JSON.stringify({summary:(said.goalBlurb||"").trim()||null,answers}),
       });
       if(!r.ok){
         const d=await r.json().catch(()=>({}));
         throw new Error(d.error||"Couldn't save that");
       }
       toast("Thanks — that's you in");
-      onBack();
+      // A trip still waiting for its destination goes to the wait, where
+      // this person can see who else it is waiting on — or, if they were
+      // the last, find the trips.
+      if(plan&&plan.destStyle==="undecided"&&replace)replace("groupTrip",{groupId:group.id,planId});
+      else onBack();
     }catch(e){
       console.error("[plan preferences] save failed",e);
-      toast(e.message);
+      setSaveErr(e.message);
     }
     setSaving(false);
   };
 
-  if(loading)return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>One moment…</div></div>);
+  if(loading||(!group&&!(groups||[]).length))return(<div className="sc"><div style={{padding:"60px 20px",textAlign:"center",color:C.t2}}>One moment…</div></div>);
+  if(!group||!plan)return <NotLoaded what="This trip" onBack={onBack}/>;
 
-  const field=(label,hint,value,setter,placeholder,rows)=>(
-    <div style={{padding:"0 20px 18px"}}>
-      <div className="sl" style={{marginBottom:6}}>{label}</div>
-      <div style={{fontSize:12,color:C.t3,marginBottom:8,lineHeight:1.5}}>{hint}</div>
-      <textarea aria-label={label} value={value} rows={rows}
-        onChange={e=>setter(e.target.value)} placeholder={placeholder}
-        style={{width:"100%",padding:"14px",borderRadius:14,border:`1px solid ${C.border}`,
-          background:C.s2,color:C.t1,fontSize:15,lineHeight:1.5,fontFamily:"inherit",
-          resize:"none",outline:"none"}}/>
-    </div>
-  );
-
+  const night=plan.type==="restaurant";
   return(
     <div className="sc">
       <ScreenHeader onBack={onBack} label="This trip" title="What do you want from it?"/>
-      <div style={{padding:"0 20px 14px",fontSize:13,color:C.t2,lineHeight:1.55}}>
-        Your answers here are about this trip only — they do not change your
-        profile. Everyone sees that you have answered, never what you said.
+      <div style={{padding:"0 20px 10px",fontSize:13,color:C.t2,lineHeight:1.55}}>
+        The same questions everyone going answers{plan.dates?` for ${plan.dates}`:""}. About
+        this trip only — your profile stays as it is. Everyone sees that you
+        have answered, never what you said.
       </div>
       {loadErr&&(
-        <div style={{margin:"0 20px 14px",padding:"11px 13px",background:C.amberDim,
+        <div style={{margin:"0 20px 10px",padding:"11px 13px",background:C.amberDim,
           border:`1px solid ${C.amber}`,borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
-          We could not load anything you had already written. Saving now will replace it.
+          We could not load anything you had already said. Saving now will replace it.
         </div>
       )}
-      {field("What's this trip about, for you?",
-        "The most useful thing you can tell us. Say what you are hoping happens.",
-        summary,setSummary,"A proper rest, and one big night out…",4)}
-      {field("Anything you want to make sure we do?",
-        "Optional. One thing that would make the trip for you.",
-        mustDo,setMustDo,"See the sunrise from somewhere high…",3)}
-      {field("Anything you would rather we didn't?",
-        "Optional. We will not suggest these.",
-        noWay,setNoWay,"Nothing that starts before 9am…",3)}
-      <div style={{padding:"0 20px 30px"}}>
-        <button className="bp" disabled={saving} onClick={save}>
-          {saving?"Saving…":"That's me in"}
-        </button>
-        <div style={{textAlign:"center",fontSize:11.5,color:C.t3,marginTop:10,lineHeight:1.5}}>
-          You can skip anything. Having been through it is what the group is waiting for.
-        </div>
-      </div>
+      <TripQuiz
+        group={group}
+        userLocation={userLocation}
+        departure={departure}
+        setPlaceOverride={setPlaceOverride}
+        saveDeparture={saveDeparture}
+        toast={toast}
+        error={saveErr}
+        isSolo={false}
+        allComplete={true}
+        // Nothing carried over: this person answers every question the
+        // organiser did, not the subset a previous plan happened to cover.
+        known={null}
+        fixed={{mode:night?"night":"trip",startDate:plan.startDate||"",endDate:night?(plan.startDate||""):(plan.endDate||"")}}
+        initial={initial}
+        finishLabel={saving?"Saving…":"That's me in"}
+        finishNote="You can skip anything. Having been through it is what the group is waiting for."
+        busy={saving}
+        onGenerate={save}
+      />
     </div>
   );
 }
@@ -3834,34 +3896,41 @@ function DepartureLine({departure,saveDeparture}){
   );
 }
 
-function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known}){
+// `fixed` is a group trip somebody else has already set up: the kind of plan
+// and the dates are decided, so the date step is not asked, and this person
+// answers exactly the questions the organiser answered — the same list, in
+// the same order — so everybody's answers are about the same thing.
+// `initial` is what this person already said for this trip, to edit rather
+// than redo. `finishLabel` replaces the generate button's words.
+function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known,fixed,initial,finishLabel,finishNote,busy}){
   const [qStep,setQStep]=useState(0);
-  const [startDate,setStartDate]=useState(known?.startDate||"");
-  const [endDate,setEndDate]=useState(known?.endDate||"");
+  const [startDate,setStartDate]=useState(fixed?.startDate||known?.startDate||"");
+  const [endDate,setEndDate]=useState(fixed?.endDate||known?.endDate||"");
   // Reach plans experiences, not only travel. A night out is its own thing:
   // one date, one evening, and almost nothing to answer — food, music and
   // drinks are already in the taste quiz.
-  const [mode,setMode]=useState(known?.startDate&&known?.endDate?"trip":null);
-  const [nightTime,setNightTime]=useState("");
+  const [mode,setMode]=useState(fixed?.mode||(known?.startDate&&known?.endDate?"trip":null));
+  const [nightTime,setNightTime]=useState(initial?.nightTime||"");
   const isNight=mode==="night";
   const [answers,setAnswers]=useState({
-    goalBlurb:known?.goalBlurb||"",
-    tripType:known?.tripType||[],accommodation:known?.accommodation||[],
-    budget:null,pace:known?.pace||null,noWayJose:known?.noWayJose||[],
+    goalBlurb:initial?.goalBlurb||known?.goalBlurb||"",
+    tripType:initial?.tripType||known?.tripType||[],accommodation:initial?.accommodation||known?.accommodation||[],
+    budget:initial?.budget||null,pace:initial?.pace||known?.pace||null,noWayJose:initial?.noWayJose||known?.noWayJose||[],
     // A night has its own mood. What you fancy this Friday is not your
     // standing taste profile, so these are asked fresh every time and never
     // carried over from a previous plan.
-    nightKind:[],nightFood:[],nightEnergy:null,nightWhere:null,
+    nightKind:initial?.nightKind||[],nightFood:initial?.nightFood||[],
+    nightEnergy:initial?.nightEnergy||null,nightWhere:initial?.nightWhere||null,
   });
   // Default to trusting what was already said. Anyone who wants the full set
   // of questions back gets one tap to have them — the recap card offers it.
   const [reask,setReask]=useState(false);
   const [customInputs,setCustomInputs]=useState({
-    tripType:"",accommodation:"",noWayJose:"",
+    tripType:"",accommodation:"",noWayJose:initial?.noWayText||"",
   });
   // An exact figure beats a bucket: it is the number the model plans against,
   // and the tiers are computed from it.
-  const [budgetCustom,setBudgetCustom]=useState(known?.budget||"");
+  const [budgetCustom,setBudgetCustom]=useState(initial?.budgetPerPerson?String(initial.budgetPerPerson):(known?.budget||""));
   const tog=(k,v)=>setAnswers(a=>({...a,[k]:a[k].includes(v)?a[k].filter(x=>x!==v):[...a[k],v]}));
   const sel=(k,v)=>setAnswers(a=>({...a,[k]:v}));
   const setCustom=(k,v)=>setCustomInputs(c=>({...c,[k]:v}));
@@ -4156,7 +4225,8 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   // asked at all and the dates lead. The arithmetic lives in lib/quiz-steps
   // and is tested there: its failure is showing a question twice or losing
   // one, and nothing throws when it does.
-  const steps=stepsFor(asked);
+  // A trip somebody else set up has its dates already, so that step goes.
+  const steps=stepsFor(asked).filter(s=>!(fixed&&s.kind==="dates"));
   const isDateStep=steps[qStep]?.kind==="dates";
   const quizQ=steps[qStep]?.question;
   const totalSteps=steps.length;
@@ -4202,7 +4272,9 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
     // Everything they told us about this trip is in. The properties carry
     // shape only — how long, how many, what kind — never a word of what
     // they wrote. Never awaited: this must not delay generating a trip.
-    void fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
+    // Not for somebody answering a trip another person started: that is not
+    // a trip being set up, and counting it as one would double the funnel.
+    if(!fixed)void fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({name:"trip_input_submitted",groupId:group?.id||null,
         props:{nights:isNight?1:nights,kind:isNight?"night":"trip",solo:!!isSolo}})}).catch(()=>{});
     onGenerate(
@@ -4379,6 +4451,16 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
       {/* Quiz questions */}
       {!isDateStep&&quizQ&&(
         <div style={{flex:1,display:"flex",flexDirection:"column"}}>
+          {/* With no date step, this is the only place to say what the first
+              answer settled — otherwise a question they expected just does
+              not appear, and nothing says why. */}
+          {fixed&&goalLine&&quizQ.id!=="goalBlurb"&&(
+            <div style={{margin:"0 20px 10px",padding:"8px 12px",background:C.s2,
+              border:`1px solid ${C.border}`,borderRadius:12,fontSize:12,
+              color:C.t2,lineHeight:1.5}}>
+              From what you said: {goalLine}. We won't ask again.
+            </div>
+          )}
           <div style={{padding:"8px 20px 14px",textAlign:"center"}}>
             <div style={{fontSize:40,marginBottom:8}}>{quizQ.icon}</div>
             <div style={{fontFamily:"var(--font-display)",fontSize:26,
@@ -4493,12 +4575,25 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
         </div>
       )}
 
+      {/* Where a flow that does not build trips says what went wrong: on
+          the step the button is on, in its own words, not under "Couldn't
+          build your trips" on a date step this person never saw. */}
+      {isLast&&finishLabel&&error&&(
+        <div style={{margin:"0 20px",padding:"10px 12px",background:C.redDim,border:`1px solid ${C.red}`,
+          borderRadius:12,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
+          ⚠️ {error}
+        </div>
+      )}
       {/* Navigation */}
       <div style={{padding:"12px 20px 44px",display:"flex",gap:10}}>
         {qStep>0&&(
           <button className="bs" style={{flex:1}} onClick={()=>setQStep(s=>s-1)}>← Back</button>
         )}
-        {isLast?(
+        {isLast&&finishLabel?(
+          <button className="bp" style={{flex:2}} disabled={!!busy||!canNext} onClick={handleGenerate}>
+            {finishLabel}
+          </button>
+        ):isLast?(
           <button className="bp" style={{flex:2,
             background:!allComplete?`linear-gradient(135deg,${C.amber},${C.red})`:undefined}}
             onClick={handleGenerate}>
@@ -4513,17 +4608,38 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
           </button>
         )}
       </div>
+      {isLast&&finishNote&&(
+        <div style={{padding:"0 20px 30px",marginTop:-30,fontSize:11.5,color:C.t3,lineHeight:1.5,textAlign:"center"}}>
+          {finishNote}
+        </div>
+      )}
     </div>
   );
 }
 
 
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer}){
+// A group trip waits on everybody. The owner's rule: group trip quizzes
+// wait on each other, so that every option is built from everybody's input.
+// So for a group, the organiser's answers do not go straight to the model —
+// they create the trip (no destination yet), everybody else is asked the
+// same questions, and "Find our trips" opens once they all have. `planId`
+// is that trip, when this screen is opened to wait on it or to find its
+// options. A solo trip has nobody to wait for and works as it always has.
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,refreshGroup}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
   // it is what the person filled in a moment ago on the way here.
   const latestPlan=(group?.plans||[])[(group?.plans||[]).length-1]||null;
-  const [step,setStep]=useState(0);
+  // 0 the quiz · "wait" everybody's answers · 1 finding · 2 the options
+  const [step,setStep]=useState(planId?"wait":0);
+  // The group trip these options are for, once it exists.
+  const [waitPlanId,setWaitPlanId]=useState(planId||null);
+  // Who has answered for it — names and a yes or no, never what they said.
+  const [answered,setAnswered]=useState(null);
+  const [answeredErr,setAnsweredErr]=useState(false);
+  const [starting,setStarting]=useState(false);
+  const [asking,setAsking]=useState(false);
+  const [askNote,setAskNote]=useState(null);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
   // Which option cards are showing every day rather than the first two.
@@ -4563,6 +4679,29 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     setLoadingStatus(false);
   };
 
+  const loadAnswered=async(id)=>{
+    if(!id||isTempId(id))return;
+    try{
+      const r=await fetch(`/api/plans/${id}/readiness`);
+      if(!r.ok)throw new Error(String(r.status));
+      const d=await r.json();
+      // No report is not "everyone has answered": the button stays shut.
+      setAnswered(d.preferences||null);
+      setAnsweredErr(!d.preferences);
+    }catch(e){
+      console.error("[groupTrip] could not check who has answered",e);
+      setAnsweredErr(true);
+    }
+  };
+  // Live while somebody is looking at the wait, so the last person answering
+  // opens the button without anybody having to come back.
+  useEffect(()=>{
+    if(step!=="wait"||!waitPlanId)return;
+    loadAnswered(waitPlanId);
+    const t=setInterval(()=>loadAnswered(waitPlanId),15000);
+    return()=>clearInterval(t);
+  },[step,waitPlanId]);
+
   const membersList=Object.values(memberStatus);
   const completedCount=membersList.filter(m=>m.quizDone).length;
   const rawTotal=membersList.length||group.memberIds?.length||1;
@@ -4595,6 +4734,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     setNightAnswers(extra.nightPrefs||{});
     setEnrichFailed(false);
     setStep(1);setGenerating(true);setError(null);
+    // Where a failure lands: back on the wait for a group trip, back on the
+    // quiz otherwise. Either way with the reason on the screen.
+    const back=extra.planId?"wait":0;
     try{
       const res=await fetch("/api/trips/generate",{
         method:"POST",
@@ -4614,6 +4756,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           tripPrefs:prefs,
           mode:extra.mode||"trip",
           nightPrefs:extra.nightPrefs||{},
+          // A group trip: waits for, and is built from, everybody's answers.
+          planId:extra.planId||null,
         }),
       });
       if(res.ok){
@@ -4627,26 +4771,30 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           // its days already written. Three calls in parallel cost the same
           // wall-clock as one, and picking a winner is then instant rather
           // than another half-minute of waiting.
-          enrichWithItineraries(data.trips,sd||startDate,ed||endDate);
+          enrichWithItineraries(data.trips,sd||startDate,ed||endDate,extra);
         }else{
           setError("No trips returned — try different dates or budget");
-          setStep(0);
+          setStep(back);
         }
       }else{
         const err=await res.json().catch(()=>({}));
         const msg=err.error||"Generation failed";
-        // Auto-retry once on parse failures
+        // Auto-retry once on parse failures. This passed `true` where the
+        // extras go, so a retried night out came back as a trip.
         if(!retrying&&(msg.includes("parsing")||msg.includes("parse"))){
           setGenerating(false);
-          setTimeout(()=>generate(sd,ed,bud,prefs,true),1000);
+          setTimeout(()=>generate(sd,ed,bud,prefs,extra,true),1000);
           return;
         }
         setError(msg);
-        setStep(0);
+        setStep(back);
+        // Somebody's answers were taken back, or the list moved: show the
+        // server's own view of who it is waiting on.
+        if(extra.planId)loadAnswered(extra.planId);
       }
     }catch(e){
       setError("Network error — check your connection and try again");
-      setStep(0);
+      setStep(extra.planId?"wait":0);
     }finally{setGenerating(false);}
   };
 
@@ -4670,7 +4818,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
   // Writes the day-by-day plan for every option, in parallel, and attaches it
   // to the trip it belongs to.
-  const enrichWithItineraries=async(list,sd,ed)=>{
+  // `extra` is what generate was called with. Read from there rather than
+  // from state, which has not re-rendered yet when this runs.
+  const enrichWithItineraries=async(list,sd,ed,extra={})=>{
+    const night=extra.mode?extra.mode==="night":nightOut;
     setEnriching(list.length);
     const results=await Promise.all(list.map(async trip=>{
       try{
@@ -4680,10 +4831,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             groupId,startDate:sd||null,endDate:ed||null,
             detailTripId:trip.id,
             tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
-            mode:nightOut?"night":"trip",
-            nightPrefs:nightOut?nightAnswers:{},
+            mode:night?"night":"trip",
+            nightPrefs:night?(extra.nightPrefs||nightAnswers):{},
             departureCity:departure?.city||null,
             departureAirport:departure?.airport||null,
+            // The days of each option are written from everybody's answers
+            // too, not only the options themselves.
+            planId:extra.planId||null,
           }),
         });
         if(!r.ok){
@@ -4709,6 +4863,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     // Re-entry here cost twice: a duplicate plan and a second itinerary
     // generation, which is a paid model call.
     if(buildingItinerary)return;
+    // A group trip already exists — everybody answered against it. Picking
+    // gives it a destination rather than making a second plan beside it.
+    if(waitPlanId)return pickForGroupTrip(trip);
     // Save plan immediately with placeholder itinerary
     const np={
       id:"p"+Date.now(),
@@ -4809,6 +4966,218 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     push("planDetail",{planId:realId,groupId});
   };
 
+  // Picking one of a group trip's options. The trip row is updated in
+  // place, and only while it is still undecided — checked in the same write,
+  // so two people picking different options at once cannot both land.
+  const pickForGroupTrip=async(trip)=>{
+    const id=waitPlanId;
+    // Only ever set from an id the server gave back, but a pick against a
+    // local one would be a 404 somebody reads as "picked".
+    if(!id||isTempId(id)){toast("This trip is still saving — try again in a moment");return;}
+    setBuildingItinerary(trip.id);
+    let res,body;
+    try{
+      res=await fetch(`/api/plans/${id}`,{
+        method:"PATCH",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          title:trip.destination,
+          destination_city:trip.city||null,
+          destination_country:trip.country_code||null,
+          budget_cents:Math.round((Number(trip.total_per_person)||0)*100),
+          // Clears "undecided": the trip has a place now.
+          destination_style:null,
+          why_chosen:(trip.used_suggestions||[]).length?trip.used_suggestions:null,
+          only_if_undecided:true,
+        }),
+      });
+      body=await res.json().catch(()=>({}));
+    }catch(e){
+      console.error("[groupTrip] could not pick",e);
+      toast("Couldn't save that pick — check your connection and try again");
+      setBuildingItinerary(null);
+      return;
+    }
+    if(!res.ok){
+      console.error("[groupTrip] pick refused",res.status,body);
+      toast(body.error||"Couldn't save that pick — try again");
+      setBuildingItinerary(null);
+      // Somebody else picked first. Theirs stands; show it.
+      if(body.alreadyDecided){
+        if(refreshGroup)await refreshGroup(groupId);
+        push("planDetail",{planId:id,groupId});
+      }
+      return;
+    }
+    const saved=body.plan||{};
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id!==id?p:{...p,
+      title:saved.title||trip.destination,
+      destinationCity:saved.destination_city??trip.city??null,
+      destinationCountry:saved.destination_country??trip.country_code??null,
+      budget:Math.round((saved.budget_cents??0)/100)||trip.total_per_person||p.budget,
+      destStyle:saved.destination_style??null,
+      imageUrl:saved.image_url||p.imageUrl||null,
+      imageCredit:saved.image_credit||p.imageCredit||null,
+      aiData:trip,
+    })}));
+    toast(trip.destination+" it is! Writing the days… ✨");
+    try{
+      let rows=[];
+      if(trip.itinerary?.length){
+        rows=nightOut
+          ?itineraryRows(trip.itinerary,true)
+          :[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
+        const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
+        updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===id?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
+      }else{
+        const r=await fetch("/api/trips/generate",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({
+            groupId,startDate,endDate,
+            detailTripId:trip.id,planId:id,
+            tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
+            mode:nightOut?"night":"trip",
+            nightPrefs:nightOut?nightAnswers:{},
+            departureCity:departure?.city||null,
+            departureAirport:departure?.airport||null,
+          }),
+        });
+        const d=await r.json().catch(()=>({}));
+        if(r.ok&&(d.itinerary||[]).length){
+          rows=nightOut
+            ?itineraryRows(d.itinerary,true)
+            :[...fixedCostRows(trip),...itineraryRows(d.itinerary)];
+          updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===id?{...p,itinerary:rows}:p)}));
+        }else{
+          console.error("[groupTrip] itinerary for the pick failed",r.status,d);
+          toast(d.error||"Couldn't build the day-by-day plan — you can add days yourself");
+        }
+      }
+      if(rows.length&&saveItineraryToServer)await saveItineraryToServer(id,rows);
+    }catch(e){
+      console.error("[groupTrip] itinerary for the pick failed",e);
+      toast("Couldn't build the day-by-day plan — try again, or add days yourself");
+    }
+    setBuildingItinerary(null);
+    push("planDetail",{planId:id,groupId});
+  };
+
+  // What the trip is called in a sentence. "Where next?" is a fine title on
+  // a card and a strange one after "Say what you want from".
+  const tripName=p=>!p||!p.title||p.title==="Where next?"
+    ?(p?.type==="restaurant"?`${group.name}'s next night out`:`${group.name}'s next trip`)
+    :p.title;
+
+  // The organiser has answered. For a group, that makes the trip — with no
+  // destination yet — and asks everybody else the same questions. Nothing is
+  // sent to the model until all of them have answered.
+  const startGroupTrip=async(dates,tripBudget,prefs,extra={})=>{
+    if(starting)return;
+    setStarting(true);setError(null);
+    const night=extra.mode==="night";
+    const goal=(prefs?.goalBlurb||"").trim();
+    // Their own words, cut at a word, or nothing pretending to be a place.
+    const title=goal
+      ?(goal.length>60?goal.slice(0,60).replace(/\s+\S*$/,"")+"…":goal)
+      :"Where next?";
+    const budgetNum=parseInt(tripBudget)||null;
+    // Exactly what every other member's answers look like, so the reader
+    // on the server treats the organiser's the same as theirs.
+    const stored={...prefs,budgetPerPerson:budgetNum,
+      ...(night?{nightTime:extra.nightPrefs?.time||null}:{})};
+    const np={
+      id:"p"+Date.now(),title,status:"planning",
+      dates:night?formatDates(dates.start):formatDates(dates.start,dates.end),
+      startDate:dates.start||null,
+      endDate:night?(dates.start||null):(dates.end||null),
+      budget:budgetNum||0,
+      type:night?"restaurant":"trip",
+      participants:group.memberIds||[],
+      itinerary:[],votes:{},options:[],
+      destStyle:"undecided",
+      goalBlurb:goal||null,tripAnswers:stored,
+      soloMode:false,
+    };
+    updateGroup(groupId,g=>({...g,plans:[...g.plans,np]}));
+    const realId=savePlanToServer?await savePlanToServer(groupId,np,{quiet:true}):null;
+    if(!realId||isTempId(realId)){
+      // A group trip that only exists on this phone cannot be answered by
+      // anybody else, so it is not left on the screen looking as if it can.
+      updateGroup(groupId,g=>({...g,plans:g.plans.filter(p=>p.id!==np.id)}));
+      setError("Couldn't start this trip for the group — nothing was saved or sent. Try again.");
+      setStarting(false);
+      return;
+    }
+    // Their own answers, recorded against the trip the same way everybody
+    // else's are. Creating the plan tries this too and never fails over it;
+    // this is the one that says so when it does not land.
+    try{
+      const r=await fetch(`/api/plans/${realId}/preferences`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({summary:goal||null,answers:stored}),
+      });
+      if(!r.ok){
+        console.error("[groupTrip] organiser answers not saved",r.status);
+        toast("Your answers didn't save — answer again from the next screen");
+      }
+    }catch(e){
+      console.error("[groupTrip] organiser answers not saved",e);
+      toast("Your answers didn't save — answer again from the next screen");
+    }
+    setStartDate(dates.start||"");
+    setEndDate(night?(dates.start||""):(dates.end||""));
+    setBudget(tripBudget||"");
+    setTripPrefs(prefs);
+    setNightOut(night);
+    setNightAnswers(extra.nightPrefs||{});
+    setWaitPlanId(realId);
+    setStep("wait");
+    setStarting(false);
+    // Ask the others, once, now.
+    askTheOthers(realId);
+  };
+
+  // Emails whoever has not answered. Said exactly as it went: how many were
+  // emailed, or that email is not on, with the link to share by hand beside
+  // it either way.
+  const askTheOthers=async(id)=>{
+    if(asking||!id||isTempId(id))return;
+    setAsking(true);
+    try{
+      const r=await fetch(`/api/plans/${id}/notify`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:"prefs"}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't send those emails.");
+      if(d.notified){
+        const short=(d.attempted||0)>d.notified;
+        setAskNote(`Emailed ${plural(d.notified,"person","people")} to ask.${short?" Not everyone could be emailed — pass the link on to the rest.":""}`);
+      }else setAskNote(d.message||"Everyone else has already answered.");
+    }catch(e){
+      console.error("[groupTrip] could not ask the others",e);
+      setAskNote(`${e.message} Pass the link on to them instead.`);
+    }
+    setAsking(false);
+  };
+  const shareAnswerLink=(id)=>{
+    const where=typeof window!=="undefined"?window.location.origin:"";
+    const link=`${where}/home?answer=${encodeURIComponent(id)}`;
+    const msg=`We're planning a trip on Reach, and it waits for everyone's answers before it finds anywhere. Say what you want from it: ${link}`;
+    if(navigator.share){navigator.share({title:"Say what you want from this trip",text:msg}).catch(()=>{});}
+    else{navigator.clipboard?.writeText(msg);toast("Copied — paste away");}
+  };
+
+  // Everybody has answered: the options, from all of them. Dates, budget and
+  // kind come from the trip itself, so any member can press this.
+  const findOurTrips=(p)=>{
+    if(!p||generating)return;
+    const night=p.type==="restaurant";
+    const sd=p.startDate||"";
+    const ed=night?sd:(p.endDate||"");
+    setStartDate(sd);setEndDate(ed);setBudget(p.budget?String(p.budget):"");
+    generate(sd,ed,p.budget||null,{},{mode:night?"night":"trip",planId:waitPlanId});
+  };
+
   const activeTrips=(trips||[]).filter(t=>!myVetoes.has(t.id));
   const vetoedTrips=(trips||[]).filter(t=>myVetoes.has(t.id));
 
@@ -4824,6 +5193,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           <div style={{fontSize:12,color:C.t2}}>
             {step===0
               ?"Tell us about it"
+              :step==="wait"
+              ?"Everyone answers first"
               :step===1
                 ?(nightOut?"Finding you a night out…":"Finding your perfect trips…")
                 :(nightOut?"Pick your night":"Pick your trip")}
@@ -4834,119 +5205,25 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       {/* ── STEP 0: Member readiness + Trip Planning Quiz ── */}
       {step===0&&(
         <>
-          {/* Member quiz status - only show for groups, not solo */}
+          {/* How a group trip works now, said before anybody answers. This
+              was a panel about the standing taste quiz — who had filled in
+              what they like in general — which is not what a group trip
+              waits for any more: it waits for everybody's answers to these
+              same questions, about this trip. */}
           {!isSolo&&(
-          <div style={{padding:"0 20px 16px"}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-              <div style={{fontSize:12,fontWeight:600,color:C.t3,textTransform:"uppercase",letterSpacing:".08em"}}>
-                Group readiness
-              </div>
-              <div style={{fontSize:12,color:allComplete?C.green:C.accentText,fontWeight:600}}>
-                {completedCount}/{totalCount} ready
+            <div style={{padding:"0 20px 16px"}}>
+              <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:18,padding:"14px 16px"}}>
+                <div style={{fontSize:14,fontWeight:600,color:C.t1,marginBottom:4}}>
+                  You answer first
+                </div>
+                <div style={{fontSize:13,color:C.t2,lineHeight:1.6}}>
+                  Then everyone in {group.name} answers these same questions, and
+                  Reach only looks for trips once all of you have — so every
+                  option is built from what each of you said. The group sees
+                  who has answered, never what anybody said.
+                </div>
               </div>
             </div>
-
-            {/* Progress bar for groups */}
-            <div style={{height:5,background:C.s3,borderRadius:3,marginBottom:12,overflow:"hidden"}}>
-              <div style={{height:"100%",width:readyPercent+"%",borderRadius:3,
-                background:allComplete?`linear-gradient(90deg,${C.green},${C.green})`:`linear-gradient(90deg,${C.accentDeep},${C.accent})`,
-                transition:"width .5s ease"}}/>
-            </div>
-
-            {/* Member list */}
-            {membersList.length>0?(
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                {membersList.map((m,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",
-                    background:m.quizDone?C.s2:"rgba(239,68,68,.06)",
-                    border:"1px solid "+(m.quizDone?C.border:"rgba(239,68,68,.15)"),
-                    borderRadius:12}}>
-                    <div style={{width:32,height:32,borderRadius:"50%",
-                      background:m.quizDone?C.accent:C.s3,
-                      display:"flex",alignItems:"center",justifyContent:"center",
-                      fontSize:13,fontWeight:700,color:"white",flexShrink:0,overflow:"hidden"}}>
-                      {m.avatar?<img src={m.avatar} style={{width:32,height:32,objectFit:"cover"}} alt=""/>
-                        :(m.name||"?")[0].toUpperCase()}
-                    </div>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:500,color:C.t1}}>{m.name||"Member"}</div>
-                      <div style={{fontSize:11,color:m.quizDone?C.green:C.red,marginTop:1}}>
-                        {m.quizDone?"✓ Preferences ready":"⏳ Quiz not complete"}
-                      </div>
-                    </div>
-                    {/* This showed each member's top two answers — what they
-                        eat, what they listen to — to everyone else in the
-                        group. Readiness is the group's business; the answers
-                        are the person's. The server no longer sends them. */}
-                  </div>
-                ))}
-              </div>
-            ):(
-              <div style={{textAlign:"center",padding:"8px 0",color:C.t3,fontSize:12}}>
-                {loadingStatus?"Checking group status…":""}
-              </div>
-            )}
-
-            {!isSolo&&!allComplete&&(
-              <div style={{marginTop:12,background:"linear-gradient(135deg,rgba(212,168,67,0.08),rgba(196,154,56,0.04))",
-                border:"1px solid rgba(212,168,67,0.2)",borderRadius:18,padding:"16px"}}>
-                <div style={{display:"flex",alignItems:"flex-start",gap:12,marginBottom:12}}>
-                  <div style={{width:40,height:40,borderRadius:12,
-                    background:"linear-gradient(135deg,rgba(212,168,67,0.22),rgba(212,168,67,0.08))",
-                    display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
-                    ✨
-                  </div>
-                  <div>
-                    <div style={{fontSize:14,fontWeight:600,color:C.t1,marginBottom:4}}>
-                      Waiting on {totalCount-completedCount} {totalCount-completedCount===1?"member":"members"}
-                    </div>
-                    <div style={{fontSize:13,color:C.t2,lineHeight:1.6}}>
-                      Reach builds better trips when everyone shares what they're into. Nudge whoever hasn't yet.
-                    </div>
-                  </div>
-                </div>
-                <button onClick={()=>{
-                  // Was hardcoded to a preview deployment that no longer
-                  // resolves, so every nudge sent people to a dead link.
-                  const where=typeof window!=="undefined"?window.location.origin:"";
-                  const msg=`Hey! We're planning a trip on Reach and need your preferences to build the perfect options. Take 2 minutes: ${where}`;
-                  if(navigator.share){navigator.share({title:"Complete your Reach quiz",text:msg}).catch(()=>{});}
-                  else{navigator.clipboard?.writeText(msg);toast("Copied — paste away");}
-                }} style={{width:"100%",padding:"11px 16px",
-                  background:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
-                  color:C.onAccent,border:"none",borderRadius:14,
-                  fontSize:13,fontWeight:600,cursor:"pointer",
-                  boxShadow:"0 4px 16px rgba(212,168,67,0.25)"}}>
-                  📲 Nudge them
-                </button>
-                {/* The person reading this is often one of the people being
-                    waited on, and the panel used to offer them everything
-                    except the way to sort it. */}
-                <button className="bs" style={{width:"100%",marginTop:8}}
-                  onClick={()=>push("taste")}>
-                  Haven't done yours? Two minutes →
-                </button>
-              </div>
-            )}
-
-            {(allComplete||isSolo)&&(
-              <div style={{marginTop:12,background:"linear-gradient(135deg,rgba(52,211,153,0.08),rgba(52,211,153,0.04))",
-                border:"1px solid rgba(52,211,153,0.2)",borderRadius:18,padding:"14px 16px",
-                display:"flex",alignItems:"center",gap:12}}>
-                <div style={{width:36,height:36,borderRadius:10,
-                  background:"rgba(52,211,153,0.15)",
-                  display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>
-                  ✅
-                </div>
-                <div>
-                  <div style={{fontSize:14,fontWeight:600,color:C.green}}>Everyone's ready!</div>
-                  <div style={{fontSize:12,color:C.t2,marginTop:2}}>
-                    AI is reading all {totalCount} members' preferences to build your perfect trips.
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
           )}
 
           {/* Solo banner - only show for solo */}
@@ -4985,7 +5262,14 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             totalCount={totalCount}
             isSolo={isSolo}
             known={knownFromPlan(latestPlan)}
+            // A group's last button does not find trips: it starts the trip
+            // and asks everybody else. Saying "Generate" there would promise
+            // what the next screen then refuses.
+            finishLabel={isSolo?undefined:(starting?"Starting…":"Save and ask the others")}
+            finishNote={isSolo?undefined:`No trips are found until everyone in ${group.name} has answered these same questions.`}
+            busy={starting}
             onGenerate={(dates,tripBudget,prefs,extra)=>{
+              if(!isSolo){startGroupTrip(dates,tripBudget,prefs,extra);return;}
               setStartDate(dates.start);
               setEndDate(dates.end);
               setBudget(tripBudget);
@@ -4995,6 +5279,114 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           />
         </>
       )}
+
+      {/* ── Waiting on everybody's answers ── */}
+      {step==="wait"&&(()=>{
+        const wp=(group.plans||[]).find(p=>p.id===waitPlanId)||null;
+        if(!wp)return <NotLoaded what="This trip" onBack={onBack}/>;
+        // Somebody has already picked. There is nothing left to wait for.
+        if(wp.destStyle!=="undecided"){
+          return(
+            <div style={{padding:"8px 20px 30px"}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>{wp.title}</div>
+              <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:16}}>
+                This trip already has its destination.
+              </div>
+              <button className="bp" onClick={()=>push("planDetail",{planId:wp.id,groupId})}>Open the trip</button>
+            </div>
+          );
+        }
+        const members=answered?.members||[];
+        const mine=members.find(m=>m.userId===me);
+        // Strict: answered for this trip. The lenient `ready` would let a
+        // trip nobody has answered for through, which is the thing this
+        // screen exists to stop.
+        const allAnswered=!isSolo&&members.length>0&&members.every(m=>m.answered);
+        const othersOut=members.some(m=>!m.answered&&m.userId!==me);
+        const first=n=>String(n||"").trim().split(/\s+/)[0]||"Someone";
+        return(
+          <div style={{flex:1,overflowY:"auto",padding:"0 20px 30px"}}>
+            <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:6}}>{tripName(wp)}</div>
+            <div style={{fontSize:13,color:C.t2,lineHeight:1.6,marginBottom:14}}>
+              {wp.dates?`${wp.dates} · `:""}No trips are found until everyone going has
+              answered the same questions. The group sees who has answered, never what they said.
+            </div>
+
+            {answeredErr&&!answered&&(
+              <div style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
+                borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:12}}>
+                Couldn't check who has answered just now.{" "}
+                <button onClick={()=>loadAnswered(waitPlanId)} style={{background:"none",border:"none",padding:0,
+                  color:C.accentText,fontWeight:600,cursor:"pointer",fontSize:12.5}}>Try again</button>
+              </div>
+            )}
+            {!answered&&!answeredErr&&(
+              <div style={{fontSize:12.5,color:C.t3,marginBottom:12}}>Checking who has answered…</div>
+            )}
+
+            {members.length>0&&(
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+                {members.map(m=>(
+                  <div key={m.userId} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                    padding:"10px 12px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:12}}>
+                    <span style={{fontSize:13.5,color:C.t1,fontWeight:500}}>
+                      {first(m.name)}{m.userId===me?" (you)":""}
+                    </span>
+                    <span style={{fontSize:12,fontWeight:600,color:m.answered?C.green:C.t3}}>
+                      {m.answered?"✓ Answered":"Not yet"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* The person being waited on sees the way to stop being
+                waited on, first. */}
+            {mine&&!mine.answered&&(
+              <button className="bp" style={{marginBottom:10}}
+                onClick={()=>push("planPrefs",{planId:waitPlanId,groupId})}>
+                Say what you want from this trip
+              </button>
+            )}
+
+            {othersOut&&(
+              <div style={{marginBottom:14}}>
+                <div style={{display:"flex",gap:8}}>
+                  <button className="bs" style={{flex:1}} disabled={asking}
+                    onClick={()=>askTheOthers(waitPlanId)}>
+                    {asking?"Sending…":"Nudge them by email"}
+                  </button>
+                  {/* Opens the phone's share sheet, or copies — it hands the
+                      link over rather than sending anything itself. */}
+                  <button className="bs" style={{flex:1}} onClick={()=>shareAnswerLink(waitPlanId)}>
+                    Pass on the link
+                  </button>
+                </div>
+                {askNote&&(
+                  <div style={{fontSize:12,color:C.t2,marginTop:8,lineHeight:1.5}}>{askNote}</div>
+                )}
+              </div>
+            )}
+
+            {error&&(
+              <div style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
+                borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:12}}>
+                {error}
+              </div>
+            )}
+
+            {/* No override. The owner's rule is that it waits. */}
+            <button className="bp" disabled={!allAnswered||generating} onClick={()=>findOurTrips(wp)}>
+              {wp.type==="restaurant"?"✨ Find our nights out":"✨ Find our trips"}
+            </button>
+            <div style={{fontSize:12,color:C.t3,marginTop:8,lineHeight:1.5,textAlign:"center"}}>
+              {allAnswered
+                ?"Everyone has answered. Anyone in the group can press this."
+                :(answered?.waiting||"This opens once everyone has answered.")}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── STEP 1: Generating ── */}
       {step===1&&(
@@ -5261,7 +5653,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
           {/* Regenerate */}
           <div style={{padding:"0 20px 40px"}}>
-            <button className="bs" style={{width:"100%"}} onClick={()=>{setStep(0);setTrips(null);setVetoes({});setVotes({});setMyVote(null);setMyVetoes(new Set());}}>
+            <button className="bs" style={{width:"100%"}} onClick={()=>{
+              // A group trip goes back to its wait, where "Find our trips"
+              // builds three more from the same answers. Back to the quiz
+              // would make a second trip.
+              setStep(waitPlanId?"wait":0);setTrips(null);setVetoes({});setVotes({});setMyVote(null);setMyVetoes(new Set());}}>
               ↺ Generate different options
             </button>
           </div>
@@ -6949,6 +7345,34 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       <div style={{flex:1,overflowY:"auto",paddingBottom:20}}>
         {atab==="overview"&&(
           <div style={{padding:"16px 0"}}>
+            {/* A group trip with no destination yet is waiting for everyone's
+                answers. Whoever has not answered is asked; everyone else is
+                taken to the wait, where the trips are found once all are in. */}
+            {plan.destStyle==="undecided"&&(()=>{
+              const ms=prefs?.members||[];
+              const mine=ms.find(m=>m.userId===me);
+              const allHere=!prefs?.solo&&ms.length>0&&ms.every(m=>m.answered);
+              return(
+                <div style={{margin:"0 20px 14px",padding:"14px",background:C.accentDim,
+                  border:`1px solid ${C.accentText}`,borderRadius:14}}>
+                  <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>
+                    {mine&&!mine.answered?"Say what you want from this trip":allHere?"Everyone has answered":"Where this goes is still open"}
+                  </div>
+                  <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
+                    {mine&&!mine.answered
+                      ?"The same questions everyone going answers. No trips are found until all of you have."
+                      :allHere
+                        ?"Find the trips — each one built from what all of you said."
+                        :(prefs?.waiting||"No trips are found until everyone going has answered.")}
+                  </div>
+                  <button className="bp" onClick={()=>mine&&!mine.answered
+                    ?push("planPrefs",{planId,groupId})
+                    :push("groupTrip",{groupId,planId})}>
+                    {mine&&!mine.answered?"Answer the questions":allHere?"Find our trips":"See who has answered"}
+                  </button>
+                </div>
+              );
+            })()}
             <TripProgress
               plan={plan} group={group} soloTrip={soloTrip} votesIn={totalV}
               busy={building||nudging}
@@ -9618,6 +10042,16 @@ export default function ReachApp({realUser,onSignOut}={}){
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         push("taste");
       }
+      // From the email asking what somebody wants from a group trip: straight
+      // to that trip's questions. Cleared for the same reasons as above; the
+      // screen finds the group once the groups have loaded.
+      if(params.get("answer")){
+        const planId=params.get("answer");
+        params.delete("answer");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        if(/^[0-9a-f-]{36}$/i.test(planId))push("planPrefs",{planId});
+      }
       // Back from a payment provider's own page. Stripe appends payment_intent
       // and redirect_status to the address checkout gave it. Reopen that
       // checkout to record it, and clear the address first so a refresh or a
@@ -10103,7 +10537,10 @@ export default function ReachApp({realUser,onSignOut}={}){
   };
 
 
-  const savePlanToServer=async(groupId,plan)=>{
+  // `quiet`: the caller says what failed itself. A group trip that could not
+  // be saved is taken back off the screen, so "it's only on this device"
+  // would be describing a plan that is not there.
+  const savePlanToServer=async(groupId,plan,{quiet=false}={})=>{
     try{
       // Structured only. Every screen that creates a plan sets startDate and
       // endDate, so splitting the display label apart again — which broke the
@@ -10146,10 +10583,10 @@ export default function ReachApp({realUser,onSignOut}={}){
       }
       const err=await res.json().catch(()=>null);
       console.error("[savePlanToServer]",res.status,err);
-      showToast("Couldn't save that plan — it's only on this device");
+      if(!quiet)showToast("Couldn't save that plan — it's only on this device");
     }catch(e){
       console.error("[savePlanToServer]",e);
-      showToast("Couldn't save that plan — it's only on this device");
+      if(!quiet)showToast("Couldn't save that plan — it's only on this device");
     }
     return plan.id;
   };

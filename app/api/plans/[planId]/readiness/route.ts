@@ -9,7 +9,7 @@
 import { NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness } from '@/lib/essentials-server';
-import { planReadiness, waitingSentence } from '@/lib/plan-readiness';
+import { planReadiness, waitingSentence, answersSentence } from '@/lib/plan-readiness';
 
 export async function GET(_req: Request, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -26,7 +26,15 @@ export async function GET(_req: Request, { params }: { params: { planId: string 
       ctx.db, params.planId, String(ctx.plan.group_id),
       (ctx.plan as { solo_mode?: boolean }).solo_mode === true,
     );
-    preferences = { ...p, waiting: waitingSentence(p.waitingOn) };
+    // A vote is only promised where there is something to vote on. A trip
+    // with no options yet is waiting for the answers its options are built
+    // from, and says that instead.
+    const options = (ctx.plan as { vote_options?: unknown }).vote_options;
+    const hasOptions = Array.isArray(options) && options.length > 0;
+    preferences = {
+      ...p,
+      waiting: hasOptions ? waitingSentence(p.waitingOn) : answersSentence(p.waitingOn),
+    };
   } catch {
     // Reported as absent rather than as "everyone is ready", which would
     // enable a vote the server is about to refuse.

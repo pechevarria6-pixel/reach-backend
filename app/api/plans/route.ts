@@ -6,6 +6,7 @@ import { track } from '@/lib/track';
 import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
 import { placesFor } from '@/lib/discovery/real-places';
 import { within } from '@/lib/deadline';
+import { UNDECIDED } from '@/lib/group-answers';
 
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),
@@ -71,7 +72,13 @@ export async function POST(req: NextRequest) {
   // and licence beside it. Given a short deadline of its own: a trip card
   // without a photograph is the card as it has always looked, and nobody
   // should wait on an encyclopaedia to save a plan. Null is a fine answer.
-  const photo = await within(
+  //
+  // A group trip still waiting for its destination has no place to picture:
+  // its title is "Where next?" or the organiser's sentence, and a photograph
+  // looked up from either would be of somewhere nobody is going. It gets its
+  // picture when an option is picked (PATCH /api/plans/[planId]).
+  const undecided = body.destination_style === UNDECIDED;
+  const photo = undecided ? null : await within(
     destinationPhoto([body.destination_city, body.destination_country].filter(Boolean).join(', ') || body.title || ''),
     3000, 'the destination photo',
   ).catch(() => null);

@@ -6,17 +6,20 @@
 // the app at the right moment or being chased by text. That is the widest gap
 // between what is built and what a group can actually use.
 //
-// POST { kind: "vote" | "funding" } → emails members who have not yet acted
+// POST { kind: "vote" | "funding" | "prefs" } → emails members who have not yet acted
+//
+// "prefs" is a group trip waiting for everyone's answers before its options
+// are built: it emails whoever has not answered for this trip yet.
 import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
-import { sendVoteNeeded, sendFundingNeeded, type SendResult } from '@/lib/email';
+import { sendVoteNeeded, sendFundingNeeded, sendAnswersNeeded, type SendResult } from '@/lib/email';
 import { planShares } from '@/lib/money';
 import { planSkips } from '@/lib/participation';
 import { z } from 'zod';
 
-const Schema = z.object({ kind: z.enum(['vote', 'funding']) });
+const Schema = z.object({ kind: z.enum(['vote', 'funding', 'prefs']) });
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -24,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const parsed = Schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: 'kind must be "vote" or "funding"' }, { status: 400 });
+    return NextResponse.json({ error: 'kind must be "vote", "funding" or "prefs"' }, { status: 400 });
   }
   const { kind } = parsed.data;
   const db = ctx.db;
@@ -44,6 +47,16 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   if (kind === 'vote') {
     const { data } = await db.from('votes').select('user_id').eq('plan_id', params.planId);
     doneIds = (data || []).map(v => v.user_id);
+  } else if (kind === 'prefs') {
+    // Having answered for this trip is the thing. The read failing must not
+    // turn into "nobody has answered" and email everyone who already has.
+    const { data, error } = await db.from('plan_preferences')
+      .select('user_id, submitted_at').eq('plan_id', params.planId);
+    if (error) {
+      console.error('[notify] could not read who has answered', { planId: params.planId, code: error.code });
+      return NextResponse.json({ error: "Couldn't check who has answered — try again in a moment." }, { status: 503 });
+    }
+    doneIds = (data || []).filter(r => r.submitted_at).map(r => r.user_id);
   } else {
     const { data } = await db.from('contributions')
       .select('user_id, status').eq('plan_id', params.planId);
@@ -54,14 +67,20 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // task — they are looking at it.
   const outstanding = memberIds.filter(id => !doneIds.includes(id) && id !== ctx.user.id);
   if (!outstanding.length) {
-    return NextResponse.json({ notified: 0, message: 'Everyone has already done this' });
+    return NextResponse.json({
+      notified: 0,
+      message: kind === 'prefs' ? 'Everyone else has already answered' : 'Everyone has already done this',
+    });
   }
 
   const { data: people } = await db
     .from('users').select('id, email').in('id', outstanding);
 
   const base = appUrl(req);
-  const url = `${base}/home`;
+  // Straight to the questions for this trip: /home opens them from ?answer=.
+  const url = kind === 'prefs'
+    ? `${base}/home?answer=${encodeURIComponent(params.planId)}`
+    : `${base}/home`;
   // Each person's own share, the same figure checkout will charge them. This
   // used to quote the first person's even split of the budget to everybody,
   // which was wrong for anyone sitting something out and for any priced trip.
@@ -81,6 +100,13 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       ? await sendVoteNeeded(person.email, {
           planTitle: plan.title, groupName: group?.name || 'Your group',
           options: (plan.vote_options as string[]) || [], url,
+        })
+      : kind === 'prefs'
+      ? await sendAnswersNeeded(person.email, {
+          // "is planning Where next?" reads as a typo. A trip with no
+          // destination yet is just their next trip.
+          planTitle: plan.title === 'Where next?' ? 'their next trip' : plan.title,
+          groupName: group?.name || 'Your group', url,
         })
       : await sendFundingNeeded(person.email, {
           planTitle: plan.title, groupName: group?.name || 'Your group',

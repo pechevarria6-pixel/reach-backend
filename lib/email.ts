@@ -128,6 +128,25 @@ export function sendVoteNeeded(to: string, opts: { planTitle: string; groupName:
     <a href="${escape(opts.url)}" style="${emailButtonStyle}">Cast your vote</a>`), 'vote needed');
 }
 
+/**
+ * A group trip is waiting to hear what this person wants from it.
+ *
+ * Nothing is decided yet — no destination, nothing to vote on — so this asks
+ * for exactly one thing, and says why it matters: the options are only built
+ * once everybody has answered. Nobody else's answers are in it.
+ */
+export function sendAnswersNeeded(to: string, opts: { planTitle: string; groupName: string; url: string }) {
+  return send(to, `${opts.groupName} wants to hear from you`, shell('What do you want from this trip?', `
+    <p style="font-size:15px;line-height:1.6;margin:0 0 14px;">
+      <strong>${escape(opts.groupName)}</strong> is planning <strong>${escape(opts.planTitle)}</strong>,
+      and the trip options are only put together once everyone going has answered the same few questions.
+    </p>
+    <p style="font-size:14px;line-height:1.6;color:#635539;margin:0 0 20px;">
+      Your answers are yours — the group sees that you have answered, never what you said.
+    </p>
+    <a href="${escape(opts.url)}" style="${emailButtonStyle}">Say what you want</a>`), 'answers needed');
+}
+
 export function sendBookingConfirmation(to: string, opts: {
   planTitle: string;
   items: Array<{ label: string; detail?: string | null; confirmation?: string | null }>;

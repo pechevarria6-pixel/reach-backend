@@ -23,6 +23,12 @@ export interface MemberReadiness {
   /** What the group already calls them. Never an email. */
   name: string;
   ready: boolean;
+  /**
+   * Has actually answered for this trip. `ready` is lenient — on a trip
+   * nobody has been asked about, everybody is ready — and this is not. A
+   * group trip waiting for its options is gated on this one.
+   */
+  answered: boolean;
 }
 
 export interface ReadinessReport {
@@ -61,6 +67,21 @@ export function waitingSentence(names: string[]): string | null {
     ? names[0]
     : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
   return `Votes open when everyone's in — waiting on ${list}.`;
+}
+
+/**
+ * The same wait, for a trip with nothing to vote on yet.
+ *
+ * "Votes open when everyone's in" on a trip with no options promised a vote
+ * that was never coming: what the group is waiting for there is the answers
+ * the options get built from, so that is what it says.
+ */
+export function answersSentence(names: string[]): string | null {
+  if (!names.length) return null;
+  const list = names.length === 1
+    ? names[0]
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Waiting on ${list} to say what they want from this trip.`;
 }
 
 export async function planReadiness(
@@ -109,7 +130,8 @@ export async function planReadiness(
     const userId = String(record.user_id);
     // The email is deliberately not a fallback name: it is somebody's email.
     const name = String(u.name || '').trim() || 'A traveller';
-    return { userId, name, ready: !asked || submitted.has(userId) };
+    const answered = submitted.has(userId);
+    return { userId, name, ready: !asked || answered, answered };
   });
 
   return {

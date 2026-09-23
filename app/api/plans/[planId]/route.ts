@@ -5,6 +5,9 @@ import { tidyLegacy } from '@/lib/checkout';
 import { impactOfDateChange, describeImpact, needsConfirmation, stillWorksFor } from '@/lib/date-change';
 import { z } from 'zod';
 import { track } from '@/lib/track';
+import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
+import { within } from '@/lib/deadline';
+import { UNDECIDED } from '@/lib/group-answers';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -22,6 +25,13 @@ const UpdatePlanSchema = z.object({
   destination_style: z.string().nullish(),
   dealbreakers: z.array(z.string()).nullish(),
   vote_options: z.array(z.string()).nullish(),
+  // What the chosen option does for whom, as the group was shown it.
+  why_chosen: z.array(z.string()).nullish(),
+  // Picking a group trip's destination. Only lands on a trip that is still
+  // waiting for one, checked in the same statement as the write — two people
+  // pressing "Pick this" on different options at once is two concurrent
+  // requests, and read-then-write would let both through. Never stored.
+  only_if_undecided: z.boolean().nullish(),
 });
 
 // GET /api/plans/[id] — get a single plan with itinerary and votes
@@ -93,8 +103,24 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
 
   // Handle status-specific timestamps
   // confirmDateChange is a decision about this request, not a column.
-  const { confirmDateChange: _confirm, ...fields } = body as Record<string, unknown>;
+  const { confirmDateChange: _confirm, only_if_undecided: onlyIfUndecided, ...fields } = body as Record<string, unknown>;
   const updates: any = { ...fields };
+  if ('why_chosen' in updates) updates.why_chosen = (updates.why_chosen as string[] | null)?.length ? updates.why_chosen : null;
+  if ('destination_country' in updates && updates.destination_country) {
+    updates.destination_country = String(updates.destination_country).toUpperCase();
+  }
+
+  // The picture of the place, now that there is a place. A group trip was
+  // saved before it had one, so it was deliberately given no photograph;
+  // this is when it gets the one creating a trip with a destination gets.
+  if (onlyIfUndecided === true && updates.destination_city) {
+    const photo = await within(
+      destinationPhoto([updates.destination_city, updates.destination_country].filter(Boolean).join(', ')),
+      3000, 'the destination photo',
+    ).catch(() => null);
+    // Never the picture without the credit: a photograph is somebody's work.
+    if (photo) Object.assign(updates, { image_url: photo.url, image_credit: credit(photo), image_source: photo.source });
+  }
   // Same guard as POST /api/plans: never hand Postgres a display string.
   if ('start_date' in updates) updates.start_date = toDateOrNull(updates.start_date);
   if ('end_date' in updates) updates.end_date = toDateOrNull(updates.end_date);
@@ -171,8 +197,33 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   // The error used to be discarded here, so a failed or no-op update answered
   // 200 with { plan: null } and anything writing through this route could
   // silently not save.
-  const { data: updated, error: writeError } = await supabase
-    .from('plans').update(updates).eq('id', params.planId).select().single();
+  const write = () => {
+    let q = supabase.from('plans').update(updates).eq('id', params.planId);
+    if (onlyIfUndecided === true) q = q.eq('destination_style', UNDECIDED);
+    return q.select().maybeSingle();
+  };
+  let attempt = await write();
+  // why_chosen and the photograph columns arrive in migrations. A database
+  // that has not had one yet should lose the sentence or the picture, not
+  // the destination somebody just picked — the same bargain POST makes.
+  const UNKNOWN = /could not find the '([a-z_]+)' column|column "?([a-z_]+)"? .*does not exist/i;
+  for (let i = 0; i < 4 && attempt.error; i++) {
+    const missing = UNKNOWN.exec(attempt.error.message || '');
+    const name = missing ? (missing[1] || missing[2]) : null;
+    if (!name || !['why_chosen', 'image_url', 'image_credit', 'image_source'].includes(name) || !(name in updates)) break;
+    console.error('[plans PATCH] retrying without a column this database does not have yet', { column: name });
+    delete updates[name];
+    attempt = await write();
+  }
+  const { data: updated, error: writeError } = attempt;
+  if (onlyIfUndecided === true && !writeError && !updated) {
+    // Nothing matched: somebody else picked first. Theirs stands, and this
+    // person is told so rather than silently overwriting it.
+    return NextResponse.json(
+      { error: 'Somebody has already picked where this trip goes.', alreadyDecided: true },
+      { status: 409 },
+    );
+  }
   if (writeError || !updated) {
     console.error('[plans PATCH] update failed', { planId: params.planId, code: writeError?.code });
     return NextResponse.json({ error: 'Could not save that change' }, { status: 500 });
