@@ -92,3 +92,21 @@ test('nothing in, nothing thrown', () => {
   assert.deepEqual(r.trips, []);
   assert.equal(r.fatal.length, 0);
 });
+
+import { oneMealPerEvening } from '../../lib/generation-rules.ts';
+test("two dinners in one evening: the first stays, the second goes", () => {
+  const { day, dropped } = oneMealPerEvening({
+    morning: { plan: 'Start the night with a pint at Trophy Brewing' },
+    afternoon: { plan: "Dinner at Vic's Italian Restaurant" },
+    evening: { plan: "Dinner at the bar counter at Vinny's Italian Grill" },
+  });
+  assert.equal((day.afternoon as { plan: string }).plan, "Dinner at Vic's Italian Restaurant");
+  assert.equal((day.evening as { plan: string }).plan, '');
+  assert.equal(dropped.length, 1);
+});
+test('dinner then dessert and a last drink is one meal', () => {
+  const { dropped } = oneMealPerEvening({
+    morning: 'Dinner at Vic’s', afternoon: 'The show at the Pour House', evening: 'Dessert and a last drink nearby',
+  });
+  assert.equal(dropped.length, 0);
+});

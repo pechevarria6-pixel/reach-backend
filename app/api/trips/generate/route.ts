@@ -6,7 +6,7 @@ import {
   TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA,
   parseModelJSON, textOf, normalizeTrips, dropFillerDays,
 } from '@/lib/trip-schema';
-import { applyRules, correctionNote } from '@/lib/generation-rules';
+import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
 import { planReadiness } from '@/lib/plan-readiness';
 import {
   readGroupAnswers, answersBlock, standingWishesBlock, groupFraming, attributes,
@@ -658,6 +658,8 @@ Return exactly one day. Use its three slots as the shape of an EVENING — not
 a day. Nothing here happens before late afternoon:
 - "morning" is where they meet first — a bar for a drink, a walk, or the thing
   before the thing. If the evening genuinely starts at dinner, say so there.
+- EXACTLY ONE slot is a sit-down meal. If dinner is the first stop or the main
+  event, the last slot is a drink, dessert or a walk — never another restaurant.
 - "afternoon" is the main event: the game, the gig, the show, the booking.
   Name it. Never write about the slot — "this is the slot for the thing you
   already have in mind", "leave this window open" — that is the form talking
@@ -665,7 +667,8 @@ a day. Nothing here happens before late afternoon:
   is, make it a real thing they could do: the dinner, the venue, the bar with
   the band on. An evening of two real things beats three with a note in the
   middle.
-- "evening" is what follows: dinner, dessert, a last drink.
+- "evening" is what follows: dessert, a last drink, or dinner if nothing before
+  it was a meal.
 
 Then "daytime": two things they could do earlier that same day if they decide
 to make a day of it. Nearby, and they must work as an afternoon on their own —
@@ -1054,6 +1057,20 @@ you have made up; a day that is simply a good day is allowed to be one.`;
         console.error('[trips itinerary] removed stays nobody booked', {
           destination, claims: [...invented].slice(0, 8),
         });
+      }
+
+      // One sit-down meal an evening. The prompt says so; this is the half
+      // that does not depend on it being obeyed (lib/generation-rules.ts).
+      if (isNightPlan) {
+        for (let i = 0; i < days.length; i++) {
+          const { day, dropped } = oneMealPerEvening(days[i]);
+          if (dropped.length) {
+            console.error('[trips itinerary] dropped a second meal in one evening', {
+              destination, plan: detailTripId ?? null, dropped: dropped.map(d => d.slice(0, 60)),
+            });
+            days[i] = day;
+          }
+        }
       }
 
       if (!days.length) {

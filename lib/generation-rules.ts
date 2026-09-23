@@ -129,3 +129,29 @@ export function correctionNote(report: RuleReport, rule: ModeRule): string {
 
 // Re-exported for the route, which builds its own zod types.
 export type Schema<T> = z.ZodType<T>;
+
+// ─── One sit-down meal per evening ───────────────────────────────────────
+// The night prompt offered dinner in all three slots — "if the evening
+// starts at dinner, say so there", the main event can be "the dinner", and
+// the evening is "dinner, dessert, a last drink" — and nothing checked what
+// came back. The one double dinner that reached a screen (Vic's and Vinny's,
+// the same Raleigh evening) was a stale booking, but nothing would have
+// stopped the model writing it. The first meal stays; a later one goes
+// rather than being relabelled — "an evening of two real things beats three".
+const MEAL = /\b(dinner|supper|tasting menu|prix[- ]fixe|brunch|lunch|sit[- ]down meal)\b/i;
+const slotText = (v: unknown) => typeof v === 'string' ? v : String((v as { plan?: unknown } | null)?.plan ?? '');
+
+export function oneMealPerEvening<D extends { morning?: unknown; afternoon?: unknown; evening?: unknown }>(day: D): { day: D; dropped: string[] } {
+  const order = ['morning', 'afternoon', 'evening'] as const;
+  let seen = false;
+  const dropped: string[] = [];
+  const out = { ...day } as Record<string, unknown>;
+  for (const k of order) {
+    const text = slotText(out[k]);
+    if (!text || !MEAL.test(text)) continue;
+    if (!seen) { seen = true; continue; }
+    dropped.push(text);
+    out[k] = typeof out[k] === 'string' ? '' : { ...(out[k] as object), plan: '' };
+  }
+  return { day: out as D, dropped };
+}
