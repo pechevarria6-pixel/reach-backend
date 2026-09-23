@@ -13,6 +13,7 @@ import { requireUser, isFail } from '@/lib/auth';
 import { encrypt, decrypt } from '@/lib/encryption';
 import { GENDERS, missingFor, validBirthDate, plausiblePhone } from '@/lib/essentials';
 import { z } from 'zod';
+import { paymentRefundCents } from '@/lib/refunds';
 
 // A document number is stored encrypted and must never travel back in full.
 // The screen only needs to prove it holds the right one, so it gets the last
@@ -46,12 +47,11 @@ export async function GET() {
     // holds zero rows, so this screen showed an empty payment history to
     // somebody who had paid — twice, in this database.
     //
-    // A whole refund shows as the status 'refunded'. Part of one is recorded
-    // in refunded_cents (sql/wave1-refunds-2026-09-22.sql) and is not listed
-    // here yet: naming that column would fail this read until the migration
-    // runs, and this history shows what was paid, not what came back.
+    // select('*') so refunded_cents (sql/wave1-refunds-2026-09-22.sql) is
+    // read the moment it exists without failing this read before then; the
+    // rows are narrowed to what the screen shows below.
     db.from('contributions')
-      .select('id, amount_cents, currency, status, created_at, plan_id')
+      .select('*')
       .eq('user_id', user.id).order('created_at', { ascending: false }).limit(10),
   ]);
 
@@ -105,10 +105,13 @@ export async function GET() {
     connected: connected.data || [],
     cards,
     payments: (contributions.data || []).map(c => ({
-      ...c,
-      // The screen reads this to show a refund; contributions record one as
-      // a status, so it is derived rather than invented.
-      refund_amount_cents: c.status === 'refunded' ? c.amount_cents : 0,
+      id: c.id, amount_cents: c.amount_cents, currency: c.currency,
+      status: c.status, created_at: c.created_at, plan_id: c.plan_id,
+      // The screen reads this to show a refund. Part of a payment given back
+      // is recorded in refunded_cents and showed as nothing back at all when
+      // this read only the status; a whole one before the migration is still
+      // said by the status alone.
+      refund_amount_cents: paymentRefundCents(c),
     })),
     // Undefined rather than null means the column is not there yet, so the
     // screen can tell "not set" apart from "migration not run".

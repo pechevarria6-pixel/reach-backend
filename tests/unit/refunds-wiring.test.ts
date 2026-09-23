@@ -37,10 +37,20 @@ test('nothing names refunded_cents in a select, so every read works before the m
   assert.deepEqual(offenders, []);
 });
 
-test('the funding total, the ledger and the funded announcement all count net of refunds', () => {
-  assert.match(read('app/api/plans/[planId]/funding/route.ts'), /sumCollected\(/);
+test('the funding total, the ledger, the funded announcement and approval all count net of refunds', () => {
+  assert.match(read('app/api/plans/[planId]/funding/route.ts'), /netCollectedCents\(contributions\)/);
   assert.match(read('app/api/plans/[planId]/ledger/route.ts'), /netPaidCents\(/);
   assert.match(read('app/api/webhooks/stripe/route.ts'), /sumCollected\(/);
+  // Approval is where a counted-but-refunded dollar would be spent. It reads
+  // every contribution column (so refunded_cents arrives with the migration)
+  // and decides through fundingAt / fundingOf, which count net
+  // (refunds.test.ts: "refunds, funding and approval count collected money
+  // the same way").
+  const approve = read('app/api/bookings/[id]/approve/route.ts');
+  assert.match(approve, /from\('contributions'\)\.select\('\*'\)/);
+  assert.match(approve, /fundingAt\(owed, paid\.data/);
+  assert.match(approve, /fundingOf\(owed, paid\.data\)/);
+  assert.match(approve, /const owed = chargedRows\(/);
 });
 
 test('the webhook records refunded_cents from the charge', () => {
@@ -53,10 +63,38 @@ test('a refunded contribution is never marked succeeded again', () => {
   }
 });
 
-test('the refund route claims the payment before it asks Stripe', () => {
+test('the refund route takes the plan lock, then claims the payment, then asks Stripe', () => {
   const src = read('app/api/plans/[planId]/funding/refund/route.ts');
-  const claim = src.indexOf(".from('refunds').insert(");
-  const stripe = src.indexOf('api.stripe.com/v1/refunds');
-  assert.ok(claim > 0 && stripe > 0 && claim < stripe, 'the refunds row must be written before Stripe is called');
-  assert.match(src, /'Idempotency-Key':\s*refundIdempotencyKey\(/);
+  const lock = src.indexOf("from('refund_locks').insert(");
+  const claim = src.indexOf(".from('refunds')\n        .insert(");
+  const stripe = src.indexOf("stripeCall('https://api.stripe.com/v1/refunds', stripeKey, {");
+  assert.ok(lock > 0 && claim > 0 && stripe > 0, 'lock, claim and Stripe call must all be there');
+  assert.ok(lock < claim && claim < stripe, 'the lock and the claim must be taken before Stripe is called');
+  assert.match(src, /key: refundIdempotencyKey\(piece\.contributionId, piece\.attempt\)/);
+  // The lock is released however the request ends.
+  assert.match(src, /finally \{\s*const \{ error \} = await db\.from\('refund_locks'\)\.delete\(\)/);
+});
+
+test('the refund route never lowers what the webhook recorded', () => {
+  const src = read('app/api/plans/[planId]/funding/refund/route.ts');
+  assert.match(src, /refunded_cents: outcome\.refundedCents[^\n]*\n\s*\.eq\('id', contributionId\)\n\s*\.lt\('refunded_cents', outcome\.refundedCents\)/);
+});
+
+test('bookings are read with mode and provider, so only what Reach buys is kept back', () => {
+  const src = read('app/api/plans/[planId]/funding/refund/route.ts');
+  assert.match(src, /from\('bookings'\)\.select\('[^']*\bmode\b[^']*\bprovider\b[^']*'\)/);
+});
+
+test('the webhook: a part refund before the migration is retried, and a failed refund is put back', () => {
+  const src = read('app/api/webhooks/stripe/route.ts');
+  // 200 here meant Stripe never sent it again and the plan counted the money for good.
+  assert.match(src, /if \(outcome\.partial\) \{[\s\S]{0,900}status: 500/);
+  assert.doesNotMatch(src, /writeError = null;/);
+  assert.match(src, /'charge\.refund\.updated'/);
+  assert.match(src, /liveRefundedCents\(/);
+});
+
+test('the payment history reports part refunds', () => {
+  const src = read('app/api/profile/route.ts');
+  assert.match(src, /refund_amount_cents: paymentRefundCents\(c\)/);
 });
