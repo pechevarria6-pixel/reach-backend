@@ -11,6 +11,8 @@
 //
 // GET  → what I said about this trip (mine only)
 // POST → record what I said, and mark me as having had my say
+import { announceIfEveryoneIn } from '@/lib/everyone-in';
+import { pushSender } from '@/lib/push';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { z } from 'zod';
@@ -80,5 +82,15 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({ error: "Couldn't save your answers — try again" }, { status: 500 });
   }
 
-  return NextResponse.json({ saved: true });
+  // The last answer in: tell the whole group, once. Never fails the save —
+  // the answers are what matters and they are stored.
+  let everyone = false;
+  try {
+    const plan = ctx.plan as { id?: string; group_id: string; title?: string; type?: string; destination_style?: string };
+    everyone = await announceIfEveryoneIn(ctx.db, { ...plan, id: params.planId }, ctx.user.id, pushSender());
+  } catch (e) {
+    console.error('[plan preferences POST] could not announce everyone in', { planId: params.planId, error: e instanceof Error ? e.message : String(e) });
+  }
+
+  return NextResponse.json({ saved: true, everyoneIn: everyone });
 }

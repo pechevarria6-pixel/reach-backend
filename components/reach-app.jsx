@@ -15,6 +15,7 @@ import { byDay, dearestDay } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { priceLabel } from "@/lib/discovery/price-label";
+import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
@@ -602,6 +603,107 @@ function isTempId(id){
 }
 
 // ─── HOME ────────────────────────────────────────────────────────────────────
+// ─── The bell ─────────────────────────────────────────────────────────────
+// What Reach has told this person: a nudge to answer, "everyone's in". And
+// the one place to let Reach notify their phone — asked only when they tap,
+// and on an iPhone in Safari, told plainly that Apple only allows it once
+// Reach is on the Home Screen, rather than a button that does nothing.
+function NotificationsBell(){
+  const [open,setOpen]=useState(false);
+  const [data,setData]=useState({available:false,unread:0,items:[]});
+  const [push,setPush]=useState(null);   // PushState, once known
+  const [turning,setTurning]=useState(false);
+  const load=async()=>{
+    try{
+      const r=await fetch("/api/notifications");
+      if(r.ok)setData(await r.json());
+    }catch(e){console.error("[bell] could not load",e);}
+  };
+  useEffect(()=>{
+    load();
+    const t=setInterval(load,60000);
+    pushState().then(setPush).catch(()=>setPush("unsupported"));
+    return()=>clearInterval(t);
+  },[]);
+  const openBell=async()=>{
+    setOpen(true);
+    if(data.unread>0){
+      setData(d=>({...d,unread:0,items:d.items.map(n=>({...n,read_at:n.read_at||new Date().toISOString()}))}));
+      try{
+        const r=await fetch("/api/notifications",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+        if(!r.ok)console.error("[bell] could not mark read",r.status);
+      }catch(e){console.error("[bell] could not mark read",e);}
+    }
+  };
+  const turnOn=async()=>{
+    if(turning)return;
+    setTurning(true);
+    try{setPush(await turnOnPush());}catch(e){console.error("[bell] could not turn on notifications",e);setPush("off");}
+    setTurning(false);
+  };
+  const ago=iso=>{
+    const m=Math.max(1,Math.round((Date.now()-new Date(iso).getTime())/60000));
+    return m<60?`${m}m`:m<1440?`${Math.round(m/60)}h`:`${Math.round(m/1440)}d`;
+  };
+  const PUSH_LINE={
+    on:null,
+    off:"Get these on your phone, even when Reach is closed.",
+    denied:"Notifications are blocked for Reach in this browser's settings — allow them there to get these on your phone.",
+    install_first:"On iPhone, add Reach to your Home Screen first: tap Share, then “Add to Home Screen”, and open it from there. Apple only allows notifications that way.",
+    unsupported:"This browser can't show notifications — they'll still be here in Reach.",
+    not_configured:"Phone notifications aren't switched on yet — they'll still be here in Reach.",
+  };
+  return(
+    <>
+      <button onClick={openBell} aria-label={data.unread?`${data.unread} new notifications`:"Notifications"}
+        style={{position:"relative",background:"none",border:"none",cursor:"pointer",fontSize:22,padding:4,lineHeight:1}}>
+        🔔
+        {data.unread>0&&(
+          <span style={{position:"absolute",top:0,right:0,minWidth:17,height:17,borderRadius:9,background:C.accent,
+            color:C.onAccent,fontSize:10.5,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px"}}>
+            {data.unread>9?"9+":data.unread}
+          </span>
+        )}
+      </button>
+      {open&&(
+        <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:60,display:"flex",alignItems:"flex-end"}}>
+          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxHeight:"75vh",overflowY:"auto",background:C.s1,
+            borderRadius:"20px 20px 0 0",padding:"18px 20px 28px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <div style={{fontSize:17,fontWeight:700,color:C.t1}}>Notifications</div>
+              <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",color:C.t2,fontSize:14,cursor:"pointer"}}>Done</button>
+            </div>
+            {push&&PUSH_LINE[push]&&(
+              <div style={{padding:"12px 14px",borderRadius:14,background:C.s2,border:`1px solid ${C.border}`,marginBottom:14}}>
+                <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5}}>{PUSH_LINE[push]}</div>
+                {push==="off"&&(
+                  <button className="bs" style={{marginTop:10}} disabled={turning} onClick={turnOn}>
+                    {turning?"Asking…":"Turn on notifications"}
+                  </button>
+                )}
+              </div>
+            )}
+            {push==="on"&&<div style={{fontSize:11.5,color:C.green,marginBottom:12}}>✓ This device gets these as notifications.</div>}
+            {!data.items.length?(
+              <div style={{fontSize:13,color:C.t2,padding:"18px 0",textAlign:"center"}}>
+                {data.available?"Nothing yet. When your group needs you, it shows up here.":"Nothing here yet."}
+              </div>
+            ):data.items.map(n=>(
+              <a key={n.id} href={n.url||"/home"} style={{display:"block",textDecoration:"none",padding:"11px 0",borderTop:`1px solid ${C.border}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:10}}>
+                  <div style={{fontSize:13.5,fontWeight:n.read_at?500:700,color:C.t1}}>{n.title}</div>
+                  <div style={{fontSize:11,color:C.t3,flexShrink:0}}>{ago(n.created_at)}</div>
+                </div>
+                {n.body&&<div style={{fontSize:12.5,color:C.t2,marginTop:2,lineHeight:1.45}}>{n.body}</div>}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function HomeScreen({groups,um,push,toast,loading,user,setTab}){
   // The server has no idea what time it is where you are. Anything that reads
   // the clock waits for the browser rather than guessing and being corrected.
@@ -770,11 +872,14 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab}){
             the browser, which is a text mismatch, which fails hydration —
             React then replaced the document on every single load. The space is
             held so nothing jumps when it arrives. */}
-        <div style={{fontSize:13.5,color:C.t2,marginBottom:5,fontWeight:500,minHeight:18}}>
-          {mounted?(<>
-            {hour<12?"Good morning":hour<17?"Good afternoon":"Good evening"}
-            {firstNameOf(user,"")&&`, ${firstNameOf(user)}`}
-          </>):null}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5,minHeight:18}}>
+          <div style={{fontSize:13.5,color:C.t2,fontWeight:500}}>
+            {mounted?(<>
+              {hour<12?"Good morning":hour<17?"Good afternoon":"Good evening"}
+              {firstNameOf(user,"")&&`, ${firstNameOf(user)}`}
+            </>):null}
+          </div>
+          {mounted&&<NotificationsBell/>}
         </div>
         {/* A question rather than a greeting, because the answer is the whole
             point of the app. One word carries the accent, and the question
@@ -5232,15 +5337,19 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       if(r.status===429){
         // Somebody (maybe this person, a moment ago) already nudged them.
         setNudgeWait(Math.min(60,Math.max(1,Number(d.retryAfterSeconds)||60)));
-        setAskNote(d.error||"They were just emailed — you can nudge them again in a minute.");
+        setAskNote(d.error||"They were just nudged — you can nudge them again in a minute.");
         setAsking(false);
         return;
       }
-      if(!r.ok)throw new Error(d.error||"Couldn't send those emails.");
+      if(!r.ok)throw new Error(d.error||"Couldn't nudge them just now.");
       if(d.notified){
-        const short=(d.attempted||0)>d.notified;
         setNudgeWait(60);
-        setAskNote(`Emailed ${plural(d.notified,"person","people")} to ask.${short?" Not everyone could be emailed — pass the link on to the rest.":""}`);
+        // Said as it went: on their phone, in the app, by email.
+        const how=[
+          d.pushed?`${plural(d.pushed,"phone","phones")} notified`:null,
+          d.emailed?`${plural(d.emailed,"email","emails")} sent`:null,
+        ].filter(Boolean);
+        setAskNote(`Nudged ${plural(d.notified,"person","people")} — it's waiting in their Reach notifications${how.length?` (${how.join(", ")})`:""}.`);
       }else setAskNote(d.message||"Everyone else has already answered.");
     }catch(e){
       console.error("[groupTrip] could not ask the others",e);
@@ -5461,7 +5570,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                 <div style={{display:"flex",gap:8}}>
                   <button className="bs" style={{flex:1}} disabled={asking||nudgeWait>0}
                     onClick={()=>askTheOthers(waitPlanId)}>
-                    {asking?"Sending…":nudgeWait>0?`Nudge again in ${nudgeWait}s`:"Nudge them by email"}
+                    {asking?"Nudging…":nudgeWait>0?`Nudge again in ${nudgeWait}s`:"Nudge them"}
                   </button>
                   {/* Opens the phone's share sheet, or copies — it hands the
                       link over rather than sending anything itself. */}
@@ -10193,6 +10302,15 @@ export default function ReachApp({realUser,onSignOut}={}){
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         if(/^[0-9a-f-]{36}$/i.test(planId))push("planPrefs",{planId});
+      }
+      // From "Everyone's in": straight to the trip's wait screen, where
+      // "Find our trips" is now unlocked.
+      if(params.get("waiting")){
+        const planId=params.get("waiting"), groupId=params.get("group");
+        params.delete("waiting");params.delete("group");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        if(/^[0-9a-f-]{36}$/i.test(planId)&&/^[0-9a-f-]{36}$/i.test(groupId||""))push("groupTrip",{groupId,planId});
       }
       // Back from a payment provider's own page. Stripe appends payment_intent
       // and redirect_status to the address checkout gave it. Reopen that

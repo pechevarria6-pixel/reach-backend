@@ -10,6 +10,8 @@
 //
 // "prefs" is a group trip waiting for everyone's answers before its options
 // are built: it emails whoever has not answered for this trip yet.
+import { notifyUsers } from '@/lib/notify-user';
+import { pushSender } from '@/lib/push';
 import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { appUrl } from '@/lib/app-url';
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     if (!claim.allowed) {
       console.log('[notify] nudged less than a minute ago', { planId: params.planId, retryAfter: claim.retryAfterSeconds });
       return NextResponse.json({
-        error: 'They were just emailed — you can nudge them again in a minute.',
+        error: 'They were just nudged — you can nudge them again in a minute.',
         retryAfterSeconds: claim.retryAfterSeconds,
       }, { status: 429, headers: { 'Retry-After': String(claim.retryAfterSeconds) } });
     }
@@ -109,9 +111,32 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     shares = planShares(planBookings || [], plan.budget_cents || 0, memberIds, await planSkips(db, params.planId));
   }
 
+  // A trip waiting on answers nudges in the app: everybody's bell, and their
+  // phone if they have let Reach notify it. Email is the fallback only for
+  // people no phone notification reached — the owner's rule.
+  let inApp = 0, pushed = 0;
+  let emailTo = people || [];
+  if (kind === 'prefs') {
+    const organiser = (await db.from('users').select('name').eq('id', ctx.user.id).maybeSingle()).data?.name;
+    const first = String(organiser || '').trim().split(/\s+/)[0] || 'Your group';
+    const what = plan.title === 'Where next?'
+      ? (plan.type === 'restaurant' ? 'your next night out' : 'your next trip')
+      : plan.title;
+    const delivery = await notifyUsers(db, outstanding, {
+      kind: 'prefs',
+      title: `${first} is waiting on you`,
+      body: `Say what you want from ${what} — the ideas are built once everyone has answered.`,
+      url: `/home?answer=${encodeURIComponent(params.planId)}`,
+      planId: params.planId,
+    }, pushSender());
+    inApp = delivery.inApp;
+    pushed = delivery.pushed.length;
+    emailTo = (people || []).filter(p => delivery.unreached.includes(p.id));
+  }
+
   let notified = 0;
   const failures: string[] = [];
-  for (const person of people || []) {
+  for (const person of emailTo) {
     if (!person.email) continue;
     const result: SendResult = kind === 'vote'
       ? await sendVoteNeeded(person.email, {
@@ -140,9 +165,9 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   }
 
   // Nothing went, so nothing was nudged: the next press may try again now.
-  if (!notified) await releaseNudge(db, claimId);
+  if (!notified && !pushed && !inApp) await releaseNudge(db, claimId);
 
-  if (!notified && failures.length) {
+  if (!notified && !pushed && !inApp && failures.length) {
     // Every send failed for the same reason, and it is almost always the key.
     const reason = failures[0];
     console.error('[notify] nothing sent', { planId: params.planId, kind, reason, attempted: failures.length });
@@ -154,5 +179,10 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     }, { status: 503 });
   }
 
-  return NextResponse.json({ notified, attempted: (people || []).length, failed: failures.length });
+  return NextResponse.json({
+    // People reached by anything at all, and how: bell, phone, email.
+    notified: kind === 'prefs' ? outstanding.length : notified,
+    inApp, pushed, emailed: notified,
+    attempted: (people || []).length, failed: failures.length,
+  });
 }
