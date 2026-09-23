@@ -409,11 +409,10 @@ export async function GET(req: NextRequest) {
       `${process.env.LITEAPI_BASE || 'https://api.liteapi.travel/v3.0'}/data/countries`,
       { headers: { 'X-API-Key': process.env.LITEAPI_KEY ?? '', accept: 'application/json' } }),
     probe('Viator (activities)', 'booking', 'VIATOR_API_KEY', null),
-    // Duffel is the flight provider; Kiwi stays dormant behind it. Listed
-    // with its mode, because a live token is the one credential here that
-    // could issue a real ticket by accident.
+    // Duffel is the flight provider, and the only one: the Kiwi integration
+    // was deleted. Listed with its mode, because a live token is the one
+    // credential here that could issue a real ticket by accident.
     probe('Duffel (flights)', 'booking', 'DUFFEL_API_KEY', null),
-    probe('Kiwi/Tequila (flights, dormant)', 'booking', 'TEQUILA_API_KEY', null),
     probe('AeroAPI (flight status)', 'booking', 'AEROAPI_KEY', null),
 
     // ── Everything the app cannot run without ──────────────────────────

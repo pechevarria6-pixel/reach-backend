@@ -17,6 +17,26 @@ import { PROVIDERS } from '@/lib/booking/registry';
 import { hotelOptions } from '@/lib/booking/providers/hotels.liteapi';
 import { flightOptions } from '@/lib/booking/providers/flights.duffel';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
+import { partySize } from '@/lib/participation';
+import { roomsFor } from '@/lib/booking/party';
+
+/**
+ * The request sized for who is going now, not who was going when it was
+ * first priced. This is how a quote that funding refuses as `stale_quotes`
+ * gets priced again: pick it (or another) here, and it comes back for the
+ * current party. Flights and hotels are never sat out, so that is everybody.
+ */
+async function sizedNow(
+  db: Parameters<typeof partySize>[0], plan: Parameters<typeof partySize>[1], request: BookingItemRequest,
+): Promise<BookingItemRequest> {
+  const party = await partySize(db, plan);
+  return {
+    ...request,
+    party,
+    ...(request.flight ? { flight: { ...request.flight, seats: party } } : {}),
+    ...(request.hotel ? { hotel: { ...request.hotel, rooms: Math.max(request.hotel.rooms || 1, roomsFor(party)) } } : {}),
+  };
+}
 
 const CHANGEABLE = new Set(['quoted', 'awaiting_approval']);
 const SWAPPABLE = new Set(['hotel', 'flight']);
@@ -45,8 +65,8 @@ const lockedMessage = (status: string) => status === 'confirmed'
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const got = await load(params.id);
   if (got.fail) return got.fail;
-  const { booking } = got;
-  const request = booking.request_payload as BookingItemRequest;
+  const { booking, ctx } = got;
+  const request = await sizedNow(ctx.db, ctx.plan, booking.request_payload as BookingItemRequest);
   const current = { detail: booking.detail, priceCents: booking.price_cents, status: booking.status,
     raw: booking.response_payload ?? null };
   if (!CHANGEABLE.has(booking.status)) {
@@ -66,7 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: lockedMessage(booking.status) }, { status: 409 });
   }
 
-  const request = { ...(booking.request_payload as BookingItemRequest) };
+  const request = await sizedNow(ctx.db, ctx.plan, booking.request_payload as BookingItemRequest);
   if (booking.vertical === 'hotel' && request.hotel) {
     request.hotel = { ...request.hotel, hotelId: parsed.data.key, rateId: undefined };
   } else if (booking.vertical === 'flight' && request.flight) {
@@ -101,5 +121,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
   // Approved in the moment between reading and writing: nothing changed.
   if (!updated) return NextResponse.json({ error: lockedMessage('confirmed') }, { status: 409 });
+  // A price rise approval was holding for the old choice is not a price for
+  // this one, and accepting it later would put the wrong fare on the row.
+  // Before sql/wave1-bookings-2026-09-22.sql the column does not exist and
+  // there is nothing to clear.
+  const { error: cleared } = await ctx.db.from('bookings')
+    .update({ pending_price_cents: null }).eq('id', params.id).not('pending_price_cents', 'is', null);
+  if (cleared && !(cleared.code === 'PGRST204' || cleared.code === '42703' || /pending_price_cents/.test(cleared.message ?? ''))) {
+    console.error('[options] could not clear a price rise held for the old choice', { id: params.id, code: cleared.code });
+  }
   return NextResponse.json({ booking: updated, previousPriceCents: booking.price_cents });
 }

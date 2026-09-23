@@ -4,7 +4,18 @@
 //   1. /hotels/rates  → rates for a hotel/city (quote)
 //   2. /rates/prebook → lock a rate, returns prebookId
 //   3. /rates/book    → commit, returns confirmation
-import { BookingProvider, BookingItemRequest, BookingItemResult, isConfigured } from '../types';
+import { type BookingProvider, type BookingItemRequest, type BookingItemResult, isConfigured } from '../types.ts';
+import { headcount, occupancies } from '../party.ts';
+
+/**
+ * Who is in which room: the party spread across the rooms, three people in
+ * two rooms being two and one. A quote from before `party` existed, with
+ * nobody named, is priced at two to a room as it always was.
+ */
+function occupancyOf(req: BookingItemRequest) {
+  const rooms = Math.max(1, req.hotel?.rooms || 1);
+  return occupancies(headcount(req, rooms * 2), rooms);
+}
 
 const BASE = process.env.LITEAPI_BASE || 'https://api.liteapi.travel/v3.0';
 const KEY = () => process.env.LITEAPI_KEY || '';
@@ -55,14 +66,11 @@ export async function hotelOptions(req: BookingItemRequest, limit = 6) {
   if (!isConfigured('LITEAPI_KEY')) return { error: 'Hotels are switched off.', options: [] };
   const h = req.hotel;
   if (!h?.city || !h.countryCode) return { error: 'This trip has no destination saved.', options: [] };
-  const rooms = Math.max(1, h.rooms || 1);
   let data;
   try {
     data = await liteFetch('/hotels/rates', { method: 'POST', body: JSON.stringify({
       checkin: h.checkin, checkout: h.checkout, currency: 'USD', guestNationality: 'US',
-      occupancies: Array.from({ length: rooms }, () => ({
-        adults: Math.max(1, Math.ceil((req.travelers?.length || rooms * 2) / rooms)),
-      })),
+      occupancies: occupancyOf(req),
       cityName: h.city, countryCode: h.countryCode,
     }) });
   } catch (e) {
@@ -102,13 +110,10 @@ export const liteApiHotels: BookingProvider = {
       checkout: h.checkout,
       currency: 'USD',
       guestNationality: 'US',
-      // Occupancy, not identity. Named travellers arrive at approval; at quote
-      // time a plan may have nobody listed yet, and asking for zero adults —
-      // or reading .length off an array that is not there — is how this
-      // failed. Two to a room is the assumption a hotel would make.
-      occupancies: Array.from({ length: Math.max(1, h.rooms || 1) }, () => ({
-        adults: Math.max(1, Math.ceil((req.travelers?.length || (h.rooms || 1) * 2) / Math.max(1, h.rooms || 1))),
-      })),
+      // Occupancy, not identity: the party this is for, spread across the
+      // rooms. It was `travelers.length`, which is nobody at quote time, so
+      // every room was priced at two whatever the group was.
+      occupancies: occupancyOf(req),
     };
     // LiteAPI: "you must search by either country code, latitude and
     // longitude, placeId, lastUpdatedAt, IATA code, or hotelIds". A city name
@@ -117,12 +122,23 @@ export const liteApiHotels: BookingProvider = {
     else if (h.city && h.countryCode) { body.cityName = h.city; body.countryCode = h.countryCode; }
 
     const data = await liteFetch('/hotels/rates', { method: 'POST', body: JSON.stringify(body) });
+    // The hotel that was priced, and no other. A pinned hotel with no rates is
+    // unavailable; it is never quietly swapped for whichever hotel came first.
+    type Rate = Record<string, unknown> & {
+      name?: string; offerId?: string; rateId?: string;
+      retailRate?: { total?: { amount?: number | string; currency?: string }[] };
+    };
+    const hotels = (data?.data ?? []) as { hotelId?: string; roomTypes?: { offerId?: string; rates?: Rate[] }[] }[];
+    const match = h.hotelId ? hotels.find(x => x.hotelId === h.hotelId) : hotels[0];
+    if (h.hotelId && !match) {
+      return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'That hotel has no rooms left for these dates.' };
+    }
     // The offer and the rate live at different levels, and prebook wants the
     // offer. Asked LiteAPI directly rather than guessing a third time: the
     // roomType carries offerId, and the rate underneath carries rateId,
     // pricing and the cancellation policy. Sending the rate's id was refused
     // as "invalid offerId" — it is a real identifier for a different thing.
-    const roomType = data?.data?.[0]?.roomTypes?.[0];
+    const roomType = match?.roomTypes?.[0];
     const first = roomType?.rates?.[0];
     if (!first) {
       return { vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi', error: 'No rates available' };
@@ -134,7 +150,7 @@ export const liteApiHotels: BookingProvider = {
     // place to stay was a code nobody could recognise or look up. The rates
     // answer carries only the id; /data/hotel carries the rest. A failed
     // lookup costs the name, never the quote.
-    const hotelId: string | undefined = data?.data?.[0]?.hotelId;
+    const hotelId: string | undefined = match?.hotelId;
     const hotel = hotelId ? await hotelDetails(hotelId) : null;
     const room = titleCase(first?.name);
     return {
@@ -200,21 +216,35 @@ export const liteApiHotels: BookingProvider = {
         prebookId,
         holder: { firstName: lead.firstName, lastName: lead.lastName, email: lead.email },
         payment: { method: 'ACC_CREDIT_CARD' }, // sandbox: account credit; production: wallet/deposit
-        guests: req.travelers.map((t, i) => ({
-          occupancyNumber: i + 1, firstName: t.firstName, lastName: t.lastName, email: t.email,
-        })),
+        // Our booking's own id, so an order LiteAPI holds can always be
+        // traced to the row that asked for it — including one whose answer
+        // never reached us.
+        ...(req.reference ? { clientReference: req.reference } : {}),
+        // One named guest per room. occupancyNumber is the room, not the
+        // person: numbering every traveller named a fourth room in a
+        // booking of two.
+        guests: occupancyOf(req).map((_, room) => {
+          const t = req.travelers[room] ?? lead;
+          return { occupancyNumber: room + 1, firstName: t.firstName, lastName: t.lastName, email: t.email };
+        }),
       }),
     });
     const conf = booked?.data;
+    if (!conf?.bookingId) {
+      return {
+        vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi',
+        error: 'The hotel did not confirm the booking.', raw: conf,
+      };
+    }
     return {
       vertical: 'hotel',
       mode: 'native',
-      status: conf?.bookingId ? 'confirmed' : 'failed',
+      status: 'confirmed',
       provider: 'liteapi',
-      providerRef: conf?.bookingId || conf?.confirmationNumber,
-      priceCents: conf?.price ? Math.round(Number(conf.price) * 100) : undefined,
-      currency: conf?.currency || 'USD',
-      detail: conf?.hotel?.name ? `${conf.hotel.name} confirmed` : 'Hotel booking confirmed',
+      providerRef: conf.bookingId || conf.confirmationNumber,
+      priceCents: conf.price ? Math.round(Number(conf.price) * 100) : undefined,
+      currency: conf.currency || 'USD',
+      detail: conf.hotel?.name ? `${conf.hotel.name} confirmed` : 'Hotel booking confirmed',
       raw: conf,
     };
   },

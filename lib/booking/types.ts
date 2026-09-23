@@ -13,6 +13,10 @@ export type FulfillmentMode = 'native' | 'redirect' | 'concierge';
 export type BookingStatus =
   | 'quoted'             // priced, not yet committed
   | 'awaiting_approval'  // proposed; group lead must approve before execution
+  // Claimed by one approval and at the provider right now. Written by a
+  // conditional update from awaiting_approval, so two approvals of the same
+  // row cannot both reach the provider — see app/api/bookings/[id]/approve.
+  | 'booking'
   | 'pending'       // submitted, awaiting provider/ops confirmation
   | 'confirmed'     // booked — confirmation number available
   | 'redirected'    // handed to partner checkout
@@ -25,6 +29,8 @@ export interface TravelerInfo {
   email: string;
   phone?: string;
   dateOfBirth?: string; // required for flights
+  /** female | male | x | unspecified — only ever read at approval, never stored. */
+  gender?: string;
 }
 
 export interface BookingItemRequest {
@@ -32,6 +38,20 @@ export interface BookingItemRequest {
   planId: string;
   groupId: string;
   travelers: TravelerInfo[];
+  /**
+   * How many people this is for. Set when the thing is quoted, from the
+   * party, and checked again at approval against everybody actually on the
+   * booking. Every provider sizes from this: seats, rooms' occupants, an
+   * activity's travellers, a table. It used to be `travelers.length`, and
+   * nobody is named at quote time, so every quote was for one person.
+   */
+  party?: number;
+  /**
+   * Our own id for this booking, sent to the provider where it takes one
+   * (LiteAPI clientReference, Viator partnerBookingRef), so an order at the
+   * provider can always be traced back to the row that asked for it.
+   */
+  reference?: string;
   // Vertical-specific payloads (only the relevant one is set)
   flight?: {
     origin: string;        // IATA, e.g. "SFO"
@@ -83,7 +103,7 @@ export interface BookingItemResult {
   vertical: Vertical;
   mode: FulfillmentMode;
   status: BookingStatus;
-  provider: string;              // 'liteapi' | 'kiwi' | 'viator' | 'ticketmaster' | 'concierge'
+  provider: string;              // 'liteapi' | 'duffel' | 'viator' | 'ticketmaster' | 'airline' | a table platform
   providerRef?: string;          // provider booking id / confirmation number
   redirectUrl?: string;          // for mode=redirect
   priceCents?: number;
@@ -91,6 +111,8 @@ export interface BookingItemResult {
   detail?: string;               // human-readable summary
   raw?: unknown;                 // provider response for auditing
   error?: string;
+  /** The itinerary line this was asked for, echoed back by POST /api/bookings. */
+  itineraryItemId?: string;
 }
 
 export interface BookingProvider {

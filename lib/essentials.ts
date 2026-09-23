@@ -107,8 +107,9 @@ export function missingFor(e: Essentials | null | undefined, today = new Date())
   const gender = (e?.gender ?? '').trim().toLowerCase();
   // 'unspecified' is a stored answer, and not one an automated booking can
   // carry — see duffelGender. It is still counted as answered here: that
-  // booking goes to a person rather than failing, so somebody who has told
-  // us is not left looking at an unfinished form for ever.
+  // flight is handed to the airline's own site when it is quoted (see
+  // airlineHandoff), so somebody who has told us is not left looking at an
+  // unfinished form for ever.
   if (!gender || !GENDERS.includes(gender as Gender)) missing.push('gender');
   if (!plausiblePhone(e?.phone)) missing.push('phone number');
   return missing;

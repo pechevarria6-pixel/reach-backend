@@ -14,11 +14,20 @@
 //   * an offer expires, often within the hour, and a group takes longer than
 //     that to agree on anything — so book() re-requests rather than trusting
 //     a stored price
-import { BookingProvider, BookingItemRequest, BookingItemResult, CancelResult } from '../types';
+import type { BookingProvider, BookingItemRequest, BookingItemResult, CancelResult } from '../types.ts';
 import {
   amountToCents, offerExpired, duffelGender, toDuffelPassenger,
-  describeOffer, flightIdent, describeConditions, departed, offerKey, offerOption, isOrderId, type DuffelPassenger,
-} from '../duffel-map';
+  describeOffer, flightIdent, describeConditions, departed, offerKey, offerOption, isOrderId, airlineSite, type DuffelPassenger,
+} from '../duffel-map.ts';
+import { headcount } from '../party.ts';
+
+/**
+ * Seats: the party the flight is for. It was `travelers.length`, and nobody
+ * is named when a trip is priced, so every group's fare was for one seat.
+ */
+function seatsFor(req: BookingItemRequest): number {
+  return headcount({ party: req.party ?? req.flight?.seats, travelers: req.travelers });
+}
 
 const BASE = process.env.DUFFEL_BASE || 'https://api.duffel.com';
 const VERSION = 'v2';
@@ -57,7 +66,7 @@ type Offer = {
   total_amount?: string;
   total_currency?: string;
   expires_at?: string;
-  owner?: { name?: string };
+  owner?: { name?: string; conditions_of_carriage_url?: string | null };
   passengers?: { id: string }[];
   slices?: unknown[];
   // What you are actually agreeing to. A real offer came back saying changes
@@ -229,7 +238,7 @@ export async function flightOptions(req: BookingItemRequest, limit = 6) {
   const f = req.flight;
   if (!process.env.DUFFEL_API_KEY || !f) return { error: 'Flights are switched off.', options: [] };
   if (departed(f.departDate)) return { error: "This trip's dates have already passed.", options: [] };
-  const { error, offers } = await searchOffers({ ...f, offerKey: undefined }, req.travelers?.length || f.seats || 1);
+  const { error, offers } = await searchOffers({ ...f, offerKey: undefined }, seatsFor(req));
   const seen = new Set<string>();
   const options = [];
   for (const o of offers) {
@@ -261,7 +270,7 @@ export const duffelFlights: BookingProvider = {
       return fail("This trip's dates have already passed — pick new ones and we can price the flights.");
     }
 
-    const { error, offer } = await cheapestOffer(f, req.travelers?.length || f.seats || 1);
+    const { error, offer } = await cheapestOffer(f, seatsFor(req));
     if (error || !offer) return fail(error ?? 'No flights found.');
 
     const cents = amountToCents(offer.total_amount);
@@ -293,6 +302,9 @@ export const duffelFlights: BookingProvider = {
         option: offerOption(offer as Parameters<typeof offerOption>[0]),
         // Shown before anyone pays a share towards it.
         conditions: describeConditions(offer.conditions),
+        // Where this airline sells its own tickets, for a flight Reach cannot
+        // buy — see airlineHandoff. From the airline's own page, never a guess.
+        airlineSite: airlineSite(offer.owner?.conditions_of_carriage_url),
       },
     };
   },
@@ -319,12 +331,15 @@ export const duffelFlights: BookingProvider = {
     }
 
     const passengerIds = raw?.passengerIds ?? [];
-    if (passengerIds.length < req.travelers.length) {
-      return fail('The airline offered fewer seats than there are travellers.');
+    // Exactly one seat per traveller. Fewer leaves somebody at the gate; more
+    // is a seat bought for nobody, and Duffel refuses an order that does not
+    // name every passenger the offer was priced for.
+    if (passengerIds.length !== req.travelers.length) {
+      return fail(`The fare was for ${passengerIds.length} ${passengerIds.length === 1 ? 'seat' : 'seats'} and ${req.travelers.length} ${req.travelers.length === 1 ? 'person is' : 'people are'} going — price it again for everyone.`);
     }
 
     const passengers: DuffelPassenger[] = [];
-    const needsAPerson: string[] = [];
+    let markerNotCarried = false;
     for (const [i, t] of req.travelers.entries()) {
       const who = [t.firstName, t.lastName].filter(Boolean).join(' ') || 'A traveller';
       const mapped = toDuffelPassenger(
@@ -342,37 +357,21 @@ export const duffelFlights: BookingProvider = {
         if (mapped.problem !== 'gender') return fail(mapped.why);
         // An X marker is not a blank. The passport is right and the
         // automated channel is what is narrow: Duffel takes m or f and
-        // nothing else. Airlines do issue these tickets — through a person.
-        // Failing here would mean somebody cannot fly with their friends
-        // because of what is printed on their passport, which is not an
-        // outcome this app is going to produce.
-        needsAPerson.push(who);
+        // nothing else.
+        markerNotCarried = true;
         continue;
       }
       passengers.push(mapped.passenger);
     }
 
-    if (needsAPerson.length) {
-      const names = needsAPerson.length === 1
-        ? needsAPerson[0]
-        : `${needsAPerson.slice(0, -1).join(', ')} and ${needsAPerson[needsAPerson.length - 1]}`;
-      return {
-        vertical: 'flight', mode: 'concierge', status: 'pending', provider: 'concierge',
-        providerRef: `CNC-${Date.now().toString(36).toUpperCase()}`,
-        // The fare they were quoted, so the group's total does not move.
-        priceCents: q.priceCents, currency: q.currency,
-        detail: q.detail,
-        // Said plainly, and without making it sound like something went
-        // wrong. Nothing has: this booking is being made by a person.
-        error: null,
-        raw: {
-          conciergeReason: 'gender-marker',
-          travellers: needsAPerson,
-          note: `${names} will be booked directly with the airline — automatic booking only carries male or female, and we are not putting the wrong one on a ticket.`,
-          offerId: q.providerRef,
-          flightIdent: (q.raw as { flightIdent?: string | null })?.flightIdent ?? null,
-        },
-      };
+    // This used to come back as a 'pending' concierge booking carrying the
+    // fare, so the group paid for a seat that no process anywhere would
+    // book. /api/bookings now hands such a flight to the airline's own site
+    // when it is quoted, with no price on it, so this is only reached when a
+    // marker changed after the quote. Nobody is named: the response is read
+    // by the whole group, and a passport marker is not theirs to learn here.
+    if (markerNotCarried) {
+      return fail("Automatic booking only carries a male or female passport marker, so Reach can't buy this flight. Book it with the airline directly — nothing was bought here.");
     }
 
     if (liveToken()) {

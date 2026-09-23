@@ -134,7 +134,7 @@ export function itemTitle(row: CheckoutRow, fallback?: string | null): string {
  * then booked would have shown the failure and hidden the booking.
  */
 const WEIGHT: Record<string, number> = {
-  confirmed: 6, redirected: 5, pending: 4, awaiting_approval: 3, quoted: 2, failed: 1, cancelled: 0,
+  confirmed: 6, redirected: 5, booking: 4, pending: 4, awaiting_approval: 3, quoted: 2, failed: 1, cancelled: 0,
 };
 const weigh = (row: CheckoutRow) => WEIGHT[row.status ?? ''] ?? 2;
 
@@ -171,19 +171,21 @@ const isConcierge = (row: CheckoutRow) => row.provider === 'concierge' || row.mo
 const settled = (row: CheckoutRow) => row.status !== 'failed' && row.status !== 'cancelled';
 
 /**
- * A row that costs money to the person tapping the button.
+ * A row that costs money to the person tapping the button: one Reach buys.
  *
- * Who books it is not the question — whether it has a price is. A table
- * somebody rings up about is a request with no price, settled at the venue.
- * A flight booked by a person because the automated channel will not carry
- * an X passport marker is a seat that costs $236 and the group owes it.
- * Excluding by provider put the second in the same bucket as the first, so a
- * trip whose only booking was that flight showed a total of nothing and
- * refused to take payment for a real fare.
+ * A table somebody rings up about is a request with no price, settled at the
+ * venue. A redirect — a table on Resy, a ticket, a flight handed to the
+ * airline's own site — is bought by the person on someone else's checkout,
+ * so it is never in this total and never stops anybody paying for the rest.
+ *
+ * A priced concierge row used to count. That was the flight for somebody
+ * with an X passport marker: the group paid $236 for it and no process
+ * anywhere booked it. Such a flight is now handed to the airline when it is
+ * quoted, with no price, and a concierge row is never charged for.
  */
 function charged(row: CheckoutRow): boolean {
   if (!settled(row)) return false;
-  return priced(row) || !isConcierge(row);
+  return !isConcierge(row) && row.mode !== 'redirect';
 }
 
 

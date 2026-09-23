@@ -32,11 +32,14 @@ update public.bookings
 
 
 -- ── 2. The two indexes ─────────────────────────────────────────────────
+-- 'booking' (a row an approval has claimed) was added 2026-09-22 with
+-- sql/wave1-bookings-2026-09-22.sql. Listing it here is harmless whichever
+-- of the two files runs first.
 
 create unique index if not exists bookings_one_live_per_thing
   on public.bookings (plan_id, idempotency_key)
   where idempotency_key is not null
-    and status in ('quoted', 'awaiting_approval', 'pending', 'confirmed');
+    and status in ('quoted', 'awaiting_approval', 'booking', 'pending', 'confirmed');
 
 create unique index if not exists contributions_one_per_intent
   on public.contributions (stripe_payment_intent, user_id)

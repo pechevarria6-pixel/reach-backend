@@ -23,6 +23,8 @@ import { tripTiming, today } from '@/lib/calendar';
 import { rentalLine } from '@/lib/ground';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
 import { findProduct } from '@/lib/booking/providers/viator-search';
+import { roomsFor } from '@/lib/booking/party';
+import { failuresByLine } from '@/lib/booking/failures';
 
 export const maxDuration = 60;
 
@@ -113,7 +115,7 @@ function asRequest(
         checkout: plan.end_date,
         // One room per two people, rounded up: the group can change it, and
         // a quote for one room when six are going is a misleading number.
-        rooms: Math.max(1, Math.ceil(partySize / 2)),
+        rooms: roomsFor(partySize),
       },
     } as BookingItemRequest & { itineraryItemId: string; title: string };
   }
@@ -238,6 +240,30 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       created: 0, failed: 0, failures: [], alreadyBooked: alreadyBooked.size,
       skipped: (candidates as Item[]).map(i => ({ title: i.title, why })),
     });
+  }
+
+  // Nothing is added to what people have already paid for.
+  //
+  // Every booking added here raises the total, and with it everybody's
+  // share — so after somebody has paid, a new line opened at checkout left
+  // the plan short of money it had been told was complete, and approval
+  // refused it for good. Said instead, per line, with what to do about it.
+  // A failed read is treated as paid: the safe answer for a lock is locked.
+  if (candidates.length) {
+    const { data: paid, error: paidError } = await ctx.db.from('contributions')
+      .select('id').eq('plan_id', params.planId).eq('status', 'succeeded').limit(1);
+    if (paidError) console.error('[bookable] could not check for payments', { planId: params.planId, code: paidError.code });
+    if (paidError || paid?.length) {
+      return NextResponse.json({
+        created: 0, failed: 0, failures: [], alreadyBooked: alreadyBooked.size,
+        skipped: (candidates as Item[]).map(i => ({
+          title: i.title,
+          why: paidError
+            ? 'we could not check the payments just now, so nothing new was added — open checkout again in a moment'
+            : 'money has already been paid towards this trip, and it only covers what was on the list then — so this one is yours to book directly',
+        })),
+      });
+    }
   }
 
   // Free the slot held by a previous failed attempt.
@@ -481,7 +507,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   // Stamp each new row with the line it came from, so the next open of
   // checkout knows it is already there.
-  const results: { status?: string; error?: string }[] = body.results ?? [];
+  const results: { status?: string; error?: string; itineraryItemId?: string }[] = body.results ?? [];
   const failed = results.filter(r => r.status === 'failed');
 
   const { data: fresh } = await ctx.db
@@ -501,7 +527,8 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     failed: failed.length,
     // Named, because a line that could not be quoted is a line somebody is
     // about to pay for and will not receive.
-    failures: failed.map((f, i) => ({ title: requests[i]?.title ?? 'an item', error: f.error ?? 'could not be quoted' })),
+    // By the line each result was asked for — see lib/booking/failures.ts.
+    failures: failuresByLine(requests, results),
     alreadyBooked: alreadyBooked.size,
     skipped,
   });

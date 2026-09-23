@@ -1,13 +1,19 @@
-// ─── POST /api/bookings — the concierge orchestrator ─────────────────────
-// Body: { planId, groupId, travelers: TravelerInfo[], items: BookingItemRequest[] }
-// Quotes then books every item through its provider, persists each result
-// to Supabase `bookings`, notifies nothing (frontend polls plan status).
+// ─── POST /api/bookings — price everything, book nothing ────────────────
+// Body: { planId, items: BookingItemRequest[], dryRun?: boolean }
+// Quotes every item through its provider and stores each one awaiting
+// approval. Nothing is bought here: POST /api/bookings/[id]/approve does
+// that, after the money is in. Each result echoes the itineraryItemId it was
+// asked for, so a caller names a failure by what it was and not by where it
+// sat in the list.
 // GET /api/bookings?planId=… — list bookings for a plan.
 import { NextRequest, NextResponse } from 'next/server';
 import { PROVIDERS } from '@/lib/booking/registry';
 import { report } from '@/lib/report';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { groupReadiness, withoutTravelerDetails } from '@/lib/essentials-server';
+import { groupReadiness, withoutTravelerDetails, bookingTravellers } from '@/lib/essentials-server';
+import { partySize } from '@/lib/participation';
+import { airlineOnly } from '@/lib/booking/approval';
+import { airlineHandoff } from '@/lib/booking/duffel-map';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
 import { findDuplicate, identityOf as findKey } from '@/lib/booking/duplicate';
 import { bookingFacts } from '@/lib/contracts/booking';
@@ -57,8 +63,22 @@ export async function POST(req: NextRequest) {
   // trip was actually waiting on was the one person on it pressing Book after
   // paying, which approval already is. The "waiting on the others" wording
   // was fixed where it was said.
-  const executeNow = body.executeNow === true;
+  //
+  // `executeNow` went too. No client sent it, and it booked straight from
+  // here with no funding check at all.
   const results: BookingItemResult[] = [];
+  // Every result carries the line it was asked for, set on the object itself
+  // because the write below may still turn it into a failure.
+  const keep = (item: BookingItemRequest, r: BookingItemResult) => {
+    const line = (item as { itineraryItemId?: unknown }).itineraryItemId;
+    if (typeof line === 'string' && line) r.itineraryItemId = line;
+    results.push(r);
+  };
+
+  // How many people this is for, decided here rather than taken from the
+  // client: it is what every provider sizes the price from, and approval
+  // refuses to book a different number.
+  const party = await partySize(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null });
 
   // No airline issues a ticket without a legal name, a date of birth and a
   // gender for every passenger. Checked once, before anything is quoted, so
@@ -68,6 +88,19 @@ export async function POST(req: NextRequest) {
   if ((body.items as BookingItemRequest[]).some(i => i.vertical === 'flight')) {
     const { ready, blocking } = await groupReadiness(ctx.db, ctx.plan.group_id as string);
     if (!ready) flightsBlocked = blocking;
+  }
+
+  // Whether any flight must go to the airline's own site: somebody carries a
+  // passport marker automatic booking cannot send. Decided at the quote, so
+  // the flight never enters the total and nobody pays a share of a seat
+  // Reach cannot buy. It used to be discovered at booking, after the money.
+  let toAirline = false;
+  if (!flightsBlocked && (body.items as BookingItemRequest[]).some(i => i.vertical === 'flight')) {
+    try {
+      toAirline = airlineOnly(await bookingTravellers(ctx.db, ctx.plan.group_id as string));
+    } catch {
+      flightsBlocked = 'We could not check who is travelling just now.';
+    }
   }
 
   // What this plan already has in play, read once. A double-tapped "Book
@@ -123,7 +156,7 @@ export async function POST(req: NextRequest) {
           price_cents: Number(f.priceCents || 0),
         },
       });
-      results.push({
+      keep(item, {
         vertical: f.vertical as BookingItemResult['vertical'],
         mode: f.mode as BookingItemResult['mode'],
         status: f.status as BookingItemResult['status'],
@@ -142,7 +175,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (item.vertical === 'flight' && flightsBlocked) {
-      results.push({
+      keep(item, {
         vertical: 'flight', mode: 'native', status: 'failed', provider: 'none',
         // Names, not details: who to go and ask.
         error: flightsBlocked,
@@ -153,7 +186,7 @@ export async function POST(req: NextRequest) {
     if (!provider) {
       // The enum is ours. "Unknown vertical activity" is not a sentence.
       console.error('[bookings] no provider for vertical', { vertical: item.vertical });
-      results.push({ vertical: item.vertical, mode: 'concierge', status: 'failed', provider: 'none', error: "Reach can't book this kind of thing yet" });
+      keep(item, { vertical: item.vertical, mode: 'redirect', status: 'failed', provider: 'none', error: "Reach can't book this kind of thing yet" });
       continue;
     }
     // Attach shared context
@@ -164,16 +197,24 @@ export async function POST(req: NextRequest) {
     // undefined array crashed the hotel quote with "cannot read properties of
     // undefined" — a five-hundred error for a trip nobody had named anyone on
     // yet. Who is travelling is settled at approval; a quote needs a count.
-    item.travelers = item.travelers?.length ? item.travelers : (body.travelers ?? []);
+    //
+    // Nobody is named at quote time any more: approval names everybody on the
+    // booking from their saved details, so nothing sent here is trusted to
+    // stand for who is going.
+    item.travelers = [];
+    item.party = party;
+    if (item.flight) item.flight = { ...item.flight, seats: party };
+    if (item.restaurant) item.restaurant = { ...item.restaurant, partySize: party };
 
     try {
-      const result = (dryRun || !executeNow)
-        ? await provider.quote(item)
-        : await provider.book(item);
-      if (!dryRun && !executeNow && (result.status === 'quoted')) {
+      let result = await provider.quote(item);
+      if (item.vertical === 'flight' && toAirline && result.status === 'quoted' && item.flight) {
+        result = airlineHandoff(result, item.flight);
+      }
+      if (!dryRun && result.status === 'quoted') {
         result.status = 'awaiting_approval' as BookingItemResult['status'];
       }
-      results.push(result);
+      keep(item, result);
 
       if (!dryRun) {
         // The identity of the thing booked, so the database can refuse a
@@ -274,7 +315,7 @@ export async function POST(req: NextRequest) {
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Provider error';
-      results.push({ vertical: item.vertical, mode: 'native', status: 'failed', provider: provider.name, error: msg });
+      keep(item, { vertical: item.vertical, mode: 'native', status: 'failed', provider: provider.name, error: msg });
     }
   }
 

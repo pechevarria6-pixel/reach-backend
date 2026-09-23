@@ -44,7 +44,8 @@ export interface Impact {
   whose?: string | null;
 }
 
-const SETTLED = new Set(['confirmed', 'redirected', 'pending']);
+// 'booking' is at the provider right now: as good as bought for the old dates.
+const SETTLED = new Set(['confirmed', 'booking', 'redirected', 'pending']);
 const PROVISIONAL = new Set(['quoted', 'awaiting_approval']);
 
 /**

@@ -49,7 +49,8 @@ export function minutesLeft(expiresAt: string | null | undefined, now = new Date
  * is allowed to decline. Two of those four cannot be sent here, and the
  * honest thing is to say so rather than pick one — a ticket issued under the
  * wrong marker is refused at the gate, and choosing on somebody's behalf is
- * not ours to do. Those bookings go to the concierge lane instead.
+ * not ours to do. Those flights are handed to the airline's own site — see
+ * airlineHandoff below.
  */
 export function duffelGender(gender: string | null | undefined): 'm' | 'f' | null {
   const g = (gender ?? '').trim().toLowerCase();
@@ -284,4 +285,85 @@ export function offerOption(offer: {
 /** Duffel's own order id, as opposed to the airline booking reference a traveller reads. */
 export function isOrderId(ref: unknown): boolean {
   return typeof ref === 'string' && /^ord_[A-Za-z0-9]+$/.test(ref);
+}
+
+// ─── A flight Reach cannot buy, handed to the airline ────────────────────
+// Duffel carries male or female and nothing else. When anybody on a flight
+// has an X marker, or would rather not say, this flight used to become a
+// "concierge" row with the fare on it: the group paid for it and no process
+// anywhere booked it. Now it is said at the quote, before anybody pays: Reach
+// is not buying this one, here is where to, and it is not in the total.
+
+/**
+ * The airline's own site, from what the airline itself told Duffel.
+ *
+ * Duffel gives each airline a conditions-of-carriage page, which lives on the
+ * airline's domain; its origin is the airline's site. Nothing is guessed
+ * from a name. Null when the airline gave no such page.
+ */
+export function airlineSite(conditionsUrl: unknown): string | null {
+  if (typeof conditionsUrl !== 'string') return null;
+  try {
+    const u = new URL(conditionsUrl);
+    return u.protocol === 'https:' ? u.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A search for this route and date that sells every airline flying it. */
+export function flightSearchUrl(f: { origin?: string; destination?: string; departDate?: string; returnDate?: string }): string | null {
+  if (!f.origin || !f.destination || !f.departDate) return null;
+  const q = `Flights from ${f.origin} to ${f.destination} on ${f.departDate}${f.returnDate ? ` returning ${f.returnDate}` : ''}`;
+  return `https://www.google.com/travel/flights?q=${encodeURIComponent(q)}`;
+}
+
+export interface Handoff {
+  vertical: 'flight';
+  mode: 'redirect';
+  status: 'quoted';
+  provider: 'airline';
+  redirectUrl?: string;
+  priceCents?: undefined;
+  currency?: string;
+  detail: string;
+  raw: Record<string, unknown>;
+}
+
+/**
+ * A priced Duffel quote turned into a flight the group books themselves.
+ *
+ * No price travels on the row, so it is in nobody's share and no approval
+ * can charge for it. The fare is kept as what it is — what it cost when we
+ * looked — and said as an estimate. Nobody is named: which traveller carries
+ * which marker is theirs to tell the group, not ours.
+ */
+export function airlineHandoff(
+  quote: { priceCents?: number; currency?: string; detail?: string; raw?: unknown },
+  flight: { origin?: string; destination?: string; departDate?: string; returnDate?: string },
+): Handoff {
+  const raw = (quote.raw ?? {}) as Record<string, unknown>;
+  const airline = String((raw.option as { airline?: string } | undefined)?.airline ?? '').trim() || 'the airline';
+  const site = typeof raw.airlineSite === 'string' ? raw.airlineSite : null;
+  const url = site ?? flightSearchUrl(flight);
+  const fare = typeof quote.priceCents === 'number' && quote.priceCents > 0
+    ? ` It was about $${Math.round(quote.priceCents / 100).toLocaleString('en-US')} for everyone when we checked.`
+    : '';
+  const where = site ? `on ${airline}'s own site` : 'with the airline directly';
+  return {
+    vertical: 'flight',
+    mode: 'redirect',
+    status: 'quoted',
+    provider: 'airline',
+    redirectUrl: url ?? undefined,
+    priceCents: undefined,
+    currency: quote.currency,
+    detail: `${quote.detail ?? 'Flight'} · book ${where}`,
+    raw: {
+      ...raw,
+      handoff: 'gender-marker',
+      estimateCents: quote.priceCents ?? null,
+      note: `Automatic booking only carries a male or female passport marker, so Reach isn't buying this flight and it isn't in the trip's total. Book it ${where}.${fare}`,
+    },
+  };
 }

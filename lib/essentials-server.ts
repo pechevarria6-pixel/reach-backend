@@ -5,6 +5,7 @@
 // it returns has none in it.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { readinessOf, blockingMessage, type Readiness } from '@/lib/essentials';
+import type { Person } from '@/lib/booking/approval';
 
 export interface GroupReadiness {
   travelers: Readiness[];
@@ -31,10 +32,11 @@ export function displayName(u: Record<string, unknown>): string {
  * written there. Names and emails stay, because a group already sees those
  * on its own member list.
  *
- * Nothing is lost: the details go to the provider from this request in the
- * same breath, and approval reads them fresh from the users table, which is
- * also the only way a booking made tomorrow uses the passport somebody
- * corrected today.
+ * Nothing is lost, because nothing here is needed later. A quote names
+ * nobody. Approval builds the travellers itself, from every member on that
+ * booking, out of the users table (bookingTravellers below) — so a booking
+ * made tomorrow uses the passport somebody corrected today, and never a copy
+ * of it from this column.
  */
 export function withoutTravelerDetails<T extends { travelers?: unknown[] }>(item: T): T {
   if (!Array.isArray(item.travelers) || !item.travelers.length) return item;
@@ -94,4 +96,50 @@ export async function groupReadiness(db: SupabaseClient, groupId: string): Promi
   });
 
   return { travelers, ready: travelers.every(t => t.ready), blocking: blockingMessage(travelers) };
+}
+
+/**
+ * Everybody on a booking, with what a provider needs to book them.
+ *
+ * Approval used to book under whoever pressed the button, because the quote
+ * named nobody — one lead guest for a room of four, one passenger for a
+ * flight of three. This reads every member of the group except the people
+ * sitting this booking out, from the same columns groupReadiness reads, plus
+ * the email a confirmation goes to.
+ *
+ * Server-only and never stored: the result goes to the provider and nowhere
+ * else. A read that fails throws, because booking a smaller party than the
+ * one going is not a safe fallback.
+ */
+export async function bookingTravellers(
+  db: SupabaseClient, groupId: string, sittingOut: string[] = [],
+): Promise<Person[]> {
+  const cols = 'user_id, users(id, name, first_name, last_name, date_of_birth, gender, phone, email)';
+  const full = await db.from('group_members').select(cols).eq('group_id', groupId);
+  // As in groupReadiness: before sql/travel-essentials-2026-09-18.sql the
+  // gender column does not exist, and nobody has one to send.
+  const res = full.error && /gender/.test(full.error.message || '')
+    ? await db.from('group_members').select(cols.replace(' gender,', '')).eq('group_id', groupId)
+    : full;
+  if (res.error) {
+    console.error('[travellers] could not read the group', { groupId, code: res.error.code });
+    throw new Error('Could not read who is travelling');
+  }
+  const out = new Set(sittingOut);
+  return ((res.data ?? []) as unknown as Record<string, unknown>[])
+    .filter(m => !out.has(String(m.user_id)))
+    .map(m => {
+      const u = joined(m);
+      const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+      return {
+        userId: String(m.user_id),
+        name: displayName(u),
+        firstName: s(u.first_name),
+        lastName: s(u.last_name),
+        dateOfBirth: s(u.date_of_birth),
+        gender: s(u.gender),
+        phone: s(u.phone),
+        email: s(u.email),
+      };
+    });
 }

@@ -28,7 +28,9 @@ export interface BookingLike {
  * somebody is pressing the button again, and refusing them would be worse
  * than the bug this prevents.
  */
-const LIVE = new Set(['quoted', 'awaiting_approval', 'pending', 'confirmed']);
+// 'booking' is a row an approval has claimed and is at the provider right
+// now — the most in play a booking can be.
+const LIVE = new Set(['quoted', 'awaiting_approval', 'booking', 'pending', 'confirmed']);
 
 /**
  * The part of a request that says which thing this is.

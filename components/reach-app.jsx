@@ -3160,10 +3160,11 @@ const PLATFORM_PERK={
 
 // How a booking happens, in words. Nothing here is an enum somebody reads:
 // `mode` and `provider` are how this codebase talks to itself.
+// No "concierge" line: nobody at Reach sorts anything out by hand, and the
+// one row that said so was a flight the group paid for that nobody booked.
 const BOOKING_MODE={
   native:"We book this for you",
   redirect:"You book it — takes two taps",
-  concierge:"We'll sort this one out",
 };
 
 const BOOKING_STATE={
@@ -10486,10 +10487,11 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           </div>
           <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
             Airlines carry the marker printed on your passport or licence, which is
-            not always how you'd describe yourself. If yours is X, or you'd rather
-            not say, we book that flight with the airline directly — automatic
-            booking only carries male or female and we won't put the wrong one on
-            your ticket.
+            not always how you'd describe yourself. Automatic booking only carries
+            male or female, and we won't put the wrong one on your ticket — so if
+            yours is X, or you'd rather not say, Reach won't buy flights for your
+            trips. They're booked on the airline's own site instead, and left out
+            of what anyone pays through Reach.
           </div>
           {e.gender===undefined&&(
             <div style={{marginTop:10,padding:"10px 12px",background:C.amberDim,border:`1px solid ${C.amber}`,borderRadius:12,fontSize:12,color:C.t1,lineHeight:1.5}}>

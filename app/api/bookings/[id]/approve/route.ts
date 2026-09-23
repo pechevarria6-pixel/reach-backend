@@ -1,235 +1,395 @@
 // ─── POST /api/bookings/[id]/approve — the human trigger ─────────────────
-// Nothing books until this fires. On approval:
-//   native lanes (hotel/flight/activity) → provider.book() executes now
-//   redirect lane (events)               → returns the prefilled URL to open
-//                                          in the in-app browser, where the
-//                                          user's own signed-in session
-//                                          completes checkout in 1–2 taps
-//   concierge lane (restaurants)         → ticket moves to 'pending' for ops
-// Body (optional): { note?: string }
+// Contract:
+//   200 { status, booking }
+//   400 { code: 'travellers_missing', who: string[] }      names, never details
+//   402 { code: 'not_funded', funding: { targetCents, collectedCents, shortfallCents, funded } }
+//   409 { code: 'already_in_progress', status }             somebody else has it, or it is done
+//   409 { code: 'price_changed', oldCents, newCents }       accept with { acceptNewPrice: true }
+//   409 { code: 'party_changed', quoted, now }              price it again for who is going
+//   409 { code: 'unavailable', error }                      cannot be booked as it stands
+//   502 { code: 'provider_failed', error }                  the provider refused or did not answer
+// and 401/403/404 from sign-in and lookup, 500 when our own database fails.
+// Every response except 200 means nothing was bought.
+//
+// Body (optional): { acceptNewPrice?: true } — only counts when this route
+// has told somebody about a new price (bookings.pending_price_cents).
+//
+// Nothing books until this fires. In order:
+//   1. who is on it — every member of the group except anybody sitting this
+//      booking out, with their saved details, and exactly as many as it was
+//      priced for;
+//   2. the price — re-quoted, and a rise waits for somebody to accept it;
+//   3. the money — what the group has actually paid in, net of refunds,
+//      covers the total at the price just checked;
+//   4. the claim — one conditional update, so two presses cannot both book;
+//   5. the provider — and only a row this claim still holds is written.
+//
+// Redirects (a table, a ticket, a flight handed to the airline's own site)
+// skip 1 and 2: nobody's passport goes anywhere and Reach charges nothing.
 import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { PROVIDERS } from '@/lib/booking/registry';
 import { appUrl } from '@/lib/app-url';
+import { report } from '@/lib/report';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
-import { BookingItemRequest, BookingProvider, Vertical } from '@/lib/booking/types';
+import type { BookingItemRequest, BookingItemResult, TravelerInfo, Vertical } from '@/lib/booking/types';
+import { readSkips } from '@/lib/participation';
+import { bookingTravellers } from '@/lib/essentials-server';
+import {
+  acceptedPrice, airlineOnly, fundingOf, isPurchase, planBooked, priceRose,
+  travellersMissing, unpriced, type Person,
+} from '@/lib/booking/approval';
+import { partyChange } from '@/lib/booking/party';
+import { claimBooking, finishClaim, M1 } from '@/lib/booking/claim';
+import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 import { sendBookingConfirmation } from '@/lib/email';
 import { track } from '@/lib/track';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const supabase = createServerClient;
 
-// One list for quoting and booking — see lib/booking/registry.ts.
+// A re-quote and a booking are two provider calls, and a function killed
+// between the claim and the final write leaves a row in 'booking' that
+// nothing retries. As long as the plan allows, so that happens as rarely
+// as it can.
+export const maxDuration = 60;
 
+type Row = Record<string, unknown> & {
+  id: string; plan_id: string; vertical: string; status: string; mode?: string | null;
+  provider?: string | null; price_cents?: number | null; pending_price_cents?: number | null;
+  request_payload?: unknown; response_payload?: unknown; detail?: string | null;
+  provider_ref?: string | null; redirect_url?: string | null;
+};
+
+const refuse = (status: number, body: Record<string, unknown>) => NextResponse.json(body, { status });
+const unavailable = (error: string) => refuse(409, { code: 'unavailable', error });
+
+function asTraveler(p: Person): TravelerInfo {
+  return {
+    firstName: p.firstName ?? '', lastName: p.lastName ?? '', email: p.email ?? '',
+    phone: p.phone ?? undefined, dateOfBirth: p.dateOfBirth ?? undefined, gender: p.gender ?? undefined,
+  };
+}
+
+/** PostgREST's answers for a column it does not know: the migration has not run. */
+function missingColumn(error: { code?: string; message?: string } | null): boolean {
+  return !!error && (error.code === 'PGRST204' || error.code === '42703' || /pending_price_cents/.test(error.message ?? ''));
+}
+
+/**
+ * A price rise, kept aside until somebody accepts it. Writing it into
+ * price_cents at once raised the total under a group that had paid the old
+ * one; before M2 that is still what happens, as it always did.
+ */
+async function recordRise(db: SupabaseClient, booking: Row, newCents: number): Promise<void> {
+  const now = new Date().toISOString();
+  if ('pending_price_cents' in booking) {
+    const { error } = await db.from('bookings')
+      .update({ pending_price_cents: newCents, updated_at: now })
+      .eq('id', booking.id).eq('status', 'awaiting_approval');
+    if (!error) return;
+    if (!missingColumn(error)) {
+      console.error('[approve] could not record a price rise', { bookingId: booking.id, code: error.code });
+      return;
+    }
+  }
+  console.error(`[approve] no pending_price_cents column — writing the new price into price_cents as before; run ${M1}`);
+  const { error } = await db.from('bookings')
+    .update({ price_cents: newCents, updated_at: now })
+    .eq('id', booking.id).eq('status', 'awaiting_approval');
+  if (error) console.error('[approve] could not record a price rise', { bookingId: booking.id, code: error.code });
+}
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  // Look the booking up first so we know which plan to authorize against.
-  // Approval executes a real purchase, so this endpoint used to let any
-  // signed-in user spend another group's money.
-  const lookup = supabase();
-  const { data: booking, error: fetchErr } = await lookup
-    .from('bookings').select('*').eq('id', params.id).single();
-  if (fetchErr || !booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
+  // Looked up first so we know which plan to authorize against. Approval
+  // executes a real purchase, so this endpoint once let any signed-in user
+  // spend another group's money.
+  const { data: found, error: fetchErr } = await supabase()
+    .from('bookings').select('*').eq('id', params.id).maybeSingle();
+  if (fetchErr) {
+    console.error('[approve] could not read the booking', { bookingId: params.id, code: fetchErr.code });
+    return refuse(500, { error: 'Could not read that booking just now. Nothing was booked.' });
+  }
+  if (!found) return refuse(404, { error: 'Booking not found' });
+  const booking = found as Row;
 
   const ctx = await requirePlanMember(booking.plan_id);
   if (isFail(ctx)) return ctx.error;
   const db = ctx.db;
+  const body = await req.json().catch(() => ({}));
 
   if (booking.status !== 'awaiting_approval') {
-    return NextResponse.json({ error: `Cannot approve a booking in status '${booking.status}'` }, { status: 409 });
+    return refuse(409, {
+      code: 'already_in_progress', status: booking.status,
+      error: booking.status === 'booking' ? 'Somebody is booking this right now.' : 'This one has already been dealt with.',
+    });
   }
 
-  // ── GATE 1: collect-then-approve ──────────────────────────────────────
-  // Execution is blocked until every member's share is collected.
-  // Override per-call with { skipFundingCheck: true } (e.g. solo trips).
-  const body = await req.json().catch(() => ({}));
-  if (body.skipFundingCheck !== true) {
-    const { data: planBookings } = await db
-      .from('bookings').select('price_cents,status').eq('plan_id', booking.plan_id)
-      .not('status', 'in', NOT_CHARGED);
-    const targetCents = (planBookings || []).reduce((s, b) => s + (b.price_cents || 0), 0);
-    const { data: contribs } = await db
-      .from('contributions').select('amount_cents,status').eq('plan_id', booking.plan_id);
-    const collectedCents = (contribs || [])
-      .filter(c => c.status === 'succeeded')
-      .reduce((s, c) => s + c.amount_cents, 0);
-    if (targetCents > 0 && collectedCents < targetCents) {
-      return NextResponse.json({
-        error: 'Plan not fully funded',
-        funding: { targetCents, collectedCents, shortfallCents: targetCents - collectedCents },
-      }, { status: 402 });
+  const vertical = booking.vertical as Vertical;
+  const provider = PROVIDERS[vertical];
+  if (!provider) return unavailable("Reach can't book this kind of thing.");
+
+  const request = { ...((booking.request_payload ?? {}) as BookingItemRequest) };
+  request.vertical = vertical;
+  request.planId = booking.plan_id;
+  request.groupId = String(ctx.plan.group_id);
+  request.reference = booking.id;
+  request.travelers = [];
+  const purchase = isPurchase(booking);
+  // Handed to the airline when it was quoted. Duffel must never be asked to
+  // buy it: nobody paid a share of it.
+  const handedOff = vertical === 'flight' && booking.mode === 'redirect';
+
+  // ── 1. Who is on it ───────────────────────────────────────────────────
+  if (purchase) {
+    // The provider that priced it is the one that books it. A row priced by
+    // an integration that has since gone (Kiwi) is priced again, not handed
+    // to whatever now sits under the same vertical.
+    if (booking.provider && booking.provider !== provider.name) {
+      return unavailable('This was priced with a provider Reach no longer books through. Price it again from checkout.');
     }
-  }
-
-  const provider = PROVIDERS[booking.vertical as Vertical];
-  const request = booking.request_payload as BookingItemRequest;
-
-  // Who the room is under. A booking created from an itinerary has nobody
-  // named on it — the bridge does not hold traveller details and should not —
-  // so the person approving stands as the lead guest. They are the one
-  // pressing the button and the one the confirmation goes to, and a provider
-  // will not take a reservation for nobody.
-  if (!request.travelers?.length) {
-    const { data: approver } = await db
-      .from('users').select('name, email').eq('id', ctx.user.id).maybeSingle();
-    const whole = (approver?.name || '').trim();
-    const [first, ...rest] = whole ? whole.split(/\s+/) : [];
-    request.travelers = first
-      ? [{ firstName: first, lastName: rest.join(' ') || first, email: approver?.email ?? '' } as BookingItemRequest['travelers'][number]]
-      : [];
-    if (!request.travelers.length) {
-      console.error('[bookings/approve] nobody to book under', { bookingId: params.id, userId: ctx.user.id });
+    if (unpriced(booking)) {
+      return unavailable("This has no price, so nobody has paid a share of it. Price it again from checkout.");
     }
-  }
+    if (vertical === 'hotel' && !request.hotel?.hotelId) {
+      // Without the hotel's id, booking would search the city again and take
+      // whichever hotel came first — not the one anybody agreed to.
+      return unavailable('We did not keep which hotel this was when it was priced. Price it again from checkout.');
+    }
 
-  // ── GATE 2: quote freshness ───────────────────────────────────────────
-  // Prices drift between propose and approve. Re-quote; if the price moved
-  // more than 5% or $25, surface it for re-approval instead of silently
-  // charging more. Drops just proceed (and show as wins in the detail).
-  if (booking.price_cents && body.acceptNewPrice !== true) {
+    let people: Person[];
     try {
-      const fresh = await provider.quote(request);
-      if (fresh.priceCents && fresh.priceCents > booking.price_cents) {
-        const driftCents = fresh.priceCents - booking.price_cents;
-        const driftPct = driftCents / booking.price_cents;
-        if (driftCents > 2500 || driftPct > 0.05) {
-          // If this does not stick, the next approval compares against the
-          // old price and the rise passes through unnoticed — which is the
-          // whole thing this guard exists to catch.
-          const { error: drifted } = await db.from('bookings').update({
-            price_cents: fresh.priceCents,
-            detail: `${booking.detail} · price rose $${(driftCents / 100).toFixed(2)} since proposal`,
-            updated_at: new Date().toISOString(),
-          }).eq('id', params.id);
-          if (drifted) console.error('[approve] could not record a price rise', { bookingId: params.id, code: drifted.code });
-          void track(db, 'quote_drift', {
-            userId: ctx.user.id, planId: String(booking.plan_id),
-            props: {
-              delta_cents: driftCents,
-              vertical: String(booking.vertical),
-              provider: String(booking.provider ?? 'none'),
-            },
-          });
-
-          return NextResponse.json({
-            error: 'Price changed since proposal — re-approve to accept',
-            oldPriceCents: booking.price_cents,
-            newPriceCents: fresh.priceCents,
-            reapproveWith: { acceptNewPrice: true },
-          }, { status: 409 });
-        }
-      }
-    } catch { /* quote refresh is best-effort; proceed on failure */ }
+      const { skips } = await readSkips(db, booking.plan_id);
+      const out = skips.filter(s => s.ref === booking.id).map(s => s.userId);
+      people = await bookingTravellers(db, String(ctx.plan.group_id), out);
+    } catch {
+      return refuse(500, { error: 'Could not check who is travelling just now. Nothing was booked.' });
+    }
+    const who = travellersMissing(vertical, people);
+    if (who.length) {
+      return refuse(400, {
+        code: 'travellers_missing', who,
+        error: `${who.join(', ')} ${who.length === 1 ? 'needs' : 'need'} to add their travel details before this can be booked.`,
+      });
+    }
+    const change = partyChange(request, people.length);
+    if (change) {
+      return refuse(409, {
+        code: 'party_changed', ...change,
+        error: `This was priced for ${change.quoted} and ${change.now} ${change.now === 1 ? 'is' : 'are'} going. Price it again for everyone.`,
+      });
+    }
+    if (vertical === 'flight' && airlineOnly(people)) {
+      // A marker changed after the quote. Nobody is named: the group reads this.
+      return unavailable("Automatic booking only carries a male or female passport marker, so Reach can't buy this flight. Book it with the airline directly.");
+    }
+    request.travelers = people.map(asTraveler);
+    request.party = people.length;
+    if (request.flight) request.flight = { ...request.flight, seats: people.length };
   }
+
+  // ── 2. The price ──────────────────────────────────────────────────────
+  let priceCents = Number(booking.price_cents) || 0;
+  const accepted = acceptedPrice(body, booking);
+  if (accepted !== null) {
+    const { data: moved, error } = await db.from('bookings')
+      .update({ price_cents: accepted, pending_price_cents: null, updated_at: new Date().toISOString() })
+      .eq('id', booking.id).eq('status', 'awaiting_approval').eq('pending_price_cents', accepted)
+      .select('id');
+    if (error) {
+      console.error('[approve] could not accept the new price', { bookingId: booking.id, code: error.code });
+      return refuse(500, { error: 'Could not save that just now. Nothing was booked.' });
+    }
+    if (!moved?.length) return refuse(409, { code: 'already_in_progress', status: booking.status, error: 'This changed while you were looking — reopen it.' });
+    priceCents = accepted;
+  }
+
+  if (purchase) {
+    let fresh: BookingItemResult;
+    try {
+      fresh = await provider.quote(request);
+    } catch (e) {
+      // This used to shrug and carry on, and a rise nobody had seen went
+      // through with the booking.
+      console.error('[approve] could not re-check the price', { bookingId: booking.id, error: e instanceof Error ? e.message : String(e) });
+      return refuse(502, { code: 'provider_failed', error: "We couldn't check the price just now, so nothing was booked. Try again in a moment." });
+    }
+    if (fresh.status === 'failed' || !fresh.priceCents) {
+      return unavailable(fresh.error || 'This is no longer on sale at any price we can read.');
+    }
+    if (vertical === 'hotel') {
+      const hotelId = (fresh.raw as { hotelId?: string } | undefined)?.hotelId;
+      if (hotelId !== request.hotel?.hotelId) return unavailable('That hotel has no rooms left for these dates.');
+      // Book the room just priced, not whichever a third search turns up.
+      if (request.hotel && fresh.providerRef) request.hotel = { ...request.hotel, rateId: fresh.providerRef };
+    }
+    if (priceRose(priceCents, fresh.priceCents)) {
+      await recordRise(db, booking, fresh.priceCents);
+      void track(db, 'quote_drift', {
+        userId: ctx.user.id, planId: String(booking.plan_id),
+        props: { delta_cents: fresh.priceCents - priceCents, vertical: String(vertical), provider: String(booking.provider ?? 'none') },
+      });
+      return refuse(409, {
+        code: 'price_changed', oldCents: priceCents, newCents: fresh.priceCents,
+        error: 'The price has gone up since this was priced. Nothing was booked.',
+      });
+    }
+  }
+
+  // ── 3. The money ──────────────────────────────────────────────────────
+  // After the price, so a plan funded for the old price is not waved through
+  // at the new one. There is no way round it: `skipFundingCheck` let any
+  // member spend Reach's money on a trip nobody had paid for.
+  const [charged, paid] = await Promise.all([
+    db.from('bookings').select('id, price_cents, status').eq('plan_id', booking.plan_id).not('status', 'in', NOT_CHARGED),
+    // `*` so refunded_cents is read from the moment its migration runs.
+    db.from('contributions').select('*').eq('plan_id', booking.plan_id),
+  ]);
+  if (charged.error || paid.error) {
+    console.error('[approve] could not read what the plan owes and holds', { planId: booking.plan_id, code: charged.error?.code ?? paid.error?.code });
+    return refuse(500, { error: 'Could not check the payments just now. Nothing was booked.' });
+  }
+  const funding = fundingOf(charged.data, paid.data);
+  if (funding.targetCents > 0 && !funding.funded) {
+    return refuse(402, { code: 'not_funded', funding, error: 'Not everybody has paid their share yet.' });
+  }
+
+  // ── 4. The claim ──────────────────────────────────────────────────────
+  const claimed = await claimBooking(db, booking.id, ctx.user.id);
+  if (claimed.ok === false) {
+    if (claimed.taken) return refuse(409, { code: 'already_in_progress', status: 'booking', error: 'Somebody is booking this right now.' });
+    console.error('[approve] could not claim the booking', { bookingId: booking.id, error: claimed.error });
+    return refuse(500, { error: 'Could not start this booking just now. Nothing was booked.' });
+  }
+  const claim = claimed.claim;
 
   void track(db, 'booking_approved', {
     userId: ctx.user.id, planId: String(booking.plan_id),
-    props: { vertical: String(booking.vertical), price_cents: Number(booking.price_cents || 0) },
+    props: { vertical: String(vertical), price_cents: priceCents },
   });
 
+  // ── 5. The provider ───────────────────────────────────────────────────
+  let result: BookingItemResult;
   try {
-    const result = await provider.book(request);
-    void track(db, result.status === 'failed' ? 'booking_failed' : 'booking_confirmed', {
-      userId: ctx.user.id, planId: String(booking.plan_id),
-      props: {
-        vertical: String(result.vertical),
-        provider: String(result.provider ?? 'none'),
-        // The status matters as much as the fact: `redirected` is handed
-        // over, not booked, and a funnel that conflates them overstates.
-        outcome: String(result.status),
-        price_cents: Number(result.priceCents || booking.price_cents || 0),
-      },
-    });
-    const { data: updated, error: updErr } = await db
-      .from('bookings')
-      .update({
-        status: result.status,               // confirmed | pending | redirected | failed
-        provider_ref: result.providerRef || booking.provider_ref,
-        redirect_url: result.redirectUrl || booking.redirect_url,
-        price_cents: result.priceCents ?? booking.price_cents,
-        detail: result.detail || booking.detail,
-        response_payload: result.raw || booking.response_payload,
-        error: result.error || null,
-        approved_by: ctx.user.id,
-        approved_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', params.id)
-      .select()
-      .single();
-    if (updErr) {
-      console.error('[approve] booking update failed', updErr);
-      return NextResponse.json({ error: updErr.message }, { status: 500 });
-    }
-
-    // Nothing told anyone their booking had happened. The template for this
-    // has existed since the first version and was never called from anywhere.
-    if (result.status === 'confirmed') {
-      const [{ data: person }, { data: plan }] = await Promise.all([
-        db.from('users').select('email').eq('id', ctx.user.id).maybeSingle(),
-        db.from('plans').select('title').eq('id', booking.plan_id).maybeSingle(),
-      ]);
-      if (person?.email) {
-        const base = appUrl(req);
-        // Best-effort: a mail failure must not turn a successful booking into
-        // an error the caller has to interpret.
-        const mail = await sendBookingConfirmation(person.email, {
-          planTitle: plan?.title || 'your trip',
-          items: [{
-            label: updated.vertical ? `${updated.vertical[0].toUpperCase()}${updated.vertical.slice(1)}` : 'Booking',
-            detail: result.detail || updated.detail || null,
-            confirmation: result.providerRef || updated.provider_ref || null,
-          }],
-          url: `${base.replace(/\/$/, '')}/home`,
-        });
-        if (!mail.sent) console.error('[approve] confirmation email not sent', mail);
-      }
-    }
-
-    // ── The plan itself ───────────────────────────────────────────────
-    // Every booking on this trip had been actioned and the plan still said
-    // "planning". The screen announced "You're all booked!" over a record
-    // that disagreed with it, and nothing else — a reminder, a group's list,
-    // an email — could tell a booked trip from one still being argued over.
-    //
-    // A trip is booked when nothing is left awaiting approval, nothing
-    // failed, and at least one booking actually came back confirmed. A
-    // concierge ticket sitting at 'pending' does not block that: somebody is
-    // holding the reservation, which is what the lane means. Anything failed
-    // keeps the plan where it is, because it is not booked.
-    const { data: siblings, error: siblingError } = await db
-      .from('bookings').select('status').eq('plan_id', booking.plan_id);
-    if (siblingError) {
-      console.error('[approve] could not read the plan\'s other bookings', { planId: booking.plan_id, error: siblingError.message });
-    } else {
-      const states = (siblings ?? []).map(b => b.status);
-      const settled = states.length > 0
-        && !states.includes('awaiting_approval')
-        && !states.includes('failed')
-        && states.some(st => st === 'confirmed' || st === 'redirected');
-      if (settled && ctx.plan.status !== 'booked') {
-        const { error: planError } = await db.from('plans')
-          .update({ status: 'booked', booked_at: new Date().toISOString() })
-          .eq('id', booking.plan_id);
-        if (planError) console.error('[approve] could not mark the plan booked', { planId: booking.plan_id, error: planError.message });
-      }
-    }
-
-    return NextResponse.json({ booking: updated, result });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'Execution failed';
+    result = handedOff
+      ? {
+          vertical: 'flight', mode: 'redirect', status: 'redirected', provider: String(booking.provider ?? 'airline'),
+          redirectUrl: booking.redirect_url ?? undefined, detail: booking.detail ?? undefined,
+          raw: booking.response_payload ?? undefined,
+        }
+      : await provider.book(request);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'The provider did not answer.';
     // A booking that fails at the provider is the single most expensive thing
     // to debug after the fact, and it left no trace at all.
-    console.error('[approve] provider execution failed', { bookingId: params.id, msg });
-    // A booking that failed and does not say so reads as still awaiting
-    // approval, so somebody approves it again and the provider is asked to
-    // book the same thing twice.
-    const { error: notMarked } = await db.from('bookings').update({
-      status: 'failed', error: msg,
-      approved_by: ctx.user.id, approved_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).eq('id', params.id);
-    if (notMarked) console.error('[approve] a failed booking could not be marked failed', { bookingId: params.id, code: notMarked.code });
-    return NextResponse.json({ error: msg }, { status: 502 });
+    console.error('[approve] provider execution failed', { bookingId: booking.id, msg });
+    // Marked failed, not left awaiting approval: a failure that does not say
+    // so is approved again, and the provider asked to book the same thing twice.
+    const { error } = await finishClaim(db, booking.id, claim, {
+      status: 'failed', error: msg, updated_at: new Date().toISOString(),
+    });
+    if (error) console.error('[approve] a failed booking could not be marked failed', { bookingId: booking.id, error });
+    return refuse(502, { code: 'provider_failed', error: msg });
   }
+
+  void track(db, result.status === 'failed' ? 'booking_failed' : 'booking_confirmed', {
+    userId: ctx.user.id, planId: String(booking.plan_id),
+    props: {
+      vertical: String(result.vertical),
+      provider: String(result.provider ?? 'none'),
+      // `redirected` is handed over, not booked, and a funnel that
+      // conflates them overstates.
+      outcome: String(result.status),
+      price_cents: Number(result.priceCents || priceCents || 0),
+    },
+  });
+
+  // A provider that answers 200 with `failed` inside has not booked anything.
+  // This used to return 200 with the failure tucked in the body, and the
+  // screen read the status code.
+  if (result.status === 'failed') {
+    const { error } = await finishClaim(db, booking.id, claim, {
+      status: 'failed', error: result.error || 'The provider refused this booking.',
+      response_payload: result.raw ?? booking.response_payload ?? null,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) console.error('[approve] a failed booking could not be marked failed', { bookingId: booking.id, error });
+    return refuse(502, { code: 'provider_failed', error: result.error || 'The provider refused this booking.' });
+  }
+
+  const { row: updated, error: updErr } = await finishClaim(db, booking.id, claim, {
+    status: result.status,               // confirmed | pending | redirected
+    provider_ref: result.providerRef || booking.provider_ref || null,
+    redirect_url: result.redirectUrl || booking.redirect_url || null,
+    price_cents: handedOff ? null : (result.priceCents ?? booking.price_cents ?? null),
+    detail: result.detail || booking.detail || null,
+    response_payload: result.raw ?? booking.response_payload ?? null,
+    error: null,
+    ...('pending_price_cents' in booking ? { pending_price_cents: null } : {}),
+    updated_at: new Date().toISOString(),
+  });
+  if (updErr || !updated) {
+    // The provider holds an order our table does not point at — the one
+    // fault here nobody can recover from by retrying.
+    report(new Error(updErr ? `booked but not recorded: ${updErr}` : 'booked, and the claim was lost before it could be recorded'), {
+      where: 'bookings/approve', extra: { bookingId: booking.id, provider: result.provider, ref: result.providerRef ?? null, claim: claim.how },
+    });
+    if (!updErr) {
+      // Somebody else moved this row while we were at the provider, so this
+      // order is a second one. Undone where the provider lets us.
+      const orderId = (result.raw as { orderId?: string } | undefined)?.orderId;
+      if (result.provider === 'duffel' && orderId) {
+        const undone = await cancelDuffelOrder(orderId, { confirm: true });
+        console.error('[approve] cancelled an order whose claim was lost', { bookingId: booking.id, orderId, outcome: undone.status, error: undone.error });
+      } else {
+        console.error('[approve] an order whose claim was lost could not be cancelled from here', { bookingId: booking.id, provider: result.provider, ref: result.providerRef ?? null });
+      }
+      return refuse(409, { code: 'already_in_progress', status: 'booking', error: 'Somebody else was booking this at the same moment.' });
+    }
+    return refuse(500, { error: 'This was booked but we could not save it. Do not book it again — we have been told.' });
+  }
+
+  // Nothing told anyone their booking had happened. The template for this
+  // has existed since the first version and was never called from anywhere.
+  if (result.status === 'confirmed') {
+    const [{ data: person }, { data: plan }] = await Promise.all([
+      db.from('users').select('email').eq('id', ctx.user.id).maybeSingle(),
+      db.from('plans').select('title').eq('id', booking.plan_id).maybeSingle(),
+    ]);
+    if (person?.email) {
+      const base = appUrl(req);
+      // Best-effort: a mail failure must not turn a successful booking into
+      // an error the caller has to interpret.
+      const v = String(updated.vertical ?? '');
+      const mail = await sendBookingConfirmation(person.email, {
+        planTitle: plan?.title || 'your trip',
+        items: [{
+          label: v ? `${v[0].toUpperCase()}${v.slice(1)}` : 'Booking',
+          detail: result.detail || (updated.detail as string | null) || null,
+          confirmation: result.providerRef || (updated.provider_ref as string | null) || null,
+        }],
+        url: `${base.replace(/\/$/, '')}/home`,
+      });
+      if (!mail.sent) console.error('[approve] confirmation email not sent', mail);
+    }
+  }
+
+  // ── The plan itself ─────────────────────────────────────────────────
+  // Booked when nothing is waiting, mid-booking, pending or failed, and at
+  // least one thing came back done. `pending` used to pass: a flight the
+  // priced-concierge lane had taken money for, with nobody booking it, read
+  // as a booked trip.
+  const { data: siblings, error: siblingError } = await db
+    .from('bookings').select('status').eq('plan_id', booking.plan_id);
+  if (siblingError) {
+    console.error('[approve] could not read the plan\'s other bookings', { planId: booking.plan_id, error: siblingError.message });
+  } else if (planBooked((siblings ?? []).map(b => b.status)) && ctx.plan.status !== 'booked') {
+    const { error: planError } = await db.from('plans')
+      .update({ status: 'booked', booked_at: new Date().toISOString() })
+      .eq('id', booking.plan_id);
+    if (planError) console.error('[approve] could not mark the plan booked', { planId: booking.plan_id, error: planError.message });
+  }
+
+  return NextResponse.json({ status: updated.status, booking: updated });
 }

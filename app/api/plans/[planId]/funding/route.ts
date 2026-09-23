@@ -12,7 +12,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { report } from '@/lib/report';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { planShares } from '@/lib/money';
-import { planSkips } from '@/lib/participation';
+import { planSkips, partySize } from '@/lib/participation';
+import { netCollectedCents } from '@/lib/booking/approval';
+import { staleForParty } from '@/lib/booking/party';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { track } from '@/lib/track';
 
@@ -29,46 +31,34 @@ async function fundingStatus(
 
   const { data: contributions } = await db
     .from('contributions').select('*').eq('plan_id', planId);
-  const succeeded = (contributions || []).filter(c => c.status === 'succeeded');
-  const collectedCents = succeeded.reduce((s, c) => s + c.amount_cents, 0);
+  // Net of anything Stripe has given back — the same figure approval checks
+  // against, so this screen cannot say "funded" over a plan approval refuses.
+  const collectedCents = netCollectedCents(contributions);
 
   const memberIds = await groupMemberIds(db, groupId);
   const skips = await planSkips(db, planId);
 
+  // ── Nobody pays more because a booking of ours failed ─────────────────
   // Priced bookings, less anything this member is sitting out, split exactly;
   // before anything is priced, an even share of the plan's budget. The same
   // function feeds the participation screen and the reminder email, so the
-  // amount charged here is the amount shown there. `targetCents` still reports
-  // the booking total, because that is what the approve gate compares against,
-  // and the shares always add up to it.
-  const rawShareCents = planShares(bookings || [], Math.max(0, budgetCents || 0), memberIds, skips)[userId] ?? 0;
-
-  const myPaidCents = succeeded
-    .filter(c => c.user_id === userId)
-    .reduce((s, c) => s + c.amount_cents, 0);
-
-  // ── Nobody pays more because a booking of ours failed ─────────────────
-  // The target counts only bookings that have not failed, and the share falls
-  // back to an even slice of the budget when nothing is priced. Put those
-  // together after a provider refuses a booking and the trip re-prices
-  // itself: in the first end-to-end run a hotel failed at the provider, the
-  // target dropped from $334.01 to nothing, the share reverted to a quarter
-  // of the budget, and somebody who had paid in full was asked for $65.99
-  // more. Our failure, their money.
+  // amount charged here is the amount shown there.
   //
-  // So once anything has been collected, a share cannot rise above what that
-  // person has already paid. It can still fall — a cancelled booking should
-  // give money back, and that shows up as a refund rather than a smaller
-  // demand — and a plan nobody has paid into yet prices normally.
-  const myShareCents = collectedCents > 0 && rawShareCents > myPaidCents && myPaidCents > 0
-    ? myPaidCents
-    : rawShareCents;
-  if (myShareCents !== rawShareCents) {
-    console.error('[funding] share held at what was already paid', {
-      planId, userId, rawShareCents, myPaidCents, targetCents,
-      reason: 'a booking failed and the trip would otherwise have re-priced upwards',
-    });
-  }
+  // The budget is a guess for a plan nothing has been priced on, and once
+  // money has come in it is never used again. In the first end-to-end run a
+  // hotel failed at the provider, the target dropped from $334.01 to
+  // nothing, the share fell back to a quarter of the budget, and somebody
+  // who had paid in full was asked for $65.99 more. Our failure, their money.
+  //
+  // That used to be patched by capping every share at what the person had
+  // already paid — which also made a real top-up impossible. A price rise
+  // somebody accepted, or a booking added before anyone paid, left the plan
+  // short for good, and approval refused it for ever. With the budget out of
+  // it after the first payment, a share only rises when real bookings do.
+  const guessCents = collectedCents > 0 ? 0 : Math.max(0, budgetCents || 0);
+  const myShareCents = planShares(bookings || [], guessCents, memberIds, skips)[userId] ?? 0;
+
+  const myPaidCents = netCollectedCents(contributions, userId);
 
   const { data: failedBookings } = await db
     .from('bookings')
@@ -206,6 +196,27 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     ? Math.min(Math.round(requested), status.myRemainingCents)
     : status.myRemainingCents;
 
+  // Priced for a different number of people than are going. A share of a
+  // two-seat fare is not a share of the three-seat fare that will actually
+  // be charged, so no money is taken against it until it is priced again.
+  const { data: waiting, error: waitingError } = await ctx.db.from('bookings')
+    .select('id, vertical, status, request_payload')
+    .eq('plan_id', params.planId).eq('status', 'awaiting_approval');
+  if (waitingError) {
+    console.error('[funding] could not read the bookings waiting', { planId: params.planId, code: waitingError.code });
+    return NextResponse.json({ error: 'Could not check this trip just now. Nothing has been charged.' }, { status: 500 });
+  }
+  const party = await partySize(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null });
+  const stale = staleForParty(waiting, party);
+  if (stale.length) {
+    return NextResponse.json({
+      code: 'stale_quotes',
+      stale: stale.map(b => ({ id: b.id, vertical: b.vertical })),
+      error: `Some of this was priced for a different number of people than are going (${party}). It needs pricing again before anybody pays. Nothing has been charged.`,
+      funding: status,
+    }, { status: 409 });
+  }
+
   // Nothing on this plan has a price yet. That is a different thing from
   // "you have paid already", and saying the wrong one sends somebody looking
   // for a receipt that does not exist. A screenshot from production had this
@@ -245,7 +256,14 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // leaving the group changes what everyone owes — is a new one. A second
   // identical payment is already refused above, which is what makes keying
   // on the amount safe rather than a way to block a legitimate charge.
-  const idempotencyKey = `reach_contrib_${params.planId}_${ctx.user.id}_${amountCents}`;
+  //
+  // And on how many payments this person has made here before. A top-up of
+  // the same amount as an earlier payment — the fare rose by exactly what
+  // they paid last time — would otherwise be handed that earlier, finished
+  // intent back, and nothing would be charged for the rise.
+  const priorPayments = (status.contributions || [])
+    .filter((c: { user_id?: string }) => c.user_id === ctx.user.id).length;
+  const idempotencyKey = `reach_contrib_${params.planId}_${ctx.user.id}_${amountCents}_${priorPayments}`;
   const stripeRes = await fetch('https://api.stripe.com/v1/payment_intents', {
     method: 'POST',
     headers: {

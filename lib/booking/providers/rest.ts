@@ -1,91 +1,13 @@
 // ─── Remaining four verticals in one module ──────────────────────────────
-import { BookingProvider, BookingItemRequest, BookingItemResult, isConfigured } from '../types';
-import { reservationUrl, type Platform } from '../reservations';
+import { type BookingProvider, type BookingItemRequest, type BookingItemResult, isConfigured } from '../types.ts';
+import { reservationUrl, type Platform } from '../reservations.ts';
+import { headcount } from '../party.ts';
 
-// ═══ FLIGHTS — Kiwi.com Tequila (native) ═════════════════════════════════
-// Apply at tequila.kiwi.com (approval is typically days, not months).
-// Set TEQUILA_API_KEY. Flow: /v2/search → quote; /v2/booking → save_booking
-// then confirm_payment (Kiwi is merchant of record — they charge the card
-// via their Zooz flow; in sandbox, confirm is simulated).
-const KIWI = 'https://api.tequila.kiwi.com';
-
-export const kiwiFlights: BookingProvider = {
-  vertical: 'flight',
-  name: 'kiwi',
-
-  async quote(req): Promise<BookingItemResult> {
-    if (!isConfigured('TEQUILA_API_KEY')) {
-      return { vertical: 'flight', mode: 'native', status: 'failed', provider: 'kiwi', error: 'TEQUILA_API_KEY not set — apply at tequila.kiwi.com' };
-    }
-    const f = req.flight!;
-    const toKiwiDate = (d: string) => d.split('-').reverse().join('/'); // YYYY-MM-DD → DD/MM/YYYY
-    const params = new URLSearchParams({
-      fly_from: f.origin, fly_to: f.destination,
-      date_from: toKiwiDate(f.departDate), date_to: toKiwiDate(f.departDate),
-      adults: String(req.travelers.length),
-      curr: 'USD', limit: '5', selected_cabins: f.cabin || 'M',
-      ...(f.returnDate ? { return_from: toKiwiDate(f.returnDate), return_to: toKiwiDate(f.returnDate) } : {}),
-    });
-    const res = await fetch(`${KIWI}/v2/search?${params}`, { headers: { apikey: process.env.TEQUILA_API_KEY! } });
-    const json = await res.json();
-    const best = json?.data?.[0];
-    if (!best) return { vertical: 'flight', mode: 'native', status: 'failed', provider: 'kiwi', error: 'No flights found' };
-    return {
-      vertical: 'flight', mode: 'native', status: 'quoted', provider: 'kiwi',
-      providerRef: best.booking_token,
-      priceCents: Math.round(best.price * 100), currency: 'USD',
-      detail: `${best.cityFrom} → ${best.cityTo} · ${best.airlines?.join('/')} · $${best.price}`,
-      // flightIdent is what /api/plans/[planId]/live queries AeroAPI with.
-      // Kiwi returns the operating carrier and number on the first leg.
-      raw: {
-        id: best.id,
-        route: best.route?.length,
-        flightIdent: best.route?.[0]
-          ? `${best.route[0].airline || ''}${best.route[0].flight_no || ''}` || null
-          : null,
-      },
-    };
-  },
-
-  async book(req): Promise<BookingItemResult> {
-    const q = await this.quote(req);
-    if (q.status !== 'quoted' || !q.providerRef) return q;
-    const body = {
-      booking_token: q.providerRef,
-      passengers: req.travelers.map(t => ({
-        name: t.firstName, surname: t.lastName, email: t.email,
-        birthday: t.dateOfBirth || '1990-01-01',
-        category: 'adult', title: 'mr',
-      })),
-      lang: 'en', locale: 'en', currency: 'usd',
-    };
-    const res = await fetch(`${KIWI}/v2/booking/save_booking`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: process.env.TEQUILA_API_KEY! },
-      body: JSON.stringify(body),
-    });
-    const json = await res.json();
-    if (!json?.booking_id) {
-      return { vertical: 'flight', mode: 'native', status: 'failed', provider: 'kiwi', error: json?.message || 'save_booking failed', raw: json };
-    }
-    // Payment confirm (sandbox keys auto-approve; production uses Kiwi's payment flow)
-    await fetch(`${KIWI}/v2/booking/confirm_payment`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: process.env.TEQUILA_API_KEY! },
-      body: JSON.stringify({ booking_id: json.booking_id, transaction_id: json.transaction_id }),
-    }).catch(() => null);
-    return {
-      vertical: 'flight', mode: 'native', status: 'confirmed', provider: 'kiwi',
-      providerRef: String(json.booking_id),
-      priceCents: q.priceCents, currency: 'USD',
-      detail: q.detail,
-      raw: {
-        booking_id: json.booking_id,
-        flightIdent: (q.raw as { flightIdent?: string } | undefined)?.flightIdent || null,
-      },
-    };
-  },
-};
+// Flights are Duffel's (lib/booking/providers/flights.duffel.ts). The Kiwi
+// integration that lived here was switched off, and still what approval
+// called: it sent no passengers, and invented a birthday and a
+// "mr" for anybody it did not know. Deleted rather than kept dormant, so
+// nothing can route to it again.
 
 // ═══ ACTIVITIES — Viator Partner API (native) ════════════════════════════
 // Apply at partnerresources.viator.com (Merchant tier books natively).
@@ -109,7 +31,9 @@ export const viatorActivities: BookingProvider = {
       headers: { 'Content-Type': 'application/json', 'exp-api-key': process.env.VIATOR_API_KEY!, 'Accept': 'application/json;version=2.0' },
       body: JSON.stringify({
         productCode: a.productCode, travelDate: a.date,
-        paxMix: [{ ageBand: 'ADULT', numberOfTravelers: req.travelers.length }],
+        // The party, not whoever is named: nobody is at quote time, and an
+        // activity priced for one person is not the price for four.
+        paxMix: [{ ageBand: 'ADULT', numberOfTravelers: headcount(req) }],
       }),
     });
     const json = await res.json();
@@ -120,7 +44,7 @@ export const viatorActivities: BookingProvider = {
       vertical: 'activity', mode: 'native', status: 'quoted', provider: 'viator',
       providerRef: opt.optionCode || a.productCode,
       priceCents: total ? Math.round(total * 100) : undefined, currency: 'USD',
-      detail: `${a.productCode} on ${a.date} · ${req.travelers.length} travelers`, raw: opt,
+      detail: `${a.productCode} on ${a.date} · ${headcount(req)} ${headcount(req) === 1 ? 'traveller' : 'travellers'}`, raw: opt,
     };
   },
 
@@ -134,10 +58,12 @@ export const viatorActivities: BookingProvider = {
       headers: { 'Content-Type': 'application/json', 'exp-api-key': process.env.VIATOR_API_KEY!, 'Accept': 'application/json;version=2.0' },
       body: JSON.stringify({
         productCode: a.productCode, optionCode: q.providerRef, travelDate: a.date,
-        paxMix: [{ ageBand: 'ADULT', numberOfTravelers: req.travelers.length }],
+        paxMix: [{ ageBand: 'ADULT', numberOfTravelers: headcount(req) }],
         communication: { email: lead.email, phone: lead.phone || '' },
         bookerInfo: { firstName: lead.firstName, lastName: lead.lastName },
-        partnerBookingRef: `reach_${req.planId}_${Date.now()}`,
+        // Our booking's id where there is one, so Viator's record points back at
+        // the row that asked for it.
+        partnerBookingRef: req.reference ? `reach_${req.reference}` : `reach_${req.planId}_${Date.now()}`,
       }),
     });
     const json = await res.json();
@@ -221,7 +147,7 @@ export const tableReservations: BookingProvider = {
     const platform = (r.platform ?? 'none') as Platform;
     const url = reservationUrl(platform, {
       name: r.name, city: r.city, date: r.date, time: r.time,
-      partySize: r.partySize, knownUrl: r.externalUrl,
+      partySize: headcount({ party: req.party ?? r.partySize, travelers: req.travelers }), knownUrl: r.externalUrl,
     });
 
     return {
@@ -235,7 +161,7 @@ export const tableReservations: BookingProvider = {
       detail: tableLabel(r),
       redirectUrl: url ?? undefined,
       priceCents: 0,
-      raw: { platform, date: r.date, time: r.time, partySize: r.partySize, phone: r.phone ?? null },
+      raw: { platform, date: r.date, time: r.time, partySize: headcount({ party: req.party ?? r.partySize, travelers: req.travelers }), phone: r.phone ?? null },
     };
   },
 

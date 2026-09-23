@@ -105,7 +105,7 @@ const ENV_GROUPS = [
       ['RESEND_API_KEY', v => v.startsWith('re_'), 'invite and receipt emails will not send'],
       ['TICKETMASTER_API_KEY', v => v.length > 8, 'Discover falls back to generic events'],
       ['LITEAPI_KEY', v => v.length > 8, 'hotel booking lane stays off'],
-      ['TEQUILA_API_KEY', v => v.length > 8, 'flight booking lane stays off'],
+      ['DUFFEL_API_KEY', v => v.startsWith('duffel_'), 'flight booking lane stays off'],
       ['VIATOR_API_KEY', v => v.length > 8, 'activity booking lane stays off'],
       ['AEROAPI_KEY', v => v.length > 8, 'live flight status stays off'],
     ],
