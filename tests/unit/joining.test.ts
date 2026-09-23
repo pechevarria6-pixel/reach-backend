@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  latecomerOptOuts, isSoloCount, bringAlongNote, beforeJoining, afterJoining,
+  latecomerOptOuts, isSoloCount, bringAlongNote, tripHolds, notOnBooked, beforeJoining, afterJoining,
 } from '../../lib/joining.ts';
 import { claimInvitesFor } from '../../lib/invites.ts';
 import { planShares } from '../../lib/money.ts';
@@ -10,18 +10,32 @@ import { planReadiness } from '../../lib/plan-readiness.ts';
 
 // ── The pure parts ───────────────────────────────────────────────────────
 
-test('a newcomer is kept off every live booking, once each', () => {
+test('a newcomer is kept off what is bought, once each', () => {
   const rows = latecomerOptOuts([
     { id: 'b1', plan_id: 'p1', status: 'confirmed' },
     { id: 'b1', plan_id: 'p1', status: 'confirmed' },
-    { id: 'b2', plan_id: 'p1', status: 'awaiting_approval' },
     { id: 'b3', plan_id: 'p2', status: 'pending' },
   ], 'u-new');
   assert.deepEqual(rows, [
     { plan_id: 'p1', item_ref: 'b1', user_id: 'u-new' },
-    { plan_id: 'p1', item_ref: 'b2', user_id: 'u-new' },
     { plan_id: 'p2', item_ref: 'b3', user_id: 'u-new' },
   ], 'a repeated row would make Postgres refuse the whole upsert');
+});
+
+test('a proposal or a hold is not bought: the newcomer is on it, to be re-priced', () => {
+  // The review's case: a three-person group opens checkout, a fourth joins.
+  // Kept off the proposal, the fourth could never be put back on the flight
+  // or the hotel — those cannot be sat out, so they cannot be sat back in.
+  const unbought = [
+    { id: 'flight', plan_id: 'p1', status: 'awaiting_approval' },
+    { id: 'hotel', plan_id: 'p1', status: 'quoted' },
+    { id: 'link', plan_id: 'p1', status: 'redirected' },
+  ];
+  assert.deepEqual(latecomerOptOuts(unbought, 'u-new'), []);
+  // Unless somebody has paid into that plan: what they paid against is the
+  // total, and it does not move.
+  assert.deepEqual(latecomerOptOuts(unbought, 'u-new', new Set(['p1'])).map(r => r.item_ref), ['flight', 'hotel', 'link']);
+  assert.deepEqual(latecomerOptOuts(unbought, 'u-new', new Set(['p2'])), [], 'only the plan that was paid into');
 });
 
 test('failed and cancelled bookings are nobody’s, so nobody is kept off them', () => {
@@ -52,19 +66,63 @@ test('what somebody who joins late owes for what was already booked: nothing', (
   assert.equal(after['u-new'], 0, 'the newcomer is not charged for a room that is not theirs');
 });
 
-test('the note never lets an invite read as a booking', () => {
-  const quiet = bringAlongNote({ hasBookings: false, paidCents: 0 });
+test('the note never lets an invite read as a booking, and promises nothing Reach does not do', () => {
+  const none = { bought: false, unbought: false, paidCents: 0 };
+  const quiet = bringAlongNote(none);
   assert.match(quiet, /until they join/);
   assert.doesNotMatch(quiet, /everyone/i, 'singular while it is still one person');
 
-  const lined = bringAlongNote({ hasBookings: true, paidCents: 0 });
-  assert.match(lined, /for you alone/);
-  assert.match(lined, /doesn't book them a seat, a room or a ticket/);
-  assert.match(lined, /isn't priced yet/);
+  const proposed = bringAlongNote({ ...none, unbought: true });
+  assert.match(proposed, /Nothing's bought yet/);
+  assert.match(proposed, /priced for everyone going the next time checkout opens/);
 
-  const paid = bringAlongNote({ hasBookings: true, paidCents: 123450 });
-  assert.match(paid, /\$1,234\.50 you've paid stay exactly as they are/);
-  assert.match(bringAlongNote({ hasBookings: false, paidCents: 5000 }), /\$50 you've paid/, 'money in counts even before a booking row does');
+  const booked = bringAlongNote({ ...none, bought: true });
+  assert.match(booked, /stays yours alone/);
+  assert.match(booked, /can't add someone to a booking it has already made/);
+  assert.match(booked, /directly with the airline or hotel/, 'somewhere they can actually get a seat');
+  assert.doesNotMatch(booked, /priced for everyone/, 'nothing unbought, nothing re-priced');
+  assert.match(bringAlongNote({ ...none, bought: true, unbought: true }), /priced for everyone going/);
+
+  const paid = bringAlongNote({ ...none, unbought: true, paidCents: 123450 });
+  assert.match(paid, /You've paid \$1,234\.50/);
+  assert.match(paid, /priced for you alone/);
+  assert.doesNotMatch(paid, /priced for everyone/, 'a paid trip is not re-sized');
+
+  // The group screen, which cannot see bookings or payments.
+  const unknown = bringAlongNote({ ...none, known: false });
+  assert.match(unknown, /can't add someone to a booking/);
+  assert.match(unknown, /paid towards/);
+
+  // The promise the review found: nothing books "anything for them" separately.
+  for (const s of [quiet, proposed, booked, paid, unknown]) {
+    assert.doesNotMatch(s, /booked separately/);
+  }
+});
+
+test('what a trip holds, from the rows the plan screen already has', () => {
+  assert.deepEqual(tripHolds([], 0), { bought: false, unbought: false, paidCents: 0 });
+  assert.deepEqual(tripHolds([{ status: 'confirmed', vertical: 'restaurant' }], 0).bought, true);
+  assert.equal(tripHolds([{ status: 'pending', vertical: 'flight' }], 0).bought, true);
+  assert.equal(tripHolds([{ status: 'redirected', vertical: 'event' }], 0).bought, false, 'a link out is not bought through Reach');
+  assert.equal(tripHolds([{ status: 'quoted', vertical: 'hotel' }], 0).unbought, true);
+  assert.equal(tripHolds([{ status: 'awaiting_approval', vertical: 'restaurant' }], 0).unbought, false,
+    'only flights and rooms are re-sized, so only they are promised it');
+  assert.equal(tripHolds([{ status: 'failed', vertical: 'flight' }], 0).unbought, false);
+  assert.equal(tripHolds(null, 4999.6).paidCents, 5000);
+});
+
+test('who is not on a flight or hotel already bought, and nothing a person chose to sit out', () => {
+  const bookings = [
+    { id: 'f1', vertical: 'flight' }, { id: 'h1', vertical: 'hotel' }, { id: 'd1', vertical: 'restaurant' },
+  ];
+  const skips = [
+    { ref: 'f1', userId: 'u-new' }, { ref: 'h1', userId: 'u-new' }, { ref: 'f1', userId: 'u-new' },
+    { ref: 'd1', userId: 'u-solo' },
+    { ref: 'h1', userId: 'u-gone' },
+  ];
+  assert.deepEqual(notOnBooked(bookings, skips, ['u-solo', 'u-new']), { 'u-new': ['flight', 'hotel'] });
+  assert.deepEqual(notOnBooked(bookings, [], ['u-solo']), {});
+  assert.deepEqual(notOnBooked(null, null, []), {});
 });
 
 // ── Against a stand-in for the database ──────────────────────────────────
@@ -159,6 +217,31 @@ test('before joining, the newcomer is kept off what this group already holds', a
   assert.deepEqual(out, { ok: true, satOut: 1 });
   assert.deepEqual(tables.item_optouts, [{ plan_id: 'p1', item_ref: 'hotel', user_id: 'u-new' }],
     'not the failed dinner, and nothing from somebody else’s group');
+});
+
+test('a proposal is left for the newcomer to be priced onto, until somebody pays', async () => {
+  const tables = soloTrip();
+  tables.bookings.push({ id: 'flight', plan_id: 'p2', status: 'awaiting_approval' });
+  tables.bookings.push({ id: 'room', plan_id: 'p2', status: 'quoted' });
+  const out = await beforeJoining(makeDb(tables), 'g1', 'u-new');
+  assert.deepEqual(out, { ok: true, satOut: 1 });
+  assert.deepEqual(tables.item_optouts.map(r => r.item_ref), ['hotel'], 'only the confirmed room');
+
+  const paidFor: Record<string, Row[]> = { ...soloTrip(), contributions: [{ plan_id: 'p2', status: 'succeeded' }] };
+  paidFor.bookings.push({ id: 'flight', plan_id: 'p2', status: 'awaiting_approval' });
+  await beforeJoining(makeDb(paidFor), 'g1', 'u-new');
+  assert.deepEqual(paidFor.item_optouts.map(r => r.item_ref).sort(), ['flight', 'hotel'],
+    'paid into: the total they paid against does not move');
+
+  const refunded: Record<string, Row[]> = { ...soloTrip(), contributions: [{ plan_id: 'p2', status: 'refunded' }] };
+  refunded.bookings.push({ id: 'flight', plan_id: 'p2', status: 'awaiting_approval' });
+  await beforeJoining(makeDb(refunded), 'g1', 'u-new');
+  assert.deepEqual(refunded.item_optouts.map(r => r.item_ref), ['hotel'], 'only money that landed counts as paid');
+});
+
+test('payments that cannot be read stop the join rather than guessing', async () => {
+  const out = await beforeJoining(makeDb(soloTrip(), { contributions: { code: 'XX000' } }), 'g1', 'u-new');
+  assert.equal(out.ok, false);
 });
 
 test('if that cannot be written, the join is refused rather than re-pricing a paid booking', async () => {

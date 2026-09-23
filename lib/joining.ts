@@ -15,11 +15,23 @@
 //      halve under them. Nothing already booked or paid may change because
 //      somebody joined.
 //
-// The second is fixed with the mechanism that already answers "who is paying
-// for this booking": item_optouts. Whoever joins is recorded as not on every
-// booking that existed before they arrived, which leaves every existing
-// share exactly where it was. Their own seat, room or ticket has not been
-// booked or priced, and the screens say so rather than implying it has.
+// The second depends on whether anything has actually been bought.
+//
+//   - Bought: a booking confirmed or pending with a provider, or anything on
+//     a plan somebody has already paid into. That is
+//     a seat, a room or a ticket in somebody's name, or a total somebody paid
+//     against. The newcomer is recorded as not on it, with the mechanism that
+//     already answers "who is paying for this booking" — item_optouts — which
+//     leaves every existing share exactly where it was. Reach cannot add a
+//     person to a flight or a room it has already bought.
+//
+//   - Not bought: a proposal ('awaiting_approval') or a quote somebody is
+//     holding ('quoted'). Nothing is in anybody's name and nobody has paid, so
+//     the newcomer is simply on it, and the next time checkout opens it is
+//     re-priced for the new number of people (lib/booking/resize.ts) and the
+//     total split between them. Keeping them off a proposal left a group that
+//     gained a member with no way to put them on the flight or the hotel at
+//     all: those cannot be sat out, so they cannot be sat back in either.
 //
 // Called from every place a membership is created for an existing group:
 // POST /api/groups/[id]/members (an admin adding somebody),
@@ -32,22 +44,42 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 const NO_TABLE = 'PGRST205';
 
 export type PriorBooking = { id: string | number; plan_id: string | number; status?: string | null };
+
+/**
+ * Bought: with a provider, or confirmed by one — a seat, a room or a ticket in
+ * somebody's name, whether or not the money has settled. Not 'redirected':
+ * that is a link to somebody else's checkout, and nothing has been bought
+ * through Reach at all.
+ */
+export const BOUGHT: ReadonlySet<string> = new Set(['confirmed', 'pending']);
+/** Priced and nothing bought: a proposal, or a quote somebody is holding (lib/booking/charged.ts). */
+const UNBOUGHT = new Set(['awaiting_approval', 'quoted']);
+/** What is sized by headcount, and so re-sized when somebody joins (lib/booking/resize.ts). */
+const RESIZED = new Set(['flight', 'hotel']);
 export type OptOutRow = { plan_id: string; item_ref: string; user_id: string };
 
 /**
- * The rows that keep a newcomer off everything booked before they arrived.
+ * The rows that keep a newcomer off what was bought before they arrived.
  *
- * Failed and cancelled bookings are nobody's to pay for, so they are left
- * alone. One row per booking, whatever the input repeats — Postgres refuses
- * an upsert that names the same row twice.
+ * Bought means past approval, or anything at all on a plan somebody has paid
+ * into (`paidPlans`, plan ids) — what they paid against is that plan's total,
+ * and it must not move under them. A proposal or a held quote on an unpaid
+ * plan is left alone: it is re-priced for everyone going instead.
+ *
+ * Failed and cancelled bookings are nobody's to pay for. One row per booking,
+ * whatever the input repeats — Postgres refuses an upsert that names the same
+ * row twice.
  */
-export function latecomerOptOuts(bookings: PriorBooking[], userId: string): OptOutRow[] {
+export function latecomerOptOuts(
+  bookings: PriorBooking[], userId: string, paidPlans: ReadonlySet<string> = new Set(),
+): OptOutRow[] {
   if (!userId) return [];
   const seen = new Set<string>();
   const rows: OptOutRow[] = [];
   for (const b of bookings || []) {
     if (b?.id == null || b?.plan_id == null) continue;
     if (b.status === 'failed' || b.status === 'cancelled') continue;
+    if (!BOUGHT.has(String(b.status ?? '')) && !paidPlans.has(String(b.plan_id))) continue;
     const key = `${b.plan_id}|${b.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -62,21 +94,101 @@ export function isSoloCount(memberCount: number): boolean {
 }
 
 /**
- * What the plan screen says beside "Bring someone along".
+ * What a trip holds, as far as the screen showing the note can tell.
  *
- * The only thing it must never do is let somebody believe the new person's
- * seat, room or ticket came with the invite. So once anything is booked or
- * paid, it says what stays and what does not, in that order.
+ * `known: false` is a screen that cannot see bookings or payments (the group
+ * screen); it gets the sentence that is true whichever way they fall, rather
+ * than the reassuring one.
  */
-export function bringAlongNote(state: { hasBookings: boolean; paidCents: number }): string {
+export type TripHolds = { known?: boolean; bought: boolean; unbought: boolean; paidCents: number };
+
+/**
+ * TripHolds from the booking rows a screen already has. Only flights and
+ * rooms count as unbought here, because those are what the bridge re-sizes
+ * (lib/booking/resize.ts); a table or an activity keeps the quote it has.
+ */
+export function tripHolds(
+  bookings: { status?: string | null; vertical?: string | null }[] | null | undefined, paidCents: number,
+): TripHolds {
+  const rows = bookings ?? [];
+  return {
+    bought: rows.some(b => BOUGHT.has(String(b?.status ?? ''))),
+    unbought: rows.some(b => UNBOUGHT.has(String(b?.status ?? '')) && RESIZED.has(String(b?.vertical))),
+    paidCents: Math.max(0, Math.round(paidCents || 0)),
+  };
+}
+
+const usd = (cents: number) =>
+  `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: cents % 100 ? 2 : 0, maximumFractionDigits: 2 })}`;
+
+// A person added to a trip already booked needs somewhere to get their own
+// seat or room, and Reach is not it: a Duffel order or a LiteAPI booking
+// cannot take another passenger or guest, and the bridge hands back the
+// booking already on the list rather than quoting a second one. So the
+// sentence says where.
+const OWN_BOOKING = "Reach can't add someone to a booking it has already made, so they'd book their own seat or room directly with the airline or hotel.";
+// Flights and rooms only: those are what the bridge re-sizes. A table or an
+// activity keeps the quote it has.
+const REPRICED = "flights and rooms not bought yet are priced for everyone going the next time checkout opens, and the cost is split between you and them.";
+
+/**
+ * What the screen says beside "Bring someone along".
+ *
+ * The one thing it must never do is let somebody believe the new person's
+ * seat or room came with the invite. Each sentence is what beforeJoining and
+ * the bookable bridge actually do: what is bought, and everything on a trip
+ * somebody has paid towards, stays the organiser's alone and the newcomer is
+ * not added to it; flights and rooms not bought are re-sized for both.
+ *
+ * It used to promise that "anything for them gets booked separately".
+ * Nothing did: for the same flight or hotel the bridge handed back the
+ * organiser's own booking. So each branch says who actually does what.
+ */
+export function bringAlongNote(state: TripHolds): string {
   const paid = Math.max(0, Math.round(state.paidCents || 0));
-  if (!state.hasBookings && paid === 0) {
-    return "It stays a trip for one until they join. After that it's planned as a group, and they get a say.";
+  if (state.known === false) {
+    return `Anything Reach has already booked, and any trip you've paid towards, stays priced for you alone. ${OWN_BOOKING} On a trip you haven't paid towards, ${REPRICED}`;
   }
-  const kept = paid > 0
-    ? `What you've booked and the $${(paid / 100).toLocaleString('en-US', { minimumFractionDigits: paid % 100 ? 2 : 0, maximumFractionDigits: 2 })} you've paid stay exactly as they are, and they're for you alone.`
-    : "What's already lined up stays exactly as it is, and it's for you alone.";
-  return `${kept} Adding someone doesn't book them a seat, a room or a ticket, and their share isn't priced yet — anything for them gets booked separately.`;
+  if (paid > 0) {
+    // Paid for, not necessarily booked yet: what was paid against stays as it
+    // is, so nothing on it is re-sized either, and they are not added to it.
+    return `You've paid ${usd(paid)} towards this trip, so everything on it stays priced for you alone and they aren't charged for any of it. They'd book their own seat or room directly with the airline or hotel.`;
+  }
+  if (state.bought) {
+    return `What's already booked stays yours alone. ${OWN_BOOKING}${state.unbought ? ` Once they join, ${REPRICED}` : ''}`;
+  }
+  if (state.unbought) {
+    return `Nothing's bought yet. Once they join, ${REPRICED}`;
+  }
+  return "It stays a trip for one until they join. After that it's planned as a group, and they get a say.";
+}
+
+/**
+ * Which flights and hotels each member is not on, for a screen to say so.
+ * Only those two: they cannot be sat out by choice (the participation route
+ * refuses it), so an opt-out on one is somebody who joined after it was
+ * bought or paid for (latecomerOptOuts). A dinner somebody chose to sit out
+ * is their own business and not what this reports.
+ */
+export function notOnBooked(
+  bookings: { id?: unknown; vertical?: string | null }[] | null | undefined,
+  skips: { ref: string; userId: string }[] | null | undefined,
+  memberIds: string[],
+): Record<string, ('flight' | 'hotel')[]> {
+  const kind = new Map<string, 'flight' | 'hotel'>();
+  for (const b of bookings ?? []) {
+    if (b?.id != null && RESIZED.has(String(b.vertical))) kind.set(String(b.id), b.vertical as 'flight' | 'hotel');
+  }
+  const members = new Set(memberIds);
+  const out: Record<string, ('flight' | 'hotel')[]> = {};
+  for (const s of skips ?? []) {
+    const v = kind.get(String(s.ref));
+    if (!v || !members.has(s.userId)) continue;
+    const list = (out[s.userId] ??= []);
+    if (!list.includes(v)) list.push(v);
+  }
+  for (const list of Object.values(out)) list.sort();
+  return out;
 }
 
 /** `error` is the sentence to show when `ok` is false. */
@@ -84,11 +196,11 @@ export type JoinOutcome = { ok: boolean; satOut?: number; error?: string };
 
 /**
  * Before the membership row is written: keep the newcomer off what is already
- * booked. Done first, so there is no moment in which they are a member and
+ * bought. Done first, so there is no moment in which they are a member and
  * funding quotes them a share of somebody else's room.
  *
- * A failure here stops the join. Letting them in anyway would re-price every
- * booking on the trip, including ones already paid for. The one exception is
+ * A failure here stops the join. Letting them in anyway would split bookings
+ * already bought or paid for. The one exception is
  * a deployment that has not run sql/preferences-v1.sql: there, nobody can be
  * kept off anything, shares split evenly as they always did, and refusing
  * every join would be worse than that.
@@ -109,7 +221,16 @@ export async function beforeJoining(db: SupabaseClient, groupId: string, userId:
     return { ok: false, error: "We couldn't check what's already booked — try again in a moment." };
   }
 
-  const rows = latecomerOptOuts((bookings ?? []) as PriorBooking[], userId);
+  // Plans somebody has paid into: everything on them stays as it was paid for.
+  const { data: paid, error: paidErr } = await db
+    .from('contributions').select('plan_id').in('plan_id', planIds).eq('status', 'succeeded');
+  if (paidErr) {
+    console.error('[joining] could not read what has been paid', { groupId, code: paidErr.code });
+    return { ok: false, error: "We couldn't check what's already been paid — try again in a moment." };
+  }
+  const paidPlans = new Set((paid ?? []).map(c => String((c as { plan_id: unknown }).plan_id)));
+
+  const rows = latecomerOptOuts((bookings ?? []) as PriorBooking[], userId, paidPlans);
   if (!rows.length) return { ok: true, satOut: 0 };
 
   const { error: optErr } = await db

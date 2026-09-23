@@ -24,7 +24,7 @@ import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { STEPS, stepStates, cannotSign, bookingTracker } from "@/lib/plan-steps";
-import { bringAlongNote } from "@/lib/joining";
+import { bringAlongNote, tripHolds } from "@/lib/joining";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -2675,7 +2675,11 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           <div style={{marginTop:14}}>
             <button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Bring someone along</button>
             <div style={{fontSize:12,color:C.t2,marginTop:8,lineHeight:1.5}}>
-              {bringAlongNote({hasBookings:group.plans.some(p=>p.status==="booked"),paidCents:0})}
+              {/* This screen holds no bookings and no payments, and a plan's
+                  status says neither: a paid solo plan reads "approved" and one
+                  with quotes on it "planning". So any plan at all gets the
+                  sentence that is true whichever way they fall. */}
+              {bringAlongNote(group.plans.length?{known:false,bought:false,unbought:false,paidCents:0}:{bought:false,unbought:false,paidCents:0})}
             </div>
           </div>
         )}
@@ -2983,7 +2987,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 
   return(
     <div className="sc">
-      <ScreenHeader onBack={onBack} label="Back" title="Edit Group"/>
+      <ScreenHeader onBack={onBack} label="Back" title={members.length<=1?"Edit details":"Edit Group"}/>
       <div style={{padding:"0 20px",display:"flex",gap:12,alignItems:"center",marginBottom:18}}>
         <div style={{fontSize:44,minWidth:52,textAlign:"center"}}>{inferGroupEmoji(name)}</div>
         <input aria-label="Group name" className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="Group name" style={{flex:1}}/>
@@ -8356,7 +8360,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       birth for a weekend somebody is driving to. The chip says
                       ready or not and which fields are outstanding — never a
                       value, not even to the person's own group. */}
-                  {hasFlight&&(()=>{
+                  {hasFlight&&!(funding?.notOnBooked?.[uid]||[]).includes("flight")&&(()=>{
                     const r=readiness?.travelers?.find(t=>t.userId===uid);
                     if(!r)return null;
                     return r.ready
@@ -8364,25 +8368,35 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       :<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}
                          title={`Still needed: ${r.missing.join(", ")}`}>Needs details</span>;
                   })()}
-                  <span className="pill pill-g" style={{fontSize:10}}>✓ In</span>
+                  {/* Somebody who joined after the flight or hotel was bought is
+                      not on it (lib/joining.ts), and "✓ In" beside their name
+                      said they were. */}
+                  {(funding?.notOnBooked?.[uid]||[]).length
+                    ?<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}>Not on the booked {funding.notOnBooked[uid].join(" or ")}</span>
+                    :<span className="pill pill-g" style={{fontSize:10}}>✓ In</span>}
                 </div>
               ):null;})}
               {/* Plans change, and a trip for one is allowed to become a trip
                   for two. The invite is the group's own (Edit group → Add
                   someone), not a second mechanism. What it must not do is
-                  suggest the newcomer's seat or room came with it: once
-                  anything here is booked or paid, the note says what stays
-                  and what does not — and the server keeps them off every
-                  existing booking so that is true (lib/joining.ts). */}
+                  suggest the newcomer's seat or room came with it. The note
+                  says what the server does: they are kept off what is bought
+                  or paid for (lib/joining.ts), and flights and rooms not yet
+                  bought are re-sized for them (lib/booking/resize.ts). */}
               {soloTrip&&group.role==="admin"&&(
                 <div style={{marginTop:12}}>
                   <button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Bring someone along</button>
                   <div style={{fontSize:12,color:C.t2,marginTop:8,lineHeight:1.5}}>
-                    {bringAlongNote({
-                      hasBookings:plan.status==="booked"||(funding?.targetCents||0)>0||(plan.itinerary||[]).some(i=>i.conf),
-                      paidCents:funding?.collectedCents||0,
-                    })}
+                    {bringAlongNote(tripHolds(planBookings,funding?.collectedCents||0))}
                   </div>
+                </div>
+              )}
+              {/* The person it happened to. Only the organiser saw the note
+                  before they joined, and nothing on this screen told the
+                  newcomer that the seat and room already here are not theirs. */}
+              {(funding?.notOnBooked?.[me]||[]).length>0&&(
+                <div style={{fontSize:12,color:C.t2,marginTop:10,lineHeight:1.5}}>
+                  You joined after the {funding.notOnBooked[me].join(" and ")} {funding.notOnBooked[me].length>1?"were":"was"} booked, so you're not on {funding.notOnBooked[me].length>1?"them":"it"} and aren't charged for {funding.notOnBooked[me].length>1?"them":"it"}. Reach can't add someone to a booking it has already made — book your own directly with the {funding.notOnBooked[me].map(v=>v==="flight"?"airline":"hotel").join(" or ")}.
                 </div>
               )}
             </div>
@@ -8593,7 +8607,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 <>
                   <button className="bp" style={{marginBottom:6,...(steps.budget==="done"?{background:C.green}:{background:C.s2,color:C.t3,border:`1px solid ${C.border}`})}}
                     disabled={steps.budget!=="done"} onClick={()=>push("checkout",{planId,groupId})}>
-                    {timing==="on_now"?"Open the booking list →":`Book everything${reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?" est.":""} each`:""} →`}
+                    {/* The server's figure is this person's share, not a
+                        per-head price: somebody who joined after the flight
+                        was bought pays nothing towards it, so "each" was
+                        false the moment shares differed. */}
+                    {timing==="on_now"?"Open the booking list →":`Book everything${reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?(soloTrip?" est.":" est. each"):(soloTrip?"":" your share")}`:""} →`}
                   </button>
                   {/* The biggest commitment in the app used to be a button
                       with no number on it. People do not press those. Say

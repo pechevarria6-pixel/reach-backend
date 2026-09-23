@@ -13,6 +13,7 @@
 // runs. This is the part that works today and works regardless: before
 // writing, look at what this plan already has, and if the very same thing is
 // already live, hand that back instead of booking it again.
+import { UNBOUGHT, sizeOf } from './resize.ts';
 
 /** What identifies the thing being booked, per vertical. */
 export interface BookingLike {
@@ -86,7 +87,41 @@ export function findDuplicate<T extends BookingLike>(
   for (const row of existing ?? []) {
     if (!LIVE.has(String(row.status ?? ''))) continue;
     const theirs = identityOf(row.request_payload as Record<string, unknown>);
-    if (theirs && theirs === wanted) return row;
+    if (!theirs || theirs !== wanted) continue;
+    // The same flight for a different number of people is not the same
+    // booking while nothing has been bought. Handing back a one-seat quote to
+    // a request for two is how a trip that gained somebody went on pricing
+    // one fare — see findStale, which the caller retires it with.
+    if (isResizing(row, item)) continue;
+    return row;
+  }
+  return null;
+}
+
+/** An unbought quote for this very thing, sized for a different number of people than `item` asks for. */
+function isResizing(row: BookingLike, item: Record<string, unknown>): boolean {
+  if (!UNBOUGHT.has(String(row.status ?? ''))) return false;
+  const asked = sizeOf(item, null);
+  return asked !== null && sizeOf(row.request_payload as Record<string, unknown>) !== asked;
+}
+
+/**
+ * The unbought quote `item` replaces: the same flight or hotel, priced for a
+ * different number of people. Null when there is none, or when the one there
+ * is already bought — a confirmed seat is never quietly swapped.
+ *
+ * The caller retires it before writing the new one. Both carry the same
+ * idempotency key, and the database allows one live row per key.
+ */
+export function findStale<T extends BookingLike>(
+  existing: T[],
+  item: Record<string, unknown>,
+): T | null {
+  const wanted = identityOf(item);
+  if (!wanted) return null;
+  for (const row of existing ?? []) {
+    if (identityOf(row.request_payload as Record<string, unknown>) !== wanted) continue;
+    if (isResizing(row, item)) return row;
   }
   return null;
 }

@@ -15,7 +15,7 @@ import { partySize } from '@/lib/participation';
 import { airlineOnly } from '@/lib/booking/approval';
 import { airlineHandoff } from '@/lib/booking/duffel-map';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
-import { findDuplicate, identityOf as findKey } from '@/lib/booking/duplicate';
+import { findDuplicate, findStale, identityOf as findKey } from '@/lib/booking/duplicate';
 import { bookingFacts } from '@/lib/contracts/booking';
 import { track } from '@/lib/track';
 
@@ -130,11 +130,35 @@ export async function POST(req: NextRequest) {
   }
   const existing = already ?? [];
 
+  // Whether a quote sized for a different number of people may be replaced.
+  // Not once anybody has paid: what they paid against is the total, and the
+  // same lock holds sitting things out and holding them. Asked once, and only
+  // if some item needs it; unknown is treated as paid.
+  let paidInto: boolean | null = null;
+  const anyonePaid = async () => {
+    if (paidInto !== null) return paidInto;
+    const { data, error } = await ctx.db.from('contributions')
+      .select('id').eq('plan_id', body.planId).eq('status', 'succeeded').limit(1);
+    if (error) console.error('[bookings] could not check payments before re-pricing', { plan: body.planId, code: error.code });
+    paidInto = !!error || !!data?.length;
+    return paidInto;
+  };
+
   for (const item of body.items as BookingItemRequest[]) {
+    // The same flight or hotel, quoted for a different number of people and
+    // not yet bought — a trip for one that somebody has since joined. It is
+    // replaced by the quote this request makes, never handed back: a one-seat
+    // price shown to two people is a wrong number. On a plan somebody has paid
+    // into it stays exactly as it is, and is handed back like any duplicate.
+    //
     // Already booked, and still live. Hand back what is there rather than
     // making a second one. A failed or cancelled booking is deliberately not
     // a duplicate — it is the reason somebody is pressing the button again.
-    const twin = dryRun ? null : findDuplicate(existing, item as unknown as Record<string, unknown>);
+    // A live row of the right size wins over replacing one of the wrong size.
+    const dup = dryRun ? null : findDuplicate(existing, item as unknown as Record<string, unknown>);
+    const unsized = dryRun || dup ? null : findStale(existing, item as unknown as Record<string, unknown>);
+    const stale = unsized && !(await anyonePaid()) ? unsized : null;
+    const twin = dup ?? (stale ? null : unsized);
     if (twin) {
       console.log('[bookings] already booked — returning the existing one', {
         plan: body.planId, vertical: item.vertical, status: twin.status,
@@ -175,11 +199,41 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
+    // Takes the wrongly sized quote off the list, and only while it is still
+    // unbought — if somebody approved it in the meantime it is a real booking
+    // and is left alone. Unlinked from its itinerary line, so the next open of
+    // checkout can quote that line afresh if this attempt does not replace it.
+    const retireStale = async (): Promise<boolean> => {
+      if (!stale?.id) return true;
+      const { data: retired, error: retireErr } = await ctx.db.from('bookings')
+        .update({ status: 'cancelled', itinerary_item_id: null, updated_at: new Date().toISOString() })
+        .eq('id', stale.id).in('status', ['awaiting_approval', 'quoted'])
+        .select('id');
+      if (retireErr || !retired?.length) {
+        console.error('[bookings] could not retire a quote sized for a different party', {
+          plan: body.planId, vertical: item.vertical, code: retireErr?.code ?? 'changed',
+        });
+        return false;
+      }
+      stale.status = 'cancelled';
+      return true;
+    };
+    // A re-price that did not work still takes the old quote off: left there,
+    // it is one person's fare split between two, and paying against it would
+    // lock that in. The line is quoted again on the next open of checkout,
+    // which is what happens to any line that could not be priced.
+    const staleFailed = async (why?: string) => {
+      const gone = await retireStale();
+      return gone
+        ? `This was priced for a different number of people and couldn't be re-priced for everyone going${why ? ` — ${why}` : ''}. It's off the total until it can be; reopen checkout to try again.`
+        : (why ?? 'This could not be re-priced just now.');
+    };
+
     if (item.vertical === 'flight' && flightsBlocked) {
       keep(item, {
         vertical: 'flight', mode: 'native', status: 'failed', provider: 'none',
         // Names, not details: who to go and ask.
-        error: flightsBlocked,
+        error: stale ? await staleFailed(flightsBlocked) : flightsBlocked,
       });
       continue;
     }
@@ -216,6 +270,25 @@ export async function POST(req: NextRequest) {
         result.status = 'awaiting_approval' as BookingItemResult['status'];
       }
       keep(item, result);
+
+      if (stale?.id) {
+        if (result.status === 'failed') {
+          result.error = await staleFailed(result.error);
+          continue;
+        }
+        // Retired before the new row is written: both may carry the same
+        // idempotency key, and the database allows one live row per key.
+        const heldBefore = stale.status === 'quoted';
+        if (!await retireStale()) {
+          result.status = 'failed' as BookingItemResult['status'];
+          result.error = "This changed while we were re-pricing it — reopen checkout to see where it stands.";
+          continue;
+        }
+        // Somebody holding it (lib/booking/charged.ts) still is. Only a
+        // proposal becomes a hold again: anything the provider has already
+        // answered for is what it is.
+        if (heldBefore && result.status === 'awaiting_approval') result.status = 'quoted' as BookingItemResult['status'];
+      }
 
       if (!dryRun) {
         // The identity of the thing booked, so the database can refuse a

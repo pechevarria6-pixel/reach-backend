@@ -16,6 +16,7 @@ import { planSkips, partySize } from '@/lib/participation';
 import { netCollectedCents } from '@/lib/booking/approval';
 import { staleForParty } from '@/lib/booking/party';
 import { midClaim } from '@/lib/booking/claim';
+import { notOnBooked } from '@/lib/joining';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { track } from '@/lib/track';
 
@@ -27,7 +28,7 @@ async function fundingStatus(
   // checkout does not show it in the total, so nobody is charged for it.
   const { data: rows } = await db
     .from('bookings')
-    .select('id,price_cents,status,mode,provider')
+    .select('id,price_cents,status,mode,provider,vertical')
     .eq('plan_id', planId)
     .not('status', 'in', NOT_CHARGED);
   const bookings = chargedRows(rows);
@@ -94,6 +95,10 @@ async function fundingStatus(
     inDoubt: inDoubt.map(b => ({ id: b.id, vertical: b.vertical, detail: b.detail ?? null })),
     funded: targetCents > 0 && collectedCents >= targetCents,
     memberCount: memberIds.length,
+    // Who is not on a flight or hotel already bought, because they joined
+    // after it was (lib/joining.ts). Without it the plan screen marked them
+    // "✓ In" and "Ready to fly" for a seat that is not theirs.
+    notOnBooked: notOnBooked(bookings, skips, memberIds),
     myShareCents,
     myPaidCents,
     myRemainingCents: Math.max(0, myShareCents - myPaidCents),
