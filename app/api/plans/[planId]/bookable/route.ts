@@ -27,6 +27,8 @@ import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
 import { findProduct } from '@/lib/booking/providers/viator-search';
 import { roomsFor } from '@/lib/booking/party';
 import { failuresByLine, lockedByPayment } from '@/lib/booking/failures';
+import { heldVenueNear } from '@/lib/discovery/held-venue';
+import { locatePlan } from '@/lib/discovery/geocode';
 
 export const maxDuration = 60;
 
@@ -409,6 +411,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       .data?.home_airport ?? null
     : null;
 
+  // Where the trip is on the map, for finding its restaurants in our venue
+  // table. Asked once, and only when there is a restaurant line to look up.
+  let placed: Promise<{ lat: number; lng: number } | null> | null = null;
+  const tripPoint = () => (placed ??= locatePlan(plan).catch(() => null));
+
   for (const item of candidates as Item[]) {
     // An activity has to become a real product before it can be quoted. The
     // itinerary says "brewery tour"; Viator sells product 5638853P1. When
@@ -439,26 +446,21 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       // line — against a list of venue names, so it matched nothing on any
       // real itinerary and every restaurant fell through with no platform
       // and no phone number, which is what "provider: none" meant.
+      //
+      // Near this trip, still open, and that exact name. By name alone it
+      // was the first row anywhere in the world with a matching name — and
+      // the weekly map load holds every "The Crown" in thirty-odd regions —
+      // so the number offered could ring a restaurant in another state.
+      // See lib/discovery/held-venue.ts. A stay line is priced by the hotel
+      // provider (asRequest) and never reads this table.
       const venueName = (item.venue_name || '').trim();
-      const { data: venue, error: venueError } = venueName
-        ? await ctx.db
-            .from('discovery_venues')
-            .select('reservation_platform, reservation_url, phone')
-            .ilike('name', venueName)
-            // The weekly map load holds hotels too. A table line is never
-            // a hotel's front desk, even when the two share a name. A stay
-            // line is priced by the hotel provider (asRequest) and never
-            // reads this table, so it is unaffected.
-            .neq('interest', 'places to stay')
-            .limit(1)
-            .maybeSingle()
-        : { data: null, error: null };
+      const at = venueName ? await tripPoint() : null;
+      if (venueName && !at) console.error('[bookable] could not place this trip, so no venue details are offered', { planId: params.planId });
+      const { venue, error: venueError } = await heldVenueNear(ctx.db, venueName, at);
       // A column that does not exist yet means the migration is pending, and
       // every restaurant falls to the phone lane — which is the honest
-      // degraded state, not an error.
-      if (venueError && !/reservation_platform|phone|schema cache/i.test(venueError.message || '')) {
-        console.error('[bookable] could not read the venue', { code: venueError.code });
-      }
+      // degraded state, not an error (heldVenueNear reports those as none).
+      if (venueError) console.error('[bookable] could not read the venue', { code: venueError.code });
       // A number somebody can ring is a real answer, and it is the one we
       // have most often: the map records phone numbers for venues nobody has
       // worked out a booking platform for. Kept even when the venue is not in
