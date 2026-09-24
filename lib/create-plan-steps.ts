@@ -6,11 +6,13 @@
 export type PlanKind = 'restaurant' | 'concert' | 'weekend' | 'trip';
 
 export function createPlanSteps(kind: string | null | undefined): string[] {
-  if (kind === 'restaurant') return ['Type', 'When', 'Cuisine', 'Budget'];
-  if (kind === 'concert') return ['Type', 'When', 'Genre', 'Budget'];
-  if (kind === 'weekend') return ['Type', 'When', 'Vibe', 'Stay', 'Budget'];
-  return ['Type', 'When', 'Vibe', 'Stay', 'Rules', 'Budget'];
+  // Where, for every kind: a plan with no place was built for its title —
+  // "Test", "Weekend Away" — with rows naming squares in no city at all.
+  if (kind === 'restaurant') return ['Type', 'Where', 'When', 'Cuisine', 'Budget'];
+  if (kind === 'concert') return ['Type', 'Where', 'When', 'Genre', 'Budget'];
+  if (kind === 'weekend') return ['Type', 'Where', 'When', 'Vibe', 'Stay', 'Budget'];
+  return ['Type', 'Where', 'When', 'Vibe', 'Stay', 'Rules', 'Budget'];
 }
 
 /** The screens the flow knows how to draw. A step name outside this is a screen nobody sees. */
-export const RENDERED = new Set(['Type', 'When', 'Cuisine', 'Genre', 'Vibe', 'Stay', 'Rules', 'Budget']);
+export const RENDERED = new Set(['Type', 'Where', 'When', 'Cuisine', 'Genre', 'Vibe', 'Stay', 'Rules', 'Budget']);

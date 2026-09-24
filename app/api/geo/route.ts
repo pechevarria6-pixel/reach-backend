@@ -33,6 +33,8 @@ export interface GeoHit {
   lng: number;
   city: string | null;
   state: string | null;
+  /** ISO-2, upper case — what a hotel search and the itinerary need. */
+  country: string | null;
 }
 
 /** The parts of an address that answer "what city is this". */
@@ -96,6 +98,7 @@ export async function GET(req: NextRequest) {
         lng: Number(h.lon),
         city: cityOf(h.address as Record<string, string> | undefined),
         state: (h.address as Record<string, string> | undefined)?.state ?? null,
+        country: ((h.address as Record<string, string> | undefined)?.country_code ?? '').toUpperCase() || null,
       }))
       .filter(h => h.label && Number.isFinite(h.lat) && Number.isFinite(h.lng));
 

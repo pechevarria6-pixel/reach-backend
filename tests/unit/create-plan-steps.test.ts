@@ -13,3 +13,7 @@ test('only a stay-length plan asks where to stay', () => {
   assert.ok(!createPlanSteps('restaurant').includes('Stay'));
   assert.ok(!createPlanSteps('concert').includes('Stay'));
 });
+
+test('every kind asks where', () => {
+  for (const k of ['restaurant', 'concert', 'weekend', 'trip']) assert.equal(createPlanSteps(k)[1], 'Where');
+});

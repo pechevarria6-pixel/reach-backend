@@ -6435,6 +6435,23 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   const [cuisine,setCuisine]=useState(null);
   const [concertGenre,setConcertGenre]=useState(null);
   const [accom,setAccom]=useState(null);
+  // Where the plan happens: a place the map confirmed, with its country.
+  const [where,setWhere]=useState(null);           // {city,country,label}
+  const [whereQuery,setWhereQuery]=useState("");
+  const [whereHits,setWhereHits]=useState([]);
+  const [whereLooking,setWhereLooking]=useState(false);
+  const findWhere=async(q)=>{
+    const term=(q||"").trim();
+    if(term.length<3){setWhereHits([]);return;}
+    setWhereLooking(true);
+    try{
+      const r=await fetch("/api/geo?limit=6&q="+encodeURIComponent(term));
+      if(!r.ok)throw new Error(String(r.status));
+      const d=await r.json();
+      setWhereHits((d.hits||[]).filter(h=>h.city||h.label));
+    }catch(e){console.error("[createPlan] place search failed",e);toast("Couldn't search for that just now — try again in a moment");}
+    setWhereLooking(false);
+  };
   const [bks,setBks]=useState([]);
   const [budget,setBudget]=useState("");
   const [voting,setVoting]=useState(false);
@@ -6578,6 +6595,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   const canContinue=()=>{
     const label=STEPS[step];
     if(label==="Type")return !!(gid&&planType);
+    if(label==="Where")return !!(where?.city);
     if(label==="When"){
       if(isEvent)return !!(eventDate);
       return !!(startDate&&endDate&&nights()>0);
@@ -6666,6 +6684,11 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       destStyle:dest||null,
       accommodation:accom||null,
       dealbreakers:bks||[],
+      // Where, as the map confirmed it, and whether anybody else is on it —
+      // both were asked about and neither was ever saved.
+      destinationCity:where?.city||null,
+      destinationCountry:where?.country||null,
+      soloMode:isSoloGroup,
       participants:selGroup?.memberIds||[],
       itinerary:[],
       votes:(voting&&!isSoloGroup)?Object.fromEntries(vopts.filter(Boolean).map(o=>[o,0])):{},
@@ -6750,7 +6773,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       </div>
       <div style={{padding:"0 20px"}}>
 
-        {step===0&&(
+        {label==="Type"&&(
           <div>
             <div className="pt" style={{marginBottom:6}}>Who's joining?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Select a group and what you're planning.</div>
@@ -6791,7 +6814,33 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           </div>
         )}
 
-        {step===1&&(
+        {label==="Where"&&(
+          <div>
+            <div className="pt" style={{marginBottom:6}}>Where is it?</div>
+            <div style={{fontSize:13,color:C.t2,marginBottom:14}}>The town or city. Everything Reach suggests is found there.</div>
+            {where?(
+              <div style={{padding:"12px 14px",borderRadius:14,border:`2px solid ${C.accentText}`,background:C.accentDim,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                <div style={{fontSize:14,color:C.t1,fontWeight:600}}>{where.label}</div>
+                <button className="bsm" onClick={()=>{setWhere(null);setWhereQuery("");}}>Change</button>
+              </div>
+            ):(
+              <>
+                <input className="inp" autoFocus value={whereQuery} placeholder="Charlotte, NC"
+                  onChange={e=>{setWhereQuery(e.target.value);findWhere(e.target.value);}}/>
+                {whereLooking&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
+                {whereHits.map((h,i)=>(
+                  <div key={i} {...pressable}
+                    onClick={()=>{setWhere({city:h.city||h.label.split(",")[0].trim(),country:h.country||null,label:h.label.split(",").slice(0,3).join(",")});setWhereHits([]);}}
+                    style={{padding:"10px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,color:C.t1,cursor:"pointer",lineHeight:1.4}}>
+                    {h.label}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {label==="When"&&(
           <div>
             {isEvent?(
               <>
@@ -7509,6 +7558,40 @@ function readLocalReview(id){try{return JSON.parse(localStorage.getItem(reviewKe
 function writeLocalReview(id,v){try{localStorage.setItem(reviewKey(id),JSON.stringify(v));}catch{}}
 const STEP_LABEL={overview:"Overview",budget:"Budget",bookings:"Book"};
 
+// ─── "Where is this?" for a plan that never said ──────────────────────────
+// Plans made before the create flow asked where have no place, and their
+// days were being written for the title — "Test", "Weekend Away". This asks
+// once, saves the place on the plan, and lets the build carry on.
+function PlacePrompt({onPick,onCancel,toast}){
+  const [q,setQ]=useState("");
+  const [hits,setHits]=useState([]);
+  const [looking,setLooking]=useState(false);
+  const find=async(term)=>{
+    if((term||"").trim().length<3){setHits([]);return;}
+    setLooking(true);
+    try{
+      const r=await fetch("/api/geo?limit=6&q="+encodeURIComponent(term.trim()));
+      if(!r.ok)throw new Error(String(r.status));
+      const d=await r.json();
+      setHits(d.hits||[]);
+    }catch(e){console.error("[place prompt] search failed",e);toast("Couldn't search for that just now — try again in a moment");}
+    setLooking(false);
+  };
+  return(
+    <div style={{margin:"0 20px 14px",padding:"12px 14px",background:C.s2,border:`1px solid ${C.accentBorder}`,borderRadius:14}}>
+      <div style={{fontSize:13.5,fontWeight:600,color:C.t1,marginBottom:4}}>Where is this?</div>
+      <div style={{fontSize:12,color:C.t2,marginBottom:8,lineHeight:1.5}}>This plan doesn't say where it happens yet, so there is nowhere to plan the days around.</div>
+      <input className="inp" autoFocus value={q} placeholder="Charlotte, NC" onChange={e=>{setQ(e.target.value);find(e.target.value);}}/>
+      {looking&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
+      {hits.map((h,i)=>(
+        <div key={i} {...pressable} onClick={()=>onPick({city:h.city||h.label.split(",")[0].trim(),country:h.country||null})}
+          style={{padding:"9px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,color:C.t1,cursor:"pointer"}}>{h.label}</div>
+      ))}
+      <button className="bs" style={{marginTop:10}} onClick={onCancel}>Not now</button>
+    </div>
+  );
+}
+
 function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab,departure}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
@@ -7703,6 +7786,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // was no way to get them: the empty state offered only a manual builder. A
   // trip the model already chose can have its day-by-day plan generated on
   // demand, which is also the repair path for those older plans.
+  const [needsPlace,setNeedsPlace]=useState(false);
+  // Build once the place has landed on the plan — the build reads the plan,
+  // and calling it in the same tick would still see no place.
+  const [buildWhenPlaced,setBuildWhenPlaced]=useState(false);
+  useEffect(()=>{
+    if(buildWhenPlaced&&plan?.destinationCity){setBuildWhenPlaced(false);buildItinerary();}
+  },[buildWhenPlaced,plan?.destinationCity]);
   const buildItinerary=async()=>{
     if(building)return;
     if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
@@ -7740,6 +7830,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // to "The Milk Carton Kids" — which is how a Washington gig came back
       // full of Los Angeles.
       const where=plan.destinationCity||null;
+      // No place, no plan: ask, rather than write days for the title.
+      if(!where){setNeedsPlace(true);setBuilding(false);return;}
       // What this plan is about, in the words somebody used.
       //
       // Nothing was sent, so the server had no act to look up and no reason
@@ -7755,7 +7847,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           mode:oneEvening?"night":"trip",
           location:where, goalBlurb:about,
           tripData:{
-            destination:where||plan.title, city:where,
+            destination:where, city:where,
             country_code:plan.destinationCountry||null,
             vibe:plan.vibe||null, costs:null,
           },
@@ -8164,6 +8256,17 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             {/* Not while the trip has no destination: its first step is "plan
                 the days", and there is no place to write days about yet — the
                 server refuses it. The card above is the step that trip is on. */}
+            {needsPlace&&(
+              <PlacePrompt toast={toast} onCancel={()=>setNeedsPlace(false)}
+                onPick={async({city,country})=>{
+                  const saved=await updatePlanOnServer(planId,{destination_city:city,...(country?{destination_country:country}:{})});
+                  if(saved===false)return;
+                  updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,destinationCity:city,destinationCountry:country||p.destinationCountry||null}:p)}));
+                  setNeedsPlace(false);
+                  setBuildWhenPlaced(true);
+                  toast(`${city} it is — planning the days now`);
+                }}/>
+            )}
             {plan.destStyle!=="undecided"&&<TripProgress
               plan={plan} group={group} soloTrip={soloTrip} votesIn={totalV}
               busy={building||nudging}
