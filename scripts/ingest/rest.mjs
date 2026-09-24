@@ -27,6 +27,12 @@ export function credentials() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url) { console.error('SUPABASE_URL is not set'); process.exit(1); }
   if (!key) { console.error('SUPABASE_SERVICE_ROLE_KEY is not set'); process.exit(1); }
+  // A key pasted where the address goes is the likeliest mistake, and it
+  // otherwise surfaces as a network error about something else.
+  if (!/^https:\/\/[^/\s]+/.test(url)) {
+    console.error('SUPABASE_URL is not a web address — it should look like https://<project>.supabase.co (Supabase: Project Settings → Data API → Project URL)');
+    process.exit(1);
+  }
   return { url: url.replace(/\/$/, ''), key };
 }
 

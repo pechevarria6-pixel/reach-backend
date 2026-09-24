@@ -49,7 +49,9 @@ const value = (name) => {
 };
 
 const die = (why) => { console.error(`✗ ${why}`); process.exit(1); };
-const missingTable = (e) => /PGRST205|42P01|42703|ingest_seeds|ingest_runs|gone_at/.test(`${e?.code} ${e?.message}`);
+// By code only. The message of a failed fetch carries the URL, and the URL
+// names the table, so a wrong SUPABASE_URL read as "run the migration".
+const missingTable = (e) => /^(PGRST205|42P01|42703)$/.test(String(e?.code ?? ''));
 
 // ── --list-regions ─────────────────────────────────────────────────────
 if (flag('list-regions')) {
