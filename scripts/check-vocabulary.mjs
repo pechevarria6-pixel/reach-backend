@@ -51,6 +51,19 @@ const BROKEN_PROMISES = [
   'reach will confirm',
   'reach will call',
   'we will call the venue',
+  // Nothing in Reach follows anything up or sorts anything out by itself:
+  // there is an inbox, and a person who writes to it. Moab's travellers were
+  // told "we'll follow up" over $1,474 and nothing did, because nothing knew.
+  "we'll follow up",
+  'we will follow up',
+  "we'll sort it",
+  "we'll sort this",
+  // Said of flights Reach hands to the airline, which Reach does not book at all.
+  'will be booked directly',
+  // A price nobody has read. Walk-up prices are the venue's to say.
+  'price at the door',
+  // An absolute nobody checked about somebody else's policy.
+  'never holds',
 ];
 
 /** Values that are never copy, wherever they turn up in a rendered string. */
@@ -104,15 +117,30 @@ for (const f of files) {
     // Eight characters rather than twelve for the same reason. "We're on it"
     // is eleven and is a promise the app cannot keep.
     const strings = [...code.matchAll(/(["'`])((?:(?!\1).){8,})\1/g)];
+    const inStrings = new Set();
     for (const match of strings) {
       const text = match[2];
       if (!/\s/.test(text)) continue;
       if (DATA_SHAPED.test(text)) continue;
       for (const word of [...BANNED, ...BROKEN_PROMISES]) {
         if (text.toLowerCase().includes(word)) {
-          console.log(`  ${f}:${i + 1}  ${text.slice(0, 68)}`);
+          console.log(`  ${f}:${i + 1}  "${word}" in: ${text.slice(0, 68)}`);
           found++;
+          inStrings.add(word);
         }
+      }
+    }
+    // A promise is a promise wherever it is written: in JSX text between
+    // tags, or on the continuation line of an email's template string, where
+    // no quote opens and closes on the line. "Reach never holds your money"
+    // sat in the terms page and the receipt email, both read by the person
+    // whose money it was, and the quoted-string scan saw neither. Entities
+    // are read as the characters they draw.
+    const plain = code.toLowerCase().replace(/&rsquo;|&#39;|&apos;/g, "'").replace(/[\u2018\u2019]/g, "'");
+    for (const word of BROKEN_PROMISES) {
+      if (!inStrings.has(word) && plain.includes(word)) {
+        console.log(`  ${f}:${i + 1}  "${word}" in: ${code.trim().slice(0, 68)}`);
+        found++;
       }
     }
   });

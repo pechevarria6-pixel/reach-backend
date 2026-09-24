@@ -35,7 +35,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     .neq('status', 'refunded');
   if (recorded) {
     console.error('[funding] paid at Stripe but not recorded', { plan: params.planId, code: recorded.code });
-    return NextResponse.json({ error: "Your payment went through — we couldn't record it. Don't pay again; tell us and we'll sort it." }, { status: 500 });
+    return NextResponse.json({ error: "Your payment went through, but we couldn't record it against this trip. Don't pay again. Email hello@alcanzar.io with your payment reference so it can be attached or refunded." }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
 }

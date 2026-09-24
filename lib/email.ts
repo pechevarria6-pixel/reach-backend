@@ -76,7 +76,7 @@ export function sendPaymentReceipt(to: string, amountCents: number, planTitle: s
       <tr><td style="padding:8px 0;color:#635539;">Reference</td><td style="padding:8px 0;text-align:right;font-family:monospace;font-size:12px;">${escape(stripeId)}</td></tr>
     </table>
     <p style="font-size:14px;color:#635539;line-height:1.6;margin-top:16px;">
-      Keep this for your records. Your share is held by Stripe and goes to the people being paid — Reach never holds it.
+      Keep this for your records. Your payment is held on Reach's Stripe account and is spent only on booking this trip. Whatever isn't spent can be refunded the same way you paid.
     </p>`), 'payment receipt');
 }
 

@@ -28,14 +28,15 @@ export default function TermsPage() {
 
       <h2>Money</h2>
       <p>
-        <strong>Reach never holds your money.</strong> Payments are processed by Stripe and move
-        between you and the party being paid. Reach does not custody balances, does not act as an
-        escrow, and cannot spend your funds. A group&rsquo;s &ldquo;wallet&rdquo; figure is a record
-        of what members have contributed toward a plan, not an account Reach controls.
+        <strong>What you pay towards a plan is held on Reach&rsquo;s Stripe account until it is
+        spent on that plan.</strong> Payments are processed by Stripe. Money paid towards a plan is
+        used only to book what that plan lists, and only once what has been paid in covers it.
+        Whatever is not spent can be refunded to the way you paid. A group&rsquo;s
+        &ldquo;wallet&rdquo; figure is a record of what members have contributed toward a plan.
       </p>
       <p>
-        Nothing is booked until a plan is funded and the organiser approves it. That order is
-        deliberate and does not change.
+        Nothing is booked until what has been paid in covers a plan and somebody on it chooses to
+        book it. That order is deliberate and does not change.
       </p>
       <p>
         Your card details are entered directly into Stripe&rsquo;s payment form and are never seen or
