@@ -3935,7 +3935,9 @@ const writeMine=(base,userId,value)=>{const k=localKey(base,userId);if(k)writeLo
 const Q2_EMOJI=Object.fromEntries((TASTE_QUESTIONS[0]?.options||[]).map(o=>[o.l,o.e]));
 
 const QUIZ_SCREENS=[
-  {id:"first_move",field:"first_move",title:"You just landed. First move?",options:[
+  // Pick every one that fits — the answers blend (lib/traveler-profile.ts
+  // scoreQuiz). Somebody who eats first and then wanders is both.
+  {id:"first_move",field:"first_move",blend:true,title:"You just landed. First move?",sub:"Pick any that sound like you.",options:[
     {v:"eat",e:"🍜",l:"Find the best local spot to eat"},
     {v:"wander",e:"🚶",l:"Walk until something looks interesting"},
     {v:"famous",e:"🗽",l:"Straight to the famous thing"},
@@ -3943,20 +3945,20 @@ const QUIZ_SCREENS=[
     {v:"group",e:"💬",l:"Text the group: “who's out tonight?”"},
   ]},
   {id:"interests",field:"interests",multi:true,title:"What are you into?",sub:"Pick as many as you like."},
-  {id:"plan",field:"plan",scale:true,title:"How much plan do you like?",options:[
+  {id:"plan",field:"plan",scale:true,blend:true,title:"How much plan do you like?",sub:"Depends on the trip? Pick more than one.",options:[
     {v:"wing",e:"🎲",l:"Wing it"},
     {v:"loose",e:"🗺️",l:"Loose outline"},
     {v:"daily",e:"📋",l:"Daily plan"},
     {v:"full",e:"🌅",l:"Morning to night"},
     {v:"hourly",e:"⏱️",l:"Every hour"},
   ]},
-  {id:"restaurant",field:"restaurant",title:"Pick the restaurant.",options:[
+  {id:"restaurant",field:"restaurant",blend:true,title:"Pick the restaurant.",sub:"Or restaurants — pick any you'd go to.",options:[
     {v:"famous",e:"⭐",l:"5,000 reviews, can't miss"},
     {v:"locals",e:"🏠",l:"Locals' favorite"},
     {v:"new",e:"✨",l:"Opened last month"},
     {v:"truck",e:"🚚",l:"Food truck someone mentioned once"},
   ]},
-  {id:"late",field:"late",title:"It's 11pm on the trip. You're…",options:[
+  {id:"late",field:"late",blend:true,title:"It's 11pm on the trip. You're…",sub:"Depends on the night? Pick more than one.",options:[
     {v:"asleep",e:"😴",l:"Asleep"},
     {v:"one_more",e:"🍷",l:"One more, then bed"},
     {v:"next_spot",e:"🕺",l:"Where's the next spot?"},
@@ -3977,7 +3979,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
   const [stored,setStored]=useState(quiz.stored);
   const [step,setStep]=useState(0);
   const [answers,setAnswers]=useState(()=>({
-    first_move:known.first_move||null,plan:known.plan||null,restaurant:known.restaurant||null,late:known.late||null,
+    // A one-pick answer from before blending became a list of one.
+    ...Object.fromEntries(["first_move","plan","restaurant","late"].map(f=>[f,
+      Array.isArray(known[f])?known[f]:known[f]?[known[f]]:[]])),
     interests:(known.interests||[]).filter(i=>Q2_TILES.includes(i)),
     dietary:known.dietary||[],dislikes:known.dislikes||[],
   }));
@@ -4025,6 +4029,7 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
       }
       const v=final[scr.field];
       if(scr.multi)body[scr.field]=v||[];
+      else if(scr.blend){ if((v||[]).length)body[scr.field]=v; }
       else if(v)body[scr.field]=v;
     }
     body.skipped=skippedIds;
@@ -4124,9 +4129,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
         {s.options&&!s.scale&&(
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {s.options.map(o=>{
-              const selected=answers[s.field]===o.v;
+              const selected=s.blend?(answers[s.field]||[]).includes(o.v):answers[s.field]===o.v;
               return(
-                <button key={o.v} onClick={()=>pick(s.field,o.v)} disabled={saving}
+                <button key={o.v} onClick={()=>s.blend?toggle(s.field,o.v):pick(s.field,o.v)} disabled={saving} aria-pressed={selected}
                   style={{...tile(selected),display:"flex",alignItems:"center",gap:12,padding:"12px 14px"}}>
                   <span style={{fontSize:24}}>{o.e}</span>
                   <span style={{fontSize:14,fontWeight:600,lineHeight:1.3}}>{o.l}</span>
@@ -4138,9 +4143,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
         {s.scale&&(
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
             {s.options.map(o=>{
-              const selected=answers[s.field]===o.v;
+              const selected=s.blend?(answers[s.field]||[]).includes(o.v):answers[s.field]===o.v;
               return(
-                <button key={o.v} onClick={()=>pick(s.field,o.v)} disabled={saving}
+                <button key={o.v} onClick={()=>s.blend?toggle(s.field,o.v):pick(s.field,o.v)} disabled={saving} aria-pressed={selected}
                   style={{...tile(selected),textAlign:"center",padding:"12px 4px"}}>
                   <div style={{fontSize:22,marginBottom:6}}>{o.e}</div>
                   <div style={{fontSize:11,fontWeight:600,lineHeight:1.2}}>{o.l}</div>
@@ -4203,9 +4208,8 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
         )}
       </div>
 
-      {/* Multi-select screens are the only ones with a button: a single
-          choice moves on by itself. */}
-      {(s.multi||s.id==="no_way")&&(
+      {/* Screens that take more than one answer end with Done. */}
+      {(s.multi||s.blend||s.id==="no_way")&&(
         <div style={{padding:"8px 16px 28px"}}>
           <button className={s.id==="no_way"?"bs":"bp"} disabled={saving} onClick={()=>{
               const sk=new Set(skipped);sk.delete(s.id);setSkipped(sk);next(answers,sk);

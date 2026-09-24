@@ -177,12 +177,23 @@ export const DISLIKES = [
 
 // ─── The answers ─────────────────────────────────────────────────────────
 
+export type OneOrMore<T extends string> = T | T[] | null;
+
+/** An answer as a list of the picks the table knows, whatever shape it came in. */
+export function picksOf<T extends string>(v: OneOrMore<T> | undefined, table: Record<string, unknown>): T[] {
+  const list = Array.isArray(v) ? v : v ? [v] : [];
+  return [...new Set(list)].filter((x): x is T => typeof x === 'string' && Object.prototype.hasOwnProperty.call(table, x));
+}
+
 export interface QuizAnswers {
-  first_move?: FirstMove | null;
+  // One pick or several. People are more than one thing — "find the food"
+  // and "walk until something looks interesting" are both true of plenty of
+  // travellers — so these screens take every answer that fits and blend them.
+  first_move?: OneOrMore<FirstMove>;
   interests?: string[] | null;
-  plan?: PlanChoice | null;
-  restaurant?: RestaurantChoice | null;
-  late?: LateChoice | null;
+  plan?: OneOrMore<PlanChoice>;
+  restaurant?: OneOrMore<RestaurantChoice>;
+  late?: OneOrMore<LateChoice>;
   /** PRIVATE. Never leaves this person's own screens. */
   dietary?: string[] | null;
   /** PRIVATE. */
@@ -192,7 +203,7 @@ export interface QuizAnswers {
   eat_everything?: boolean | null;
   drinks?: string[] | null;
   seating?: string[] | null;
-  night_out?: NightOutChoice | null;
+  night_out?: OneOrMore<NightOutChoice>;
   camera_roll?: ArchetypeKey | null;
   free_afternoon?: FreeAfternoonChoice | null;
   /** PRIVATE. Their own words. */
@@ -253,11 +264,36 @@ export function scoreQuiz(answers: QuizAnswers | null | undefined, now: Date = n
     for (const [k, v] of Object.entries(e.d ?? {})) { dials[k as DialKey] = v as number; answered.add(k as DialKey); }
   };
 
-  apply(a.first_move ? FIRST_MOVE[a.first_move] : undefined);
-  apply(a.plan ? PLAN[a.plan] : undefined);
-  apply(a.restaurant ? RESTAURANT[a.restaurant] : undefined);
-  apply(a.late ? LATE[a.late] : undefined);
-  apply(a.night_out ? NIGHT_OUT[a.night_out] : undefined);
+  // Several picks on one screen are blended, not stacked. The screen keeps
+  // the weight it has with one pick, shared between the picks, so choosing
+  // everything is not a louder answer than choosing one; and a dial is the
+  // average of where the picks put it, so "Loose outline" and "Every hour"
+  // is somebody in between, not whichever was tapped last.
+  const blend = (table: Record<string, Effect>, v: OneOrMore<string> | undefined) => {
+    const picks = picksOf(v, table);
+    if (!picks.length) return;
+    const share = 1 / picks.length;
+    const sums: Partial<Record<DialKey, { total: number; n: number }>> = {};
+    for (const pick of picks) {
+      const e = table[pick];
+      for (const [k, pts] of Object.entries(e.a ?? {})) scores[k as ArchetypeKey] += (pts as number) * share;
+      for (const [k, d] of Object.entries(e.d ?? {})) {
+        const s = sums[k as DialKey] ?? { total: 0, n: 0 };
+        s.total += d as number; s.n++;
+        sums[k as DialKey] = s;
+      }
+    }
+    for (const [k, s] of Object.entries(sums)) {
+      dials[k as DialKey] = clampDial(Math.round(s!.total / s!.n));
+      answered.add(k as DialKey);
+    }
+  };
+
+  blend(FIRST_MOVE, a.first_move);
+  blend(PLAN, a.plan);
+  blend(RESTAURANT, a.restaurant);
+  blend(LATE, a.late);
+  blend(NIGHT_OUT, a.night_out);
 
   const interests = strings(a.interests);
   const perInterest = interestCounts(interests);
@@ -336,10 +372,10 @@ export function dialsSetBy(answers: QuizAnswers | null | undefined): DialKey[] {
   const a = answers ?? {};
   const out = new Set<DialKey>();
   const add = (e: Effect | undefined) => { for (const k of Object.keys(e?.d ?? {})) out.add(k as DialKey); };
-  if (a.plan) add(PLAN[a.plan]);
-  if (a.restaurant) add(RESTAURANT[a.restaurant]);
-  if (a.late) add(LATE[a.late]);
-  if (a.night_out) add(NIGHT_OUT[a.night_out]);
+  for (const k of picksOf(a.plan, PLAN)) add(PLAN[k]);
+  for (const k of picksOf(a.restaurant, RESTAURANT)) add(RESTAURANT[k]);
+  for (const k of picksOf(a.late, LATE)) add(LATE[k]);
+  for (const k of picksOf(a.night_out, NIGHT_OUT)) add(NIGHT_OUT[k]);
   if (a.free_afternoon && typeof (FREE_AFTERNOON[a.free_afternoon] as { pace?: number })?.pace === 'number') out.add('pace');
   return DIALS.filter(d => out.has(d));
 }

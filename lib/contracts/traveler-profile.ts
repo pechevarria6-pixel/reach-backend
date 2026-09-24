@@ -27,19 +27,25 @@ const dialValue = z.number().finite().min(0).max(100);
  * What the browser may send. Every enum is closed: an answer the scorer does
  * not know is refused at the door rather than scored as nothing.
  */
+/** One of a screen's options, or several of them to blend. Closed either way. */
+function oneOrMore(table: Record<string, unknown>) {
+  const one = z.enum(keysOf(table));
+  return z.union([one, z.array(one).min(1).max(Object.keys(table).length)]).nullish();
+}
+
 export const QuizAnswers = z.object({
-  first_move: z.enum(keysOf(FIRST_MOVE)).nullish(),
+  first_move: oneOrMore(FIRST_MOVE),
   interests: shortList.nullish(),
-  plan: z.enum(keysOf(PLAN)).nullish(),
-  restaurant: z.enum(keysOf(RESTAURANT)).nullish(),
-  late: z.enum(keysOf(LATE)).nullish(),
+  plan: oneOrMore(PLAN),
+  restaurant: oneOrMore(RESTAURANT),
+  late: oneOrMore(LATE),
   dietary: shortList.nullish(),
   dislikes: shortList.nullish(),
   no_way_text: z.string().max(200).nullish(),
   eat_everything: z.boolean().nullish(),
   drinks: shortList.nullish(),
   seating: shortList.nullish(),
-  night_out: z.enum(keysOf(NIGHT_OUT)).nullish(),
+  night_out: oneOrMore(NIGHT_OUT),
   camera_roll: Archetype.nullish(),
   free_afternoon: z.enum(keysOf(FREE_AFTERNOON)).nullish(),
   free_interests: z.string().max(300).nullish(),
