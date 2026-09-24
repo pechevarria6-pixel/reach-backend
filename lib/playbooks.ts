@@ -349,3 +349,37 @@ function scale(hint: Partial<Allocation>, keys: (keyof Allocation)[], by: number
   for (const k of keys) out[k] = Number(hint[k]) / by;
   return out;
 }
+
+// ─── Which playbook a plan is, and what it tells the writer ──────────────
+// Eleven playbooks sat ready and nothing read them. The archetype is decided
+// here, in code, from what the plan already says — never by the model — and
+// the playbook reaches the itinerary as shape: how this kind of evening or
+// trip usually goes. Never as facts about a place, and never as a price.
+export function archetypeFor(p: {
+  night: boolean; solo: boolean; planType?: string | null; goal?: string | null; tripTypes?: string;
+}): string | null {
+  const text = `${p.goal ?? ''} ${p.tripTypes ?? ''}`.toLowerCase();
+  if (/\bbachelor(?:ette)?\b|\bstag\b|\bhen (?:do|party)\b/.test(text)) return 'bachelor_party';
+  if (/\breunion\b/.test(text)) return 'reunion';
+  if (p.planType === 'concert' || /\bfestival\b|\bconcert\b|\bgig\b/.test(text)) return 'festival_concert';
+  if (p.night || p.planType === 'restaurant') return 'night_out';
+  if (/\bski\b|\bsnow\b|\bslopes\b/.test(text)) return 'ski_trip';
+  if (/\bbeach\b|\bcoast\b|\bisland\b/.test(text)) return 'beach_weekend';
+  if (/\bhik\w*|\boutdoor\w*|\badventure\b|\bnational park\b|\bcamp\w*/.test(text)) return 'outdoors_adventure';
+  if (/\bfood\b|\bfoodie\b|\beat\w*|\bculinary\b/.test(text)) return 'food_trip';
+  if (/\bfamily\b|\bkids\b/.test(text)) return 'family_trip';
+  if (p.solo && /\breset\b|\brecharge\b|\bunwind\b|\balone\b/.test(text)) return 'solo_reset';
+  if (/\bcity\b/.test(text)) return 'city_break';
+  return null;
+}
+
+/** The playbook as the prompt carries it: shape, not facts. */
+export function playbookGuidance(pb: Pick<Playbook, 'rhythm' | 'must_haves' | 'common_mistakes' | 'conflict_points'>, kind: string): string {
+  const lines = [
+    `HOW ${saidAloud(kind).toUpperCase()} USUALLY GOES — guidance on shape and pacing only. It names no places and is not a fact about any venue; the menu is still the only list you may name from.`,
+    ...pb.rhythm.map(r => `- ${r.phase}: ${r.guidance}`),
+    `Worth making sure of: ${pb.must_haves.slice(0, 4).join('; ')}.`,
+    `Where these go wrong: ${pb.common_mistakes.slice(0, 3).join('; ')}.`,
+  ];
+  return lines.join('\n');
+}

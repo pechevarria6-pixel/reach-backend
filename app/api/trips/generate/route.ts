@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { archetypeFor, playbookGuidance, PlaybookSchema } from '@/lib/playbooks';
 import { datedDays } from '@/lib/calendar';
 import { report } from '@/lib/report';
 import { requireGroupMember, isFail } from '@/lib/auth';
@@ -749,12 +750,27 @@ export async function POST(req: NextRequest) {
     if (foodGap.length) console.error('[trips itinerary] no verified place for the food asked for', { destination, city: tripCity || nightCity, wanted: foodGap });
     // The calendar, not just a count: weekly nights have a weekday, and the
     // model was being asked to honour one it had never been told.
+    // The shape of this kind of plan, from the playbooks that were written
+    // and never read. Decided in code; skipped if the row is not ready or does
+    // not parse — a missing playbook leaves the prompt as it was.
+    let shapeBlock = '';
+    const kind = archetypeFor({ night: isNightPlan, solo, goal, tripTypes });
+    if (kind) {
+      const { data: pbRow, error: pbErr } = await supabase.from('trip_playbooks')
+        .select('playbook, status').eq('archetype', kind).maybeSingle();
+      if (pbErr) console.error('[generate] could not read the playbook', { kind, code: pbErr.code });
+      const pb = pbRow?.status === 'ready' ? PlaybookSchema.safeParse(pbRow.playbook) : null;
+      if (pb?.success) {
+        const shape = playbookGuidance(pb.data, kind);
+        shapeBlock = ['', shape, ''].join('\n');
+      }
+    }
     const calendarDays = datedDays(startDate ? String(startDate) : null, isNightPlan ? 1 : Math.max(1, nights));
     const whenLine = calendarDays.length
       ? (isNightPlan ? `THE EVENING: ${calendarDays[0].replace(/^Day 1 — /, '')}.` : `THE DAYS:\n${calendarDays.join('\n')}\nPut anything that only happens on certain weekdays on the right day.`)
       : 'The dates are not fixed yet. Do not tie anything to a weekday or a season.';
     const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}.
-${whenLine} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
+${whenLine}${shapeBlock} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
 
 ${solo ? 'One person, on their own.' : partyLine ?? `${groupSize} people going out together.`}
 ${realEvent ? eventFacts(realEvent) : ''}${act.length >= 2 && !realEvent ? `
@@ -839,7 +855,7 @@ The same rule covers the plan line itself. Name the place, describe the
 outing, do not slip in a policy: "no cover if you sit at the bar",
 "no reservations needed", "Sabaku's sister spot" — each asserts something
 about a business that would have to be checked, and none of them was.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
-${whenLine}
+${whenLine}${shapeBlock}
 
 ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
