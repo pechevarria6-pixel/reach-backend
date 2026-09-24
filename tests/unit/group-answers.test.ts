@@ -316,3 +316,13 @@ test('"will" and "may" are words, not Will and May', () => {
   assert.equal(saysWho('We will hike the ridge and may swim', who), false);
   assert.equal(saysWho('Will wanted the beach', who), true);
 });
+
+import { nightPrefsFrom } from '../../lib/group-answers.ts';
+test("a rebuild keeps the night's food: the organiser's answer first", () => {
+  const out = nightPrefsFrom({ byUser: {
+    sam: { summary: null, answers: { nightFood: ['custom:Greek'] } },
+    peter: { summary: null, answers: { nightFood: ['custom:Thai'], nightEnergy: 'chill' } },
+  } }, 'peter');
+  assert.deepEqual(out.food, ['Thai']);
+  assert.equal(out.energy, 'chill');
+});

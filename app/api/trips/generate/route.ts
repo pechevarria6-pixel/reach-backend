@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { datedDays } from '@/lib/calendar';
 import { report } from '@/lib/report';
 import { requireGroupMember, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
@@ -9,7 +10,7 @@ import {
 import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
 import { planReadiness } from '@/lib/plan-readiness';
 import {
-  readGroupAnswers, answersBlock, standingWishesBlock, groupFraming, attributes,
+  readGroupAnswers, answersBlock, standingWishesBlock, groupFraming, attributes, nightPrefsFrom,
   optionsGate, notYetAnswered, isUndecided, type GroupAnswers,
 } from '@/lib/group-answers';
 import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
@@ -650,6 +651,15 @@ export async function POST(req: NextRequest) {
       wantedBlock = answersBlock(read, { group: isGroup });
       // A thing somebody said to avoid is a constraint, not a hint.
       tripVetoes.push(...read.vetoes);
+      // What the plan's own answers say that the request did not: tonight's
+      // food, kind and energy, and the lowest budget anybody named. A
+      // rebuild sends none of them, so a Thai birthday at $250 was rebuilt
+      // eight times as a brewery and ramen for $105.
+      const stored = nightPrefsFrom(read, groupPlan?.created_by ?? null);
+      if (!(nightPrefs.food || []).length && stored.food) nightPrefs.food = stored.food;
+      if (!(nightPrefs.kind || []).length && stored.kind) nightPrefs.kind = stored.kind;
+      if (!nightPrefs.energy && stored.energy) nightPrefs.energy = stored.energy;
+      if (read.lowestBudget && !body.budgetPerPerson) effectiveBudget = read.lowestBudget;
     }
     const allVetoesHere = [...new Set([...allVetoes, ...tripVetoes])];
     // The part of town is no longer asked for. It comes from where they
@@ -727,7 +737,14 @@ export async function POST(req: NextRequest) {
       ...foodGap.map(w => `We hold no verified ${w} place here. Do not describe any stop as ${w} food or promise ${w} anywhere.`),
     ].join('\n');
     if (foodGap.length) console.error('[trips itinerary] no verified place for the food asked for', { destination, city: tripCity || nightCity, wanted: foodGap });
-    const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}. Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
+    // The calendar, not just a count: weekly nights have a weekday, and the
+    // model was being asked to honour one it had never been told.
+    const calendarDays = datedDays(startDate ? String(startDate) : null, isNightPlan ? 1 : Math.max(1, nights));
+    const whenLine = calendarDays.length
+      ? (isNightPlan ? `THE EVENING: ${calendarDays[0].replace(/^Day 1 — /, '')}.` : `THE DAYS:\n${calendarDays.join('\n')}\nPut anything that only happens on certain weekdays on the right day.`)
+      : 'The dates are not fixed yet. Do not tie anything to a weekday or a season.';
+    const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}.
+${whenLine} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
 
 ${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
 ${realEvent ? eventFacts(realEvent) : ''}${act.length >= 2 && !realEvent ? `
@@ -812,6 +829,7 @@ The same rule covers the plan line itself. Name the place, describe the
 outing, do not slip in a policy: "no cover if you sit at the bar",
 "no reservations needed", "Sabaku's sister spot" — each asserts something
 about a business that would have to be checked, and none of them was.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
+${whenLine}
 
 ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}

@@ -434,3 +434,21 @@ export function isLive(p: { status?: string | null; startDate?: unknown; endDate
   if (p.status === 'completed' || p.status === 'cancelled') return false;
   return tripTiming({ startDate: p.startDate, endDate: p.endDate }, todayISO) !== 'over';
 }
+
+/**
+ * The trip's days as a person would say them: "Day 1 — Friday 2 October 2026".
+ * The itinerary prompts carried the number of nights and no dates, and were
+ * asked to put weekly nights ("every Wednesday, 7pm") on the right day —
+ * which the model then had to guess. Parsed as a calendar date, not a
+ * moment, so no timezone can move the weekday.
+ */
+export function datedDays(start: string | null | undefined, count: number): string[] {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(start || ''));
+  if (!m || count < 1) return [];
+  const base = Date.UTC(+m[1], +m[2] - 1, +m[3]);
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(base + i * 86400000);
+    const said = d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+    return `Day ${i + 1} — ${said}`;
+  });
+}

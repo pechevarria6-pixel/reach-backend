@@ -428,3 +428,22 @@ export function notYetAnswered(names: string[], then: string): string {
   const verb = names.length === 1 ? "hasn't" : "haven't";
   return `${namesList(names)} ${verb} said what they want from this trip yet. ${then}`;
 }
+
+/**
+ * A night out's own answers — food, kind of night, energy — as the night
+ * prompt reads them, from what was stored for the plan. A rebuild sent none,
+ * so "my buddy who loves Thai food" reached the first build and not the
+ * eight after it. The organiser's first, then anybody's.
+ */
+export function nightPrefsFrom(read: Pick<GroupAnswers, 'byUser'>, organiser?: string | null): { food?: string[]; kind?: string[]; energy?: string } {
+  const people = Object.entries(read.byUser ?? {});
+  people.sort(([a], [b]) => Number(b === organiser) - Number(a === organiser));
+  const out: { food?: string[]; kind?: string[]; energy?: string } = {};
+  for (const [, u] of people) {
+    const a = u.answers ?? {};
+    if (!out.food) { const f = list(a.nightFood); if (f.length) out.food = f; }
+    if (!out.kind) { const k = list(a.nightKind); if (k.length) out.kind = k; }
+    if (!out.energy && a.nightEnergy) out.energy = word(a.nightEnergy);
+  }
+  return out;
+}

@@ -7839,7 +7839,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // good evening in the right city with no concert in it. The title is
       // the best thing we hold — for a gig it IS the act's name, which is
       // exactly what the listing search needs.
-      const about=plan.goalBlurb||plan.title||null;
+      // Never a title the model wrote: "Greek Dinner & Jazz at The Pit" was
+      // being sent as what the person said, and looked up as a show. A
+      // concert's title is the act, which is the one case it is theirs.
+      const about=plan.goalBlurb||(plan.type==="concert"?plan.title:null)||null;
       const res=await fetch("/api/trips/generate",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({

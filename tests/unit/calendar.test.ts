@@ -331,3 +331,9 @@ test('cancelled is not on; undated and upcoming and happening now are', () => {
   assert.equal(isLive({ status: 'approved', startDate: '2026-10-10' }, '2026-09-23'), true);
   assert.equal(isLive({ status: 'approved', startDate: '2026-09-17', endDate: '2026-09-30' }, '2026-09-23'), true);
 });
+
+import { datedDays } from '../../lib/calendar.ts';
+test('the days are said as dates, weekday and all', () => {
+  assert.deepEqual(datedDays('2026-10-02', 2), ['Day 1 — Friday, October 2, 2026', 'Day 2 — Saturday, October 3, 2026']);
+  assert.deepEqual(datedDays(null, 3), []);
+});
