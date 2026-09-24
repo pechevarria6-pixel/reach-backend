@@ -66,6 +66,22 @@ const BROKEN_PROMISES = [
   'never holds',
 ];
 
+/**
+ * Fake science. Personality quizzes sell themselves with a number — "94%
+ * accurate", "40 years of research" — and Reach's quiz is six taps and a
+ * lookup table (lib/traveler-profile.ts). The spec for quiz v3 rules these
+ * out by name: no claim of accuracy, anywhere. Checked like a broken
+ * promise, in JSX text as well as strings, because that is what they are.
+ */
+const FAKE_SCIENCE = [
+  '94%',
+  '% accuracy',
+  '% accurate',
+  'scientifically proven',
+  'science-backed',
+  '40 years of research',
+];
+
 /** Values that are never copy, wherever they turn up in a rendered string. */
 const NEVER_RENDERED = ['undefined', 'NaN', '[object Object]'];
 
@@ -122,7 +138,7 @@ for (const f of files) {
       const text = match[2];
       if (!/\s/.test(text)) continue;
       if (DATA_SHAPED.test(text)) continue;
-      for (const word of [...BANNED, ...BROKEN_PROMISES]) {
+      for (const word of [...BANNED, ...BROKEN_PROMISES, ...FAKE_SCIENCE]) {
         if (text.toLowerCase().includes(word)) {
           console.log(`  ${f}:${i + 1}  "${word}" in: ${text.slice(0, 68)}`);
           found++;
@@ -137,7 +153,7 @@ for (const f of files) {
     // whose money it was, and the quoted-string scan saw neither. Entities
     // are read as the characters they draw.
     const plain = code.toLowerCase().replace(/&rsquo;|&#39;|&apos;/g, "'").replace(/[\u2018\u2019]/g, "'");
-    for (const word of BROKEN_PROMISES) {
+    for (const word of [...BROKEN_PROMISES, ...FAKE_SCIENCE]) {
       if (!inStrings.has(word) && plain.includes(word)) {
         console.log(`  ${f}:${i + 1}  "${word}" in: ${code.trim().slice(0, 68)}`);
         found++;

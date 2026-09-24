@@ -1,4 +1,5 @@
 import type { Finding } from './types.ts';
+import { profileBoost, type TravelerProfile } from '../traveler-profile.ts';
 
 /**
  * Something found because of an interest outranks something found by being
@@ -6,7 +7,7 @@ import type { Finding } from './types.ts';
  * studio they will actually go to beats a stadium show they will not, and
  * sorting by distance or date buries it every time.
  */
-export function rank(findings: Finding[], interests: string[]): Finding[] {
+export function rank(findings: Finding[], interests: string[], profile: TravelerProfile | null = null): Finding[] {
   const wanted = interests.map(i => i.toLowerCase());
   const score = (f: Finding) => {
     let s = 0;
@@ -20,6 +21,10 @@ export function rank(findings: Finding[], interests: string[]): Finding[] {
     // Something happening on a date is a plan. A place that is simply open is
     // homework: you still have to decide when, and whether anything is on.
     if (f.date) s += 25;
+    // The onboarding quiz's raw signals — what they chase and how they like
+    // to travel — shade the order among the rest. Never the label alone, and
+    // never enough to outrank something they said they are into.
+    s += profileBoost(f, profile);
     return s;
   };
   // Interleave by source so one prolific provider cannot take the whole page.

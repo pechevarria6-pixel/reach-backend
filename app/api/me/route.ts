@@ -2,6 +2,7 @@ import { auth, currentUser } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { claimInvitesFor } from '@/lib/invites';
+import { quizFromRow, withinQuietPeriod } from '@/lib/contracts/traveler-profile';
 
 export async function GET() {
   const { userId: clerkId } = auth();
@@ -151,6 +152,16 @@ export async function GET() {
       dietary: dbUser.dietary_needs,
       travelStyle: dbUser.travel_style,
     } : null,
-    quizComplete: !!(dbUser?.budget_range || dbUser?.cuisines?.length),
+    // The onboarding quiz v3: version, the profile the server computed, and
+    // this person's own answers — returned to them and nobody else. Through
+    // the contract, so a column the migration adds cannot be read here and
+    // dropped on the way to the screen.
+    quiz: quizFromRow(dbUser),
+    // Done is: answered v2, worked through v3, or skipped it inside the last
+    // sixty days. Skipping is a real answer and is not asked again.
+    // v3 asks no budget and no cuisines, so its interests count too — before
+    // the migration they are the only trace a finished v3 quiz leaves.
+    quizComplete: !!(dbUser?.budget_range || dbUser?.cuisines?.length || dbUser?.favorite_activities?.length
+      || dbUser?.quiz_version === 3 || withinQuietPeriod(dbUser?.quiz_skipped_at)),
   });
 }

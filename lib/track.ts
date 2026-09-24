@@ -33,6 +33,20 @@ export const EVENT_NAMES = [
   'quote_drift',
   'recommendation_dismissed',
   'plan_deleted',
+  // The onboarding quiz v3 (spec section 8). Enough to see where people
+  // drop off, how long it takes, and whether the share card brings anyone.
+  'quiz_started',
+  'quiz_screen_viewed',
+  'quiz_screen_skipped',
+  'quiz_result_viewed',
+  'quiz_dial_adjusted',
+  'quiz_shared',
+  'quiz_share_opened',
+  'quiz_share_joined',
+  // The questions asked later, one at a time.
+  'drip_shown',
+  'drip_answered',
+  'drip_dismissed',
 ] as const;
 
 export type EventName = typeof EVENT_NAMES[number];

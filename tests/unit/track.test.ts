@@ -51,7 +51,11 @@ test('a long string is prose, and prose is never a property', () => {
 test('only the listed names may be written', () => {
   assert.equal(isEventName('booking_confirmed'), true);
   assert.equal(isEventName('something_i_invented'), false);
-  assert.equal(EVENT_NAMES.length, 17);
+  // 17 before the onboarding quiz v3, whose section 8 adds eleven.
+  assert.equal(EVENT_NAMES.length, 28);
+  for (const n of ['quiz_started', 'quiz_screen_viewed', 'quiz_screen_skipped', 'quiz_result_viewed',
+    'quiz_dial_adjusted', 'quiz_shared', 'quiz_share_opened', 'quiz_share_joined',
+    'drip_shown', 'drip_answered', 'drip_dismissed', 'quiz_completed']) assert.equal(isEventName(n), true, n);
 });
 
 test('the ids it was given are the ids it records', async () => {

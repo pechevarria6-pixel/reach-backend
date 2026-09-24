@@ -24,6 +24,21 @@ const FROM_BROWSER = new Set<EventName>([
   'quiz_completed',
   'trip_input_submitted',
   'recommendation_dismissed',
+  // What only the quiz screen can see: which screen, skipped or not, which
+  // bar was nudged. Props are the screen or question id and nothing typed —
+  // and scrubProps would drop anything longer anyway.
+  'quiz_started',
+  'quiz_screen_viewed',
+  'quiz_screen_skipped',
+  'quiz_result_viewed',
+  'quiz_dial_adjusted',
+  'quiz_shared',
+  // Opened before anybody has an account, like an invitation.
+  'quiz_share_opened',
+  'quiz_share_joined',
+  'drip_shown',
+  'drip_answered',
+  'drip_dismissed',
 ]);
 
 export async function POST(req: NextRequest) {
