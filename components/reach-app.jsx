@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
 import { namesList } from "@/lib/group-answers";
+import { shownTitle } from "@/lib/trip-vote";
 import { itemsFromRows } from "@/lib/contracts/itinerary-item";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
@@ -860,14 +861,14 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
       // Everyone has voted and it is mine to pick.
       if(b&&!b.decided&&b.mayPick&&b.everyoneVoted)return{
         type:"vote",rank:1,text:`Everyone has voted on ${tripCalled(p)}`,
-        sub:b.leader?`Most votes: ${b.leader} — the pick is yours`:"The pick is yours",plan:p,cta:"Pick →",go};
+        sub:b.leader?`Most votes: ${shownTitle(b.ideas?.options||[],b.leader)} — the pick is yours`:"The pick is yours",plan:p,cta:"Pick →",go};
       // Voted, and waiting on the pick or the others.
       if(b&&!b.decided&&b.myVote)return{
         type:"vote",rank:1,text:`${p.group.name} is deciding on ${tripCalled(p)}`,
-        sub:`You voted for ${b.myVote}`,plan:p,cta:"Open →",go};
+        sub:`You voted for ${shownTitle(b.ideas?.options||[],b.myVote)}`,plan:p,cta:"Open →",go};
       return{
         type:"vote",rank:1,text:`${p.group.name} is deciding on ${tripCalled(p)}`,
-        sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →",go};
+        sub:(b?.ideas?.options?.length?b.ideas.options.map(o=>shownTitle(b.ideas.options,o.title)):p.options).slice(0,3).join(" · "),plan:p,cta:"Vote →",go};
     }),
     // A group trip waits for everybody's answers before any trip is found.
     // The person it is waiting on is asked here, by name of the trip; once
@@ -4869,8 +4870,10 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
             <div style={{flex:1}}>
               <div style={{fontSize:32,marginBottom:6}}>{trip.emoji}</div>
               <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:4}}>
-                {/* The name a vote goes by, which tells two ideas at one place apart. */}
-                {trip.title||trip.destination}
+                {/* The name a vote goes by, which tells two ideas at one place apart —
+                    or, for an evening whose days are written, the name its own
+                    venues give it (never a title naming places it doesn't go). */}
+                {trip.displayTitle||trip.venueTitle||trip.title||trip.destination}
               </div>
               <div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginBottom:8}}>
                 {trip.tagline}
@@ -5048,7 +5051,9 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
       method:"PATCH",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({
         pick_option:trip.id,
-        title:trip.destination,
+        // Only used before sql/trip-options-2026-09-23.sql; after it the
+        // server names the trip from the saved idea.
+        title:trip.venueTitle||trip.destination,
         destination_city:trip.city||null,
         destination_country:trip.country_code||null,
         budget_cents:Math.round((Number(trip.total_per_person)||0)*100),
@@ -5211,7 +5216,10 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
   const organiser=v.organiser;
   const orgName=organiser?.isYou?"you":(organiser?.name||"the organiser");
   const counts=v.counts||{};
-  const standings=options.map(o=>`${o.title} ${counts[o.title]||0}`).join(" · ");
+  // A vote is keyed by an idea's title; an evening is shown by its venues'
+  // name once its days are written. One name per idea, everywhere here.
+  const show=t=>shownTitle(options,t);
+  const standings=options.map(o=>`${show(o.title)} ${counts[o.title]||0}`).join(" · ");
   const closed=v.status!=="voting"||v.decided;
   // Everybody else hears "your ideas are ready" the moment they are saved,
   // while the finder's phone is still writing each one's days. For the first
@@ -5227,7 +5235,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({option:o.title})});
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"Your vote didn't save — try again");
-      toast(v.myVote?`Changed your vote to ${o.title}`:`Voted for ${o.title}`);
+      toast(v.myVote?`Changed your vote to ${show(o.title)}`:`Voted for ${show(o.title)}`);
     }catch(e){console.error("[tripIdeas] vote failed",e);toast(e.message);}
     await load();
     setBusy(null);
@@ -5266,11 +5274,11 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
   // Where it stands, said once, for who is reading it.
   const standing=v.everyoneVoted
     ?(v.leader
-      ?`Everyone has voted — most votes: ${v.leader}.`
-      :v.tied.length?`Everyone has voted, and it's a tie between ${namesList(v.tied)}.`:"Everyone has voted.")
+      ?`Everyone has voted — most votes: ${show(v.leader)}.`
+      :v.tied.length?`Everyone has voted, and it's a tie between ${namesList(v.tied.map(show))}.`:"Everyone has voted.")
     :`${v.voted} of ${v.members} have voted${v.stillToVote?.length?` — still to vote: ${namesList(v.stillToVote)}`:""}.`;
   const next=v.mayPick
-    ?(v.tied.length?"It's your call — pick the one the group goes with.":v.leader?`Pick ${v.leader} to go with the vote, or any of them — it's your call.`:"Pick one when you're ready — the votes are here to help.")
+    ?(v.tied.length?"It's your call — pick the one the group goes with.":v.leader?`Pick ${show(v.leader)} to go with the vote, or any of them — it's your call.`:"Pick one when you're ready — the votes are here to help.")
     :v.myVote
       ?`Waiting for ${orgName} to pick — the votes so far: ${standings}. You can change your vote until then.`
       :`Vote for the one you want. ${organiser?.name||"The organiser"} makes the pick.`;
@@ -5311,7 +5319,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
         const n=counts[o.title]||0;
         const x=(v.vetoes||{})[o.title]||0;
         return(
-          <TripIdeaCard key={o.id} trip={o} highlight={mine} nightOut={night}
+          <TripIdeaCard key={o.id} trip={{...o,displayTitle:show(o.title)}} highlight={mine} nightOut={night}
             startDate={plan?.startDate} endDate={night?plan?.startDate:plan?.endDate}
             groupSize={(group?.memberIds||[]).length} enriching={enriching}
             noDaysNote={enriching>0||(daysUnderWay&&!enrichFailed)?"Days are being written — check back shortly.":"The days get written for whichever one is picked."}>
@@ -5339,7 +5347,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
               )}
               {v.mayPick&&!closed&&(
                 <button className="bp" disabled={!!picking} onClick={()=>pick(o)}>
-                  {picking===o.id?"Picking…":`Pick ${o.title}`}
+                  {picking===o.id?"Picking…":`Pick ${show(o.title)}`}
                 </button>
               )}
             </div>

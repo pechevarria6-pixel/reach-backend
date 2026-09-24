@@ -103,14 +103,41 @@ export function readIdeas(raw: unknown): SavedIdeas | null {
   };
 }
 
-/** The set with one option's days written in. Null if that option is not in it. */
-export function withDays(saved: SavedIdeas, optionId: string, days: unknown[]): SavedIdeas | null {
+/**
+ * The set with one option's days written in. Null if that option is not in
+ * it. An evening's days come with the name its own venues give it
+ * (venueTitle, from the server — see the detail stage of
+ * app/api/trips/generate); it is kept beside the days it was read from.
+ */
+export function withDays(
+  saved: SavedIdeas, optionId: string, days: unknown[], extra: { venueTitle?: string | null } = {},
+): SavedIdeas | null {
   if (!saved.options.some(o => o.id === optionId)) return null;
+  const named = extra.venueTitle ? { venueTitle: extra.venueTitle } : {};
   return {
     ...saved,
     rev: saved.rev + 1,
-    options: saved.options.map(o => (o.id === optionId ? { ...o, itinerary: days } : o)),
+    options: saved.options.map(o => (o.id === optionId ? { ...o, itinerary: days, ...named } : o)),
   };
+}
+
+/**
+ * What an idea is called on a screen or in a notification. A vote is keyed
+ * by its title, which is fixed when the ideas are found; an evening is only
+ * named after its venues once its days are written. Once it has that name,
+ * it is the one shown — the same name on the card, in the count and in
+ * "Most votes" — unless two ideas would share it.
+ */
+export function shownTitle(options: Array<{ title: string; venueTitle?: unknown }>, title: string): string {
+  const o = options.find(x => x.title === title);
+  const v = typeof o?.venueTitle === 'string' ? o.venueTitle.trim() : '';
+  if (!v) return title;
+  return options.filter(x => typeof x.venueTitle === 'string' && x.venueTitle.trim() === v).length === 1 ? v : title;
+}
+
+/** The plan's title once this idea is picked: the evening's venues, or the place. */
+export function pickedTitle(idea: { destination: string; venueTitle?: unknown }): string {
+  return typeof idea.venueTitle === 'string' && idea.venueTitle.trim() ? idea.venueTitle.trim() : idea.destination;
 }
 
 /**

@@ -533,7 +533,8 @@ export async function POST(req: NextRequest) {
       // organiser asking again is handed those days — no model call, and
       // nothing the group is voting on changes under them.
       if (ideaForDays && daysDecision({ idea: ideaForDays, organiser }) === 'keep') {
-        return NextResponse.json({ itinerary: ideaForDays.itinerary, savedToIdeas: true, kept: true });
+        const kept = typeof ideaForDays.venueTitle === 'string' ? ideaForDays.venueTitle : null;
+        return NextResponse.json({ itinerary: ideaForDays.itinerary, savedToIdeas: true, kept: true, ...(kept ? { title: kept } : {}) });
       }
     }
     const { destination, vibe, costs, city: tripCity, country_code: tripCountry } = (ideaForDays ?? body.tripData ?? {}) as Record<string, any>;
@@ -1222,7 +1223,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // Onto the saved idea, so everybody voting sees the same days. Never
       // fails the request: whoever asked still gets the days.
       const savedToIdeas = ideaForDays && groupPlan
-        ? await attachDays(supabase, groupPlan.id, ideaForDays.id, days, { organiser })
+        ? await attachDays(supabase, groupPlan.id, ideaForDays.id, days, { organiser, venueTitle: title })
         : false;
       return NextResponse.json({ itinerary: days, savedToIdeas, ...(title ? { title } : {}), ...(isNightPlan && foodGap.length ? { foodGap } : {}) });
     } catch (e: any) {

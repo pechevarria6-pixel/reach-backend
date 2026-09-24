@@ -8,7 +8,7 @@ import { track } from '@/lib/track';
 import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { mayPick, readIdeas, patchDecides } from '@/lib/trip-vote';
+import { mayPick, readIdeas, patchDecides, pickedTitle } from '@/lib/trip-vote';
 import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
@@ -159,7 +159,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     if (ideas) {
       const idea = ideas.options.find(o => o.id === String(pickOption));
       if (!idea) return NextResponse.json({ error: "That isn't one of this trip's ideas any more — have a look at the current ones." }, { status: 409 });
-      updates.title = idea.destination;
+      // An evening is named after the venues its days go to, once they are
+      // written; otherwise the place.
+      updates.title = pickedTitle(idea);
       updates.destination_city = idea.city || null;
       updates.destination_country = idea.country_code ? String(idea.country_code).toUpperCase() : null;
       updates.budget_cents = Math.round((Number(idea.total_per_person) || 0) * 100);

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { planReadiness, waitingSentence } from '@/lib/plan-readiness';
 import { track } from '@/lib/track';
-import { readIdeas, tallyVotes, mayPick, voteTitles, type SavedIdeas } from '@/lib/trip-vote';
+import { readIdeas, tallyVotes, mayPick, voteTitles, shownTitle, type SavedIdeas } from '@/lib/trip-vote';
 import { readVetoes, membersOf, organiserOf, organisersOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { claimOnce } from '@/lib/everyone-in';
 import { notifyUsers } from '@/lib/notify-user';
@@ -168,9 +168,10 @@ async function tellOrganiserIfEveryoneVoted(
   // Whoever cast the last vote is looking at the count already.
   const told = organisersOf(members, plan.created_by ?? null).filter(id => id !== voterId);
   if (!told.length) return;
+  const shown = (t: string) => shownTitle(ideas?.options ?? [], t);
   const lead = view.leader
-    ? `Most votes: ${view.leader}. The pick is yours.`
-    : view.tied.length ? `It's a tie between ${view.tied.join(' and ')} — your call.` : 'The pick is yours.';
+    ? `Most votes: ${shown(view.leader)}. The pick is yours.`
+    : view.tied.length ? `It's a tie between ${view.tied.map(shown).join(' and ')} — your call.` : 'The pick is yours.';
   await notifyUsers(db, told, {
     kind: 'everyone_voted',
     title: 'Everyone has voted',

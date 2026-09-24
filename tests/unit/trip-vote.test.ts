@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ideasFrom, readIdeas, withDays, isOrganiser, mayPick, findDecision, tallyVotes, waitingTripIn,
-  voteTitles, patchDecides, daysDecision, ideasReadyCopy,
+  voteTitles, patchDecides, daysDecision, ideasReadyCopy, shownTitle, pickedTitle,
 } from '../../lib/trip-vote.ts';
 
 const meta = { set: 'S1', foundBy: 'u1', foundAt: '2026-09-23T10:00:00Z', mode: 'trip' as const };
@@ -248,4 +248,29 @@ test('one idea is "One idea", never "1 ideas"', () => {
   assert.doesNotMatch(c.body + c.title, /1 ideas|idea for the night are/);
   assert.match(c.body, /^One idea,/);
   assert.equal(c.title, 'Your idea for the night is ready — vote');
+});
+
+// ─── An evening's name, from its own venues ─────────────────────────────
+
+test('an evening keeps the name its venues give it beside its days, and the vote key does not move', () => {
+  const saved = ideasFrom([{ destination: 'Downtown dinner & drinks' }, { destination: 'Riverside evening' }], { ...meta, mode: 'night' });
+  const next = withDays(saved, 'S1:1', [{ day: 1 }], { venueTitle: 'Trophy Brewing & Kokoro Ramen' })!;
+  assert.equal(next.options[0].venueTitle, 'Trophy Brewing & Kokoro Ramen');
+  assert.equal(next.options[0].title, 'Downtown dinner & drinks');
+  assert.deepEqual(voteTitles({ trip_options: next }), ['Downtown dinner & drinks', 'Riverside evening']);
+  // Shown by the venues' name; the other, with no days yet, by its title.
+  assert.equal(shownTitle(next.options, 'Downtown dinner & drinks'), 'Trophy Brewing & Kokoro Ramen');
+  assert.equal(shownTitle(next.options, 'Riverside evening'), 'Riverside evening');
+  // Picked: the plan is called after where it actually goes.
+  assert.equal(pickedTitle(next.options[0]), 'Trophy Brewing & Kokoro Ramen');
+  assert.equal(pickedTitle(next.options[1]), 'Riverside evening');
+});
+
+test('two evenings the venues would name alike are shown by their titles', () => {
+  const options = [
+    { title: 'A', venueTitle: 'Same & Place' },
+    { title: 'B', venueTitle: 'Same & Place' },
+  ];
+  assert.equal(shownTitle(options, 'A'), 'A');
+  assert.equal(shownTitle(options, 'B'), 'B');
 });

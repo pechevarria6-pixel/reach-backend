@@ -97,7 +97,7 @@ export async function saveIdeas(
  */
 export async function attachDays(
   db: SupabaseClient, planId: string, optionId: string, days: unknown[],
-  opts: { organiser: boolean } = { organiser: false },
+  opts: { organiser: boolean; venueTitle?: string | null } = { organiser: false },
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const read = await readSavedIdeas(db, planId);
@@ -105,7 +105,7 @@ export async function attachDays(
     if (!read.ideas || !read.undecided) return false;
     const idea = read.ideas.options.find(o => o.id === optionId) ?? null;
     if (daysDecision({ idea, organiser: opts.organiser }) === 'keep') return false;
-    const next = withDays(read.ideas, optionId, days);
+    const next = withDays(read.ideas, optionId, days, { venueTitle: opts.venueTitle ?? null });
     if (!next) return false;
     const { data, error } = await db.from('plans').update({ trip_options: next })
       .eq('id', planId).eq('destination_style', 'undecided')
