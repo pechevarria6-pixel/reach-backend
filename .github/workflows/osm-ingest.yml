@@ -85,8 +85,11 @@ jobs:
           echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
           echo "slug=${REGION//\//_}" >> "$GITHUB_OUTPUT"
       # This week's download, so a re-run after a failed write does not
-      # fetch the same gigabyte twice. The key changes every ISO week.
-      - uses: actions/cache@v4
+      # fetch the same gigabyte twice. The key changes every ISO week. Saved
+      # by its own step below, because actions/cache only saves when the job
+      # succeeds, and the re-run that needs it is the one after a failure.
+      - id: pbf
+        uses: actions/cache/restore@v4
         with:
           path: .pbf/${{ steps.week.outputs.slug }}.osm.pbf
           key: pbf-${{ steps.week.outputs.slug }}-${{ steps.week.outputs.week }}
@@ -102,3 +105,9 @@ jobs:
           else
             node scripts/ingest/osm-ingest.mjs --region "$REGION" --pbf-dir .pbf
           fi
+      - name: Keep this week's download
+        if: always() && steps.pbf.outputs.cache-hit != 'true' && hashFiles(format('.pbf/{0}.osm.pbf', steps.week.outputs.slug)) != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .pbf/${{ steps.week.outputs.slug }}.osm.pbf
+          key: pbf-${{ steps.week.outputs.slug }}-${{ steps.week.outputs.week }}
