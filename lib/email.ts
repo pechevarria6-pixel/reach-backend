@@ -235,21 +235,28 @@ export function sendItinerary(to: string, opts: {
   planTitle: string;
   dates: string;
   groupName: string;
-  fixed: Array<{ title: string; detail?: string | null; cents: number }>;
-  days: Array<{ when: string; title: string; payment?: string | null; cents: number }>;
+  fixed: Array<{ title: string; detail?: string | null; cents: number | null; state: string }>;
+  days: Array<{ when: string; title: string; payment?: string | null; cents: number | null }>;
   url: string;
+  /** People on the trip, so a trip of one is not told about "the group". */
+  memberCount: number;
 }) {
   const money = (c: number) => `$${Math.round(c / 100).toLocaleString()}`;
-  const fixedTotal = opts.fixed.reduce((a, f) => a + f.cents, 0);
-  const dayTotal = opts.days.reduce((a, d) => a + d.cents, 0);
+  // Unpriced lines are left out of every total, and the total says so:
+  // a $0 added in is a number that looks like a fact and is not one.
+  const fixedTotal = opts.fixed.reduce((a, f) => a + (f.cents ?? 0), 0);
+  const dayTotal = opts.days.reduce((a, d) => a + (d.cents ?? 0), 0);
+  const gaps = opts.fixed.filter(f => f.cents === null).length + opts.days.filter(d => d.cents === null && d.title).length;
+  const plus = gaps ? ` <span style="font-size:12px;font-weight:400;color:#635539;">+ ${gaps} not priced</span>` : '';
 
   const fixedRows = opts.fixed.map(f => `
     <tr>
       <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;">
         <div style="font-size:14px;">${escape(f.title)}</div>
         ${f.detail ? `<div style="font-size:12px;color:#635539;margin-top:1px;">${escape(f.detail)}</div>` : ''}
+        <div style="font-size:12px;color:#635539;margin-top:2px;">${escape(f.state)}</div>
       </td>
-      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;text-align:right;font-size:14px;white-space:nowrap;">${money(f.cents)}</td>
+      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;text-align:right;font-size:14px;white-space:nowrap;">${f.cents !== null ? money(f.cents) : 'Not priced yet'}</td>
     </tr>`).join('');
 
   // Cash-only is called out inline, because knowing you need notes for dinner
@@ -272,8 +279,10 @@ export function sendItinerary(to: string, opts: {
     <p style="font-size:13px;color:#635539;margin:0 0 24px;">${escape(opts.groupName)}</p>
 
     ${fixedRows ? `
-      <h2 style="font-size:15px;font-weight:600;margin:0 0 4px;">Reach will book these</h2>
-      <p style="font-size:12.5px;color:#635539;margin:0 0 8px;">Paid once the group funds the trip.</p>
+      <h2 style="font-size:15px;font-weight:600;margin:0 0 4px;">Booked through Reach</h2>
+      <p style="font-size:12.5px;color:#635539;margin:0 0 8px;">${opts.memberCount > 1
+        ? 'Paid from what the group puts in. Each line says where it stands.'
+        : 'Paid from what you put in. Each line says where it stands.'}</p>
       <table style="width:100%;border-collapse:collapse;">${fixedRows}</table>
       <p style="text-align:right;font-size:14px;font-weight:600;margin:8px 0 26px;">${money(fixedTotal)} per person</p>` : ''}
 
@@ -285,7 +294,7 @@ export function sendItinerary(to: string, opts: {
     <table style="width:100%;border-collapse:collapse;border-top:2px solid #241C10;">
       <tr>
         <td style="padding:12px 0;font-size:15px;font-weight:600;">Per person, all in</td>
-        <td style="padding:12px 0;text-align:right;font-size:17px;font-weight:700;">${money(fixedTotal + dayTotal)}</td>
+        <td style="padding:12px 0;text-align:right;font-size:17px;font-weight:700;">${money(fixedTotal + dayTotal)}${plus}</td>
       </tr>
     </table>
 

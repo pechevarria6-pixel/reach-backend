@@ -9,6 +9,7 @@ import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { sendItinerary } from '@/lib/email';
 import { formatDates } from '@/lib/dates';
+import { itineraryLines } from '@/lib/itinerary-email';
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const { data: items } = await db
     .from('itinerary_items')
-    .select('title, subtitle, scheduled_time, cost_cents, booking_mode, payment_note')
+    .select('id, type, title, subtitle, scheduled_time, cost_cents, booking_mode, payment_note')
     .eq('plan_id', params.planId).order('sort_order');
 
   if (!items?.length) {
@@ -36,14 +37,17 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const { data: group } = await db.from('groups').select('name').eq('id', plan.group_id).single();
 
-  const fixed = items.filter(i => i.booking_mode === 'reach')
-    .map(i => ({ title: i.title, detail: i.subtitle, cents: i.cost_cents || 0 }));
-  const days = items.filter(i => i.booking_mode !== 'reach')
-    .map(i => ({ when: i.scheduled_time || '', title: i.title, payment: i.payment_note, cents: i.cost_cents || 0 }));
+  // Each Reach line says where its booking stands, so the rows are read.
+  // Unreadable: said as not yet booked, which is the claim that promises least.
+  const { data: bookings, error: bookingsError } = await db
+    .from('bookings').select('itinerary_item_id, status, provider_ref').eq('plan_id', params.planId);
+  if (bookingsError) console.error('[itinerary email] could not read bookings', { planId: params.planId, code: bookingsError.code });
+  const { fixed, days } = itineraryLines(items, bookings ?? []);
 
   // Who gets it: just the person asking, or everybody on the trip.
+  const members = await groupMemberIds(db, plan.group_id);
   let recipients = [ctx.user.id];
-  if (everyone) recipients = await groupMemberIds(db, plan.group_id);
+  if (everyone) recipients = members;
   const { data: people } = await db.from('users').select('id, email').in('id', recipients);
 
   const base = appUrl(req);
@@ -55,7 +59,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     if (!person.email) continue;
     const result = await sendItinerary(person.email, {
       planTitle: plan.title, dates, groupName: group?.name || 'Your trip',
-      fixed, days, url: `${base}/home`,
+      fixed, days, url: `${base}/home`, memberCount: members.length,
     });
     if (result.sent) sent++;
     else failures.push(result.reason || 'error');
