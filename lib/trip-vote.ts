@@ -14,9 +14,12 @@
 //   - whether a "Find" shows the saved ideas, builds new ones, or is refused
 //   - the count: votes, vetoes, the leader, a tie, everyone having voted
 //   - what the screen is told — counts, never who vetoed or who voted what
-//   - the duplicate guard: one undecided group trip per group at a time
+//   - the duplicate guard: one undecided plan of each kind per group at a time
+//   - who may call a plan off, and what everybody else is told
 //
 // Nothing here reads the database; lib/trip-ideas-store.ts does.
+
+import { isLive } from './calendar.ts';
 
 /** One of the three ideas, as the options stage returned it. */
 export interface TripIdea {
@@ -214,14 +217,52 @@ export function mayPick(p: { role?: string | null; createdBy?: string | null; us
  * act, not any member's. Picking or closing is deciding. So is clearing
  * "undecided", moving the status, and writing vote_options or trip_options:
  * the list a vote is checked and counted against is part of the decision.
- * On a trip that already has its destination none of these is a pick.
+ *
+ * Undoing a pick is deciding too. Without that, any member could send
+ * { destination_style: "undecided", status: "voting" } to a trip already
+ * picked and reopen the vote on the old ideas with the old votes, clear
+ * "<place> it is" for everybody, and hand the organiser the pick again. So
+ * putting "undecided" back on any decided trip, or reopening voting on one
+ * that was picked from saved ideas (`picked`), is the organiser's.
+ *
+ * On a decided trip nothing else is a pick: an ordinary plan's own vote list
+ * is still anybody's to write.
  */
 export function patchDecides(p: {
   undecided: boolean; fields: Record<string, unknown>; onlyIfUndecided: boolean; pickOption: unknown;
+  /** Decided, and decided by picking one of the saved ideas. */
+  picked?: boolean;
 }): boolean {
   if (p.onlyIfUndecided || p.pickOption != null) return true;
-  if (!p.undecided) return false;
+  if (!p.undecided) {
+    if (p.fields.destination_style === 'undecided') return true;
+    return p.picked === true && p.fields.status === 'voting';
+  }
   return ['destination_style', 'status', 'vote_options', 'trip_options'].some(k => k in p.fields);
+}
+
+/**
+ * Whether a PATCH calls a plan off. Cancelling is done for everybody, so in
+ * a group it is the organiser's — the same person who may delete it.
+ */
+export function patchCallsOff(fields: Record<string, unknown>): boolean {
+  return fields.status === 'cancelled';
+}
+
+/**
+ * What everybody else is told when the organiser calls a plan off. Their
+ * name and the plan's, and where that leaves them: free to start another.
+ */
+export function calledOffCopy(p: { organiserName: string | null; title: string | null; night: boolean }): { title: string; body: string } {
+  const who = p.organiserName?.trim() || 'The organiser';
+  // "Where next?" is what an undecided plan is called until somebody writes
+  // something, not a name: "Sam called off Where next?" reads as a riddle.
+  const named = p.title?.trim();
+  const what = named && named !== 'Where next?' ? named : (p.night ? 'the night out' : 'the trip');
+  return {
+    title: `${who} called off ${what}`,
+    body: `It won't go ahead, and nobody needs to answer or vote on it. Anyone in the group can start another ${p.night ? 'night out' : 'trip'}.`,
+  };
 }
 
 export type FindDecision =
@@ -326,18 +367,51 @@ export function tallyVotes(p: {
 
 export const WAITING_STATUSES = ['planning', 'voting'] as const;
 
+/** A plan as the duplicate guard reads it. */
+export interface WaitingCandidate {
+  id: string;
+  type?: string | null;
+  destination_style?: string | null;
+  status?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  created_at?: string | null;
+}
+
+function waitingOfType(plans: WaitingCandidate[], type: string): WaitingCandidate[] {
+  return plans
+    .filter(p => p.destination_style === 'undecided'
+      && String(p.type ?? 'trip') === type
+      && (WAITING_STATUSES as readonly string[]).includes(String(p.status ?? 'planning')))
+    .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
+}
+
 /**
  * The group trip already waiting on this group, if there is one. Starting a
  * second one would ask everybody the same questions twice and split their
  * answers across two trips, and neither would ever be found. The caller
  * gets the one that exists instead.
+ *
+ * Per kind of plan: a trip being decided does not stop the same group
+ * planning a Friday night out, nor the other way round. And only while it is
+ * still on by its own dates (isLive): a night out left in "voting" past its
+ * date, or a trip one member never answered for, used to block every later
+ * plan in the group — from a screen Home no longer showed, so nobody could
+ * even see what was in the way.
  */
-export function waitingTripIn(
-  plans: Array<{ id: string; destination_style?: string | null; status?: string | null; created_at?: string | null }>,
-): string | null {
-  const open = plans
-    .filter(p => p.destination_style === 'undecided'
-      && (WAITING_STATUSES as readonly string[]).includes(String(p.status ?? 'planning')))
-    .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')));
-  return open[0]?.id ?? null;
+export function waitingTripIn(plans: WaitingCandidate[], p: { type: string; today: string }): string | null {
+  return waitingOfType(plans, p.type)
+    .find(w => isLive({ status: w.status, startDate: w.start_date, endDate: w.end_date }, p.today))?.id ?? null;
+}
+
+/**
+ * The same kind of plan, still marked waiting, whose dates have been and
+ * gone. Nobody can go on it any more, but the database's one-waiting index
+ * (sql/trip-options-2026-09-23.sql) cannot see dates, so it would still
+ * refuse the next one. These are closed before a new one is made.
+ */
+export function staleWaitingIn(plans: WaitingCandidate[], p: { type: string; today: string }): string[] {
+  return waitingOfType(plans, p.type)
+    .filter(w => !isLive({ status: w.status, startDate: w.start_date, endDate: w.end_date }, p.today))
+    .map(w => w.id);
 }

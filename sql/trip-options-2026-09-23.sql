@@ -9,7 +9,7 @@
 --
 -- plans.trip_options  the saved set: { set, rev, mode, foundBy, foundAt, options[] }
 -- trip_vetoes         "I won't do this one" — shown to the group as a count only
--- plans_one_waiting   one undecided group trip per group at a time
+-- plans_one_waiting   one undecided plan of each kind per group at a time
 --
 -- Until this runs the app keeps working: ideas are shown to whoever found
 -- them and saved nowhere, vetoes are not offered, and the log names this file.
@@ -51,21 +51,43 @@ begin
   end if;
 end $$;
 
--- One group trip waiting on its destination per group. POST /api/plans
--- checks first and answers 409 { code: 'already_waiting', planId }; this is
--- what makes it true when two requests arrive together. Skipped, with a
--- notice, if the table already holds two — building it would fail.
+-- One plan of each kind waiting on its destination per group: a trip being
+-- decided does not stop the group planning a night out, nor the other way
+-- round. POST /api/plans checks first and answers 409
+-- { code: 'already_waiting', planId }; this is what makes it true when two
+-- requests arrive together.
+--
+-- An index cannot read today's date, so a waiting plan whose dates have
+-- passed would still hold the slot. POST /api/plans closes such a plan
+-- (status 'cancelled') before making the next; this does the same once, for
+-- the ones already there, so the index can be built.
+--
+-- An earlier version of this file built plans_one_waiting on (group_id)
+-- alone. If that is the one in place it is dropped and rebuilt on
+-- (group_id, type). Skipped, with a notice, if the table already holds two
+-- live waiting plans of one kind in one group — building it would fail.
+update public.plans
+   set status = 'cancelled', updated_at = now()
+ where destination_style = 'undecided' and status in ('planning', 'voting')
+   and coalesce(end_date, start_date) < (now() at time zone 'Etc/GMT+12')::date;
+
 do $$
 begin
+  if exists (
+    select 1 from pg_indexes where schemaname = 'public' and indexname = 'plans_one_waiting'
+      and indexdef not ilike '%(group_id, type)%'
+  ) then
+    drop index public.plans_one_waiting;
+  end if;
   if not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'plans_one_waiting') then
     if exists (
       select 1 from public.plans
       where destination_style = 'undecided' and status in ('planning', 'voting')
-      group by group_id having count(*) > 1
+      group by group_id, type having count(*) > 1
     ) then
-      raise notice 'a group has two undecided trips — not adding plans_one_waiting. Cancel one and run this again.';
+      raise notice 'a group has two undecided plans of one kind — not adding plans_one_waiting. Call one off and run this again.';
     else
-      create unique index plans_one_waiting on public.plans (group_id)
+      create unique index plans_one_waiting on public.plans (group_id, type)
         where destination_style = 'undecided' and status in ('planning', 'voting');
     end if;
   end if;

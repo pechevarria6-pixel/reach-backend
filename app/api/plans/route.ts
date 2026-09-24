@@ -7,7 +7,8 @@ import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
 import { placesFor } from '@/lib/discovery/real-places';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { waitingTripIn, WAITING_STATUSES } from '@/lib/trip-vote';
+import { waitingTripIn, staleWaitingIn, WAITING_STATUSES } from '@/lib/trip-vote';
+import { dayWhere } from '@/lib/calendar';
 
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),
@@ -113,9 +114,15 @@ export async function POST(req: NextRequest) {
   // caller is given the one that exists instead, and the client opens it.
   // sql/trip-options-2026-09-23.sql adds the index that makes this hold for
   // two requests at the same instant; this is the answer somebody reads.
-  if (undecided && !soloGroup) {
-    const existing = await waitingTrip(supabase, body.group_id);
-    if (existing) return alreadyWaiting(existing);
+  //
+  // Per kind — a trip being decided does not block a night out — and only
+  // while the waiting one is still on by its dates. One whose dates have
+  // passed is closed here, because the index cannot read dates and would
+  // otherwise refuse this plan over one nobody can go on any more.
+  if (undecided) {
+    const waiting = await waitingTrip(supabase, body.group_id, body.type);
+    if (waiting.live && !soloGroup) return alreadyWaiting(waiting.live);
+    if (waiting.stale.length) await closeStale(supabase, body.group_id, waiting.stale);
   }
 
   const row: Record<string, unknown> = {
@@ -168,8 +175,8 @@ export async function POST(req: NextRequest) {
   // Lost the race to another request making the same group trip: the
   // unique index refused this one. Theirs is the trip.
   if (error?.code === '23505' && undecided) {
-    const existing = await waitingTrip(supabase, body.group_id);
-    if (existing) return alreadyWaiting(existing);
+    const existing = await waitingTrip(supabase, body.group_id, body.type);
+    if (existing.live) return alreadyWaiting(existing.live);
   }
 
   if (error || !plan) {
@@ -234,20 +241,47 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ plan }, { status: 201 });
 }
 
-async function waitingTrip(db: import('@supabase/supabase-js').SupabaseClient, groupId: string): Promise<string | null> {
+// "Today" for a server that keeps UTC: the earliest calendar day anywhere.
+// A night out in New York is still tonight at 9pm there, when the UTC date
+// has already turned over, so a plan only counts as over once it is over
+// everywhere — the error this can make is keeping a finished plan waiting a
+// few hours longer, never closing one somebody is still on.
+function earliestToday(): string {
+  return dayWhere(-180);
+}
+
+async function waitingTrip(
+  db: import('@supabase/supabase-js').SupabaseClient, groupId: string, type: string,
+): Promise<{ live: string | null; stale: string[] }> {
   const { data, error } = await db.from('plans')
-    .select('id, destination_style, status, created_at')
-    .eq('group_id', groupId).eq('destination_style', UNDECIDED)
+    .select('id, type, destination_style, status, start_date, end_date, created_at')
+    .eq('group_id', groupId).eq('destination_style', UNDECIDED).eq('type', type)
     .in('status', [...WAITING_STATUSES]);
   if (error) {
     // Not a reason to refuse somebody their trip: the index, once it is
     // there, is what holds the line.
     console.error('[plans POST] could not check for a group trip already waiting', { groupId, code: error.code });
-    return null;
+    return { live: null, stale: [] };
   }
-  return waitingTripIn((data ?? []).map(r => ({
-    id: String(r.id), destination_style: r.destination_style, status: r.status, created_at: r.created_at,
-  })));
+  const plans = (data ?? []).map(r => ({
+    id: String(r.id), type: r.type, destination_style: r.destination_style, status: r.status,
+    start_date: r.start_date, end_date: r.end_date, created_at: r.created_at,
+  }));
+  const today = earliestToday();
+  return { live: waitingTripIn(plans, { type, today }), stale: staleWaitingIn(plans, { type, today }) };
+}
+
+// A plan still marked waiting whose dates have been and gone. Nobody can go
+// on it, and it no longer shows on Home; it is closed so the one-waiting
+// index lets the group start the next. Only while it is still undecided and
+// waiting — a pick landing at the same moment wins.
+async function closeStale(db: import('@supabase/supabase-js').SupabaseClient, groupId: string, ids: string[]) {
+  const { error } = await db.from('plans')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .in('id', ids).eq('group_id', groupId).eq('destination_style', UNDECIDED)
+    .in('status', [...WAITING_STATUSES]);
+  if (error) console.error('[plans POST] could not close a waiting plan whose dates have passed', { groupId, ids, code: error.code });
+  else console.log('[plans POST] closed waiting plans whose dates have passed', { groupId, ids });
 }
 
 function alreadyWaiting(planId: string) {

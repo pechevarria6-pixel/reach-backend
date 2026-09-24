@@ -8,7 +8,7 @@ import { track } from '@/lib/track';
 import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { mayPick, readIdeas, patchDecides, pickedTitle } from '@/lib/trip-vote';
+import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle } from '@/lib/trip-vote';
 import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
@@ -102,7 +102,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   const user = ctx.user;
 
   const { data: plan } = await supabase.from('plans')
-    .select('group_id, start_date, end_date, created_by, destination_style').eq('id', params.planId).single();
+    .select('group_id, start_date, end_date, created_by, destination_style, status, title, type').eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
 
   const { data: membership } = await supabase
@@ -121,28 +121,69 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   // Anything that would decide an undecided trip counts: picking, clearing
   // "undecided", moving its status (closing the vote), or rewriting the list
   // the vote is checked and counted against — see patchDecides.
+  // Reopening voting on a decided trip is only a pick if it was decided by
+  // picking one of the saved ideas — read separately, because the column
+  // arrives in a migration and a database without it has no saved ideas.
+  let picked = false;
+  if (plan.destination_style !== UNDECIDED && updates.status === 'voting') {
+    const { data: row, error: readErr } = await supabase.from('plans').select('trip_options').eq('id', params.planId).maybeSingle();
+    if (readErr && !notMigrated(readErr)) {
+      console.error('[plans PATCH] could not read the saved ideas', { planId: params.planId, code: readErr.code });
+      return NextResponse.json({ error: "We couldn't check this trip just now — try again in a moment." }, { status: 503 });
+    }
+    picked = !readErr && !!readIdeas((row as { trip_options?: unknown } | null)?.trip_options);
+  }
   const deciding = patchDecides({
     undecided: plan.destination_style === UNDECIDED,
     fields: updates,
     onlyIfUndecided: onlyIfUndecided === true,
     pickOption,
+    picked,
   });
+  // Calling a plan off is done for everybody, so it is the organiser's too.
+  const callingOff = patchCallsOff(updates) && plan.status !== 'cancelled';
   let others: string[] = [];
-  if (deciding) {
+  let callerName: string | null = null;
+  if (deciding || callingOff) {
     const members = await membersOf(supabase, String(plan.group_id));
     if (!members) {
       // Deciding for a group on a guess about who is in it is not an option.
-      console.error('[plans PATCH] refused a pick: could not read the group', { planId: params.planId });
+      console.error('[plans PATCH] refused: could not read the group', { planId: params.planId, callingOff });
       return NextResponse.json({ error: "We couldn't check who is in this group — try again in a moment." }, { status: 503 });
     }
     if (!mayPick({ role: membership.role, createdBy: plan.created_by, userId: user.id, memberCount: members.length })) {
       const organiser = organiserOf(members, plan.created_by ?? null);
+      const who = organiser ? firstName(organiser.name) : 'whoever set this trip up';
       return NextResponse.json({
-        error: `Only ${organiser ? firstName(organiser.name) : 'whoever set this trip up'} can make the pick — your vote is what counts toward it.`,
+        // A plan still deciding where it goes counts moving its status as
+        // deciding too, so calling it off is both; the answer names the act.
+        error: callingOff
+          ? `Only ${who} can call this off.`
+          : `Only ${who} can make the pick — your vote is what counts toward it.`,
         notOrganiser: true,
       }, { status: 403 });
     }
     others = members.map(m => m.userId).filter(id => id !== user.id);
+    callerName = firstName(members.find(m => m.userId === user.id)?.name ?? '');
+  }
+
+  // A plan holding something real — a confirmed room, a table somebody
+  // holds — is not called off from here, for the same reason it is not
+  // deleted with one: cancelling the plan does not cancel the booking, and
+  // a cancelled plan leaves Home, taking the only way to see it along.
+  if (callingOff) {
+    const { data: held, error: heldErr } = await supabase.from('bookings')
+      .select('id, status').eq('plan_id', params.planId)
+      .in('status', ['confirmed', 'redirected', 'pending']);
+    if (heldErr) {
+      console.error('[plans PATCH] could not read what this plan holds', { planId: params.planId, code: heldErr.code });
+      return NextResponse.json({ error: "We couldn't check this plan's bookings — nothing was changed." }, { status: 503 });
+    }
+    if ((held ?? []).length) {
+      return NextResponse.json({
+        error: 'This plan still has something booked. Cancel that first, then call the plan off.',
+      }, { status: 409 });
+    }
   }
 
   // The idea as the group saw it. When it is saved, it is the source of the
@@ -270,6 +311,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   const write = () => {
     let q = supabase.from('plans').update(updates).eq('id', params.planId);
     if (onlyIfUndecided === true) q = q.eq('destination_style', UNDECIDED);
+    // Called off once: a double-tap is two requests, and the second must
+    // not tell everybody again.
+    if (callingOff) q = q.neq('status', 'cancelled');
     return q.select().maybeSingle();
   };
   let attempt = await write();
@@ -295,6 +339,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
       url: `/home?vote=${encodeURIComponent(params.planId)}&group=${encodeURIComponent(String(plan.group_id))}`,
       planId: params.planId,
     }, pushSender());
+  }
+  if (callingOff && !writeError && updated && others.length) {
+    const copy = calledOffCopy({ organiserName: callerName, title: updated.title ?? plan.title ?? null, night: (updated.type ?? plan.type) === 'restaurant' });
+    await notifyUsers(supabase, others, {
+      kind: 'plan_called_off',
+      title: copy.title,
+      body: copy.body,
+      url: `/home?group=${encodeURIComponent(String(plan.group_id))}`,
+      planId: params.planId,
+    }, pushSender());
+  }
+  if (callingOff && !writeError && !updated) {
+    // The other request called it off first. Already done is done.
+    const { data: now } = await supabase.from('plans').select('*').eq('id', params.planId).maybeSingle();
+    if (now?.status === 'cancelled') return NextResponse.json({ plan: now, alreadyCalledOff: true });
   }
   if (onlyIfUndecided === true && !writeError && !updated) {
     // Nothing matched: somebody else picked first. Theirs stands, and this

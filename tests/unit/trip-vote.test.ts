@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ideasFrom, readIdeas, withDays, isOrganiser, mayPick, findDecision, tallyVotes, waitingTripIn,
   voteTitles, patchDecides, daysDecision, ideasReadyCopy, shownTitle, pickedTitle,
+  staleWaitingIn, patchCallsOff, calledOffCopy,
 } from '../../lib/trip-vote.ts';
 
 const meta = { set: 'S1', foundBy: 'u1', foundAt: '2026-09-23T10:00:00Z', mode: 'trip' as const };
@@ -171,19 +172,80 @@ test('another member\'s view shows the same counts and none of my vetoes', () =>
 
 // ─── The duplicate guard ────────────────────────────────────────────────
 
+const TODAY = '2026-09-23';
+
 test('a group trip still waiting on answers or votes blocks a second one', () => {
   assert.equal(waitingTripIn([
-    { id: 'p2', destination_style: 'undecided', status: 'voting', created_at: '2026-09-22' },
-    { id: 'p1', destination_style: 'undecided', status: 'planning', created_at: '2026-09-20' },
-  ]), 'p1');
+    { id: 'p2', type: 'trip', destination_style: 'undecided', status: 'voting', created_at: '2026-09-22' },
+    { id: 'p1', type: 'trip', destination_style: 'undecided', status: 'planning', created_at: '2026-09-20' },
+  ], { type: 'trip', today: TODAY }), 'p1');
 });
 
 test('a decided, cancelled or finished trip does not', () => {
   assert.equal(waitingTripIn([
-    { id: 'p1', destination_style: null, status: 'planning' },
-    { id: 'p2', destination_style: 'undecided', status: 'cancelled' },
-    { id: 'p3', destination_style: 'undecided', status: 'completed' },
-  ]), null);
+    { id: 'p1', type: 'trip', destination_style: null, status: 'planning' },
+    { id: 'p2', type: 'trip', destination_style: 'undecided', status: 'cancelled' },
+    { id: 'p3', type: 'trip', destination_style: 'undecided', status: 'completed' },
+  ], { type: 'trip', today: TODAY }), null);
+});
+
+test('a waiting plan whose dates have passed blocks nothing, and is the one to close', () => {
+  const plans = [
+    // A night out left in "voting" past its date.
+    { id: 'old', type: 'restaurant', destination_style: 'undecided', status: 'voting', start_date: '2026-09-12', end_date: '2026-09-12', created_at: '2026-09-01' },
+  ];
+  assert.equal(waitingTripIn(plans, { type: 'restaurant', today: TODAY }), null);
+  assert.deepEqual(staleWaitingIn(plans, { type: 'restaurant', today: TODAY }), ['old']);
+});
+
+test('a waiting plan on today, still to come, or with no dates yet still blocks', () => {
+  for (const dates of [
+    { start_date: TODAY, end_date: TODAY },
+    { start_date: '2026-10-02', end_date: '2026-10-06' },
+    { start_date: '2026-09-20', end_date: '2026-09-25' }, // under way
+    { start_date: null, end_date: null },
+  ]) {
+    const plans = [{ id: 'w', type: 'trip', destination_style: 'undecided', status: 'planning', ...dates }];
+    assert.equal(waitingTripIn(plans, { type: 'trip', today: TODAY }), 'w', JSON.stringify(dates));
+    assert.deepEqual(staleWaitingIn(plans, { type: 'trip', today: TODAY }), []);
+  }
+});
+
+test('an older plan past its date does not hide a live one behind it', () => {
+  assert.equal(waitingTripIn([
+    { id: 'old', type: 'trip', destination_style: 'undecided', status: 'planning', start_date: '2026-08-01', end_date: '2026-08-05', created_at: '2026-07-01' },
+    { id: 'new', type: 'trip', destination_style: 'undecided', status: 'planning', start_date: '2026-11-01', end_date: '2026-11-05', created_at: '2026-09-20' },
+  ], { type: 'trip', today: TODAY }), 'new');
+});
+
+test('a trip being decided does not block a night out, nor the other way round', () => {
+  const trip = { id: 't', type: 'trip', destination_style: 'undecided', status: 'voting', start_date: '2026-10-10', end_date: '2026-10-14' };
+  const night = { id: 'n', type: 'restaurant', destination_style: 'undecided', status: 'planning', start_date: '2026-09-26', end_date: '2026-09-26' };
+  assert.equal(waitingTripIn([trip], { type: 'restaurant', today: TODAY }), null);
+  assert.equal(waitingTripIn([night], { type: 'trip', today: TODAY }), null);
+  assert.equal(waitingTripIn([trip, night], { type: 'trip', today: TODAY }), 't');
+  assert.equal(waitingTripIn([trip, night], { type: 'restaurant', today: TODAY }), 'n');
+  // Nor is one kind closed on the other's account.
+  assert.deepEqual(staleWaitingIn([{ ...night, start_date: '2026-09-01', end_date: '2026-09-01' }], { type: 'trip', today: TODAY }), []);
+});
+
+// ─── Calling a plan off ─────────────────────────────────────────────────
+
+test('only a move to cancelled is calling it off', () => {
+  assert.equal(patchCallsOff({ status: 'cancelled' }), true);
+  assert.equal(patchCallsOff({ status: 'planning' }), false);
+  assert.equal(patchCallsOff({ title: 'x' }), false);
+});
+
+test('everybody else is told who called it off, and that they can start another', () => {
+  const trip = calledOffCopy({ organiserName: 'Sam', title: 'Lisbon in October', night: false });
+  assert.equal(trip.title, 'Sam called off Lisbon in October');
+  assert.match(trip.body, /start another trip/);
+  const night = calledOffCopy({ organiserName: null, title: null, night: true });
+  assert.equal(night.title, 'The organiser called off the night out');
+  assert.match(night.body, /start another night out/);
+  // The placeholder an undecided plan carries is not a name.
+  assert.equal(calledOffCopy({ organiserName: 'Sam', title: 'Where next?', night: false }).title, 'Sam called off the trip');
 });
 
 // ─── What a vote is counted against ─────────────────────────────────────
@@ -212,6 +274,23 @@ test('rewriting the vote list on an undecided trip is deciding, so it is the org
   assert.equal(patchDecides({ ...base, fields: { destination_style: null } }), true);
   // Anything else on an undecided trip is not a pick.
   assert.equal(patchDecides({ ...base, fields: { title: 'Summer' } }), false);
+});
+
+test('undoing a pick is deciding, so a member cannot reopen the vote', () => {
+  const decided = { undecided: false, onlyIfUndecided: false, pickOption: null };
+  // The exact request a member could send to a picked trip.
+  assert.equal(patchDecides({ ...decided, picked: true, fields: { destination_style: 'undecided', status: 'voting' } }), true);
+  // Either half on its own.
+  assert.equal(patchDecides({ ...decided, picked: true, fields: { destination_style: 'undecided' } }), true);
+  assert.equal(patchDecides({ ...decided, picked: true, fields: { status: 'voting' } }), true);
+  // Putting "undecided" back is deciding on any decided trip.
+  assert.equal(patchDecides({ ...decided, picked: false, fields: { destination_style: 'undecided' } }), true);
+  // An ordinary plan, never picked from ideas, can still be sent round for a vote.
+  assert.equal(patchDecides({ ...decided, picked: false, fields: { status: 'voting' } }), false);
+  assert.equal(patchDecides({ ...decided, fields: { status: 'voting' } }), false);
+  // And other edits to a picked trip are not a pick.
+  assert.equal(patchDecides({ ...decided, picked: true, fields: { status: 'approved' } }), false);
+  assert.equal(patchDecides({ ...decided, picked: true, fields: { title: 'Porto' } }), false);
 });
 
 test('picking is deciding on any trip; the vote list on a decided trip is not', () => {
