@@ -13,6 +13,7 @@ import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approv
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild } from "@/lib/itinerary-rebuild";
 import { ticketSources } from "@/lib/tickets";
+import { findLinks } from "@/lib/find-links";
 import { byDay, dearestDay } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
@@ -8359,12 +8360,15 @@ function ChoicePanel({booking,vertical,toast,onChanged}){
   );
 }
 
-function ItemActions({item,markGot,tight}){
+function ItemActions({item,markGot,tight,city}){
   if(!item)return null;
   const ticketed=item.type==="event"&&item.venue_website;
   const site=item.type!=="event"&&item.venue_website;
   const phone=item.type==="restaurant"&&item.venue_phone;
-  if(!ticketed&&!site&&!phone)return null;
+  // Book-ahead with nothing named: somewhere to look, said as a search
+  // (lib/find-links.ts), so the line can still be done from here.
+  const looks=!ticketed&&!site&&!phone&&item.booking_mode==="ahead"?findLinks({title:item.title,type:item.type,city}):[];
+  if(!ticketed&&!site&&!phone&&!looks.length)return null;
   // Anything somebody has to arrange can be said to be arranged. Only a
   // ticket could be marked done, so a table you had just rung stayed on the
   // "still needs you" list for the rest of the trip — a checklist that
@@ -8429,6 +8433,13 @@ function ItemActions({item,markGot,tight}){
           📞 {item.venue_phone}
         </a>
       )}
+      {looks.map(l=>(
+        <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer"
+          style={{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,
+            color:C.t2,fontSize:12,fontWeight:600,padding:"7px 11px",borderRadius:999,textDecoration:"none"}}>
+          {l.label} →
+        </a>
+      ))}
       {/* Reach cannot know somebody bought a ticket on a site it does not run,
           or got through on the phone. So it asks — and once told, stops
           asking, and the line leaves the list. */}
@@ -9474,7 +9485,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                                 t.who==="reach"?(t.done?"Booked by Reach":"Reach books this — Book everything below"):(t.done?(item.type==="restaurant"?"Table reserved":"Sorted"):"You book this"),
                                 item.cost_cents>0?`about $${Math.round(item.cost_cents/100)} a person, estimate`:null].filter(Boolean).join(" · ")}
                             </div>
-                            {t.who==="you"&&!t.done&&<ItemActions item={item} markGot={markGot} tight/>}
+                            {t.who==="you"&&!t.done&&<ItemActions item={item} markGot={markGot} tight city={plan?.destinationCity||plan?.destination}/>}
                             {t.who==="you"&&t.done&&(
                               <button onClick={()=>unmarkGot(item)}
                                 style={{background:"none",border:"none",padding:"4px 0 0",color:C.t3,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>
@@ -9707,7 +9718,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                         ?<div style={{fontSize:11.5,marginTop:6,fontWeight:600,color:trackedOf(item).done?C.green:C.accentText}}>
                           {trackedOf(item).done?"✓ Done":"In your list to book above ↑"}
                         </div>
-                        :<ItemActions item={item} markGot={markGot}/>}
+                        :<ItemActions item={item} markGot={markGot} city={plan?.destinationCity||plan?.destination}/>}
                       {/* A real payment note runs to a sentence — "cards at the
                           restaurant, cash only for drinks and cover" — so it is
                           a line, not a pill. Cash-only gets the warm colour
@@ -9983,7 +9994,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                             what it costs. "Cash only" above is a fact that
                             asks somebody to do something; until now this
                             screen stated it and offered nothing to do. */}
-                        <ItemActions item={r.it} markGot={markGot} tight/>
+                        <ItemActions item={r.it} markGot={markGot} tight city={plan?.destinationCity||plan?.destination}/>
                       </div>
                       <div style={{fontSize:13,color:C.t2,flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{money(r.c)}</div>
                     </div>
@@ -10055,7 +10066,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                                   {r.pay&&/cash only/i.test(r.pay)&&(
                                     <div style={{fontSize:11,color:C.amber,marginTop:2}}>💵 {r.pay}</div>
                                   )}
-                                  <ItemActions item={r.it} markGot={markGot} tight/>
+                                  <ItemActions item={r.it} markGot={markGot} tight city={plan?.destinationCity||plan?.destination}/>
                                 </div>
                                 <div style={{fontSize:13,color:C.t2,flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{money(r.c)}</div>
                               </div>
@@ -11156,7 +11167,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
                       <span>{item.payment_note}</span>
                     </div>
                   )}
-                  <ItemActions item={item} markGot={markGot} tight/>
+                  <ItemActions item={item} markGot={markGot} tight city={plan?.destinationCity||plan?.destination}/>
                 </div>
               ))}
             </div>
@@ -11340,7 +11351,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
                   About {fmt(item.cost_cents)} a person · estimate
                 </div>
               ):null}
-              <ItemActions item={item} markGot={markGot} tight/>
+              <ItemActions item={item} markGot={markGot} tight city={plan?.destinationCity||plan?.destination}/>
             </div>
           ))}
         </div>
