@@ -4672,11 +4672,10 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
       // only the optional ones would be sent back here for ever. Having been
       // through it counts, whatever they chose to say.
       try{ localStorage.setItem(QUIZ_DONE,"1"); }catch(e){}
-      // What somebody is into is the thing every recommendation is built
-      // from, so finishing it is a funnel step in its own right.
-      // Never awaited: instrumentation must not delay or fail a save.
-      void fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({name:"quiz_completed"})}).catch(()=>{});
+      // No quiz_completed here. This is Profile's full list now, and the
+      // event means the six-tap onboarding quiz was finished (with its
+      // duration) — counting edits here too would put every revisit in the
+      // completion rate the pilot target is measured against.
       if(onSaved)onSaved();
     }catch(e){
       console.error("[taste] save failed",e);
