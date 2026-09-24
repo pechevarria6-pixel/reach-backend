@@ -447,3 +447,72 @@ export function nightPrefsFrom(read: Pick<GroupAnswers, 'byUser'>, organiser?: s
   }
   return out;
 }
+
+// ─── Planning with who has answered ─────────────────────────────────────
+// The wait above is strict, and strict on its own means one slow friend
+// stalls the trip for ever. So the organiser — and only the organiser — may
+// go ahead with the answers that are in, once somebody besides them has
+// answered or the trip is two days old, whichever is first. Members who
+// have not answered still go (party size is always the members), but add
+// no wishes to the prompt: we do not know what they want from this trip.
+//
+// Going ahead is a fact about the trip, not about one request: the days of
+// each idea, the vote and a later rebuild all have to agree it happened. It
+// is recorded as an audit row keyed on the plan (no new column), and
+// planReadiness reads it back.
+
+export const PLANNED_WITH_ANSWERED = 'planned_with_answered';
+export const GO_AHEAD_AFTER_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Whether the organiser may plan with who has answered yet: at least one
+ * member other than whoever created the trip has answered, or 48 hours have
+ * passed since it was created. A missing or unreadable created time is not
+ * "long ago" — it only opens on an answer.
+ */
+export function mayGoAhead(p: {
+  members: Pick<Answered, 'userId' | 'answered'>[];
+  createdBy: string | null;
+  createdAt: string | null | undefined;
+  now?: number;
+}): boolean {
+  const someoneElse = p.members.some(m => m.answered && m.userId !== p.createdBy);
+  if (someoneElse) return true;
+  const made = p.createdAt ? Date.parse(p.createdAt) : NaN;
+  if (!Number.isFinite(made)) return false;
+  return (p.now ?? Date.now()) - made >= GO_AHEAD_AFTER_MS;
+}
+
+/**
+ * What the server does with "plan with who's answered". Organiser first:
+ * anybody else is refused whatever state the trip is in.
+ */
+export function goAheadDecision(p: { organiser: boolean; allowed: boolean }):
+  { action: 'go' } | { action: 'refuse'; status: 403 | 409; error: string } {
+  if (!p.organiser) {
+    return { action: 'refuse', status: 403, error: "Only whoever set up this trip can plan it with who's answered." };
+  }
+  if (!p.allowed) {
+    return { action: 'refuse', status: 409, error: "Somebody besides you needs to answer first — or give it 48 hours from when the trip was made." };
+  }
+  return { action: 'go' };
+}
+
+/** "3 of 4 have answered." — counts only, for the organiser's wait. */
+export function answeredCount(members: Pick<Answered, 'answered'>[]): string {
+  const n = members.filter(m => m.answered).length;
+  return `${n} of ${members.length} ${n === 1 ? 'has' : 'have'} answered.`;
+}
+
+/**
+ * Whose standing profile shapes the prompt. Everybody, normally. When the
+ * organiser went ahead, only those who answered: somebody who has not said
+ * what they want from this trip adds no wishes to it. `everyone` is still
+ * what the party size is counted from, and still where dietary needs and
+ * hard nos come from — those are constraints on the trip they are going on,
+ * not wishes, and dropping them would plan dinner around an allergy.
+ */
+export function whoShapesIt<T extends { id?: unknown }>(everyone: T[], answeredOnly: Set<string> | null): T[] {
+  if (!answeredOnly) return everyone;
+  return everyone.filter(p => answeredOnly.has(String(p.id)));
+}

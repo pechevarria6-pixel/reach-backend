@@ -18,6 +18,7 @@
 // running the new way and everybody is counted.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isSoloCount } from './joining.ts';
+import { PLANNED_WITH_ANSWERED } from './group-answers.ts';
 
 export interface MemberReadiness {
   userId: string;
@@ -39,6 +40,31 @@ export interface ReadinessReport {
   waitingOn: string[];
   /** Solo trips have nobody to wait for. */
   solo: boolean;
+  /**
+   * The organiser chose to plan with who had answered (lib/group-answers.ts,
+   * mayGoAhead). Nobody is waited on after that — the ideas, their days and
+   * the vote all go ahead — but `answered` stays strict, so the prompt still
+   * knows whose wishes it has.
+   */
+  wentAhead?: boolean;
+}
+
+/**
+ * Whether the organiser went ahead with who had answered. A failed read is
+ * "no": the wait stays shut rather than opening on a guess.
+ */
+export async function wentAheadWith(db: SupabaseClient, planId: string): Promise<boolean> {
+  try {
+    const { data, error } = await db.from('audit_logs').select('id')
+      .eq('action', PLANNED_WITH_ANSWERED).eq('resource_id', planId).limit(1);
+    if (error) {
+      console.error('[readiness] could not check whether the organiser went ahead', { planId, code: error.code });
+      return false;
+    }
+    return (data ?? []).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -144,9 +170,18 @@ export async function planReadiness(
     return { userId, name, ready: !asked || answered, answered };
   });
 
+  const allReady = rows.length > 0 && rows.every(r => r.ready);
+  // Only asked when somebody is still out: a trip everybody answered has
+  // nothing to go ahead past.
+  if (!allReady && rows.length > 0 && await wentAheadWith(db, planId)) {
+    return {
+      members: rows.map(r => ({ ...r, ready: true })),
+      allReady: true, waitingOn: [], solo: false, wentAhead: true,
+    };
+  }
   return {
     members: rows,
-    allReady: rows.length > 0 && rows.every(r => r.ready),
+    allReady,
     waitingOn: rows.filter(r => !r.ready).map(r => firstNameOf(r.name)),
     solo: false,
   };

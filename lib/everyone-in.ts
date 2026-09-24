@@ -8,6 +8,7 @@
 // first-write-wins claim the nudge uses, keyed on the trip, with no window.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { notifyUsers, type Sender } from './notify-user.ts';
+import { wentAheadWith } from './plan-readiness.ts';
 
 export const EVERYONE_IN_ACTION = 'everyone_in_announced';
 
@@ -71,6 +72,10 @@ export async function announceIfEveryoneIn(
   const memberIds = (members ?? []).map(m => String(m.user_id));
   const answeredIds = (said ?? []).filter(r => r.submitted_at).map(r => String(r.user_id));
   if (!everyoneIn(memberIds, answeredIds)) return false;
+  // The organiser went ahead with who had answered, so the ideas were built
+  // before this last answer: "built from every one of your answers" would
+  // be untrue.
+  if (await wentAheadWith(db, plan.id)) return false;
   if (!(await claimOnce(db, plan.id, byUserId))) return false;
 
   const night = plan.type === 'restaurant';

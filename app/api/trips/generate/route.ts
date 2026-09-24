@@ -10,12 +10,13 @@ import {
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
 import { withoutVetoed, tripBreach } from '@/lib/vetoes';
-import { planReadiness } from '@/lib/plan-readiness';
+import { planReadiness, wentAheadWith, type ReadinessReport } from '@/lib/plan-readiness';
 import { generationHints } from '@/lib/traveler-profile';
 import { readProfiles } from '@/lib/quiz-store';
 import {
   readGroupAnswers, answersBlock, standingWishesBlock, groupFraming, attributes, nightPrefsFrom,
   optionsGate, notYetAnswered, isUndecided, type GroupAnswers,
+  mayGoAhead, goAheadDecision, whoShapesIt, PLANNED_WITH_ANSWERED,
 } from '@/lib/group-answers';
 import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
 import { placeFromGoal, nightCityFor, partyFromGoal } from '@/lib/goal';
@@ -153,6 +154,10 @@ export async function POST(req: NextRequest) {
     // and everybody's votes on it. Without this a Find on a plan that
     // already has ideas shows those ideas and builds nothing.
     regenerate = false,
+    // "Plan with who's answered": the organiser going ahead without waiting
+    // for the last answers. Organiser only, and only once somebody besides
+    // them has answered or the trip is 48 hours old (lib/group-answers.ts).
+    withAnswered = false,
   } = body;
   // `let`: a group trip's own answers fill these when the caller did not
   // send them — which is every time somebody other than the organiser
@@ -220,7 +225,10 @@ export async function POST(req: NextRequest) {
     }, { status: 409 });
   }
 
-  let groupPlan: { id: string; created_by: string | null; type: string | null; solo_mode: boolean | null; title: string | null } | null = null;
+  let groupPlan: { id: string; created_by: string | null; created_at: string | null; type: string | null; solo_mode: boolean | null; title: string | null } | null = null;
+  // Set when the organiser went ahead with who had answered: whose wishes
+  // the prompt may carry. Null means everybody's, as it always was.
+  let answeredOnly: Set<string> | null = null;
   // Whether plans.trip_options exists yet (sql/trip-options-2026-09-23.sql),
   // and which saved set a regenerate is replacing.
   let ideasAvailable = false;
@@ -228,7 +236,7 @@ export async function POST(req: NextRequest) {
   let groupAnswers: GroupAnswers | null = null;
   if (groupPlanId) {
     const { data: row } = await supabase
-      .from('plans').select('id, group_id, created_by, type, solo_mode, destination_style, title, status')
+      .from('plans').select('id, group_id, created_by, created_at, type, solo_mode, destination_style, title, status')
       .eq('id', String(groupPlanId)).maybeSingle();
     // Membership was checked against groupId; the plan has to be in that same
     // group, or a member of one group could read another group's answers
@@ -238,6 +246,7 @@ export async function POST(req: NextRequest) {
     }
     groupPlan = {
       id: String(row.id), created_by: row.created_by ? String(row.created_by) : null,
+      created_at: row.created_at ? String(row.created_at) : null,
       type: row.type ? String(row.type) : null, solo_mode: row.solo_mode === true,
       title: row.title ? String(row.title) : null,
     };
@@ -297,7 +306,7 @@ export async function POST(req: NextRequest) {
     // which is the client's to set. Rebuilding a saved plan's days is gated
     // below, by the rule that was already there for it.
     if (isGroup && fromAnswers) {
-      let readiness;
+      let readiness: ReadinessReport;
       try {
         readiness = await planReadiness(supabase, groupPlan.id, String(groupId), false);
       } catch {
@@ -309,13 +318,45 @@ export async function POST(req: NextRequest) {
       }
       // Never solo here: isGroup was already decided from the member count, and
       // somebody leaving between the two reads must not open the gate.
-      const gate = optionsGate(readiness.members, false);
+      const gate = readiness.wentAhead ? { open: true, waitingOn: [] } : optionsGate(readiness.members, false);
+      const organiser = isOrganiser({ role: ctx.role, createdBy: groupPlan.created_by, userId: ctx.user.id });
+      if (withAnswered === true) {
+        // Server-enforced: only the organiser can go ahead, whatever the
+        // screen offered.
+        const go = goAheadDecision({
+          organiser,
+          allowed: gate.open || mayGoAhead({ members: readiness.members, createdBy: groupPlan.created_by, createdAt: groupPlan.created_at }),
+        });
+        if (go.action === 'refuse') return NextResponse.json({ error: go.error }, { status: go.status });
+        if (!gate.open) {
+          // Recorded before anything is built, so the days of each idea, the
+          // vote and any rebuild agree the trip went ahead. Without the row
+          // they would all still be waiting, so a failed write refuses.
+          const { error: noted } = await supabase.from('audit_logs').insert({
+            user_id: ctx.user.id, action: PLANNED_WITH_ANSWERED, resource: 'plans', resource_id: groupPlan.id, success: true,
+            metadata: { answered: readiness.members.filter(m => m.answered).length, members: readiness.members.length },
+          });
+          if (noted) {
+            console.error('[generate] could not record going ahead with who has answered', { plan: groupPlan.id, code: noted.code });
+            return NextResponse.json(
+              { error: "We couldn't start this with who's answered just now — try again in a moment." },
+              { status: 503 },
+            );
+          }
+          console.log('[generate] organiser went ahead with who has answered', {
+            plan: groupPlan.id, answered: readiness.members.filter(m => m.answered).length, members: readiness.members.length,
+          });
+          gate.open = true;
+          readiness = { ...readiness, wentAhead: true };
+        }
+      }
       if (!gate.open) {
         return NextResponse.json({
           error: notYetAnswered(gate.waitingOn, 'Reach finds your trips once everyone has.'),
           waitingOn: gate.waitingOn,
         }, { status: 409 });
       }
+      if (readiness.wentAhead) answeredOnly = new Set(readiness.members.filter(m => m.answered).map(m => m.userId));
     }
 
     const read = await readGroupAnswers(supabase, groupPlan.id);
@@ -433,15 +474,27 @@ export async function POST(req: NextRequest) {
     console.error('[generate] could not read the group', { groupId, code: (fallback ?? full).error?.code });
   }
 
-  const prefs = (members || []).map((m: any) => m.users).filter(Boolean);
+  // Everybody going — the party size, and the constraints that protect each
+  // of them (dietary needs, hard nos, somebody not drinking) — and, apart
+  // from that, whose wishes shape it. The two are the same list unless the
+  // organiser went ahead with who had answered: then somebody who has not
+  // said what they want from this trip adds nothing to what it is.
+  const everyone = (members || []).map((m: any) => m.users).filter(Boolean);
+  if (!answeredOnly && isGroup && detailIsPlan && await wentAheadWith(supabase, String(detailTripId))) {
+    const { data: said, error: saidErr } = await supabase
+      .from('plan_preferences').select('user_id, submitted_at').eq('plan_id', String(detailTripId));
+    if (saidErr) console.error('[generate] could not read who answered for a trip that went ahead', { plan: detailTripId, code: saidErr.code });
+    else answeredOnly = new Set((said ?? []).filter((r: any) => r.submitted_at).map((r: any) => String(r.user_id)));
+  }
+  const prefs = whoShapesIt(everyone, answeredOnly);
   // Who is going: the Reach members, or the party the sentence names, if
   // that is more. "Night out with my buddy … for his birthday" came from a
   // one-member group and was planned — and worded — as an evening alone:
   // "a menu built for eating slowly on your own". The buddy is not on Reach;
   // he is still going.
   const saidParty = partyFromGoal(goal);
-  const groupSize = Math.max(prefs.length || 2, saidParty ?? 0);
-  const notOnReach = Math.max(0, groupSize - (prefs.length || groupSize));
+  const groupSize = Math.max(everyone.length || 2, saidParty ?? 0);
+  const notOnReach = Math.max(0, groupSize - (everyone.length || groupSize));
   // Travelling alone is a different trip, not a smaller one. The prompt used
   // to say "GROUP: 1 people" and then plan for a committee.
   const solo = groupSize <= 1;
@@ -484,7 +537,7 @@ export async function POST(req: NextRequest) {
   }
 
   const allVetoes = [...new Set([
-    ...prefs.flatMap((p: any) => p.no_way_jose || []),
+    ...everyone.flatMap((p: any) => p.no_way_jose || []),
     ...(tripPrefs.noWayJose || []),
     // What anybody going said, for this trip, that they will not do.
     ...(groupAnswers?.vetoes ?? []),
@@ -495,7 +548,7 @@ export async function POST(req: NextRequest) {
   // they go in unnamed, under the rule that nobody's are ever said back:
   // everything the model writes here is shown to all of them.
   const groupWanted = !detailTripId && groupAnswers ? answersBlock(groupAnswers, { group: isGroup }) : '';
-  const dietaryNeeds = [...new Set(prefs.map((p: any) => p.dietary_needs).filter((d: any) => d && d !== 'none'))];
+  const dietaryNeeds = [...new Set(everyone.map((p: any) => p.dietary_needs).filter((d: any) => d && d !== 'none'))];
   const cuisines = [...new Set(prefs.flatMap((p: any) => p.cuisines || []))];
   const musicGenres = [...new Set(prefs.flatMap((p: any) => p.music_genres || []))];
   const activityVibes = [...new Set(prefs.flatMap((p: any) => p.activity_vibe || []))];
@@ -529,7 +582,7 @@ export async function POST(req: NextRequest) {
   // "each day from morning to night", "the last night" — would tell the
   // model to plan a day it was never asked for.
   const travelProfiles = await readProfiles(supabase, prefs.map((p: any) => p.id));
-  const someoneSober = !solo && prefs.some((p: any) => String(p.drink_style || '').trim().toLowerCase() === 'not drinking');
+  const someoneSober = !solo && everyone.some((p: any) => String(p.drink_style || '').trim().toLowerCase() === 'not drinking');
   const hintsBlock = (evening: boolean) => {
     const hints = generationHints(travelProfiles, { evening });
     // Somebody in a group not drinking is never said out loud, on any screen.
@@ -1655,7 +1708,7 @@ Return JSON only, shaped exactly like this:
         ]),
       ].filter(Boolean);
       const who = {
-        names: prefs.map((p: any) => String(p.name || '').trim().split(/\s+/)[0]).filter(Boolean),
+        names: everyone.map((p: any) => String(p.name || '').trim().split(/\s+/)[0]).filter(Boolean),
         said, title: groupPlan?.title ?? null,
       };
       let removed = 0;

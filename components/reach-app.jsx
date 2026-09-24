@@ -6756,8 +6756,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           budgetPerPerson:parseInt(bud||budget)||null,
           departureCity:departure?.city||null,
           departureAirport:departure?.airport||null,
-          // What they wrote when asked what the trip is about. The server
-          // leads on it, including reading a place out of it.
+          // What they wrote about the trip; the server leads on it, and reads a place out of it.
           goalBlurb:prefs?.goalBlurb||null,
           userLat:userLocation?.lat||null,
           userLng:userLocation?.lng||null,
@@ -6765,9 +6764,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           tripPrefs:prefs,
           mode:extra.mode||"trip",
           nightPrefs:extra.nightPrefs||{},
-          // A group trip: waits for, and is built from, everybody's answers.
-          planId:extra.planId||null,
+          planId:extra.planId||null, // a group trip: waits for, and is built from, everybody's answers
           regenerate:extra.regenerate===true, // the organiser swapping the saved ideas for three new ones
+          withAnswered:extra.withAnswered===true, // organiser going ahead with who has answered; the server checks
         }),
       });
       if(res.ok){
@@ -7153,7 +7152,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     const sd=p.startDate||"";
     const ed=night?sd:(p.endDate||"");
     setStartDate(sd);setEndDate(ed);setBudget(p.budget?String(p.budget):"");setNightOut(night);
-    generate(sd,ed,p.budget||null,{},{mode:night?"night":"trip",planId:waitPlanId,regenerate:opts.regenerate===true});
+    generate(sd,ed,p.budget||null,{},{mode:night?"night":"trip",planId:waitPlanId,regenerate:opts.regenerate===true,withAnswered:opts.withAnswered===true});
   };
 
   // The trip this screen is about, and whether this person organises it —
@@ -7319,6 +7318,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         const stillToAnswer=members.filter(m=>!m.answered);
         const haveAnswered=members.filter(m=>m.answered);
         const nameOf=m=>m.userId===me?"you":first(m.name);
+        // The organiser can go ahead with who has answered once somebody
+        // besides whoever made the trip has, or it is 48 hours old — the same
+        // rule the server holds (lib/group-answers.ts mayGoAhead).
+        const madeAt=Date.parse(wp.createdAt||"");
+        const mayGoAhead=iOrganise&&!allAnswered&&members.length>0
+          &&(members.some(m=>m.answered&&m.userId!==wp.createdBy)
+            ||(Number.isFinite(madeAt)&&Date.now()-madeAt>=48*60*60*1000));
         return(
           <div style={{flex:1,overflowY:"auto",padding:"0 20px 30px"}}>
             <div style={{fontSize:12.5,color:C.t3,marginBottom:4}}>
@@ -7339,6 +7345,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                 </div>
                 {members.length>0&&!allAnswered&&(
                   <div style={{fontSize:13.5,color:C.t1,lineHeight:1.6,marginBottom:12}}>
+                    {iOrganise&&(
+                      <div style={{fontWeight:600,marginBottom:2}}>{haveAnswered.length} of {members.length} {haveAnswered.length===1?"has":"have"} answered.</div>
+                    )}
                     {stillToAnswer.length>0&&(
                       <div><strong>Still to answer:</strong> {namesList(stillToAnswer.map(nameOf))}</div>
                     )}
@@ -7401,15 +7410,31 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
               </div>
             )}
 
-            {/* No override. The owner's rule is that it waits. */}
-            <button className="bp" disabled={!allAnswered||generating} onClick={()=>findOurTrips(wp)}>
-              {allAnswered?"":"🔒 "}{nightWait?"Find our nights out":"Find our trips"}
-            </button>
-            <div style={{fontSize:12,color:C.t3,marginTop:8,lineHeight:1.5,textAlign:"center"}}>
-              {allAnswered
-                ?"Anyone in the group can press this."
-                :"Unlocks when everyone's in"}
-            </div>
+            {/* It waits for everyone — except that one slow friend must not
+                stall the trip for ever, so the organiser may go ahead with
+                who has answered. Nobody else is offered it; the server
+                refuses anybody else (403). */}
+            {mayGoAhead?(
+              <>
+                <button className="bp" disabled={generating} onClick={()=>findOurTrips(wp,{withAnswered:true})}>
+                  Plan with who's answered
+                </button>
+                <div style={{fontSize:12,color:C.t3,marginTop:8,lineHeight:1.5,textAlign:"center"}}>
+                  Everyone in the group is still going. Reach just won't know what the others want from this {nightWait?"night":"trip"}.
+                </div>
+              </>
+            ):(
+              <>
+                <button className="bp" disabled={!allAnswered||generating} onClick={()=>findOurTrips(wp)}>
+                  {allAnswered?"":"🔒 "}{nightWait?"Find our nights out":"Find our trips"}
+                </button>
+                <div style={{fontSize:12,color:C.t3,marginTop:8,lineHeight:1.5,textAlign:"center"}}>
+                  {allAnswered
+                    ?"Anyone in the group can press this."
+                    :"Unlocks when everyone's in"}
+                </div>
+              </>
+            )}
             <CallOffPlan plan={wp} group={group} me={me} um={um} updatePlanOnServer={updatePlanOnServer}
               updateGroup={updateGroup} toast={toast} onDone={onBack}/>
           </div>
