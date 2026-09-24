@@ -15,7 +15,8 @@ import { partySize } from '@/lib/participation';
 import { airlineOnly } from '@/lib/booking/approval';
 import { airlineHandoff } from '@/lib/booking/duffel-map';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
-import { findDuplicate, findStale, identityOf as findKey } from '@/lib/booking/duplicate';
+import { identityOf as findKey } from '@/lib/booking/duplicate';
+import { readParty, restated, settle, writeRepriced, type Party } from '@/lib/booking/reprice';
 import { bookingFacts } from '@/lib/contracts/booking';
 import { track } from '@/lib/track';
 
@@ -130,36 +131,42 @@ export async function POST(req: NextRequest) {
   }
   const existing = already ?? [];
 
-  // Whether a quote sized for a different number of people may be replaced.
-  // Not once anybody has paid: what they paid against is the total, and the
-  // same lock holds sitting things out and holding them. Asked once, and only
-  // if some item needs it; unknown is treated as paid.
-  let paidInto: boolean | null = null;
-  const anyonePaid = async () => {
-    if (paidInto !== null) return paidInto;
+  // Whether anybody has paid into this plan. A quote priced for a different
+  // number of people is priced again only while nobody has: what they paid
+  // against is the total, and the same lock holds sitting things out and
+  // holding them. Unknown is treated as paid. `anyonePaid` is asked once per
+  // request; `paidNow` afresh, just before a new price is written.
+  const paidNow = async () => {
     const { data, error } = await ctx.db.from('contributions')
       .select('id').eq('plan_id', body.planId).eq('status', 'succeeded').limit(1);
     if (error) console.error('[bookings] could not check payments before re-pricing', { plan: body.planId, code: error.code });
-    paidInto = !!error || !!data?.length;
-    return paidInto;
+    return !!error || !!data?.length;
   };
+  let paidInto: boolean | null = null;
+  const anyonePaid = async () => (paidInto ??= await paidNow());
+
+  // Who is on each booking — the group, less anybody kept off it — counted
+  // here, never taken from the request (lib/booking/reprice.ts). Read only if
+  // something asked for is already on the plan; null when it cannot be read,
+  // and then nothing is priced again on a guess.
+  let going: Party | null | undefined;
+  const whoIsGoing = async () => (going === undefined
+    ? (going = await readParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null }, body.planId))
+    : going);
 
   for (const item of body.items as BookingItemRequest[]) {
-    // The same flight or hotel, quoted for a different number of people and
-    // not yet bought — a trip for one that somebody has since joined. It is
-    // replaced by the quote this request makes, never handed back: a one-seat
-    // price shown to two people is a wrong number. On a plan somebody has paid
-    // into it stays exactly as it is, and is handed back like any duplicate.
-    //
-    // Already booked, and still live. Hand back what is there rather than
-    // making a second one. A failed or cancelled booking is deliberately not
-    // a duplicate — it is the reason somebody is pressing the button again.
-    // A live row of the right size wins over replacing one of the wrong size.
-    const dup = dryRun ? null : findDuplicate(existing, item as unknown as Record<string, unknown>);
-    const unsized = dryRun || dup ? null : findStale(existing, item as unknown as Record<string, unknown>);
-    const stale = unsized && !(await anyonePaid()) ? unsized : null;
-    const twin = dup ?? (stale ? null : unsized);
-    if (twin) {
+    // Already on the list, and still live: hand back what is there rather
+    // than making a second one. A failed or cancelled booking is deliberately
+    // not a duplicate — it is the reason somebody is pressing the button
+    // again. The one exception is a proposal priced for a different number
+    // of people than are now on it, asked for at exactly the number this
+    // route counts: that row is priced again, in place (settle, in
+    // lib/booking/reprice.ts, holds the order).
+    const asItem = item as unknown as Record<string, unknown>;
+    const known = !dryRun && existing.some(r => findKey(r.request_payload as Record<string, unknown>) === findKey(asItem) && findKey(asItem));
+    const match = known ? await settle(existing, asItem, await whoIsGoing(), anyonePaid) : { kind: 'new' as const };
+    if (match.kind === 'twin') {
+      const twin = match.row;
       console.log('[bookings] already booked — returning the existing one', {
         plan: body.planId, vertical: item.vertical, status: twin.status,
       });
@@ -198,42 +205,26 @@ export async function POST(req: NextRequest) {
       } as BookingItemResult);
       continue;
     }
-
-    // Takes the wrongly sized quote off the list, and only while it is still
-    // unbought — if somebody approved it in the meantime it is a real booking
-    // and is left alone. Unlinked from its itinerary line, so the next open of
-    // checkout can quote that line afresh if this attempt does not replace it.
-    const retireStale = async (): Promise<boolean> => {
-      if (!stale?.id) return true;
-      const { data: retired, error: retireErr } = await ctx.db.from('bookings')
-        .update({ status: 'cancelled', itinerary_item_id: null, updated_at: new Date().toISOString() })
-        .eq('id', stale.id).in('status', ['awaiting_approval', 'quoted'])
-        .select('id');
-      if (retireErr || !retired?.length) {
-        console.error('[bookings] could not retire a quote sized for a different party', {
-          plan: body.planId, vertical: item.vertical, code: retireErr?.code ?? 'changed',
-        });
-        return false;
-      }
-      stale.status = 'cancelled';
-      return true;
-    };
-    // A re-price that did not work still takes the old quote off: left there,
-    // it is one person's fare split between two, and paying against it would
-    // lock that in. The line is quoted again on the next open of checkout,
-    // which is what happens to any line that could not be priced.
-    const staleFailed = async (why?: string) => {
-      const gone = await retireStale();
-      return gone
-        ? `This was priced for a different number of people and couldn't be re-priced for everyone going${why ? ` — ${why}` : ''}. It's off the total until it can be; reopen checkout to try again.`
-        : (why ?? 'This could not be re-priced just now.');
-    };
+    // Priced again with the row's own request — the pinned hotel, the chosen
+    // flight numbers — sized for who is on it. Nothing else the request says
+    // is trusted.
+    const stale = match.kind === 'stale' ? match : null;
+    const ask: BookingItemRequest = stale
+      ? restated<BookingItemRequest & Record<string, unknown>>(stale.row, stale.party,
+        { itineraryItemId: (item as { itineraryItemId?: string }).itineraryItemId } as Partial<BookingItemRequest & Record<string, unknown>>)
+      : item;
 
     if (item.vertical === 'flight' && flightsBlocked) {
+      // A stale flight keeps its row as it is, and funding goes on refusing
+      // money against it until the newcomer's details are in and it is
+      // priced again. Names, not details: who to go and ask.
+      const why = stale
+        ? await writeRepriced(ctx.db, stale.row, ask as unknown as Record<string, unknown>, { status: 'failed', error: flightsBlocked }, paidNow)
+        : null;
       keep(item, {
         vertical: 'flight', mode: 'native', status: 'failed', provider: 'none',
-        // Names, not details: who to go and ask.
-        error: stale ? await staleFailed(flightsBlocked) : flightsBlocked,
+        error: why && !why.ok ? why.error : flightsBlocked,
+        ...(stale ? { stillPriced: true } : {}),
       });
       continue;
     }
@@ -245,9 +236,9 @@ export async function POST(req: NextRequest) {
       continue;
     }
     // Attach shared context
-    item.planId = body.planId;
+    ask.planId = body.planId;
     // Trust the plan's own group, not whatever the client claimed.
-    item.groupId = ctx.plan.group_id as string;
+    ask.groupId = ctx.plan.group_id as string;
     // Never undefined: providers read this to work out occupancy, and an
     // undefined array crashed the hotel quote with "cannot read properties of
     // undefined" — a five-hundred error for a trip nobody had named anyone on
@@ -256,38 +247,38 @@ export async function POST(req: NextRequest) {
     // Nobody is named at quote time any more: approval names everybody on the
     // booking from their saved details, so nothing sent here is trusted to
     // stand for who is going.
-    item.travelers = [];
-    item.party = party;
-    if (item.flight) item.flight = { ...item.flight, seats: party };
-    if (item.restaurant) item.restaurant = { ...item.restaurant, partySize: party };
+    ask.travelers = [];
+    if (!stale) {
+      item.party = party;
+      if (item.flight) item.flight = { ...item.flight, seats: party };
+      if (item.restaurant) item.restaurant = { ...item.restaurant, partySize: party };
+    }
 
     try {
-      let result = await provider.quote(item);
-      if (item.vertical === 'flight' && toAirline && result.status === 'quoted' && item.flight) {
-        result = airlineHandoff(result, item.flight);
+      let result = await provider.quote(ask);
+      if (ask.vertical === 'flight' && toAirline && result.status === 'quoted' && ask.flight) {
+        result = airlineHandoff(result, ask.flight);
       }
       if (!dryRun && result.status === 'quoted') {
         result.status = 'awaiting_approval' as BookingItemResult['status'];
       }
       keep(item, result);
 
-      if (stale?.id) {
-        if (result.status === 'failed') {
-          result.error = await staleFailed(result.error);
-          continue;
-        }
-        // Retired before the new row is written: both may carry the same
-        // idempotency key, and the database allows one live row per key.
-        const heldBefore = stale.status === 'quoted';
-        if (!await retireStale()) {
+      if (stale) {
+        // Written onto the row it replaces, or not at all. A held quote never
+        // gets here: settle hands one back as it is.
+        const wrote = await writeRepriced(ctx.db, stale.row, ask as unknown as Record<string, unknown>, result, paidNow);
+        if (!wrote.ok) {
           result.status = 'failed' as BookingItemResult['status'];
-          result.error = "This changed while we were re-pricing it — reopen checkout to see where it stands.";
+          result.error = wrote.error;
+          // The row is still there, in the total at its old price.
+          result.stillPriced = true;
           continue;
         }
-        // Somebody holding it (lib/booking/charged.ts) still is. Only a
-        // proposal becomes a hold again: anything the provider has already
-        // answered for is what it is.
-        if (heldBefore && result.status === 'awaiting_approval') result.status = 'quoted' as BookingItemResult['status'];
+        // The same thing asked for twice in one payload is handed back the
+        // second time, as it now stands.
+        Object.assign(stale.row, { request_payload: ask, price_cents: result.priceCents ?? null });
+        continue;
       }
 
       if (!dryRun) {
@@ -389,7 +380,13 @@ export async function POST(req: NextRequest) {
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Provider error';
-      keep(item, { vertical: item.vertical, mode: 'native', status: 'failed', provider: provider.name, error: msg });
+      const why = stale
+        ? await writeRepriced(ctx.db, stale.row, ask as unknown as Record<string, unknown>, { status: 'failed', error: msg }, paidNow)
+        : null;
+      keep(item, {
+        vertical: item.vertical, mode: 'native', status: 'failed', provider: provider.name,
+        error: why && !why.ok ? why.error : msg, ...(stale ? { stillPriced: true } : {}),
+      });
     }
   }
 

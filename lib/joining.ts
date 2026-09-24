@@ -39,11 +39,17 @@
 // claimed at sign-in). Each of those has already decided the person may join;
 // this only keeps the group's plans honest about it.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { midClaim } from './booking/claim.ts';
+import { reachBuys } from './booking/charged.ts';
+import { flightSearchUrl } from './booking/duffel-map.ts';
 
 /** PostgREST's code for a table that does not exist: the migration has not run. */
 const NO_TABLE = 'PGRST205';
 
-export type PriorBooking = { id: string | number; plan_id: string | number; status?: string | null };
+export type PriorBooking = {
+  id: string | number; plan_id: string | number; status?: string | null;
+  approved_at?: unknown; updated_at?: unknown;
+};
 
 /**
  * Bought: with a provider, or confirmed by one — a seat, a room or a ticket in
@@ -51,7 +57,17 @@ export type PriorBooking = { id: string | number; plan_id: string | number; stat
  * that is a link to somebody else's checkout, and nothing has been bought
  * through Reach at all.
  */
-export const BOUGHT: ReadonlySet<string> = new Set(['confirmed', 'pending']);
+export const BOUGHT: ReadonlySet<string> = new Set(['confirmed', 'pending', 'booking']);
+
+/**
+ * Bought, or at the provider this minute. An approval mid-booking named its
+ * travellers before this person was in the group, so what it buys is not
+ * theirs: before sql/wave1-bookings-2026-09-22.sql that row still reads
+ * 'awaiting_approval', and only its claim stamp says so (midClaim).
+ */
+export function isBought(b: { status?: string | null; approved_at?: unknown; updated_at?: unknown }): boolean {
+  return BOUGHT.has(String(b?.status ?? '')) || midClaim(b ?? {});
+}
 /** Priced and nothing bought: a proposal, or a quote somebody is holding (lib/booking/charged.ts). */
 const UNBOUGHT = new Set(['awaiting_approval', 'quoted']);
 /** What is sized by headcount, and so re-sized when somebody joins (lib/booking/resize.ts). */
@@ -79,7 +95,7 @@ export function latecomerOptOuts(
   for (const b of bookings || []) {
     if (b?.id == null || b?.plan_id == null) continue;
     if (b.status === 'failed' || b.status === 'cancelled') continue;
-    if (!BOUGHT.has(String(b.status ?? '')) && !paidPlans.has(String(b.plan_id))) continue;
+    if (!isBought(b) && !paidPlans.has(String(b.plan_id))) continue;
     const key = `${b.plan_id}|${b.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -108,11 +124,12 @@ export type TripHolds = { known?: boolean; bought: boolean; unbought: boolean; p
  * (lib/booking/resize.ts); a table or an activity keeps the quote it has.
  */
 export function tripHolds(
-  bookings: { status?: string | null; vertical?: string | null }[] | null | undefined, paidCents: number,
+  bookings: { status?: string | null; vertical?: string | null; approved_at?: unknown; updated_at?: unknown }[] | null | undefined,
+  paidCents: number,
 ): TripHolds {
   const rows = bookings ?? [];
   return {
-    bought: rows.some(b => BOUGHT.has(String(b?.status ?? ''))),
+    bought: rows.some(b => isBought(b)),
     unbought: rows.some(b => UNBOUGHT.has(String(b?.status ?? '')) && RESIZED.has(String(b?.vertical))),
     paidCents: Math.max(0, Math.round(paidCents || 0)),
   };
@@ -129,7 +146,15 @@ const usd = (cents: number) =>
 const OWN_BOOKING = "Reach can't add someone to a booking it has already made, so they'd book their own seat or room directly with the airline or hotel.";
 // Flights and rooms only: those are what the bridge re-sizes. A table or an
 // activity keeps the quote it has.
-const REPRICED = "flights and rooms not bought yet are priced for everyone going the next time checkout opens, and the cost is split between you and them.";
+//
+// What the code does, and no more. Nothing is re-priced by the join itself:
+// opening checkout prices them again for everyone going (lib/booking/
+// reprice.ts), and until that happens nobody can pay (funding refuses
+// stale_quotes). A flight cannot be priced for a passenger who has not given
+// their travel details — the bridge refuses to quote it — so that is said.
+// "The cost is split between you and them" went: a share is who is on each
+// booking, and it is only true once the new price is on it.
+const REPRICED = "flights and rooms not bought yet have to be priced again for everyone going before anybody pays — that happens when checkout is opened, and a flight can't be priced until they've added their travel details.";
 
 /**
  * What the screen says beside "Bring someone along".
@@ -163,32 +188,152 @@ export function bringAlongNote(state: TripHolds): string {
   return "It stays a trip for one until they join. After that it's planned as a group, and they get a say.";
 }
 
+/** A flight or hotel somebody is not on, and where they can get their own. */
+export interface NotOn {
+  vertical: 'flight' | 'hotel';
+  /**
+   * Bought with the airline or hotel (or being bought this minute). False is
+   * paid towards and not yet bought: a different sentence, because "you
+   * joined after it was booked" about a flight nobody has bought is untrue.
+   */
+  booked: boolean;
+  /** The flights by number or the hotel by name, when the row says. */
+  what: string | null;
+  /** A search that sells it, prefilled from the row; null when the row gives nothing to search by. */
+  link: { href: string; label: string } | null;
+}
+
+type Payload = Record<string, unknown> | null | undefined;
+const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' ? v as Record<string, unknown> : null);
+const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+/**
+ * Where somebody not on a booking can get their own, from what the row
+ * holds and nothing else.
+ *
+ * A flight: Google Flights, prefilled with the same airports and dates, and
+ * the flight numbers said in words. Checked with curl on 2026-09-23: the
+ * route-and-dates query is read by Google Flights (the page comes back
+ * naming both cities); the same query with flight numbers in it is not, and
+ * opens on an empty search — so the numbers are said, not searched.
+ *
+ * A hotel: its own name and address on Google Maps, which carries its site
+ * and phone. LiteAPI gives us the hotel's name and address and no website,
+ * so a link to "the hotel's own page" would be a guess. Without a name, the
+ * hotels in the trip's city.
+ */
+export function ownBookingLink(row: { vertical?: unknown; request_payload?: unknown; response_payload?: unknown }): NotOn['link'] {
+  const req = obj(row.request_payload) as Payload;
+  const res = obj(row.response_payload) as Payload;
+  if (row.vertical === 'flight') {
+    const f = obj(req?.flight);
+    const href = flightSearchUrl({
+      origin: str(f?.origin) ?? undefined, destination: str(f?.destination) ?? undefined,
+      departDate: str(f?.departDate) ?? undefined, returnDate: str(f?.returnDate) ?? undefined,
+    });
+    return href ? { href, label: 'Search these dates on Google Flights' } : null;
+  }
+  if (row.vertical === 'hotel') {
+    const h = obj(res?.hotel);
+    const name = str(h?.name);
+    const city = str(obj(req?.hotel)?.city);
+    const q = name ? [name, str(h?.address) ?? city].filter(Boolean).join(', ') : city ? `hotels in ${city}` : null;
+    if (!q) return null;
+    return {
+      href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`,
+      label: name ? `Find ${name} on Google Maps` : `Hotels in ${city} on Google Maps`,
+    };
+  }
+  return null;
+}
+
+/** "AA1234 and AA567 out, AA890 back" from an offerKey ("AA1234.AA567/AA890"). */
+export function flightNumbers(key: unknown): string | null {
+  const k = str(key);
+  if (!k) return null;
+  const legs = k.split('/').map(l => l.split('.').filter(Boolean));
+  if (!legs.length || legs.some(l => !l.length)) return null;
+  const say = (l: string[]) => l.join(' and ');
+  return legs.length === 2 ? `${say(legs[0])} out, ${say(legs[1])} back` : say(legs[0]);
+}
+
+function whatItIs(row: { vertical?: unknown; request_payload?: unknown; response_payload?: unknown }): string | null {
+  const req = obj(row.request_payload);
+  const res = obj(row.response_payload);
+  if (row.vertical === 'flight') return flightNumbers(obj(req?.flight)?.offerKey ?? res?.offerKey);
+  if (row.vertical === 'hotel') return str(obj(res?.hotel)?.name);
+  return null;
+}
+
 /**
  * Which flights and hotels each member is not on, for a screen to say so.
  * Only those two: they cannot be sat out by choice (the participation route
  * refuses it), so an opt-out on one is somebody who joined after it was
  * bought or paid for (latecomerOptOuts). A dinner somebody chose to sit out
  * is their own business and not what this reports.
+ *
+ * Only what Reach buys, held or not: a flight handed to the airline's own
+ * site was never Reach's to put anybody on. Failed and cancelled rows are
+ * nothing to be on.
  */
 export function notOnBooked(
-  bookings: { id?: unknown; vertical?: string | null }[] | null | undefined,
+  bookings: {
+    id?: unknown; vertical?: string | null; status?: string | null; mode?: unknown; provider?: unknown;
+    request_payload?: unknown; response_payload?: unknown; approved_at?: unknown; updated_at?: unknown;
+  }[] | null | undefined,
   skips: { ref: string; userId: string }[] | null | undefined,
   memberIds: string[],
-): Record<string, ('flight' | 'hotel')[]> {
-  const kind = new Map<string, 'flight' | 'hotel'>();
+): Record<string, NotOn[]> {
+  const byId = new Map<string, NotOn>();
   for (const b of bookings ?? []) {
-    if (b?.id != null && RESIZED.has(String(b.vertical))) kind.set(String(b.id), b.vertical as 'flight' | 'hotel');
+    if (b?.id == null || !RESIZED.has(String(b.vertical))) continue;
+    if (b.status === 'failed' || b.status === 'cancelled' || !reachBuys(b)) continue;
+    byId.set(String(b.id), {
+      vertical: b.vertical as 'flight' | 'hotel', booked: isBought(b), what: whatItIs(b), link: ownBookingLink(b),
+    });
   }
   const members = new Set(memberIds);
-  const out: Record<string, ('flight' | 'hotel')[]> = {};
+  const out: Record<string, NotOn[]> = {};
+  const seen = new Set<string>();
   for (const s of skips ?? []) {
-    const v = kind.get(String(s.ref));
-    if (!v || !members.has(s.userId)) continue;
-    const list = (out[s.userId] ??= []);
-    if (!list.includes(v)) list.push(v);
+    const it = byId.get(String(s.ref));
+    if (!it || !members.has(s.userId) || seen.has(`${s.userId}|${s.ref}`)) continue;
+    seen.add(`${s.userId}|${s.ref}`);
+    (out[s.userId] ??= []).push(it);
   }
-  for (const list of Object.values(out)) list.sort();
+  for (const list of Object.values(out)) list.sort((a, b) => a.vertical.localeCompare(b.vertical));
   return out;
+}
+
+const listed = (words: string[]) =>
+  words.length <= 1 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+
+/**
+ * What the newcomer reads about the flights and hotels they are not on.
+ * Booked and paid-for are said apart: a flight bought with the airline has a
+ * seat in somebody's name; one only paid towards has not been bought yet,
+ * and saying it was booked is the kind of sentence that sends somebody to
+ * the airport with nothing.
+ */
+export function notOnSentence(items: NotOn[] | null | undefined): string | null {
+  const list = items ?? [];
+  if (!list.length) return null;
+  const name = (i: NotOn) => {
+    const kind = i.vertical === 'flight' ? 'flight' : 'hotel';
+    return `the ${kind}${i.what ? ` (${i.what})` : ''}`;
+  };
+  const booked = list.filter(i => i.booked);
+  const paid = list.filter(i => !i.booked);
+  const parts: string[] = [];
+  if (booked.length) {
+    parts.push(`${listed(booked.map(name))} ${booked.length > 1 ? 'were' : 'was'} already booked before you joined, and Reach can't add someone to a booking it has already made.`);
+  }
+  if (paid.length) {
+    parts.push(`${listed(paid.map(name))} ${paid.length > 1 ? 'were' : 'was'} already paid for before you joined, so ${paid.length > 1 ? 'they stay' : 'it stays'} priced without you and Reach won't add you to ${paid.length > 1 ? 'them' : 'it'}.`);
+  }
+  const first = parts.join(' ');
+  const where = listed([...new Set(list.map(i => (i.vertical === 'flight' ? 'airline' : 'hotel')))]);
+  return `${first.charAt(0).toUpperCase()}${first.slice(1)} You're not on ${list.length > 1 ? 'them' : 'it'} and aren't charged for ${list.length > 1 ? 'them' : 'it'} — book your own directly with the ${where}.`;
 }
 
 /** `error` is the sentence to show when `ok` is false. */
@@ -215,7 +360,7 @@ export async function beforeJoining(db: SupabaseClient, groupId: string, userId:
   if (!planIds.length) return { ok: true, satOut: 0 };
 
   const { data: bookings, error: bookingsErr } = await db
-    .from('bookings').select('id, plan_id, status').in('plan_id', planIds);
+    .from('bookings').select('id, plan_id, status, approved_at, updated_at').in('plan_id', planIds);
   if (bookingsErr) {
     console.error('[joining] could not read what the group’s trips hold', { groupId, code: bookingsErr.code });
     return { ok: false, error: "We couldn't check what's already booked — try again in a moment." };

@@ -9,15 +9,23 @@
 // title is found by that.
 
 type Req = { itineraryItemId: string; title: string };
-type Res = { status?: string; error?: string; itineraryItemId?: string };
+type Res = { status?: string; error?: string; itineraryItemId?: string; stillPriced?: boolean };
 
-export function failuresByLine(requests: Req[], results: Res[]): { title: string; error: string }[] {
+/**
+ * `stillPriced` marks a line that is in the total at its old price because
+ * pricing it again for who is going failed: it is not missing from the
+ * total, and checkout must not say it is.
+ */
+export function failuresByLine(
+  requests: Req[], results: Res[],
+): { title: string; error: string; stillPriced?: true }[] {
   const titles = new Map(requests.map(r => [r.itineraryItemId, r.title]));
   return results
     .filter(r => r.status === 'failed')
     .map(r => ({
       title: (r.itineraryItemId && titles.get(r.itineraryItemId)) || 'an item',
       error: r.error ?? 'could not be quoted',
+      ...(r.stillPriced ? { stillPriced: true as const } : {}),
     }));
 }
 

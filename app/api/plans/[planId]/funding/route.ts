@@ -12,9 +12,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { report } from '@/lib/report';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { planShares } from '@/lib/money';
-import { planSkips, partySize } from '@/lib/participation';
+import { planSkips } from '@/lib/participation';
 import { netCollectedCents } from '@/lib/booking/approval';
-import { staleForParty } from '@/lib/booking/party';
+import { readParty, staleRows } from '@/lib/booking/reprice';
 import { midClaim } from '@/lib/booking/claim';
 import { notOnBooked } from '@/lib/joining';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -86,6 +86,18 @@ async function fundingStatus(
     .not('error', 'is', null);
   const inDoubt = (open || []).filter(b => midClaim(b) && /^outcome unknown/.test(String(b.error)));
 
+  // The flights and hotels, held ones too, with what a newcomer needs to get
+  // their own: which flights, which hotel, and whether it is bought or only
+  // paid towards. The charged rows above leave out held quotes and carry
+  // neither, so somebody kept off a held room still read "✓ In".
+  const { data: seatsAndRooms, error: seatsErr } = await db
+    .from('bookings')
+    .select('id,vertical,status,mode,provider,request_payload,response_payload,approved_at,updated_at')
+    .eq('plan_id', planId)
+    .in('vertical', ['flight', 'hotel'])
+    .not('status', 'in', '("failed","cancelled")');
+  if (seatsErr) console.error('[funding] could not read the flights and hotels', { planId, code: seatsErr.code });
+
   return {
     targetCents,
     collectedCents,
@@ -95,10 +107,13 @@ async function fundingStatus(
     inDoubt: inDoubt.map(b => ({ id: b.id, vertical: b.vertical, detail: b.detail ?? null })),
     funded: targetCents > 0 && collectedCents >= targetCents,
     memberCount: memberIds.length,
-    // Who is not on a flight or hotel already bought, because they joined
-    // after it was (lib/joining.ts). Without it the plan screen marked them
-    // "✓ In" and "Ready to fly" for a seat that is not theirs.
-    notOnBooked: notOnBooked(bookings, skips, memberIds),
+    // Who is not on a flight or hotel already bought or paid for, because
+    // they joined after it was (lib/joining.ts), with where to get their own.
+    // Without it the plan screen marked them "✓ In" and "Ready to fly" for a
+    // seat that is not theirs.
+    // Null when it could not be read: the screen then says nothing either
+    // way, rather than "✓ In" over a seat that may not be theirs.
+    notOnBooked: seatsErr ? null : notOnBooked(seatsAndRooms, skips, memberIds),
     myShareCents,
     myPaidCents,
     myRemainingCents: Math.max(0, myShareCents - myPaidCents),
@@ -231,13 +246,22 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     console.error('[funding] could not read the bookings waiting', { planId: params.planId, code: waitingError.code });
     return NextResponse.json({ error: 'Could not check this trip just now. Nothing has been charged.' }, { status: 500 });
   }
-  const party = await partySize(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null });
-  const stale = staleForParty(waiting, party);
+  // Judged per booking, against who is on that booking — the group less
+  // anybody kept off it — which is who approval names, and the same rule
+  // /bookable and /api/bookings price again by (lib/booking/reprice.ts). One
+  // number for the whole plan refused, for good, a trip somebody joined after
+  // paying: they are kept off what was paid for, so it is rightly still
+  // priced for one, and approval books it for one.
+  const going = await readParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null }, params.planId);
+  if (!going) {
+    return NextResponse.json({ error: 'Could not check who is going just now. Nothing has been charged.' }, { status: 500 });
+  }
+  const stale = staleRows(waiting, going);
   if (stale.length) {
     return NextResponse.json({
       code: 'stale_quotes',
       stale: stale.map(b => ({ id: b.id, vertical: b.vertical })),
-      error: `Some of this was priced for a different number of people than are going (${party}). It needs pricing again before anybody pays. Nothing has been charged.`,
+      error: 'Some of this was priced for a different number of people than are going now. It needs pricing again before anybody pays. Nothing has been charged.',
       funding: status,
     }, { status: 409 });
   }

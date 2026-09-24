@@ -5,57 +5,37 @@
 // one fare, and "Book everything" would buy exactly that.
 //
 // So the number a quote was made for is compared with the number now going,
-// and a quote that no longer fits is replaced rather than handed back. Only
-// while nothing has been bought: 'awaiting_approval' is a proposal and
-// 'quoted' is one somebody is holding (lib/booking/charged.ts). A booking
-// that is confirmed or pending with a provider is somebody's seat, and a
-// person who joins later is kept off it instead (lib/joining.ts).
+// and a quote that no longer fits is priced again rather than handed back.
+//
+// One decision, read everywhere. Which rows are stale is staleForParty in
+// lib/booking/party.ts, judged per booking against partyFor below — the group
+// less anybody kept off that booking, which is exactly who approval names
+// (travellersFor, then partyChange). Funding refuses money against a stale
+// row with that same call, and /bookable, the hold route and /api/bookings
+// price one again with it. Two rules for "stale" is how a plan ends up
+// refused at payment for something the re-pricer thinks is fine.
+//
+// Only a proposal ('awaiting_approval') is ever re-priced on its own. A held
+// quote ('quoted') is somebody deliberately keeping that price; it is out of
+// every money sum (lib/booking/charged.ts), so a stale one costs nobody
+// anything, and it is priced again the moment it is let go (the hold route).
+// A booking that is confirmed or pending with a provider is somebody's seat,
+// and a person who joins later is kept off it instead (lib/joining.ts).
 //
 // Restaurants, activities and events are left as they are here. A table's
 // party size is not what it costs, and an activity's quote carries no
 // headcount to compare against.
+import { roomsFor, staleForParty, sizedFor } from './party.ts';
+import { identityOf, LIVE } from './duplicate.ts';
+import { midClaim } from './claim.ts';
 
-/** Proposals and held quotes: priced, and nothing bought. */
-export const UNBOUGHT: ReadonlySet<string> = new Set(['awaiting_approval', 'quoted']);
+export { roomsFor };
 
-/** One room for every two people, rounded up — the rule the bridge has always quoted by. */
-export function roomsFor(party: number): number {
-  const n = Number.isFinite(party) ? Math.floor(party) : 1;
-  return Math.max(1, Math.ceil(Math.max(1, n) / 2));
-}
+/** What is priced per head: seats, and rooms at two to a room. */
+const SIZED_BY_HEAD: ReadonlySet<string> = new Set(['flight', 'hotel']);
 
+type Skip = { ref: string; userId: string };
 type Payload = Record<string, unknown> | null | undefined;
-
-/** Which field of a request says how many it is for. */
-const SIZED: Record<string, 'seats' | 'rooms'> = { flight: 'seats', hotel: 'rooms' };
-function sizedField(vertical: unknown): 'seats' | 'rooms' | null {
-  return SIZED[String(vertical)] ?? null;
-}
-
-/**
- * How many seats a flight request is for, or rooms a hotel request is for.
- *
- * Null for anything not sized that way. `fallback` is used when the field is
- * absent: 1 for a stored row, because that is what both providers priced an
- * absent field as (`seats || 1`, `rooms || 1`); null for an incoming request,
- * because a request that does not say cannot be said to disagree.
- */
-export function sizeOf(req: Payload, fallback: number | null = 1): number | null {
-  if (!req || typeof req !== 'object') return null;
-  const field = sizedField(req.vertical);
-  if (!field) return null;
-  const part = req[req.vertical as string] as Record<string, unknown> | undefined;
-  if (!part || typeof part !== 'object') return null;
-  const n = Number(part[field]);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
-}
-
-/** What a flight or hotel for `party` people should be sized at. */
-export function sizeFor(vertical: unknown, party: number): number | null {
-  const field = sizedField(vertical);
-  if (!field) return null;
-  return field === 'seats' ? Math.max(1, Math.floor(party) || 1) : roomsFor(party);
-}
 
 /**
  * How many people one booking is for: everybody going, less the members who
@@ -63,26 +43,21 @@ export function sizeFor(vertical: unknown, party: number): number | null {
  * not on it (lib/joining.ts), so a paid-for room for one stays a room for one.
  * Skips by people no longer in the group count for nothing.
  */
-export function partyFor(
-  party: number, memberIds: string[], skips: { ref: string; userId: string }[], ref: string,
-): number {
+export function partyFor(party: number, memberIds: string[], skips: Skip[], ref: string): number {
   const members = new Set(memberIds);
   const off = new Set(skips.filter(s => s.ref === ref && members.has(s.userId)).map(s => s.userId));
   return Math.max(1, Math.floor(party) - off.size);
 }
 
 /**
- * A quote made for a different number of people than it is now for, and
- * still unbought — so it can be re-priced rather than bought wrong.
+ * Rooms for `party` people, given the rooms it had. More rooms than before
+ * are never taken away from a group that grew, but a hotel will not sell an
+ * empty room, so there are never more rooms than people.
  */
-export function isStaleForParty(
-  row: { status?: string | null; request_payload?: unknown }, party: number,
-): boolean {
-  if (!UNBOUGHT.has(String(row.status ?? ''))) return false;
-  const req = row.request_payload as Payload;
-  const have = sizeOf(req);
-  const want = sizeFor(req?.vertical, party);
-  return have !== null && want !== null && have !== want;
+export function roomsAt(had: unknown, party: number): number {
+  const before = Number.isFinite(Number(had)) && Number(had) >= 1 ? Math.floor(Number(had)) : 1;
+  const people = Math.max(1, Math.floor(party) || 1);
+  return Math.min(Math.max(before, roomsFor(people)), people);
 }
 
 /**
@@ -90,32 +65,110 @@ export function isStaleForParty(
  * the hotel's id, the flight's numbers — is kept, so re-pricing for two is
  * the same room and the same flights, not whatever a fresh search finds.
  * Nobody is named at quote time, so travellers go.
+ *
+ * `party` is written as well as seats or rooms: it is what approval compares
+ * a hotel against (partyChange), and a room re-sized without it still said
+ * "one" and was refused as priced for a different party for good.
  */
 export function resized<T extends Record<string, unknown>>(req: T, party: number): T {
-  const field = sizedField(req.vertical);
-  const want = sizeFor(req.vertical, party);
-  const part = req[req.vertical as string] as Record<string, unknown> | undefined;
-  if (!field || want === null || !part || typeof part !== 'object') return req;
-  return { ...req, travelers: [], [req.vertical as string]: { ...part, [field]: want } };
+  const vertical = String(req.vertical ?? '');
+  const part = req[vertical] as Record<string, unknown> | undefined;
+  const sizedByHead = SIZED_BY_HEAD.has(vertical);
+  if (!part || typeof part !== 'object' || !sizedByHead) return req;
+  const n = Math.max(1, Math.floor(party) || 1);
+  const sized = vertical === 'flight' ? { ...part, seats: n } : { ...part, rooms: roomsAt(part.rooms, n) };
+  return { ...req, travelers: [], party: n, [vertical]: sized };
+}
+
+type Row = {
+  id?: unknown; vertical?: unknown; status?: unknown; mode?: unknown;
+  request_payload?: unknown; approved_at?: unknown; updated_at?: unknown;
+};
+
+/**
+ * The flights and hotels on a plan that were priced for a different number
+ * of people than are now on them. Funding refuses to take money while any
+ * are left; everything else here prices them again.
+ */
+export function staleOnPlan<T extends Row>(
+  rows: T[] | null | undefined, opts: { party: number; memberIds: string[]; skips: Skip[] },
+): T[] {
+  return staleForParty(rows, r => partyFor(opts.party, opts.memberIds, opts.skips, String(r.id)));
 }
 
 /**
- * The requests that re-price whatever on a plan was quoted for a different
- * number of people than are now going on it — each sized for its own party,
- * less anybody kept off that booking. Nothing once somebody has paid
- * (`paid`): what they paid against is the total, and it does not move.
+ * The requests that price again whatever on a plan is stale, each sized for
+ * its own party. Nothing once somebody has paid (`paid`): what they paid
+ * against is the total, and it does not move. Nothing mid-booking: an
+ * approval is at the provider with it.
  */
 export function repricing<T = Record<string, unknown>>(
-  rows: { id?: unknown; status?: string | null; request_payload?: unknown }[],
-  opts: { party: number; memberIds: string[]; skips: { ref: string; userId: string }[]; paid: boolean },
+  rows: Row[] | null | undefined,
+  opts: { party: number; memberIds: string[]; skips: Skip[]; paid: boolean },
 ): T[] {
   if (opts.paid) return [];
-  const out: T[] = [];
-  for (const b of rows ?? []) {
-    if (b?.id == null || !b.request_payload || typeof b.request_payload !== 'object') continue;
-    const party = partyFor(opts.party, opts.memberIds, opts.skips, String(b.id));
-    if (!isStaleForParty(b, party)) continue;
-    out.push(resized(b.request_payload as Record<string, unknown>, party) as T);
-  }
-  return out;
+  return staleOnPlan(rows, opts)
+    .filter(r => !midClaim(r) && r.request_payload && typeof r.request_payload === 'object')
+    .map(r => resized(r.request_payload as Record<string, unknown>,
+      partyFor(opts.party, opts.memberIds, opts.skips, String(r.id))) as T);
+}
+
+/**
+ * The size a request says it is for: `party`, else a flight's seats. Null
+ * when it does not say, and a request that does not say is never taken as
+ * asking for a re-price.
+ */
+export function requestSize(item: Payload): number | null {
+  if (!item || typeof item !== 'object') return null;
+  const n = (v: unknown) => (Number.isFinite(Number(v)) && Number(v) >= 1 ? Math.floor(Number(v)) : null);
+  const part = item[String(item.vertical ?? '')] as Record<string, unknown> | undefined;
+  return n(item.party) ?? (item.vertical === 'flight' ? n(part?.seats) : null);
+}
+
+export type Match<T> =
+  | { kind: 'new' }
+  /** Already on the list: hand this back rather than making another. */
+  | { kind: 'twin'; row: T }
+  /** On the list, stale, and this request asks for exactly the right size: price that row again. */
+  | { kind: 'stale'; row: T; party: number };
+
+/**
+ * What POST /api/bookings does with a request for something the plan already
+ * has. `expectedFor` is the route's own count of who is on each booking
+ * (partyFor), never the request's: any member can post a flight with
+ * `seats: 9`, and before this that retired the quote and wrote a nine-seat
+ * one into everybody's share. Null when that count could not be read, and
+ * then nothing is re-priced on a guess.
+ *
+ * In order:
+ *   1. a live row of the right size, or one that is bought, held or
+ *      mid-booking, is handed back — it wins over re-pricing a stale twin;
+ *   2. a stale proposal is priced again only when the request asks for
+ *      exactly the number the route counts for it;
+ *   3. anything else is handed back as it is.
+ *
+ * Whether anybody has paid is the caller's to settle, and again just before
+ * it writes: this is only what the rows say.
+ */
+export function matchFor<T extends Row>(
+  existing: T[] | null | undefined, item: Payload, expectedFor: ((row: T) => number) | null,
+): Match<T> {
+  const wanted = identityOf(item ?? null);
+  if (!wanted) return { kind: 'new' };
+  const same = (existing ?? []).filter(r =>
+    LIVE.has(String(r.status ?? '')) && identityOf(r.request_payload as Payload) === wanted);
+  if (!same.length) return { kind: 'new' };
+  const stale = expectedFor
+    ? new Set(staleForParty(same, expectedFor).filter(r => !midClaim(r)))
+    : new Set<T>();
+  const fits = same.find(r => !stale.has(r));
+  if (fits) return { kind: 'twin', row: fits };
+  const row = same[0];
+  const party = expectedFor!(row);
+  return requestSize(item) === party ? { kind: 'stale', row, party } : { kind: 'twin', row };
+}
+
+/** What a row was priced for, for a sentence. */
+export function pricedFor(row: Row): number | null {
+  return sizedFor(row);
 }

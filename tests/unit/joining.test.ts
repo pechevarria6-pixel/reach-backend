@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   latecomerOptOuts, isSoloCount, bringAlongNote, tripHolds, notOnBooked, beforeJoining, afterJoining,
+  notOnSentence, ownBookingLink, flightNumbers,
 } from '../../lib/joining.ts';
 import { claimInvitesFor } from '../../lib/invites.ts';
 import { planShares } from '../../lib/money.ts';
@@ -36,6 +37,15 @@ test('a proposal or a hold is not bought: the newcomer is on it, to be re-priced
   // total, and it does not move.
   assert.deepEqual(latecomerOptOuts(unbought, 'u-new', new Set(['p1'])).map(r => r.item_ref), ['flight', 'hotel', 'link']);
   assert.deepEqual(latecomerOptOuts(unbought, 'u-new', new Set(['p2'])), [], 'only the plan that was paid into');
+});
+
+test('a booking at the provider this minute is bought: its travellers were named before the join', () => {
+  const rows = latecomerOptOuts([
+    { id: 'b1', plan_id: 'p1', status: 'booking' },
+    { id: 'b2', plan_id: 'p1', status: 'awaiting_approval', approved_at: '2026-09-23T10:00:00.000Z', updated_at: '2026-09-23T10:00:00.000Z' },
+    { id: 'b3', plan_id: 'p1', status: 'awaiting_approval', approved_at: '2026-09-22T10:00:00.000Z', updated_at: '2026-09-23T10:00:00.000Z' },
+  ], 'u-new');
+  assert.deepEqual(rows.map(r => r.item_ref), ['b1', 'b2'], 'an old approved_at on a proposal is not a claim');
 });
 
 test('failed and cancelled bookings are nobody’s, so nobody is kept off them', () => {
@@ -74,19 +84,26 @@ test('the note never lets an invite read as a booking, and promises nothing Reac
 
   const proposed = bringAlongNote({ ...none, unbought: true });
   assert.match(proposed, /Nothing's bought yet/);
-  assert.match(proposed, /priced for everyone going the next time checkout opens/);
+  // Only what the code does: nothing is re-priced by the join itself, a
+  // flight cannot be priced without the newcomer's details, and nobody can
+  // pay until it is (funding refuses stale_quotes).
+  assert.match(proposed, /priced again for everyone going before anybody pays/);
+  assert.match(proposed, /when checkout is opened/);
+  assert.match(proposed, /travel details/);
+  assert.doesNotMatch(proposed, /split between you and them/, 'a share is who is on each booking, once it is priced');
+  assert.doesNotMatch(proposed, /the next time checkout opens/, 'it is skipped once paid, once the trip starts, or when who is going cannot be read');
 
   const booked = bringAlongNote({ ...none, bought: true });
   assert.match(booked, /stays yours alone/);
   assert.match(booked, /can't add someone to a booking it has already made/);
   assert.match(booked, /directly with the airline or hotel/, 'somewhere they can actually get a seat');
-  assert.doesNotMatch(booked, /priced for everyone/, 'nothing unbought, nothing re-priced');
-  assert.match(bringAlongNote({ ...none, bought: true, unbought: true }), /priced for everyone going/);
+  assert.doesNotMatch(booked, /priced again/, 'nothing unbought, nothing re-priced');
+  assert.match(bringAlongNote({ ...none, bought: true, unbought: true }), /priced again for everyone going/);
 
   const paid = bringAlongNote({ ...none, unbought: true, paidCents: 123450 });
   assert.match(paid, /You've paid \$1,234\.50/);
   assert.match(paid, /priced for you alone/);
-  assert.doesNotMatch(paid, /priced for everyone/, 'a paid trip is not re-sized');
+  assert.doesNotMatch(paid, /priced again/, 'a paid trip is not re-sized');
 
   // The group screen, which cannot see bookings or payments.
   const unknown = bringAlongNote({ ...none, known: false });
@@ -111,18 +128,64 @@ test('what a trip holds, from the rows the plan screen already has', () => {
   assert.equal(tripHolds(null, 4999.6).paidCents, 5000);
 });
 
-test('who is not on a flight or hotel already bought, and nothing a person chose to sit out', () => {
+test('who is not on a flight or hotel, whether it is bought or only paid for, and nothing a person chose to sit out', () => {
   const bookings = [
-    { id: 'f1', vertical: 'flight' }, { id: 'h1', vertical: 'hotel' }, { id: 'd1', vertical: 'restaurant' },
+    { id: 'f1', vertical: 'flight', status: 'confirmed',
+      request_payload: { flight: { origin: 'RDU', destination: 'PVR', departDate: '2026-11-02', returnDate: '2026-11-09', offerKey: 'AA100.AA7/AA101' } } },
+    { id: 'h1', vertical: 'hotel', status: 'awaiting_approval',
+      request_payload: { hotel: { city: 'Puerto Vallarta' } }, response_payload: { hotel: { name: 'Hotel Rio', address: 'Morelos 170, Puerto Vallarta' } } },
+    { id: 'h2', vertical: 'hotel', status: 'quoted', request_payload: { hotel: { city: 'Puerto Vallarta' } } },
+    { id: 'x1', vertical: 'flight', status: 'awaiting_approval', mode: 'redirect' },
+    { id: 'c1', vertical: 'hotel', status: 'cancelled' },
+    { id: 'd1', vertical: 'restaurant', status: 'confirmed' },
   ];
   const skips = [
     { ref: 'f1', userId: 'u-new' }, { ref: 'h1', userId: 'u-new' }, { ref: 'f1', userId: 'u-new' },
+    { ref: 'h2', userId: 'u-late' }, { ref: 'x1', userId: 'u-late' }, { ref: 'c1', userId: 'u-late' },
     { ref: 'd1', userId: 'u-solo' },
     { ref: 'h1', userId: 'u-gone' },
   ];
-  assert.deepEqual(notOnBooked(bookings, skips, ['u-solo', 'u-new']), { 'u-new': ['flight', 'hotel'] });
+  const out = notOnBooked(bookings, skips, ['u-solo', 'u-new', 'u-late']);
+  assert.deepEqual(Object.keys(out).sort(), ['u-late', 'u-new'], 'a dinner sat out is nobody’s business; a leaver is not listed');
+  assert.deepEqual(out['u-new'].map(i => [i.vertical, i.booked]), [['flight', true], ['hotel', false]],
+    'the flight is booked; the room is only paid for');
+  assert.equal(out['u-new'][0].what, 'AA100 and AA7 out, AA101 back');
+  assert.equal(out['u-new'][1].what, 'Hotel Rio');
+  assert.deepEqual(out['u-late'].map(i => i.vertical), ['hotel'],
+    'a held room counts (it was left out of the charged rows before); a handed-off flight and a cancelled room do not');
   assert.deepEqual(notOnBooked(bookings, [], ['u-solo']), {});
   assert.deepEqual(notOnBooked(null, null, []), {});
+  // Mid-booking is bought: an approval at the provider named its travellers already.
+  const claimed = [{ id: 'f', vertical: 'flight', status: 'awaiting_approval', approved_at: '2026-09-23T10:00:00.000Z', updated_at: '2026-09-23T10:00:00.000Z' }];
+  assert.equal(notOnBooked(claimed, [{ ref: 'f', userId: 'u' }], ['u'])['u'][0].booked, true);
+});
+
+test('what the newcomer reads says booked and paid-for apart, and hands them somewhere to book', () => {
+  const booked = { vertical: 'flight' as const, booked: true, what: 'AA100 out, AA101 back', link: null };
+  const paidFor = { vertical: 'hotel' as const, booked: false, what: 'Hotel Rio', link: null };
+  const one = notOnSentence([booked])!;
+  assert.match(one, /^The flight \(AA100 out, AA101 back\) was already booked before you joined/);
+  assert.match(one, /with the airline\.$/);
+  const two = notOnSentence([booked, paidFor])!;
+  assert.match(two, /the hotel \(Hotel Rio\) was already paid for before you joined/);
+  assert.doesNotMatch(two, /hotel \(Hotel Rio\) was already booked/, 'paid for is not booked');
+  assert.match(two, /with the airline and hotel\.$/);
+  assert.equal(notOnSentence([]), null);
+
+  // Links from the row, nothing invented. Google Flights reads a route and
+  // dates (checked with curl, 2026-09-23); flight numbers it does not, so
+  // those are said in the sentence instead.
+  const f = ownBookingLink({ vertical: 'flight', request_payload: { flight: { origin: 'RDU', destination: 'PVR', departDate: '2026-11-02', returnDate: '2026-11-09', offerKey: 'AA100/AA101' } } })!;
+  assert.equal(f.href, 'https://www.google.com/travel/flights?q=Flights%20from%20RDU%20to%20PVR%20on%202026-11-02%20returning%202026-11-09');
+  assert.doesNotMatch(f.href, /AA100/);
+  const h = ownBookingLink({ vertical: 'hotel', request_payload: { hotel: { city: 'Puerto Vallarta' } }, response_payload: { hotel: { name: 'Hotel Rio', address: 'Morelos 170, Puerto Vallarta' } } })!;
+  assert.equal(h.href, 'https://www.google.com/maps/search/?api=1&query=Hotel%20Rio%2C%20Morelos%20170%2C%20Puerto%20Vallarta');
+  assert.equal(h.label, 'Find Hotel Rio on Google Maps');
+  assert.equal(ownBookingLink({ vertical: 'hotel', request_payload: { hotel: { city: 'Puerto Vallarta' } } })!.label, 'Hotels in Puerto Vallarta on Google Maps');
+  assert.equal(ownBookingLink({ vertical: 'hotel' }), null, 'nothing to search by, no link');
+  assert.equal(ownBookingLink({ vertical: 'flight', request_payload: { flight: { origin: 'RDU' } } }), null);
+  assert.equal(flightNumbers('AA1.AA2'), 'AA1 and AA2');
+  assert.equal(flightNumbers('AA1//'), null);
 });
 
 // ── Against a stand-in for the database ──────────────────────────────────
@@ -304,4 +367,25 @@ test('an invite that cannot be claimed cleanly stays pending for next time', asy
   assert.equal(tables.group_members.length, 1, 'not let in on a share of somebody else’s booking');
   assert.equal(tables.group_invites[0].status, 'pending');
   assert.ok(tables.plans.every(p => p.solo_mode === true));
+});
+
+// ── What the screens do with it ──────────────────────────────────────────
+test('the screens say only what they know, and take "Bring someone along" to the add field', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync('components/reach-app.jsx', 'utf8');
+  // Before funding and the bookings have both loaded, an empty list and no
+  // money read as "Nothing's bought yet" on a trip that was paid for.
+  assert.match(src, /bringAlongNote\(funding&&bookingsLoaded\s*\?tripHolds\(planBookings,funding\.collectedCents\|\|0\)\s*:\{known:false/);
+  assert.doesNotMatch(src, /bringAlongNote\(tripHolds\(planBookings,funding\?\.collectedCents\|\|0\)\)/);
+  // Both "+ Bring someone along" buttons go to the add field, not the name.
+  assert.equal(src.match(/push\("editGroup",\{groupId,focus:"add"\}\)}>\+ Bring someone along/g)?.length, 2);
+  assert.doesNotMatch(src, /push\("editGroup",\{groupId\}\)}>\+ Bring someone along/);
+  assert.match(src, /function EditGroupScreen\(\{[^}]*\bfocus\}\)/);
+  assert.match(src, /ref=\{addRef\} aria-label="Search people by name or email"/);
+  // The newcomer's line comes from notOnSentence, with its links.
+  assert.match(src, /notOnSentence\(funding\.notOnBooked\[me\]\)/);
+  assert.match(src, /i\.link\.href/);
+  // A bridge that did not answer is said on the pay screen, not swallowed.
+  assert.match(src, /bridgeFailed\?\[\{title:"Pricing"/);
+  assert.match(src, /filter\(f=>f\.stillPriced\)/, "a line still in the total is not said to be missing from it");
 });

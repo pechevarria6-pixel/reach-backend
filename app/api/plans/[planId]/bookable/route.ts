@@ -14,12 +14,13 @@
 // id onto the booking made from it, and a line already booked is skipped — so
 // re-opening checkout adds what is missing and touches nothing else.
 import { NextRequest, NextResponse } from 'next/server';
-import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
+import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness, tripTravellerIds } from '@/lib/essentials-server';
 import { type Gateway } from '@/lib/booking/providers/flights.duffel';
 import { arrivalFor } from '@/lib/booking/arrival';
-import { partySize as countParty, readSkips } from '@/lib/participation';
-import { repricing, roomsFor } from '@/lib/booking/resize';
+import { partySize as countParty } from '@/lib/participation';
+import { repricing } from '@/lib/booking/resize';
+import { readParty } from '@/lib/booking/reprice';
 import { tripTiming, today } from '@/lib/calendar';
 import { rentalLine } from '@/lib/ground';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
@@ -209,7 +210,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // row is not a booking and its line can be tried again.
   const { data: existing, error: existingError } = await ctx.db
     .from('bookings')
-    .select('id, itinerary_item_id, status, vertical, request_payload')
+    .select('id, itinerary_item_id, status, vertical, mode, request_payload, approved_at, updated_at')
     .eq('plan_id', params.planId)
     .not('status', 'in', '("failed","cancelled")');
   if (existingError) {
@@ -339,31 +340,30 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // people than are now going on it — a trip for one that somebody has since
   // joined, most often. Its line counts as booked above, so without this it
   // would sit at one seat for good. Sent back through the same machinery,
-  // sized for today's party, which replaces the old quote with the new one
-  // (findStale in lib/booking/duplicate.ts). The same hotel and the same
-  // flights: only the headcount changes.
+  // sized for who is on that booking, which prices that row again in place
+  // (lib/booking/reprice.ts). The same hotel and the same flights: only the
+  // headcount changes. A held quote is left as it is until it is let go.
   //
   // Never once anybody has paid. What they paid against is the total, and the
   // same lock holds sitting things out and holding them (the participation and
   // hold routes); a newcomer on a paid trip is kept off what it holds instead.
   // The dates check above has returned already if the trip has begun.
   if (timing !== 'over' && timing !== 'on_now') {
-    const unbought = (existing ?? []).filter(b => b.status === 'awaiting_approval' || b.status === 'quoted');
-    if (unbought.length) {
+    const proposals = (existing ?? []).filter(b => b.status === 'awaiting_approval');
+    if (proposals.length) {
       const { data: paid, error: paidErr } = await ctx.db.from('contributions')
         .select('id').eq('plan_id', params.planId).eq('status', 'succeeded').limit(1);
-      let skips: { ref: string; userId: string }[] | null = null;
-      try { skips = (await readSkips(ctx.db, params.planId)).skips; } catch { skips = null; }
-      if (paidErr || skips === null) {
+      const going = paidErr ? null : await readParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null }, params.planId);
+      if (paidErr || !going) {
         // Unknown is left as it is: re-pricing on a guess could move a total
-        // somebody has paid against.
+        // somebody has paid against. Funding refuses money against it all
+        // the same, with the same rule.
         console.error('[bookable] could not tell whether quotes need re-pricing for the party', {
-          planId: params.planId, code: paidErr?.code ?? 'skips',
+          planId: params.planId, code: paidErr?.code ?? 'members or skips',
         });
       } else if (!paid?.length) {
-        const memberIds = await groupMemberIds(ctx.db, String(ctx.plan.group_id));
         requests.push(...repricing<BookingItemRequest & { itineraryItemId: string; title: string }>(
-          unbought, { party: partySize, memberIds, skips, paid: false }));
+          proposals, { ...going, paid: false }));
       }
     }
   }
@@ -568,8 +568,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     .select('id, itinerary_item_id, request_payload, status')
     .eq('plan_id', params.planId)
     .is('itinerary_item_id', null)
-    // A quote replaced by a re-priced one keeps its line id in its payload,
-    // and only one row may hold a line. The live one is the one to link.
+    // Only one row may hold a line, and a cancelled one has given its up.
     .neq('status', 'cancelled');
   for (const row of fresh ?? []) {
     const id = (row.request_payload as { itineraryItemId?: string } | null)?.itineraryItemId;

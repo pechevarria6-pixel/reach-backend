@@ -24,7 +24,7 @@ import { stepsFor } from "@/lib/quiz-steps";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { STEPS, stepStates, cannotSign, bookingTracker } from "@/lib/plan-steps";
-import { bringAlongNote, tripHolds } from "@/lib/joining";
+import { bringAlongNote, tripHolds, notOnSentence } from "@/lib/joining";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -2673,7 +2673,10 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             this screen switches to group wording with it. */}
         {isAlone&&isAdmin&&(
           <div style={{marginTop:14}}>
-            <button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Bring someone along</button>
+            {/* Straight to the add field: "Edit" beside it goes to the same
+                screen for the name, and both landing on the name field made
+                this a second Edit button. */}
+            <button className="bs" onClick={()=>push("editGroup",{groupId,focus:"add"})}>+ Bring someone along</button>
             <div style={{fontSize:12,color:C.t2,marginTop:8,lineHeight:1.5}}>
               {/* This screen holds no bookings and no payments, and a plan's
                   status says neither: a paid solo plan reads "approved" and one
@@ -2841,8 +2844,16 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
 }
 
 // ─── EDIT GROUP ───────────────────────────────────────────────────────────────
-function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup,leaveGroup,deleteGroup,saveGroupToServer,me}){
+function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGroup,leaveGroup,deleteGroup,saveGroupToServer,me,focus}){
   const group=groups.find(g=>g.id===groupId);
+  // "+ Bring someone along" comes here to add somebody, not to rename the
+  // group: the add field is scrolled to and focused.
+  const addRef=useRef(null);
+  useEffect(()=>{
+    if(focus!=="add"||!addRef.current)return;
+    addRef.current.scrollIntoView?.({block:"center"});
+    addRef.current.focus({preventScroll:true});
+  },[focus]);
   const [name,setName]=useState(group?.name||"");
 
   const members=group?.memberIds||[];
@@ -3000,7 +3011,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 
       <div style={{padding:"0 20px 10px"}}>
         <span className="sl">Add someone</span>
-        <input aria-label="Search people by name or email" className="inp" value={q} onChange={e=>search(e.target.value)}
+        <input ref={addRef} aria-label="Search people by name or email" className="inp" value={q} onChange={e=>search(e.target.value)}
           placeholder="Search by name, or type an email to invite"
           style={{width:"100%",marginTop:8}}/>
         {searching&&<div style={{fontSize:12,color:C.t2,marginTop:8}}>Searching…</div>}
@@ -7250,7 +7261,16 @@ function HoldToggle({bookingId,status,toast,onChanged}){
       const r=await fetchWithin(`/api/bookings/${bookingId}/hold`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({hold:!held})},15000,"saving that");
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"Couldn't change that");
-      toast(held?"Back in — it books with the rest":"Held — it won't be booked or charged this time");
+      // Let go of after the group changed size: it was held at the old
+      // number, and is priced again for who is on it now, before anybody
+      // pays (the server refuses money against it until it is).
+      if(d.stale){
+        const rp=await fetchWithin(`/api/bookings/${bookingId}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reprice:true})},30000,"pricing it again");
+        const rd=await rp.json().catch(()=>({}));
+        toast(rp.ok?"Back in, and priced again for who's going now":(d.message||"Back in — it needs pricing again before anybody pays")+(rd.error?` (${rd.error})`:""));
+      }else{
+        toast(held?"Back in — it books with the rest":"Held — it won't be booked or charged this time");
+      }
       await onChanged?.();
     }catch(e){
       console.error("[hold] could not change",{bookingId},e);
@@ -7955,13 +7975,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // without these a confirmed hotel would read "to book" for ever.
   const [review,setReview]=useState({available:false,steps:{}});
   const [planBookings,setPlanBookings]=useState([]);
+  // Whether planBookings is an answer or only the empty list it starts as.
+  const [bookingsLoaded,setBookingsLoaded]=useState(false);
   const [signing,setSigning]=useState(null);
   const [openChoice,setOpenChoice]=useState(null);
   // After a hotel or flight is swapped: the rows and the total both moved.
   const refreshBookings=async()=>{
     try{
       const [b,f]=await Promise.all([fetch(`/api/bookings?planId=${planId}`),fetch(`/api/plans/${planId}/funding`)]);
-      if(b.ok){const d=await b.json();setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));}
+      if(b.ok){const d=await b.json();setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));setBookingsLoaded(true);}
       if(f.ok)setFunding(await f.json());
     }catch(e){console.error("[planDetail] could not refresh bookings",e);}
   };
@@ -7975,7 +7997,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       .catch(()=>{});
     fetch(`/api/bookings?planId=${planId}`)
       .then(r=>r.ok?r.json():null)
-      .then(d=>{if(live&&d)setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));})
+      .then(d=>{if(live&&d){setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));setBookingsLoaded(true);}})
       .catch(()=>{});
     return()=>{live=false;};
   },[planId]);
@@ -8360,7 +8382,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       birth for a weekend somebody is driving to. The chip says
                       ready or not and which fields are outstanding — never a
                       value, not even to the person's own group. */}
-                  {hasFlight&&!(funding?.notOnBooked?.[uid]||[]).includes("flight")&&(()=>{
+                  {hasFlight&&!(funding?.notOnBooked?.[uid]||[]).some(i=>i.vertical==="flight")&&(()=>{
                     const r=readiness?.travelers?.find(t=>t.userId===uid);
                     if(!r)return null;
                     return r.ready
@@ -8368,12 +8390,14 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       :<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}
                          title={`Still needed: ${r.missing.join(", ")}`}>Needs details</span>;
                   })()}
-                  {/* Somebody who joined after the flight or hotel was bought is
-                      not on it (lib/joining.ts), and "✓ In" beside their name
-                      said they were. */}
+                  {/* Somebody who joined after the flight or hotel was bought,
+                      or paid for, is not on it (lib/joining.ts), and "✓ In"
+                      beside their name said they were. Booked and paid-for are
+                      said apart: a flight only paid towards is not booked. When
+                      the server could not read it (null), neither is said. */}
                   {(funding?.notOnBooked?.[uid]||[]).length
-                    ?<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}>Not on the booked {funding.notOnBooked[uid].join(" or ")}</span>
-                    :<span className="pill pill-g" style={{fontSize:10}}>✓ In</span>}
+                    ?<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}>Not on the {funding.notOnBooked[uid].map(i=>`${i.booked?"booked":"paid-for"} ${i.vertical}`).join(" or ")}</span>
+                    :funding?.notOnBooked===null?null:<span className="pill pill-g" style={{fontSize:10}}>✓ In</span>}
                 </div>
               ):null;})}
               {/* Plans change, and a trip for one is allowed to become a trip
@@ -8385,9 +8409,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   bought are re-sized for them (lib/booking/resize.ts). */}
               {soloTrip&&group.role==="admin"&&(
                 <div style={{marginTop:12}}>
-                  <button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Bring someone along</button>
+                  <button className="bs" onClick={()=>push("editGroup",{groupId,focus:"add"})}>+ Bring someone along</button>
                   <div style={{fontSize:12,color:C.t2,marginTop:8,lineHeight:1.5}}>
-                    {bringAlongNote(tripHolds(planBookings,funding?.collectedCents||0))}
+                    {/* Only once both the bookings and the payments are in hand.
+                        Before that — or if either fails to load — an empty list
+                        and no money read as "Nothing's bought yet" on a trip
+                        that was paid for. The known:false sentence is true
+                        either way. */}
+                    {bringAlongNote(funding&&bookingsLoaded
+                      ?tripHolds(planBookings,funding.collectedCents||0)
+                      :{known:false,bought:false,unbought:false,paidCents:0})}
                   </div>
                 </div>
               )}
@@ -8396,7 +8427,14 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   newcomer that the seat and room already here are not theirs. */}
               {(funding?.notOnBooked?.[me]||[]).length>0&&(
                 <div style={{fontSize:12,color:C.t2,marginTop:10,lineHeight:1.5}}>
-                  You joined after the {funding.notOnBooked[me].join(" and ")} {funding.notOnBooked[me].length>1?"were":"was"} booked, so you're not on {funding.notOnBooked[me].length>1?"them":"it"} and aren't charged for {funding.notOnBooked[me].length>1?"them":"it"}. Reach can't add someone to a booking it has already made — book your own directly with the {funding.notOnBooked[me].map(v=>v==="flight"?"airline":"hotel").join(" or ")}.
+                  {notOnSentence(funding.notOnBooked[me])}
+                  {/* Somewhere they can actually get it, prefilled from the
+                      row: the same airports and dates, or the hotel by name. */}
+                  {funding.notOnBooked[me].filter(i=>i.link).map((i,k)=>(
+                    <div key={k} style={{marginTop:6}}>
+                      <a href={i.link.href} target="_blank" rel="noopener noreferrer" style={{color:C.accentText,fontWeight:600}}>{i.link.label} ↗</a>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -9350,6 +9388,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   const [retryable,setRetryable]=useState(true);
   // Lines of the itinerary that did not become bookings, and why.
   const [unbooked,setUnbooked]=useState([]);
+  const [unsettled,setUnsettled]=useState([]);
   const [skipBroken,setSkipBroken]=useState(false);
 
   // Everything on this trip that Reach is not going to book, with the way to
@@ -9437,13 +9476,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       //
       // The funding target is read AFTER it, so the amount people are asked
       // for is the sum of the rows they are about to see.
-      let bridge=null;
+      let bridge=null, bridgeFailed=false;
       if(!isTempId(planId)){
         try{
           const br=await fetchWithin(`/api/plans/${planId}/bookable`,{method:"POST"},20000,"pricing your trip");
           bridge=br.ok?await br.json():null;
-          if(!br.ok)console.error("[checkout] could not add the itinerary to the booking list",br.status);
-        }catch(e){ console.error("[checkout] bridge failed",e); }
+          if(!br.ok){ bridgeFailed=true; console.error("[checkout] could not add the itinerary to the booking list",br.status); }
+        }catch(e){ bridgeFailed=true; console.error("[checkout] bridge failed",e); }
       }
       const [fRes,bRes]=await Promise.all([
         fetch(`/api/plans/${planId}/funding`),
@@ -9455,8 +9494,16 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       setBookings((bJson&&(bJson.bookings||bJson))||[]);
       // What could not be added. Never silent: these are things somebody
       // believes they are paying for.
-      setUnbooked([...(bridge?.failures||[]).map(f=>({title:f.title,why:f.error})),
+      // The bridge itself not answering was silent, and the list below read
+      // as the whole trip — with anything not yet priced, or priced for fewer
+      // people than are going, missing from it or from the total.
+      setUnbooked([...(bridge?.failures||[]).filter(f=>!f.stillPriced).map(f=>({title:f.title,why:f.error})),
                    ...(bridge?.skipped||[])]);
+      // In the total, but not at a price anybody can pay yet: priced for a
+      // different number of people and not priced again (the server refuses
+      // payment until it is). Not "isn't in this total", which is untrue.
+      setUnsettled([...(bridgeFailed?[{title:"Pricing",why:"we couldn't finish pricing this trip just now, so something may be missing from this list or not yet priced for everyone going. Nothing has been charged — reopen checkout to try again."}]:[]),
+                    ...(bridge?.failures||[]).filter(f=>f.stillPriced).map(f=>({title:f.title,why:f.error}))]);
       setPhase("review");
     }catch(e){ console.error("[checkout] could not load the trip",{planId},e); fail("Couldn't load your trip \u2014 check your connection and try again.",{retry:true}); }
   };
@@ -9865,6 +9912,12 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
           {/* Lines of the itinerary that are not on this list. Said here, on
               the screen where somebody is about to pay, because the amount
               below covers what is listed and nothing else. */}
+          {unsettled.length>0&&(
+            <div style={{margin:"0 0 12px",padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.border}`,borderRadius:14}}>
+              <div style={{fontSize:12.5,color:C.t1,fontWeight:600,marginBottom:5}}>Not ready to pay yet</div>
+              {unsettled.map((u,i)=>(<div key={i} style={{fontSize:12,color:C.t2,lineHeight:1.5}}>{u.title} — {u.why}</div>))}
+            </div>
+          )}
           {unbooked.length>0&&(
             <div style={{margin:"0 0 12px",padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.border}`,borderRadius:14}}>
               <div style={{fontSize:12.5,color:C.t1,fontWeight:600,marginBottom:5}}>

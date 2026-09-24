@@ -120,6 +120,12 @@ export interface BookingItemResult {
   error?: string;
   /** The itinerary line this was asked for, echoed back by POST /api/bookings. */
   itineraryItemId?: string;
+  /**
+   * A failure that left a booking in the total at a price for a different
+   * number of people (lib/booking/reprice.ts) — as opposed to one that left
+   * the line out of the total altogether. Checkout says the two differently.
+   */
+  stillPriced?: boolean;
 }
 
 export interface BookingProvider {

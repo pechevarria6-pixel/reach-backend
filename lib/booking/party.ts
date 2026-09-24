@@ -100,16 +100,36 @@ const SEATS_AND_ROOMS = new Set(['flight', 'hotel']);
  * Only what Reach buys. A flight handed to the airline's own site costs the
  * group nothing through Reach, and stopped everybody paying for the hotel
  * the moment somebody joined.
+ *
+ * `party` is a number for the whole plan, or the number for each row — the
+ * group less anybody kept off that booking (partyFor in lib/booking/resize.ts),
+ * which is who approval names. One number for the plan refused, for good, a
+ * trip somebody joined after paying: they are kept off what was paid for, so
+ * it is rightly still priced for one, and approval books it for one.
  */
-export function staleForParty<T extends Row>(rows: T[] | null | undefined, party: number): T[] {
+export function staleForParty<T extends Row>(
+  rows: T[] | null | undefined, party: number | ((row: T) => number),
+): T[] {
   return (rows ?? []).filter(r => {
     if (r.status !== 'awaiting_approval') return false;
     if (!SEATS_AND_ROOMS.has(String(r.vertical))) return false;
     if (r.mode === 'redirect' || r.mode === 'concierge') return false;
-    const req = (r.request_payload ?? null) as Partial<BookingItemRequest> | null;
-    const sized = r.vertical === 'flight'
-      ? quotedParty(req)
-      : (Number.isFinite(Number(req?.party)) && Number(req?.party) >= 1 ? Math.floor(Number(req?.party)) : null);
-    return sized !== null && sized !== party;
+    const sized = sizedFor(r);
+    return sized !== null && sized !== (typeof party === 'function' ? party(r) : party);
   });
+}
+
+/**
+ * How many people a flight or hotel row says it was priced for, or null when
+ * it does not say. A flight says it in seats if nothing else; a hotel only in
+ * `party`, because its rooms were priced at two to a room and one room holds
+ * one person or two.
+ */
+export function sizedFor(r: { vertical?: unknown; request_payload?: unknown }): number | null {
+  const req = (r.request_payload ?? null) as Partial<BookingItemRequest> | null;
+  if (r.vertical === 'flight') return quotedParty(req);
+  if (r.vertical === 'hotel') {
+    return Number.isFinite(Number(req?.party)) && Number(req?.party) >= 1 ? Math.floor(Number(req?.party)) : null;
+  }
+  return null;
 }

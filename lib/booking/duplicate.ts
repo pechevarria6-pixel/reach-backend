@@ -13,8 +13,6 @@
 // runs. This is the part that works today and works regardless: before
 // writing, look at what this plan already has, and if the very same thing is
 // already live, hand that back instead of booking it again.
-import { UNBOUGHT, sizeOf } from './resize.ts';
-
 /** What identifies the thing being booked, per vertical. */
 export interface BookingLike {
   vertical?: string | null;
@@ -31,7 +29,7 @@ export interface BookingLike {
  */
 // 'booking' is a row an approval has claimed and is at the provider right
 // now — the most in play a booking can be.
-const LIVE = new Set(['quoted', 'awaiting_approval', 'booking', 'pending', 'confirmed']);
+export const LIVE: ReadonlySet<string> = new Set(['quoted', 'awaiting_approval', 'booking', 'pending', 'confirmed']);
 
 /**
  * The part of a request that says which thing this is.
@@ -76,6 +74,9 @@ export function identityOf(item: Record<string, unknown> | null | undefined): st
  * A booking this plan already holds for the same thing, or null.
  *
  * `existing` is what the plan has now; `item` is what is being asked for.
+ * The same thing whatever size either says it is for: whether a stale
+ * proposal is priced again instead is matchFor's to say (lib/booking/resize.ts),
+ * from the route's own count and never the request's.
  */
 export function findDuplicate<T extends BookingLike>(
   existing: T[],
@@ -88,40 +89,7 @@ export function findDuplicate<T extends BookingLike>(
     if (!LIVE.has(String(row.status ?? ''))) continue;
     const theirs = identityOf(row.request_payload as Record<string, unknown>);
     if (!theirs || theirs !== wanted) continue;
-    // The same flight for a different number of people is not the same
-    // booking while nothing has been bought. Handing back a one-seat quote to
-    // a request for two is how a trip that gained somebody went on pricing
-    // one fare — see findStale, which the caller retires it with.
-    if (isResizing(row, item)) continue;
     return row;
-  }
-  return null;
-}
-
-/** An unbought quote for this very thing, sized for a different number of people than `item` asks for. */
-function isResizing(row: BookingLike, item: Record<string, unknown>): boolean {
-  if (!UNBOUGHT.has(String(row.status ?? ''))) return false;
-  const asked = sizeOf(item, null);
-  return asked !== null && sizeOf(row.request_payload as Record<string, unknown>) !== asked;
-}
-
-/**
- * The unbought quote `item` replaces: the same flight or hotel, priced for a
- * different number of people. Null when there is none, or when the one there
- * is already bought — a confirmed seat is never quietly swapped.
- *
- * The caller retires it before writing the new one. Both carry the same
- * idempotency key, and the database allows one live row per key.
- */
-export function findStale<T extends BookingLike>(
-  existing: T[],
-  item: Record<string, unknown>,
-): T | null {
-  const wanted = identityOf(item);
-  if (!wanted) return null;
-  for (const row of existing ?? []) {
-    if (identityOf(row.request_payload as Record<string, unknown>) !== wanted) continue;
-    if (isResizing(row, item)) return row;
   }
   return null;
 }

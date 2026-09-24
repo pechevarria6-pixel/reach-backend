@@ -10,11 +10,19 @@
 // Held is status 'quoted' (see lib/booking/charged.ts). Not allowed once
 // anybody has paid: the total is what they paid against, and moving it
 // under them leaves somebody over- or under-paid.
+//
+// A held quote is never priced again while it is held — it is in nobody's
+// share, and somebody is keeping that price on purpose. If the group has
+// changed size since, it comes back as a proposal priced for the old number,
+// and the answer says so (`stale`): checkout prices it again for who is on
+// it (options { reprice: true }), and funding refuses money against it until
+// then, by the same rule (lib/booking/reprice.ts).
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { atVersion, midClaim } from '@/lib/booking/claim';
+import { readParty, staleRows } from '@/lib/booking/reprice';
 
 const Body = z.object({ hold: z.boolean() });
 
@@ -23,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!parsed.success) return NextResponse.json({ error: 'Hold it or book it?' }, { status: 400 });
 
   const { data: booking, error: readErr } = await createServerClient()
-    .from('bookings').select('id, plan_id, status, approved_at, updated_at').eq('id', params.id).maybeSingle();
+    .from('bookings').select('id, plan_id, vertical, mode, status, request_payload, approved_at, updated_at').eq('id', params.id).maybeSingle();
   if (readErr) {
     console.error('[hold] could not read booking', { id: params.id, code: readErr.code });
     return NextResponse.json({ error: 'Could not read that booking just now.' }, { status: 500 });
@@ -62,5 +70,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'Could not save that — try again in a moment.' }, { status: 500 });
   }
   if (!updated) return NextResponse.json({ error: 'It changed while you were looking — reopen it.' }, { status: 409 });
+  if (updated.status === 'awaiting_approval') {
+    const going = await readParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null }, booking.plan_id);
+    // Unknown is not said to be stale; funding checks again before any money.
+    if (going && staleRows([{ ...booking, status: 'awaiting_approval' }], going).length) {
+      return NextResponse.json({
+        status: updated.status, stale: true,
+        message: 'Back in, but it was priced for a different number of people than are going now — it needs pricing again before anybody pays.',
+      });
+    }
+  }
   return NextResponse.json({ status: updated.status });
 }

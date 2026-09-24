@@ -20,29 +20,31 @@ import { PROVIDERS } from '@/lib/booking/registry';
 import { hotelOptions } from '@/lib/booking/providers/hotels.liteapi';
 import { flightOptions } from '@/lib/booking/providers/flights.duffel';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
-import { partySize } from '@/lib/participation';
-import { roomsFor } from '@/lib/booking/party';
+import { readParty, expectedFor } from '@/lib/booking/reprice';
+import { resized } from '@/lib/booking/resize';
 import { atVersion, changeRefusal } from '@/lib/booking/claim';
 import { travellersFor } from '@/lib/essentials-server';
 import { airlineOnly } from '@/lib/booking/approval';
 import { airlineHandoff } from '@/lib/booking/duffel-map';
 
 /**
- * The request sized for who is going now, not who was going when it was
+ * The request sized for who is on this booking now, not who was when it was
  * first priced. This is how a quote that funding refuses as `stale_quotes`
  * gets priced again: pick it (or another) here, and it comes back for the
- * current party. Flights and hotels are never sat out, so that is everybody.
+ * current party — the group, less anybody kept off this booking, which is
+ * who approval names (lib/booking/reprice.ts). Sized for the whole group, a
+ * trip somebody joined after paying was priced here for two, and approval,
+ * naming one, refused it as priced for a different party for good.
+ *
+ * Null when who is going cannot be read: nothing is priced on a guess.
  */
 async function sizedNow(
-  db: Parameters<typeof partySize>[0], plan: Parameters<typeof partySize>[1], request: BookingItemRequest,
-): Promise<BookingItemRequest> {
-  const party = await partySize(db, plan);
-  return {
-    ...request,
-    party,
-    ...(request.flight ? { flight: { ...request.flight, seats: party } } : {}),
-    ...(request.hotel ? { hotel: { ...request.hotel, rooms: Math.max(request.hotel.rooms || 1, roomsFor(party)) } } : {}),
-  };
+  db: Parameters<typeof readParty>[0], plan: Parameters<typeof readParty>[1],
+  booking: { id: string; plan_id: string; request_payload: unknown },
+): Promise<BookingItemRequest | null> {
+  const going = await readParty(db, plan, booking.plan_id);
+  if (!going) return null;
+  return resized(booking.request_payload as BookingItemRequest & Record<string, unknown>, expectedFor(going)(booking));
 }
 
 const CHANGEABLE = ['quoted', 'awaiting_approval'];
@@ -74,7 +76,11 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const got = await load(params.id);
   if (got.fail) return got.fail;
   const { booking, ctx } = got;
-  const request = await sizedNow(ctx.db, ctx.plan, booking.request_payload as BookingItemRequest);
+  const request = await sizedNow(ctx.db, ctx.plan, booking);
+  if (!request) {
+    console.error('[options] could not read who is going', { id: params.id });
+    return NextResponse.json({ error: 'Could not check who is going just now.' }, { status: 500 });
+  }
   const current = { detail: booking.detail, priceCents: booking.price_cents, status: booking.status,
     raw: booking.response_payload ?? null };
   const refused = changeRefusal(booking);
@@ -92,7 +98,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const refused = changeRefusal(booking);
   if (refused) return NextResponse.json({ error: refused }, { status: 409 });
 
-  const request = await sizedNow(ctx.db, ctx.plan, booking.request_payload as BookingItemRequest);
+  const request = await sizedNow(ctx.db, ctx.plan, booking);
+  if (!request) {
+    console.error('[options] could not read who is going', { id: params.id });
+    return NextResponse.json({ error: 'Could not check who is going just now — nothing was changed.' }, { status: 500 });
+  }
   // `reprice` keeps the choice as it is — the same hotel, the same flights
   // — and only prices it again. A hotel or flight priced before either was
   // pinned has nothing to keep, and is priced afresh.
