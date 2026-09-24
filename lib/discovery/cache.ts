@@ -74,13 +74,24 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
   if (!keys.length) return { source: 'osm', status: 'ok', findings: [] };
   const { dLat, dLng } = box(seeker);
 
-  const { data, error } = await db
-    .from('discovery_venues')
-    .select('osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url')
-    .in('interest', asStored(keys))
-    .gte('lat', seeker.lat - dLat).lte('lat', seeker.lat + dLat)
-    .gte('lng', seeker.lng - dLng).lte('lng', seeker.lng + dLng)
-    .limit(300);
+  const read = (live: boolean) => {
+    let q = db
+      .from('discovery_venues')
+      .select('osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url')
+      .in('interest', asStored(keys))
+      .gte('lat', seeker.lat - dLat).lte('lat', seeker.lat + dLat)
+      .gte('lng', seeker.lng - dLng).lte('lng', seeker.lng + dLng);
+    // A place two weekly map loads in a row did not find is not a card.
+    if (live) q = q.is('gone_at', null);
+    return q.limit(300);
+  };
+  let { data, error } = await read(true);
+  // gone_at arrives in sql/world-data-phase1-2026-09-24.sql. Until it has
+  // run nothing has been marked gone, so reading without the filter is
+  // exactly the old behaviour rather than an empty screen.
+  if (error && (error.code === '42703' || /gone_at/.test(error.message || ''))) {
+    ({ data, error } = await read(false));
+  }
 
   if (error) {
     // A missing table means the migration has not been run. That is worth

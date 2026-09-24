@@ -25,6 +25,10 @@ import { locate } from './geocode.ts';
 import { noteArea, milesBetween } from './cache.ts';
 import { canTurnUp } from './rules.ts';
 import { normalise } from './verify.ts';
+import { closedThroughout, windowFor } from './hours.ts';
+
+/** What the map calls somewhere to sleep, once underscores are spaces. */
+const LODGING_KIND = /\b(hotel|guest ?house|hostel|motel|apartment)s?\b/i;
 
 export interface RealPlace {
   /** What the model cites. Short on purpose — it is typed back to us. */
@@ -54,16 +58,40 @@ export interface RealPlace {
   city: string | null;
   /** Which source vouches for it, so a card can say where this came from. */
   source: string;
+  /** "118 S Main St", as the map records it, when it does. */
+  street?: string | null;
+  /**
+   * OpenStreetMap's opening_hours, exactly as mapped, when it has them.
+   * Quoted to the model as the map's and never restated as our own: a
+   * volunteer's note from last spring is not a promise about Friday.
+   */
+  hours?: string | null;
 }
 
 /**
- * How far out to look, in miles.
+ * How far out to look, in miles, nearest first.
  *
  * A trip is not a Friday night: somebody in Moab will drive forty minutes to
  * a trailhead and think nothing of it, where Discover's tighter box is right
- * for "what is on near me tonight".
+ * for "what is on near me tonight". So the menu reaches twenty-five miles —
+ * but it gets there in steps.
+ *
+ * One twenty-five mile box capped at a few hundred rows was fine while the
+ * table held a few dozen places a town. The weekly map load puts thousands
+ * around a city, and a capped read of a box that size is an arbitrary few
+ * hundred of them: Durham's breweries offered for dinner in downtown
+ * Raleigh while the restaurant across the street was never read. There is
+ * no PostGIS here to sort by distance in the database, so the boxes grow
+ * instead, and each smaller box's rows are kept whole as the next is read.
  */
-const RADIUS_MILES = 25;
+const RINGS_MILES = [2, 5, 12, 25];
+
+/** Rows asked for per box when building a menu. */
+const PER_BOX = 500;
+
+/** Rows per page, and the most pages, when counting a whole radius. */
+const PAGE = 1000;
+const MAX_PAGES = 20;
 
 /**
  * The kinds worth holding for any destination, in the vocabulary the venue
@@ -79,6 +107,17 @@ const ALWAYS_SWEPT = [
   'breweries', 'wine tasting', 'live music', 'museums & history',
   'art & galleries', 'outdoors', 'markets & food halls',
 ];
+
+/**
+ * Somewhere to sleep, as the venue table files it.
+ *
+ * The weekly load holds hotels so a stay can be checked against the map one
+ * day. They are never on the menu: a hotel that also has a restaurant on
+ * the same map point is still a hotel, nobody is sent to one for dinner,
+ * and `bookingFor` below would have called a hotel off the map "Reach will
+ * book this" when Reach books rooms through its own providers, not these.
+ */
+const STAY_INTEREST = 'places to stay';
 
 /** At most this many of any one kind, so a city's restaurants cannot bury
  *  its one museum. The menu has to be able to furnish a whole day. */
@@ -97,13 +136,92 @@ function dedupe<T extends { name: string }>(rows: T[]): T[] {
   return kept;
 }
 
+type VenueRow = {
+  id: string; name: string; kind: string | null; interest: string | null; website: string | null;
+  city: string | null; street: string | null; lat: number; lng: number;
+  osm_tags?: Record<string, string> | null; opening_hours?: string | null;
+};
+type ReadError = { code?: string; message?: string } | null;
+/** A held row as the menu uses it. */
+type Shaped = {
+  id: string; rawKind: string | null; name: string; kind: string; interest: string | null;
+  url: string | null; city: string | null; street: string | null; hours: string | null;
+  miles: number; cuisine: string;
+};
+
+/** The half-width of a box `miles` across, in degrees, at this latitude. */
+function boxAround(lat: number, miles: number): { dLat: number; dLng: number } {
+  return { dLat: miles / 69, dLng: miles / Math.max(1, 69 * Math.cos((lat * Math.PI) / 180)) };
+}
+
+/** A value PostgREST can take inside `in.(...)` without escaping. */
+const listable = (v: string) => !/[",()\\]/.test(v);
+
+/**
+ * The live venues in a box, or the error that stopped the read.
+ *
+ * `except` leaves out kinds the menu already has enough of, so a wider box
+ * spends its rows on what is still missing — the museum twelve miles out —
+ * rather than on five hundred more restaurants. `all` pages through the
+ * whole box, for a count.
+ *
+ * `gone_at` and the newer columns arrive in migrations. A missing column is
+ * a pending migration, not an empty town, so the read is retried with the
+ * columns every version of the table has, and without the gone filter —
+ * which is exactly what the reader did before the column existed.
+ */
+async function venuesInBox(
+  db: SupabaseClient,
+  at: { lat: number; lng: number },
+  miles: number,
+  opts: { except?: string[]; all?: boolean; also?: (q: any) => any } = {},
+): Promise<{ data: VenueRow[]; error: ReadError }> {
+  const { dLat, dLng } = boxAround(at.lat, miles);
+  const except = (opts.except ?? []).filter(listable);
+  const also = opts.also ?? ((q: any) => q);
+  const read = async (columns: string, live: boolean): Promise<{ data: VenueRow[]; error: ReadError }> => {
+    const out: VenueRow[] = [];
+    for (let page = 0; page < (opts.all ? MAX_PAGES : 1); page++) {
+      let q = db.from('discovery_venues')
+        .select(columns)
+        .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
+        .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng)
+        .neq('interest', STAY_INTEREST);
+      if (live) q = q.is('gone_at', null);
+      // A null kind is filed by its interest and cannot be named here, so
+      // it is always let through.
+      if (except.length) q = q.or(`kind.is.null,kind.not.in.(${except.map(k => `"${k}"`).join(',')})`);
+      q = also(q);
+      const { data, error } = await (opts.all
+        ? q.order('id').range(page * PAGE, page * PAGE + PAGE - 1)
+        : q.limit(PER_BOX)) as unknown as { data: VenueRow[] | null; error: ReadError };
+      if (error) return { data: out, error };
+      out.push(...(data ?? []));
+      if (!opts.all || (data ?? []).length < PAGE) return { data: out, error: null };
+    }
+    console.error('[real-places] counted to the page limit — the number is a floor', { miles, rows: out.length });
+    return { data: out, error: null };
+  };
+  const FULL = 'id, name, kind, interest, website, city, street, lat, lng, osm_tags, opening_hours';
+  const BASIC = 'id, name, kind, interest, website, city, street, lat, lng';
+  const pending = (e: ReadError) => !!e && (e.code === '42703' || /gone_at|osm_tags|opening_hours/.test(e.message || ''));
+  const first = await read(FULL, true);
+  if (!pending(first.error)) return first;
+  // gone_at is the newest column, so it is the likeliest to be missing: keep
+  // the hours and the cuisine and drop only the filter. Nothing has been
+  // marked gone before the column exists, so the answer is the same.
+  console.error('[real-places] reading venues without gone_at — run sql/world-data-phase1-2026-09-24.sql', { code: first.error?.code });
+  const second = await read(FULL, false);
+  if (!pending(second.error)) return second;
+  return read(BASIC, false);
+}
+
 /**
  * Real places near where somebody is going.
  *
- * The cache first and the map second, which is the same order Discover uses
- * and for the same reason: the cached rows came from the map on an earlier
- * sweep, they cost nothing, and a town we have already swept answers
- * instantly. The live call only happens when the cache is thin.
+ * Read from our own table, which the sweep and the weekly map load fill.
+ * Nearest first, in growing boxes (see RINGS_MILES), stopping at the first
+ * box dense enough to fill the menu.
  *
  * Returns an empty list rather than throwing. Every caller has to handle
  * empty anyway — plenty of real towns have nothing mapped — and an empty
@@ -146,11 +264,9 @@ export async function placesFor(
   //   Washington  0 places  72.7s   (every mirror timed out, twice over)
   //   Charleston 13 places  39.2s   (answered, but only at a 4-mile box)
   //
-  // Seventy-two seconds to be told nothing. A generation that already had to
-  // drop from adaptive thinking to stay under the platform's ceiling cannot
-  // spend that, and a dense city — which is where most trips go — is exactly
-  // where Overpass refuses. So the map is read on a schedule by
-  // /api/discovery/sweep and this reads the table, which is instant.
+  // Seventy-two seconds to be told nothing. So the map is read on a
+  // schedule — /api/discovery/sweep nightly, the Geofabrik load weekly —
+  // and this reads the table, which is instant.
   //
   // Read without an interest filter, unlike Discover. Discover is answering
   // "what is on near me that I would like", so it matches the quiz's own
@@ -158,29 +274,94 @@ export async function placesFor(
   // to somebody's five answers returned six of Raleigh's eighty-seven
   // venues and not one restaurant. A day has a dinner in it whether or not
   // anybody listed food as an interest.
-  const dLat = RADIUS_MILES / 69;
-  const dLng = RADIUS_MILES / Math.max(1, 69 * Math.cos((at.lat * Math.PI) / 180));
-  type VenueRow = { id: string; name: string; kind: string | null; interest: string | null; website: string | null;
-    city: string | null; street: string | null; lat: number; lng: number; osm_tags?: Record<string, string> | null };
-  // osm_tags carries the map's cuisine; it arrives in a migration.
-  let { data, error } = await db.from('discovery_venues')
-    .select('id, name, kind, interest, website, city, street, lat, lng, osm_tags')
-    .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
-    .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng)
-    .limit(400) as unknown as { data: VenueRow[] | null; error: { code?: string; message?: string } | null };
-  if (error && (error.code === '42703' || /osm_tags/.test(error.message || ''))) {
-    ({ data, error } = await db.from('discovery_venues')
-      .select('id, name, kind, interest, website, city, street, lat, lng')
-      .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
-      .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng)
-      .limit(400) as unknown as { data: VenueRow[] | null; error: { code?: string; message?: string } | null });
+  //
+  // What a held row is on the menu, or null when it cannot be on it: a
+  // caterer, a hotel, a name already taken, or shut on the plan's days.
+  // Remembered per row, because the rings re-read the same rows and the
+  // hours are parsed once each.
+  const countryCode = at.countryCode ?? where.country ?? null;
+  const shaped = new Map<string, Shaped | null>();
+  const shape = (v: VenueRow): Shaped | null => {
+    const key = String(v.id);
+    if (shaped.has(key)) return shaped.get(key)!;
+    let out: Shaped | null = null;
+    const kind = String(v.kind || v.interest || 'place').replace(/_/g, ' ').trim() || 'place';
+    const usable = !!v.name && canTurnUp(String(v.name), [String(v.kind || '')])
+      // Belt and braces for rows filed before lodging had an interest of its
+      // own: whatever the interest says, a hotel is not dinner.
+      && v.interest !== STAY_INTEREST && !LODGING_KIND.test(String(v.kind || ''));
+    // Shut on the plan's own days, going by hours the map records and we
+    // could parse. No date, no hours, or hours we cannot read: kept. See
+    // lib/discovery/hours.ts for why the rule leans that way.
+    if (usable && !(opts.days && closedThroughout(v.opening_hours, opts.days,
+      windowFor(kind, v.interest, opts.days), { lat: at.lat, lng: at.lng, countryCode }))) {
+      out = {
+        id: v.id,
+        rawKind: v.kind ?? null,
+        name: String(v.name),
+        kind,
+        interest: (v.interest as string | null) || null,
+        url: (v.website as string | null) || null,
+        city: (v.city as string | null) ?? seeker.city ?? null,
+        street: (v.street as string | null) || null,
+        hours: (v.opening_hours as string | null) || null,
+        miles: milesBetween(at.lat, at.lng, Number(v.lat), Number(v.lng)),
+        cuisine: String((v.osm_tags ?? {}).cuisine ?? ''),
+      };
+    }
+    shaped.set(key, out);
+    return out;
+  };
+  const menuRows = () => dedupe(
+    [...held.values()].map(shape).filter((r): r is Shaped => !!r).sort((a, b) => a.miles - b.miles),
+  );
+
+  // Nearest first, in growing boxes. After each box the kinds that already
+  // have their share are left out of the next, and the growing stops once
+  // the menu could be filled from what is held: everything further out
+  // would sort behind it and never be chosen. A count (max Infinity) reads
+  // the whole radius instead, every page of it.
+  const held = new Map<string, VenueRow>();
+  let readError: ReadError = null;
+  const rings = Number.isFinite(max) ? RINGS_MILES : [RINGS_MILES[RINGS_MILES.length - 1]];
+  for (const miles of rings) {
+    const perKindNow = new Map<string, number>();
+    const rawKinds = new Map<string, Set<string>>();
+    for (const r of menuRows()) {
+      perKindNow.set(r.kind, (perKindNow.get(r.kind) ?? 0) + 1);
+      if (r.rawKind) rawKinds.set(r.kind, (rawKinds.get(r.kind) ?? new Set()).add(r.rawKind));
+    }
+    const fillable = [...perKindNow.values()].reduce((n, c) => n + Math.min(c, perKind), 0);
+    if (fillable >= max) break;
+    const except = [...perKindNow.entries()]
+      .filter(([, c]) => c >= perKind)
+      .flatMap(([k]) => [...(rawKinds.get(k) ?? [])]);
+    const { data, error } = await venuesInBox(db, at, miles, { except, all: !Number.isFinite(max) });
+    if (error) { readError = error; break; }
+    for (const v of data) if (!held.has(String(v.id))) held.set(String(v.id), v);
   }
 
-  if (error) {
+  if (readError) {
     // A missing table means the migration has not been run, which looks
     // exactly like a town with nothing in it unless the log says otherwise.
-    console.error('[real-places] could not read the venue table', { code: error.code, message: error.message });
-    return [];
+    console.error('[real-places] could not read the venue table', { code: readError.code, message: readError.message });
+    if (!held.size) return [];
+  }
+
+  // The food somebody asked for, looked for across the whole radius rather
+  // than only in the boxes read above. Two birthday nights asked for Thai
+  // and for Greek and both ended at a ramen bar: the menu was the eight
+  // nearest restaurants and a Thai place further out was never read. Asked
+  // by name and by the map's cuisine, because cuisine is often only in the
+  // name ("Lemongrass Thai", filed as "places to eat").
+  const wants = (opts.wantFood ?? []).map(w => w.toLowerCase().trim()).filter(Boolean);
+  for (const want of wants) {
+    const word = want.replace(/[^a-z\s-]/g, '').trim();
+    if (word.length < 3) continue;
+    const { data } = await venuesInBox(db, at, RINGS_MILES[RINGS_MILES.length - 1], {
+      also: q => q.or(`name.ilike.*${word}*,interest.ilike.*${word}*,kind.ilike.*${word}*,osm_tags->>cuisine.ilike.*${word}*`),
+    });
+    for (const v of data) if (!held.has(String(v.id))) held.set(String(v.id), v);
   }
 
   // Tell the sweep this town is wanted. It writes an area row, the nightly
@@ -189,46 +370,32 @@ export async function placesFor(
   // cache is for the next traveller, not this one.
   void noteArea(db, seeker).catch(() => {});
 
-  const rows = dedupe(
-    (data ?? [])
-      .filter(v => v.name && canTurnUp(String(v.name), [String(v.kind || '')]))
-      .map(v => ({
-        id: v.id,
-        name: String(v.name),
-        kind: String(v.kind || v.interest || 'place').replace(/_/g, ' ').trim() || 'place',
-        interest: (v.interest as string | null) || null,
-        url: (v.website as string | null) || null,
-        city: (v.city as string | null) ?? seeker.city ?? null,
-        miles: milesBetween(at.lat, at.lng, Number(v.lat), Number(v.lng)),
-        cuisine: String((v.osm_tags ?? {}).cuisine ?? ''),
-      }))
-      .sort((a, b) => a.miles - b.miles),
-  );
+  const rows = menuRows();
 
   if (!rows.length) {
     console.log('[real-places] no verified venues held for this town yet — it will name none', { city: seeker.city });
   }
 
+  const asPlace = (r: typeof rows[number], ref: string, forFood?: string): RealPlace => ({
+    ref, name: r.name, kind: r.kind, interest: r.interest, url: r.url, city: r.city, source: 'osm',
+    street: r.street, hours: r.hours,
+    ...(forFood ? { forFood } : {}),
+  });
+
   // A few of each kind, nearest first, so the menu can furnish a whole day
   // rather than sixty restaurants and nothing to do between them.
   const taken = new Map<string, number>();
   const places: RealPlace[] = [];
-  // The food somebody asked for, found among EVERYTHING held nearby and put
-  // first, outside the per-kind cap. Two birthday nights asked for Thai and
-  // for Greek and both ended at a ramen bar: the menu was the eight nearest
-  // restaurants, a Thai place further out was cut before the model saw it,
-  // and cuisine is often only in the name ("Lemongrass Thai", filed as
-  // "places to eat"). Matched on the kind, the name and the map's cuisine.
+  // The food somebody asked for, found among everything read and put first,
+  // outside the per-kind cap. Matched on the kind, the name and the map's
+  // cuisine.
   const pinned = new Set<string>();
-  for (const want of (opts.wantFood ?? []).map(w => w.toLowerCase().trim()).filter(Boolean)) {
+  for (const want of wants) {
     const re = new RegExp(`\\b${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
     for (const r of rows.filter(r => re.test(`${r.name} ${r.kind} ${r.interest ?? ''} ${r.cuisine}`)).slice(0, 2)) {
       if (pinned.has(r.name)) continue;
       pinned.add(r.name);
-      places.push({
-        ref: `p${places.length + 1}`, name: r.name, kind: r.kind, interest: r.interest, url: r.url,
-        city: r.city, source: 'osm', forFood: want,
-      });
+      places.push(asPlace(r, `p${places.length + 1}`, want));
     }
   }
   for (const r of rows) {
@@ -236,10 +403,7 @@ export async function placesFor(
     const n = taken.get(r.kind) ?? 0;
     if (n >= perKind) continue;
     taken.set(r.kind, n + 1);
-    places.push({
-      ref: `p${places.length + 1}`,
-      name: r.name, kind: r.kind, interest: r.interest, url: r.url, city: r.city, source: 'osm',
-    });
+    places.push(asPlace(r, `p${places.length + 1}`));
     if (places.length >= max) break;
   }
   // What is on at those places, from their own pages.
@@ -323,6 +487,9 @@ export function placeMenu(places: RealPlace[]): string {
     const ordered = [...list].sort((a, b) => (b.whatsOn?.length ?? 0) - (a.whatsOn?.length ?? 0));
     for (const p of ordered) {
       lines.push(`  [${p.ref}] ${p.name}`);
+      // The map's hours, labelled as the map's. They let the plan put the
+      // Sunday-closed restaurant on Saturday; they are not ours to promise.
+      if (p.hours) lines.push(`        hours per OpenStreetMap: ${p.hours}`);
       // What is actually on there, read off the venue's own page. Their
       // words, not ours — "every Wednesday Night at 7 PM" is the pub's own
       // phrasing and is worth repeating exactly, because it is checkable.
@@ -340,9 +507,13 @@ export function placeMenu(places: RealPlace[]): string {
     '- A slot that needs no venue — a walk, a drive, a morning off — sets',
     '  place_ref to null and names nothing. That is a good answer.',
     '- Do not describe what a place is like inside, what it is known for,',
-    '  what it costs, when it is open or how busy it gets. The list gives you',
-    '  a name, a kind, and sometimes what is on there. That is everything we',
-    '  know about it.',
+    '  what it costs or how busy it gets. The list gives you a name, a kind,',
+    '  sometimes its hours and sometimes what is on there.',
+    '  That is everything we know about it.',
+    '- "hours per OpenStreetMap" is what volunteers mapped, and may be out of',
+    '  date. Use it to put a place on a day it is open. If you mention the',
+    '  hours at all, say they are per OpenStreetMap; never state them as',
+    '  certain, and never give hours for a place that has none listed.',
     '- Places with something listed under them come first in each group, and',
     '  they are the better answer where one fits: a night somebody can plan',
     '  around beats a name on its own.',

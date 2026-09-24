@@ -445,6 +445,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
             .from('discovery_venues')
             .select('reservation_platform, reservation_url, phone')
             .ilike('name', venueName)
+            // The weekly map load holds hotels too. A table line is never
+            // a hotel's front desk, even when the two share a name. A stay
+            // line is priced by the hotel provider (asRequest) and never
+            // reads this table, so it is unaffected.
+            .neq('interest', 'places to stay')
             .limit(1)
             .maybeSingle()
         : { data: null, error: null };
