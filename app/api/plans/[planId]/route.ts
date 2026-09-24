@@ -112,6 +112,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     .from('group_members').select('role').eq('group_id', plan.group_id).eq('user_id', user.id).single();
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+  // "Booked" is a fact about the bookings, written by the approve route and
+  // the payment webhook when they are confirmed. Anyone in the group could
+  // set it here, and the trip then read "Booked" with nothing bought.
+  if (body.status === 'booked' && plan.status !== 'booked') {
+    return NextResponse.json({ error: 'A trip is marked booked once its bookings are confirmed, not by hand.' }, { status: 409 });
+  }
+
   // Handle status-specific timestamps
   // confirmDateChange is a decision about this request, not a column.
   const { confirmDateChange: _confirm, only_if_undecided: onlyIfUndecided, pick_option: pickOption, ...fields } = body as Record<string, unknown>;

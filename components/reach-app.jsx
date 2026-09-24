@@ -7171,7 +7171,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
 //   paid" reads as an accusation. Same fact, different verb.
 //   One obvious next action beats four buttons of equal weight, because
 //   choosing between equals is work.
-function TripProgress({plan,group,soloTrip,votesIn,onAction,busy,nothingToBuy,reserved}){
+function TripProgress({plan,group,soloTrip,votesIn,onAction,busy,nothingToBuy,reserved,funded}){
   const days=plan.itinerary?.length||0;
   const heads=(group.memberIds||[]).length||1;
   const needVote=!soloTrip&&plan.options?.length>0;
@@ -7188,7 +7188,9 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy,nothingToBuy,re
   ]:[
     {k:"planned", l:"Planned",  done:days>0},
     ...(needVote?[{k:"voted", l:"Agreed", done:votesIn>=heads}]:[]),
-    {k:"funded",  l:soloTrip?"Paid":"Funded", done:plan.status==="approved"||plan.status==="booked"},
+    // "approved" means agreed — a solo trip is approved the moment its idea
+    // is picked, with nothing paid. Only the money says Paid.
+    {k:"funded",  l:soloTrip?"Paid":"Funded", done:funded===true||plan.status==="booked"},
     {k:"booked",  l:"Booked",   done:plan.status==="booked"},
   ];
   const next=stages.find(s=>!s.done);
@@ -8337,7 +8339,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             )}
             {plan.destStyle!=="undecided"&&<TripProgress
               plan={plan} group={group} soloTrip={soloTrip} votesIn={totalV}
-              busy={building||nudging} nothingToBuy={nothingToBuy}
+              busy={building||nudging} nothingToBuy={nothingToBuy} funded={funding?.funded===true}
               reserved={tracker.total>0?{done:tracker.done,total:tracker.total}:null}
               onAction={async(stage)=>{
                 if(stage==="planned"){setAtab("bookings");await buildItinerary();return;}
