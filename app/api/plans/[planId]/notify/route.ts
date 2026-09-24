@@ -21,6 +21,8 @@ import { planShares } from '@/lib/money';
 import { planSkips } from '@/lib/participation';
 import { claimNudge, releaseNudge, limitsNudge } from '@/lib/nudge';
 import { z } from 'zod';
+import { readIdeas, shownTitle } from '@/lib/trip-vote';
+import { notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 
 const Schema = z.object({ kind: z.enum(['vote', 'funding', 'prefs']) });
 
@@ -99,6 +101,27 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const { data: people } = await db
     .from('users').select('id, email').in('id', outstanding);
 
+  // What the ideas are called where the group votes on them. A group trip's
+  // ideas are saved on the plan, and an evening's are named after the venues
+  // its days go to once they are written (shownTitle) — vote_options holds
+  // the first step's working titles, which the generator itself calls "not a
+  // fact", and a push is no place to put a venue nobody vouches for. Read on
+  // its own because the column arrives in a migration: before it, there are
+  // no saved ideas and vote_options is the vote.
+  let voteNames: string[] = ((plan.vote_options as string[]) || []).filter(t => typeof t === 'string');
+  if (kind === 'vote') {
+    const { data: saved, error: savedErr } = await db.from('plans').select('trip_options').eq('id', params.planId).maybeSingle();
+    if (savedErr && !notMigrated(savedErr)) {
+      console.error('[notify] could not read the saved ideas — naming none', { planId: params.planId, code: savedErr.code });
+      voteNames = [];
+    } else if (savedErr) {
+      console.error(`[notify] plans.trip_options is not there yet — run ${MIGRATION}`);
+    } else {
+      const ideas = readIdeas((saved as { trip_options?: unknown } | null)?.trip_options);
+      if (ideas) voteNames = ideas.options.map(o => shownTitle(ideas.options, o.title));
+    }
+  }
+
   const base = appUrl(req);
   // Straight to the questions for this trip: /home opens them from ?answer=.
   // A vote opens on the trip's Vote tab: /home opens it from ?vote=.
@@ -144,7 +167,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     const what = plan.title === 'Where next?'
       ? (plan.type === 'restaurant' ? 'your next night out' : 'your next trip')
       : plan.title;
-    const options = ((plan.vote_options as string[]) || []).slice(0, 3);
+    const options = voteNames.slice(0, 3);
     const delivery = await notifyUsers(db, outstanding, {
       kind: 'vote',
       title: 'Your vote is still to come',
@@ -164,7 +187,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     const result: SendResult = kind === 'vote'
       ? await sendVoteNeeded(person.email, {
           planTitle: plan.title, groupName: group?.name || 'Your group',
-          options: (plan.vote_options as string[]) || [], url,
+          options: voteNames, url,
         })
       : kind === 'prefs'
       ? await sendAnswersNeeded(person.email, {
