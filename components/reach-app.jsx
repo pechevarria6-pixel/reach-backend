@@ -6681,6 +6681,16 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       destinationCity:where?.city||null,
       destinationCountry:where?.country||null,
       soloMode:isSoloGroup,
+      // What the flow asked, kept as this person's answers for the plan — the
+      // itinerary reads tonight's food and time from exactly here. The
+      // cuisine, the genre and the time were asked and then thrown away.
+      // Only when there is something: an empty set still records "answered",
+      // which would start a group plan waiting on everybody else.
+      tripAnswers:(()=>{const t={
+        ...(planType==="restaurant"&&cuisine&&cuisine!=="any"?{nightFood:[cuisine]}:{}),
+        ...(planType==="concert"&&concertGenre?{nightKind:["live music",concertGenre]}:{}),
+        ...(isEvent&&eventTime?{nightTime:eventTime}:{}),
+      };return Object.keys(t).length?t:null;})(),
       participants:selGroup?.memberIds||[],
       itinerary:[],
       votes:(voting&&!isSoloGroup)?Object.fromEntries(vopts.filter(Boolean).map(o=>[o,0])):{},
