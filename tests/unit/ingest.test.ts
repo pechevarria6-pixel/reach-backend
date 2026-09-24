@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   interestsFor, osmiumFilters, rowsFor, dedupeRows, shapeBatches, goneVenues,
-  trustworthyRun, looksLikePbf, countPerSeed, ingestRegion, earlierDownloadBefore, runVerdict, seedsCovering,
+  trustworthyRun, looksLikePbf, countPerSeed, ingestRegion, earlierDownloadBefore, runVerdict, seedsCovering, MAX_FAILED_ROWS,
   type MapFeature, type IngestDb, type DbResult,
 } from '../../lib/discovery/ingest.ts';
 import { mappableKinds, kindFor, QUIZ_CUISINES } from '../../lib/discovery/taste.ts';
@@ -93,25 +93,30 @@ test('an unnamed memorial is not history, a named one is', () => {
 // ── The name-and-website rule ─────────────────────────────────────────
 
 test('no website, no row; no name, no row', () => {
-  assert.deepEqual(rowsFor(feature(1, { name: 'Diner', amenity: 'restaurant' }), [RALEIGH], REGION, SEEN), { skip: 'no_website' });
-  assert.deepEqual(rowsFor(feature(2, { amenity: 'bar', website: 'https://x.example' }), [RALEIGH], REGION, SEEN), { skip: 'no_name' });
+  assert.deepEqual(rowsFor(feature(1, { name: 'Diner', amenity: 'restaurant' }), REGION, SEEN), { skip: 'no_website' });
+  assert.deepEqual(rowsFor(feature(2, { amenity: 'bar', website: 'https://x.example' }), REGION, SEEN), { skip: 'no_name' });
 });
 
 test('a website under any of its three tags counts, and becomes a link', () => {
   for (const key of ['website', 'contact:website', 'url']) {
-    const out = rowsFor(feature(3, { name: 'Café Uno', amenity: 'cafe', [key]: 'cafe-uno.example' }), [RALEIGH], REGION, SEEN);
+    const out = rowsFor(feature(3, { name: 'Café Uno', amenity: 'cafe', [key]: 'cafe-uno.example' }), REGION, SEEN);
     assert.ok('rows' in out, key);
     assert.equal(out.rows[0].website, 'https://cafe-uno.example');
   }
 });
 
-test('outside every seed circle is not written', () => {
+test('a place far from every seed is written: the region is read whole', () => {
+  // Charlotte, 130 miles from Raleigh. The circles used to throw it away, and
+  // a town nobody had planned yet held nothing however much the map knew.
   const charlotte = feature(4, { name: 'Taproom', amenity: 'pub', website: 'https://t.example' }, [-80.8431, 35.2271]);
-  assert.deepEqual(rowsFor(charlotte, [RALEIGH], REGION, SEEN), { skip: 'outside' });
+  const out = rowsFor(charlotte, REGION, SEEN);
+  assert.ok('rows' in out, JSON.stringify(out));
+  assert.deepEqual(out.rows.map(r => r.interest), ['pubs']);
+  assert.equal(out.rows[0].region, REGION);
 });
 
 test('a caterer carries the tag and is still not a night out', () => {
-  const out = rowsFor(feature(5, { name: 'Party Caterers', amenity: 'restaurant', website: 'https://c.example' }), [RALEIGH], REGION, SEEN);
+  const out = rowsFor(feature(5, { name: 'Party Caterers', amenity: 'restaurant', website: 'https://c.example' }), REGION, SEEN);
   assert.deepEqual(out, { skip: 'cannot_turn_up' });
 });
 
@@ -120,7 +125,7 @@ test('a row carries the phone as a dialable number, the hours, the street and th
     name: 'Lemongrass Thai', amenity: 'restaurant', cuisine: 'thai', website: 'lemongrass.example',
     phone: '(919) 555-0101', opening_hours: 'Mo-Sa 11:00-22:00; Su off',
     'addr:housenumber': '118', 'addr:street': 'S Wilmington St', 'addr:city': 'Raleigh', fixme: 'check',
-  }), [RALEIGH], REGION, SEEN);
+  }), REGION, SEEN);
   assert.ok('rows' in out);
   const row = out.rows[0];
   assert.match(String(row.phone), /^\+1\s?919/);
@@ -135,7 +140,7 @@ test('a row carries the phone as a dialable number, the hours, the street and th
 });
 
 test('a place with no phone leaves the phone column out of the write entirely', () => {
-  const out = rowsFor(feature(7, { name: 'Quiet Bar', amenity: 'bar', website: 'https://q.example' }), [RALEIGH], REGION, SEEN);
+  const out = rowsFor(feature(7, { name: 'Quiet Bar', amenity: 'bar', website: 'https://q.example' }), REGION, SEEN);
   assert.ok('rows' in out);
   assert.equal('phone' in out.rows[0], false);
   assert.equal('city' in out.rows[0], false, 'never the nearest seed\'s name');
@@ -177,13 +182,15 @@ test('missed by one run is not gone; missed by two is', () => {
     held('seen-last-week', '2026-09-21T06:30:00.000Z'),
     held('missed-twice', '2026-09-14T06:30:00.000Z'),
     held('never-seen-by-a-run', null),
-    held('outside-every-circle', '2026-09-14T06:30:00.000Z', { lat: 35.2271, lng: -80.8431 }),
+    // The whole file was read, so a place far from every town was looked
+    // for too, and missing twice means gone there as much as in Raleigh.
+    held('far-from-every-seed', '2026-09-14T06:30:00.000Z', { lat: 35.2271, lng: -80.8431 }),
   ];
-  assert.deepEqual(goneVenues(venues, lastRun, [RALEIGH]), ['missed-twice']);
+  assert.deepEqual(goneVenues(venues, lastRun), ['missed-twice', 'far-from-every-seed']);
 });
 
 test('the first run ever retires nothing', () => {
-  assert.deepEqual(goneVenues([held('x', '2020-01-01T00:00:00Z')], null, [RALEIGH]), []);
+  assert.deepEqual(goneVenues([held('x', '2020-01-01T00:00:00Z')], null), []);
 });
 
 test('a run that kept under half of last time is not believed', () => {
@@ -206,6 +213,14 @@ test('places are counted once per seed, however many interests they carry', () =
     { key: 'node/1', seeds: [RALEIGH] },
     { key: 'node/2', seeds: [RALEIGH] },
   ]), { Durham: 1, Raleigh: 2 });
+});
+
+test('a seed with nothing near it is counted as 0, not left out', () => {
+  // "Seeds that kept nothing" is the towns whose itinerary will name no
+  // venues. Leaving them out of per_seed made that count read 0 of 0.
+  const moab: Seed = { ...RALEIGH, name: 'Moab' };
+  assert.deepEqual(countPerSeed([{ key: 'node/1', seeds: [RALEIGH] }], [RALEIGH, moab]), { Moab: 0, Raleigh: 1 });
+  assert.deepEqual(countPerSeed([], []), {}, 'no seeds at all is an empty record, which dueRegions reads as "had none"');
 });
 
 // ── A whole run, against a fake database ──────────────────────────────
@@ -275,18 +290,20 @@ test('a run over the fixture writes each place once per interest and never the s
   const report = await ingestRegion({ db, region: REGION, seeds: seedsFixture(), features: fixture(), log: () => {} });
   assert.equal(report.ok, true, report.problems.join('\n'));
   // Lemongrass (eat, thai), the hotel (stay), the opera house (theatre,
-  // comedy, classical) and the pottery; the hotel was exported twice.
-  assert.equal(report.kept, 4);
-  assert.equal(report.written, 7);
-  assert.equal(venues.length, 7);
-  assert.deepEqual(report.skipped, { no_website: 1, no_name: 1, outside: 1, cannot_turn_up: 1 });
+  // comedy, classical), the pottery and the Charlotte taproom, 130 miles from
+  // either seed: the region is read whole. The hotel was exported twice.
+  assert.equal(report.kept, 5);
+  assert.equal(report.written, 8);
+  assert.equal(venues.length, 8);
+  assert.deepEqual(report.skipped, { no_website: 1, no_name: 1, cannot_turn_up: 1 });
   assert.deepEqual(report.perSeed, { Durham: 4, Raleigh: 4 });
   for (const batch of upserts) {
     const shapes = new Set(batch.map(r => Object.keys(r).sort().join(',')));
     assert.equal(shapes.size, 1, 'one shape per write, so nobody\'s phone is nulled');
   }
   assert.equal(runs[0].status, 'ok');
-  assert.equal(runs[0].kept, 4);
+  assert.equal(runs[0].kept, 5);
+  assert.deepEqual(runs[0].per_seed, { Durham: 4, Raleigh: 4 }, "the taproom is kept but near neither town");
 });
 
 test('one venue that will not store fails the whole run, names it, and retires nothing', async () => {
@@ -368,17 +385,57 @@ test('the earlier download is the good run at least six days back', () => {
   assert.equal(earlierDownloadBefore('2026-09-28T06:17:00.000Z'), '2026-09-22T06:17:00.000Z');
 });
 
-test('a region whose circles only graze it keeps nothing, and that is a good run', async () => {
-  // Read because a seed's circle crosses the border; nothing in it is inside.
+test('a region that honestly holds nothing is a good run, week after week', async () => {
+  // A small territory whose mappers recorded no websites.
   const { db, runs } = fakeDb();
-  const far: Seed = { ...RALEIGH, name: 'Border Town', lat: 30, lng: -90 };
-  const first = await ingestRegion({ db, region: REGION, seeds: [far], features: fixture(), now: new Date('2026-09-21T06:17:00.000Z'), log: () => {} });
+  const nothing = () => fixture().filter(f => !f.properties?.website && !f.properties?.url && !f.properties?.['contact:website']);
+  const first = await ingestRegion({ db, region: REGION, seeds: [], features: nothing(), now: new Date('2026-09-21T06:17:00.000Z'), log: () => {} });
   assert.equal(first.ok, true, first.problems.join('\n'));
   assert.equal(first.kept, 0);
   assert.equal(runs[0].status, 'ok');
-  const second = await ingestRegion({ db, region: REGION, seeds: [far], features: fixture(), now: new Date(SEEN), log: () => {} });
+  const second = await ingestRegion({ db, region: REGION, seeds: [], features: nothing(), now: new Date(SEEN), log: () => {} });
   assert.equal(second.ok, true, 'and again the next week, rather than red every Monday');
   assert.equal(second.retired, 0);
+});
+
+test('a region nobody has planned a trip to is read whole, and says it had no seeds', async () => {
+  const { db, venues, runs } = fakeDb();
+  const report = await ingestRegion({ db, region: REGION, seeds: [], features: fixture(), log: () => {} });
+  assert.equal(report.ok, true, report.problems.join('\n'));
+  assert.equal(report.kept, 5);
+  assert.equal(venues.length, 8);
+  assert.deepEqual(runs[0].per_seed, {}, 'empty, so a first seed later makes the region due');
+});
+
+test('rows are written as the export streams, never the same row twice across batches', async () => {
+  // Batches of one, flushed every four rows: the hotel osmium exported twice
+  // arrives in a later flush than its twin would have, and must not be sent
+  // again — a second write of the row is harmless, but the dedupe has to
+  // hold across flushes, not only inside one.
+  const { db, upserts } = fakeDb();
+  const report = await ingestRegion({ db, region: REGION, seeds: seedsFixture(), features: fixture(), batchSize: 1, log: () => {} });
+  assert.equal(report.ok, true, report.problems.join('\n'));
+  const keys = upserts.flat().map((r: any) => `${r.osm_type}/${r.osm_id}/${r.interest}`);
+  assert.equal(keys.length, 8);
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(upserts.length >= 8, 'written in many small writes, not one at the end');
+});
+
+test('a database that refuses everything stops the run after MAX_FAILED_ROWS rather than asking row by row all day', async () => {
+  const many = Array.from({ length: 1500 }, (_, i) => feature(10_000 + i, { name: `Bar ${i}`, amenity: 'bar', website: `https://b${i}.example` }));
+  let calls = 0;
+  const db: IngestDb = {
+    get: async () => ({ data: [], error: null }),
+    insert: async () => ({ data: [{ id: 'run1' }], error: null }),
+    patch: async () => ({ data: null, error: null }),
+    upsert: async () => { calls++; return { data: null, error: { code: '503', message: 'unavailable' } }; },
+  };
+  const report = await ingestRegion({ db, region: REGION, seeds: [], features: many, batchSize: 100, log: () => {} });
+  assert.equal(report.ok, false);
+  assert.equal(report.failed, 1500, 'every row that was not written is counted as failed');
+  assert.equal(report.written, 0);
+  assert.ok(calls <= MAX_FAILED_ROWS + 2, `${calls} upserts for a database that said no`);
+  assert.ok(report.problems.some(p => /stopped writing/.test(p)));
 });
 
 test('nothing kept after a run that kept something is a broken download, whatever --accept-drop says', () => {

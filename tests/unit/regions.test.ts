@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   regionFor, knownRegions, geofabrikUrl, dedupeSeeds, seedKey, seedName, seedCandidates, probePoints,
-  seedPlace, sameTown, nameKey,
+  seedPlace, sameTown, nameKey, regionCountries,
   type Seed,
 } from '../../lib/discovery/regions.ts';
 
@@ -29,8 +29,18 @@ test('a country the table does not know is null, never the nearest path that loo
 
 test('every known region becomes a Geofabrik URL of the same shape', () => {
   for (const r of knownRegions()) {
-    assert.match(geofabrikUrl(r), /^https:\/\/download\.geofabrik\.de\/[a-z-]+(\/[a-z-]+)+-latest\.osm\.pbf$/);
+    // Antarctica is the one file with no continent above it.
+    assert.match(geofabrikUrl(r), /^https:\/\/download\.geofabrik\.de\/[a-z-]+(\/[a-z-]+)*-latest\.osm\.pbf$/);
+    assert.ok(r.includes('/') || r === 'antarctica', r);
   }
+});
+
+test('a Hong Kong or San Juan row answers to the code the geocoder gives it', () => {
+  assert.deepEqual(regionCountries('asia/china/hong-kong').sort(), ['CN', 'HK']);
+  assert.deepEqual(regionCountries('north-america/us/puerto-rico').sort(), ['PR', 'US']);
+  assert.deepEqual(regionCountries('north-america/us/north-carolina'), ['US']);
+  assert.deepEqual(regionCountries('not/a-region'), []);
+  assert.deepEqual(regionCountries(null), []);
 });
 
 test('the three queued Cancún profiles are one seed, accents and case folded', () => {

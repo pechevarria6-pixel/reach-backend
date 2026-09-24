@@ -1,4 +1,13 @@
-# The weekly map load. See docs/INGEST.md.
+# The map load, every day, with nobody pressing anything. See docs/INGEST.md.
+#
+#   Mondays 06:17 UTC      rebuild the seeds, then refresh EVERY region
+#   other days 04:43 UTC   rebuild the seeds, then load only the regions that
+#                          need it: never loaded, gained their first seed, or
+#                          overdue because their Monday run failed
+#
+# Every region is read whole. The list builds itself (osm-ingest.mjs --plan):
+# every US state and territory, the UK's nations, Mexico, the world list's
+# files, and the region of every plan destination and Discover area.
 #
 # The repository is public, so three rules hold throughout:
 #   - the two secrets reach a step only through `env:`, never interpolated
@@ -10,17 +19,23 @@ name: OSM ingest
 
 on:
   schedule:
-    # Mondays 06:17 UTC. Geofabrik rebuilds its extracts overnight, and an
-    # odd minute keeps us off the top of the hour everybody else picks.
+    # Odd minutes keep us off the top of the hour everybody else picks, and
+    # Geofabrik has rebuilt its extracts overnight by then.
     - cron: '17 6 * * 1'
+    - cron: '43 4 * * 0,2-6'
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'due = only regions never loaded, newly seeded or overdue; all = every region'
+        type: choice
+        options: [due, all]
+        default: due
       region:
-        description: 'One Geofabrik region, e.g. north-america/us/north-carolina. Empty = every region with seeds.'
+        description: 'One Geofabrik region, e.g. north-america/us/north-carolina. Empty = the list the mode picks.'
         required: false
         default: ''
       accept_drop:
-        description: 'Accept a run that keeps under half of last time (only after deliberately removing seeds).'
+        description: 'Accept a run that keeps under half of last time (only after deliberately changing what the load keeps; needs a region).'
         type: boolean
         required: false
         default: false
@@ -28,17 +43,46 @@ on:
 permissions:
   contents: read
 
+# One run at a time, so two runs never download at once (Geofabrik asks for
+# no more than two downloads at a time, and the batches below are two).
 concurrency:
   group: osm-ingest
   cancel-in-progress: false
 
 jobs:
-  regions:
+  seeds:
+    name: Seeds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # Every plan destination and Discover area, placed and filed under the
+      # Geofabrik files its circle reaches. Nominatim is asked only about
+      # towns never placed before, once a second, at most 100 a run; a 429
+      # stops the asking with a warning, not a failure, and the rest are
+      # placed tomorrow. Names are never printed: this log is public.
+      - name: Rebuild the seeds
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/ingest/build-seeds.mjs --write
+
+  plan:
     name: Which regions
+    needs: seeds
+    # A seeds run that failed does not stop the load: the seeds already
+    # stored still name every region, and the Seeds job shows red on its own.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      regions: ${{ steps.list.outputs.regions }}
+      count: ${{ steps.list.outputs.count }}
+      batch1: ${{ steps.list.outputs.batch1 }}
+      batch2: ${{ steps.list.outputs.batch2 }}
+      batch3: ${{ steps.list.outputs.batch3 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -48,85 +92,93 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_MODE: ${{ github.event.inputs.mode }}
           ONLY_REGION: ${{ github.event.inputs.region }}
           ACCEPT_DROP: ${{ github.event.inputs.accept_drop }}
         run: |
-          # accept_drop switches off the half-of-last-time guard. It is for the
-          # one region whose seeds were removed; with the region left empty it
-          # would switch the guard off everywhere, and a region that lost most
-          # of its extract upstream that week would be recorded as good.
-          if [ "$ACCEPT_DROP" = "true" ] && [ -z "$ONLY_REGION" ]; then
-            echo "::error::accept_drop needs a region: name the one whose seeds were removed"
+          # accept_drop switches off the half-of-last-time guard. It is for
+          # one region after a deliberate change; with the region left empty
+          # it would switch the guard off everywhere, and a region that lost
+          # most of its extract upstream that week would be recorded as good.
+          if [ "$ACCEPT_DROP" = "true" ] && [ -z "${ONLY_REGION// /}" ]; then
+            echo "::error::accept_drop needs a region: name the one whose count is meant to drop"
             exit 1
           fi
-          if [ -n "${ONLY_REGION// /}" ]; then
-            # Trimmed: the box is typed by a person, and a trailing space made
-            # "puerto-rico " a region nothing knows.
-            regions=$(node -e 'process.stdout.write(JSON.stringify([process.env.ONLY_REGION.trim()]))')
+          if [ "$EVENT" = "schedule" ]; then
+            if [ "$SCHEDULE" = "17 6 * * 1" ]; then mode=all; else mode=due; fi
           else
-            regions=$(node scripts/ingest/osm-ingest.mjs --list-regions)
+            mode="${INPUT_MODE:-due}"
           fi
-          echo "regions=$regions" >> "$GITHUB_OUTPUT"
-          echo "Regions: $regions"
+          if [ -n "${ONLY_REGION// /}" ]; then
+            node scripts/ingest/osm-ingest.mjs --plan --region "$ONLY_REGION" > plan.json
+          elif [ "$mode" = "all" ]; then
+            node scripts/ingest/osm-ingest.mjs --plan > plan.json
+          else
+            node scripts/ingest/osm-ingest.mjs --plan --due > plan.json
+          fi
+          node -e '
+            const fs = require("fs");
+            const plan = JSON.parse(fs.readFileSync("plan.json", "utf8"));
+            const out = [`count=${plan.count}`, ...plan.batches.map((b, i) => `batch${i + 1}=${JSON.stringify(b)}`)];
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, out.join("\n") + "\n");
+            console.log(`mode ${process.argv[1]}: ${plan.count} regions in batches of ${plan.batches.map(b => b.length).join(", ")}`);
+          ' "$mode"
 
-  ingest:
-    name: ${{ matrix.region }}
-    needs: regions
-    if: needs.regions.outputs.regions != '[]'
-    runs-on: ubuntu-24.04
-    # California's extract is over a gigabyte; filtering it is the slow part.
-    timeout-minutes: 120
+  # Three batches, one after another, because GitHub runs at most 256 jobs
+  # from one matrix. Each is two at a time. A batch runs whether or not the
+  # one before had a red region: one region failing never stops the others.
+  batch-1:
+    name: Load
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.batch1 != '[]' }}
     strategy:
       fail-fast: false
-      # Two at a time: Geofabrik asks downloaders not to hammer it.
       max-parallel: 2
       matrix:
-        region: ${{ fromJSON(needs.regions.outputs.regions) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-      - name: Install osmium
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool && osmium --version
-      # The cache key is the checksum of the extract Geofabrik serves now,
-      # not the week: Geofabrik rebuilds nightly, so a week key restored
-      # Monday's file on Tuesday, failed the checksum, downloaded again and
-      # could never keep the new copy under the key it already had. With no
-      # published checksum it falls back to the week, and the script's own
-      # under-a-week rule decides whether the copy is used.
-      - id: week
-        env:
-          REGION: ${{ matrix.region }}
-        run: |
-          md5=$(node scripts/ingest/osm-ingest.mjs --region "$REGION" --published-md5)
-          if [ "$md5" = "none" ] || [ -z "$md5" ]; then md5="week-$(date -u +%G-%V)"; fi
-          echo "build=$md5" >> "$GITHUB_OUTPUT"
-          echo "slug=${REGION//\//_}" >> "$GITHUB_OUTPUT"
-      # Today's download, so a re-run after a failed write does not fetch the
-      # same gigabyte twice. Saved by its own step below, because
-      # actions/cache only saves when the job succeeds, and the re-run that
-      # needs it is the one after a failure.
-      - id: pbf
-        uses: actions/cache/restore@v4
-        with:
-          path: .pbf/${{ steps.week.outputs.slug }}.osm.pbf
-          key: pbf-${{ steps.week.outputs.slug }}-${{ steps.week.outputs.build }}
-      - name: Load
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          REGION: ${{ matrix.region }}
-          ACCEPT_DROP: ${{ github.event.inputs.accept_drop }}
-        run: |
-          if [ "$ACCEPT_DROP" = "true" ]; then
-            node scripts/ingest/osm-ingest.mjs --region "$REGION" --pbf-dir .pbf --accept-drop
-          else
-            node scripts/ingest/osm-ingest.mjs --region "$REGION" --pbf-dir .pbf
-          fi
-      - name: Keep this download
-        if: always() && steps.pbf.outputs.cache-hit != 'true' && hashFiles(format('.pbf/{0}.osm.pbf', steps.week.outputs.slug)) != ''
-        uses: actions/cache/save@v4
-        with:
-          path: .pbf/${{ steps.week.outputs.slug }}.osm.pbf
-          key: pbf-${{ steps.week.outputs.slug }}-${{ steps.week.outputs.build }}
+        include: ${{ fromJSON(needs.plan.outputs.batch1) }}
+    uses: ./.github/workflows/osm-ingest-region.yml
+    with:
+      region: ${{ matrix.region }}
+      minutes: ${{ matrix.minutes }}
+      accept_drop: ${{ github.event.inputs.accept_drop == 'true' }}
+    secrets:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+  batch-2:
+    name: Load
+    needs: [plan, batch-1]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.batch2 != '[]' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.batch2) }}
+    uses: ./.github/workflows/osm-ingest-region.yml
+    with:
+      region: ${{ matrix.region }}
+      minutes: ${{ matrix.minutes }}
+      accept_drop: ${{ github.event.inputs.accept_drop == 'true' }}
+    secrets:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+  batch-3:
+    name: Load
+    needs: [plan, batch-2]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.batch3 != '[]' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.batch3) }}
+    uses: ./.github/workflows/osm-ingest-region.yml
+    with:
+      region: ${{ matrix.region }}
+      minutes: ${{ matrix.minutes }}
+      accept_drop: ${{ github.event.inputs.accept_drop == 'true' }}
+    secrets:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

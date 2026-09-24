@@ -11,8 +11,14 @@
 //     place we name (the owner's rule, and the sweep's);
 //   - one row per place per interest, because Postgres refuses an upsert
 //     that names the same row twice and takes the whole batch with it;
-//   - when a place has gone: missing from two weekly downloads in a row,
-//     inside a circle we actually read, and never on a run that looks broken.
+//   - when a place has gone: missing from two different downloads of the
+//     region it was read from, and never on a run that looks broken.
+//
+// A region is read whole. It used to be read only inside thirty-mile
+// circles around the towns people had planned trips to, which meant a town
+// nobody had planned yet held nothing, however much the map knew about it.
+// Now every qualifying place in the extract is kept, and the seeds only say
+// which regions to read and how much each town can see (per_seed).
 import { matchesSelector, websiteOf, siteUrl, whatOf, visitTagsOf, streetOf, LODGING } from './osm.ts';
 import { mappableKinds, kindFor, QUIZ_CUISINES } from './taste.ts';
 import { canTurnUp } from './rules.ts';
@@ -114,7 +120,11 @@ export function featureCentre(geometry: MapFeature['geometry']): { lat: number; 
   return { lat, lng };
 }
 
-/** The seeds whose circle this point is inside. */
+/**
+ * The seeds whose circle this point is inside. No longer a filter — a region
+ * is read whole — but the count per seed is still the number a person can
+ * check against the map: what the menu can see around that town.
+ */
 export function seedsCovering(at: { lat: number; lng: number }, seeds: Seed[]): Seed[] {
   return seeds.filter(s => milesBetween(s.lat, s.lng, at.lat, at.lng) <= (s.radius_miles ?? SEED_RADIUS_MILES));
 }
@@ -139,7 +149,7 @@ export interface VenueRow {
   harvest_status?: 'skip';
 }
 
-export type Skip = 'no_name' | 'no_website' | 'no_point' | 'outside' | 'not_a_kind' | 'cannot_turn_up' | 'no_id';
+export type Skip = 'no_name' | 'no_website' | 'no_point' | 'not_a_kind' | 'cannot_turn_up' | 'no_id';
 
 /**
  * The rows one mapped feature becomes, or why it becomes none.
@@ -149,10 +159,9 @@ export type Skip = 'no_name' | 'no_website' | 'no_point' | 'outside' | 'not_a_ki
  */
 export function rowsFor(
   feature: MapFeature,
-  seeds: Seed[],
   region: string,
   seenAt: string,
-): { rows: VenueRow[]; seeds: Seed[] } | { skip: Skip } {
+): { rows: VenueRow[] } | { skip: Skip } {
   const props = feature.properties ?? {};
   const tags: Tags = {};
   for (const [k, v] of Object.entries(props)) {
@@ -171,8 +180,6 @@ export function rowsFor(
 
   const at = featureCentre(feature.geometry);
   if (!at) return { skip: 'no_point' };
-  const covering = seedsCovering(at, seeds);
-  if (!covering.length) return { skip: 'outside' };
 
   const interests = interestsFor(tags);
   if (!interests.length) return { skip: 'not_a_kind' };
@@ -224,7 +231,7 @@ export function rowsFor(
     // than nulled for the rest, so whatever the harvest recorded survives.
     ...(kindFor(interest).harvest ? {} : { harvest_status: 'skip' as const }),
   }));
-  return { rows, seeds: covering };
+  return { rows };
 }
 
 /** One row per (osm_type, osm_id, interest), the table's own unique rule. */
@@ -274,16 +281,19 @@ export interface HeldVenue {
 /**
  * The venues to mark gone after a good run.
  *
- * Gone means: not in this week's download and not in last week's either —
- * its last sighting is older than the start of the previous good run from
- * an earlier download (see earlierDownloadBefore). One
- * missed week is a mapper mid-edit or a flaky extract, and the place stays.
+ * Gone means: not in this download and not in the previous one either — its
+ * last sighting is older than the start of the previous good run from an
+ * earlier download (see earlierDownloadBefore). One missed week is a mapper
+ * mid-edit or a flaky extract, and the place stays.
  *
- * And only inside a circle this run actually read. A seed that was removed
- * or shrunk stops the job looking there, and not looking is not evidence
- * that anything closed.
+ * `held` is only ever the region's own rows (region = the file being read),
+ * and the whole file was read, so every one of them was looked for. That is
+ * what the seed circles used to have to guarantee: when only the circles
+ * were read, a place outside every circle had not been looked for, and not
+ * looking is not evidence that anything closed. A row filed under another
+ * region, or under none (the sweep's), is never passed here.
  */
-export function goneVenues(held: HeldVenue[], previousRunStartedAt: string | null, seeds: Seed[]): string[] {
+export function goneVenues(held: HeldVenue[], previousRunStartedAt: string | null): string[] {
   if (!previousRunStartedAt) return [];
   const before = Date.parse(previousRunStartedAt);
   if (!Number.isFinite(before)) return [];
@@ -292,7 +302,7 @@ export function goneVenues(held: HeldVenue[], previousRunStartedAt: string | nul
       const seen = v.last_seen_at ? Date.parse(v.last_seen_at) : NaN;
       // Never seen by any run is not "seen and then missing". Leave it.
       if (!Number.isFinite(seen)) return false;
-      return seen < before && seedsCovering({ lat: Number(v.lat), lng: Number(v.lng) }, seeds).length > 0;
+      return seen < before;
     })
     .map(v => v.id);
 }
@@ -321,7 +331,10 @@ export function earlierDownloadBefore(startedAt: string): string {
  * A truncated download, a Geofabrik hiccup or an osmium flag gone wrong all
  * look like "most of the state closed this week". A run that kept less than
  * half of what the last good run kept is treated as broken: it stores what
- * it found and retires nothing.
+ * it found and retires nothing. With whole regions nothing done to the
+ * seeds can halve a region's count; only a change to the rules in this file
+ * (or Geofabrik re-cutting a file) should, and that is what --accept-drop
+ * is for.
  */
 export function trustworthyRun(keptNow: number, keptLastTime: number | null): boolean {
   if (keptNow <= 0) return false;
@@ -333,15 +346,12 @@ export function trustworthyRun(keptNow: number, keptLastTime: number | null): bo
  * What a run's count means: whether it is recorded as good, and whether
  * anything may be retired on its word.
  *
- * A region can honestly hold nothing. A seed's circle that only grazes a
- * neighbouring state gets that state's file read, and keeping nothing from
- * it is the right answer — which used to fail the run every week: a red
- * workflow each Monday, the download repeated, the seeds never stamped. So
- * nothing kept, where the last good run also kept nothing (or there was
- * none), is good. Nothing kept after a run that kept something is still a
- * broken download, --accept-drop or not: a region whose seeds were all
- * removed is not run at all, so a region that is run and keeps nothing has
- * lost its extract, not its towns.
+ * A region can honestly hold nothing — a small territory whose mappers have
+ * recorded no websites. So nothing kept, where the last good run also kept
+ * nothing (or there was none), is good. Nothing kept after a run that kept
+ * something is a broken download, --accept-drop or not: the region is read
+ * whole, so no change of seeds can empty it, and a region that is run and
+ * keeps nothing has lost its extract, not its places.
  *
  * Retiring needs the run before to have seen something. A good run that
  * kept nothing is no evidence of what was there, and counting it as the
@@ -372,12 +382,18 @@ export function looksLikePbf(head: Uint8Array): boolean {
 }
 
 /**
- * Places kept per seed, each place counted once however many interests it
- * was filed under. The number a person reading the log can check against
- * the map: "Raleigh 812" means 812 places, not 812 rows.
+ * Places kept within each seed's circle, each place counted once however
+ * many interests it was filed under: what the menu can see around that town
+ * from this file. "Raleigh 812" means 812 places, not 812 rows.
+ *
+ * Every seed passed as `allSeeds` is in the answer, a town with nothing near
+ * it as 0, so "seeds that kept nothing" counts the towns that would get an
+ * itinerary naming no venues, and an empty object means the region had no
+ * seeds at all when it ran (see dueRegions).
  */
-export function countPerSeed(kept: Array<{ key: string; seeds: Seed[] }>): Record<string, number> {
+export function countPerSeed(kept: Array<{ key: string; seeds: Seed[] }>, allSeeds: Seed[] = []): Record<string, number> {
   const bySeed = new Map<string, Set<string>>();
+  for (const s of allSeeds) if (!bySeed.has(s.name)) bySeed.set(s.name, new Set<string>());
   for (const { key, seeds } of kept) {
     for (const s of seeds) {
       const set = bySeed.get(s.name) ?? new Set<string>();
@@ -427,6 +443,14 @@ export interface IngestReport {
 }
 
 const enc = encodeURIComponent;
+
+/**
+ * Rows that may fail one at a time before a run stops writing. One venue
+ * that will not store is worth naming; two hundred is the database saying
+ * no, and asking it row by row through the rest of England would outlast
+ * the job's timeout while telling us nothing new.
+ */
+export const MAX_FAILED_ROWS = 200;
 const describe = (e: DbResult['error']) => `${e?.code ?? '?'} ${e?.message ?? ''}`.trim();
 
 /** Every row a GET would return, a thousand at a time. */
@@ -461,8 +485,8 @@ export async function ingestRegion(input: {
   log?: (line: string) => void;
   batchSize?: number;
   /**
-   * Accept a run that kept under half of last time's places. Only for the
-   * week after seeds were deliberately removed or shrunk; see docs/INGEST.md.
+   * Accept a run that kept under half of last time's places. Only after a
+   * deliberate change to what the load keeps; see docs/INGEST.md.
    */
   acceptDrop?: boolean;
 }): Promise<IngestReport> {
@@ -489,46 +513,70 @@ export async function ingestRegion(input: {
     runId = run.data?.[0]?.id ?? null;
   }
 
-  // 2. What the download holds.
-  const rows: VenueRow[] = [];
-  const kept: Array<{ key: string; seeds: Seed[] }> = [];
+  // 2. What the download holds, written as it is read.
+  //
+  // A whole region is tens of thousands of places (England is the largest),
+  // so rows are written in batches while the export streams rather than held
+  // until the end. Each row key is remembered, so a place osmium exports
+  // twice (a closed way, as a line and as an area) is written once: Postgres
+  // refuses an upsert naming one row twice, and takes the batch with it.
+  const size = input.batchSize ?? 500;
+  const pending: VenueRow[] = [];
+  const rowKeys = new Set<string>();
   const places = new Set<string>();
-  for await (const feature of input.features) {
-    const out = rowsFor(feature, seeds, region, startedAt);
-    if ('skip' in out) {
-      report.skipped[out.skip] = (report.skipped[out.skip] ?? 0) + 1;
-      continue;
-    }
-    const key = `${out.rows[0].osm_type}/${out.rows[0].osm_id}`;
-    // osmium can export a closed way twice, as a line and as an area.
-    if (!places.has(key)) {
-      places.add(key);
-      kept.push({ key, seeds: out.seeds });
-    }
-    rows.push(...out.rows);
-  }
-  report.kept = places.size;
-  report.perSeed = countPerSeed(kept);
-  const unique = dedupeRows(rows);
-
-  if (db) {
-    for (const batch of shapeBatches(unique, input.batchSize ?? 500)) {
+  const kept: Array<{ key: string; seeds: Seed[] }> = [];
+  let abandoned = false;
+  const writeOut = async (rows: VenueRow[]) => {
+    if (!db) { report.written += rows.length; return; }
+    for (const batch of shapeBatches(rows, size)) {
+      if (abandoned) { report.failed += batch.length; continue; }
       const { error } = await db.upsert('discovery_venues', batch, 'osm_type,osm_id,interest');
       if (!error) { report.written += batch.length; continue; }
       log(`  batch of ${batch.length} did not store (${describe(error)}) — writing them one at a time`);
       for (const row of batch) {
+        if (abandoned) { report.failed++; continue; }
         const one = await db.upsert('discovery_venues', [row], 'osm_type,osm_id,interest');
         if (one.error) {
           report.failed++;
           report.problems.push(`${row.osm_type}/${row.osm_id} "${row.name}" (${row.interest}): ${describe(one.error)}`);
+          // A database that refuses everything is not a venue that will not
+          // store. Row by row through a whole region would take all day, and
+          // the answer is already known: the run has failed.
+          if (report.failed >= MAX_FAILED_ROWS) {
+            abandoned = true;
+            report.problems.push(`stopped writing after ${MAX_FAILED_ROWS} rows failed; the rest are counted as failed`);
+          }
         } else {
           report.written++;
         }
       }
     }
-  } else {
-    report.written = unique.length;
+  };
+
+  for await (const feature of input.features) {
+    const out = rowsFor(feature, region, startedAt);
+    if ('skip' in out) {
+      report.skipped[out.skip] = (report.skipped[out.skip] ?? 0) + 1;
+      continue;
+    }
+    const first = out.rows[0];
+    const key = `${first.osm_type}/${first.osm_id}`;
+    if (!places.has(key)) {
+      places.add(key);
+      const near = seedsCovering({ lat: first.lat, lng: first.lng }, seeds);
+      if (near.length) kept.push({ key, seeds: near });
+    }
+    for (const row of out.rows) {
+      const rowKey = `${row.osm_type}/${row.osm_id}/${row.interest}`;
+      if (rowKeys.has(rowKey)) continue;
+      rowKeys.add(rowKey);
+      pending.push(row);
+    }
+    if (pending.length >= size * 4) await writeOut(pending.splice(0, pending.length));
   }
+  await writeOut(pending.splice(0, pending.length));
+  report.kept = places.size;
+  report.perSeed = countPerSeed(kept, seeds);
 
   // 3. What has gone. Never on a run that lost a write or kept too little.
   //
@@ -540,7 +588,7 @@ export async function ingestRegion(input: {
   const believable = verdict.good;
   report.trusted = report.failed === 0 && verdict.mayRetire;
   if (believable && report.kept === 0) {
-    log('  kept nothing inside the seed circles, as last time — recorded as good, nothing retired');
+    log('  kept nothing, as last time — recorded as good, nothing retired');
   }
   if (!believable) {
     fail(`kept ${report.kept} places against ${previous?.kept ?? 0} last time — a broken download looks like this, so nothing is retired and the run is not counted as good`);
@@ -551,7 +599,7 @@ export async function ingestRegion(input: {
     if (held.error) {
       report.problems.push(`could not read what might have gone: ${describe(held.error)}`);
     } else {
-      const gone = goneVenues(held.data ?? [], previous.started_at, seeds);
+      const gone = goneVenues(held.data ?? [], previous.started_at);
       for (let i = 0; i < gone.length; i += 100) {
         const ids = gone.slice(i, i + 100);
         const { error } = await db.patch(`discovery_venues?id=in.(${ids.join(',')})&gone_at=is.null`, { gone_at: startedAt });

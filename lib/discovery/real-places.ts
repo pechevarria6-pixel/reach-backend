@@ -27,6 +27,8 @@ import { canTurnUp } from './rules.ts';
 import { normalise } from './verify.ts';
 import { dialable } from './phone.ts';
 import { closedThroughout, neverOpen, windowFor } from './hours.ts';
+import { regionCountries } from './regions.ts';
+import { siteTown } from './world-destinations.ts';
 
 /** What the map calls somewhere to sleep, once underscores are spaces. */
 const LODGING_KIND = /\b(hotel|guest ?house|hostel|motel|apartment)s?\b/i;
@@ -160,6 +162,8 @@ type VenueRow = {
   city: string | null; street: string | null; lat: number; lng: number;
   osm_tags?: Record<string, string> | null; opening_hours?: string | null;
   phone?: string | null; reservation_url?: string | null;
+  /** The Geofabrik file the map load read it from; null for the sweep's rows. */
+  region?: string | null;
 };
 type ReadError = { code?: string; message?: string } | null;
 /** A held row as the menu uses it. */
@@ -169,6 +173,28 @@ type Shaped = {
   miles: number; cuisine: string;
   reservation: Reservation; phone: string | null; reserveUrl: string | null;
 };
+
+/**
+ * Whether a held row is in another country from the trip, going by the
+ * Geofabrik file the map load read it from.
+ *
+ * The load reads whole regions now, so Mexico's file puts Tijuana's
+ * restaurants in the table beside San Diego's, and Ciudad Juárez's a mile
+ * from downtown El Paso. The menu reads by distance, and a place across a
+ * border is not "nearby" to somebody without a passport in their pocket.
+ *
+ * Only a certain answer drops a row: the trip's country known, the row's
+ * region known, and none of the region's countries (as the geocoder names
+ * them — Hong Kong is "cn" to Nominatim) the trip's. A sweep row (no
+ * region) or a region nothing knows is kept, which is how the menu read
+ * before any of this.
+ */
+export function acrossTheBorder(region: string | null | undefined, tripCountry: string | null | undefined): boolean {
+  const cc = String(tripCountry || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cc) || !region) return false;
+  const countries = regionCountries(region);
+  return countries.length > 0 && !countries.includes(cc);
+}
 
 /** The half-width of a box `miles` across, in degrees, at this latitude. */
 function boxAround(lat: number, miles: number): { dLat: number; dLng: number } {
@@ -203,7 +229,7 @@ async function venuesInBox(
   const { dLat, dLng } = boxAround(at.lat, miles);
   const except = (opts.except ?? []).filter(listable);
   const also = opts.also ?? ((q: any) => q);
-  const FULL = 'id, name, kind, interest, website, city, street, lat, lng, osm_tags, opening_hours, phone, reservation_url';
+  const FULL = 'id, name, kind, interest, website, city, street, lat, lng, osm_tags, opening_hours, phone, reservation_url, region';
   const BASIC = 'id, name, kind, interest, website, city, street, lat, lng';
   const read = async (columns: string, live: boolean): Promise<{ data: VenueRow[]; error: ReadError; floor?: boolean }> => {
     const out: VenueRow[] = [];
@@ -274,7 +300,15 @@ export async function placesFor(
   const city = String(where.city || '').trim();
   if (!city) return [];
 
-  const at = await locate(city, where.country ?? null, fetchImpl).catch(() => null);
+  // A wonder is not a town. "Machu Picchu" is read around Aguas Calientes,
+  // the town at its foot that the map load seeds for it, rather than handed
+  // to a geocoder that finds no settlement by that name (or, for "Petra", a
+  // village in Mallorca) — the load would hold the venues and the menu
+  // would look for them somewhere else.
+  const site = siteTown(city, where.country ?? null);
+  const at: Awaited<ReturnType<typeof locate>> = site
+    ? { lat: site.lat, lng: site.lng, name: site.name, from: city, countryCode: site.country.toLowerCase(), subdivision: null }
+    : await locate(city, where.country ?? null, fetchImpl).catch(() => null);
   if (!at) {
     console.error('[real-places] could not place', { city });
     return [];
@@ -285,7 +319,7 @@ export async function placesFor(
   // Whatever they answered, plus the kinds every itinerary needs: a trip has
   // dinner and a morning in it regardless of what anybody ticked.
   const seeker: Seeker = {
-    lat: at.lat, lng: at.lng, city: at.city || city,
+    lat: at.lat, lng: at.lng, city: site?.name ?? city,
     interests: [...new Set([...(where.interests ?? []).slice(0, 6), ...ALWAYS_SWEPT])],
     avoid: [],
   };
@@ -322,7 +356,8 @@ export async function placesFor(
     const usable = !!v.name && canTurnUp(String(v.name), [String(v.kind || '')])
       // Belt and braces for rows filed before lodging had an interest of its
       // own: whatever the interest says, a hotel is not dinner.
-      && v.interest !== STAY_INTEREST && !LODGING_KIND.test(String(v.kind || ''));
+      && v.interest !== STAY_INTEREST && !LODGING_KIND.test(String(v.kind || ''))
+      && !acrossTheBorder(v.region, countryCode);
     // Shut on the plan's own days, going by hours the map records and we
     // could parse. No date, no hours, or hours we cannot read: kept. See
     // lib/discovery/hours.ts for why the rule leans that way.

@@ -1,0 +1,84 @@
+# One region's load, called by osm-ingest.yml once per region. See docs/INGEST.md.
+# Not run on its own: it has no schedule and no Run workflow button.
+name: OSM ingest, one region
+
+on:
+  workflow_call:
+    inputs:
+      region:
+        type: string
+        required: true
+      minutes:
+        description: 'timeout-minutes, by the size of the download (regionMinutes in lib/discovery/ingest-schedule.ts)'
+        type: number
+        required: true
+      accept_drop:
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      SUPABASE_URL:
+        required: true
+      SUPABASE_SERVICE_ROLE_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    name: ${{ inputs.region }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.minutes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install osmium
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool && osmium --version
+      # The cache key is the checksum of the extract Geofabrik serves now,
+      # not the week: Geofabrik rebuilds nightly, so a week key restored
+      # Monday's file on Tuesday, failed the checksum, downloaded again and
+      # could never keep the new copy under the key it already had. With no
+      # published checksum it falls back to the week, and the script's own
+      # under-a-week rule decides whether the copy is used.
+      - id: build
+        env:
+          REGION: ${{ inputs.region }}
+        run: |
+          md5=$(node scripts/ingest/osm-ingest.mjs --region "$REGION" --published-md5)
+          if [ "$md5" = "none" ] || [ -z "$md5" ]; then md5="week-$(date -u +%G-%V)"; fi
+          echo "build=$md5" >> "$GITHUB_OUTPUT"
+          echo "slug=${REGION//\//_}" >> "$GITHUB_OUTPUT"
+      # A copy kept by a failed run of this same build, so the re-run does not
+      # fetch the same gigabyte twice.
+      - id: pbf
+        uses: actions/cache/restore@v4
+        with:
+          path: .pbf/${{ steps.build.outputs.slug }}.osm.pbf
+          key: pbf-${{ steps.build.outputs.slug }}-${{ steps.build.outputs.build }}
+      - name: Load
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          REGION: ${{ inputs.region }}
+          ACCEPT_DROP: ${{ inputs.accept_drop }}
+        run: |
+          if [ "$ACCEPT_DROP" = "true" ]; then
+            node scripts/ingest/osm-ingest.mjs --region "$REGION" --pbf-dir .pbf --accept-drop
+          else
+            node scripts/ingest/osm-ingest.mjs --region "$REGION" --pbf-dir .pbf
+          fi
+      # Kept only when the load FAILED. A week's downloads are about 28 GB
+      # and the Actions cache holds 10, so caching every one would evict
+      # them all in turn, and a copy from a successful run is never used:
+      # Geofabrik rebuilds every night, so next week's key is a new file.
+      # The one copy worth keeping is the one a re-run of this failure will
+      # ask for, today, under this build's checksum.
+      - name: Keep this download for the re-run
+        if: failure() && steps.pbf.outputs.cache-hit != 'true' && hashFiles(format('.pbf/{0}.osm.pbf', steps.build.outputs.slug)) != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .pbf/${{ steps.build.outputs.slug }}.osm.pbf
+          key: pbf-${{ steps.build.outputs.slug }}-${{ steps.build.outputs.build }}

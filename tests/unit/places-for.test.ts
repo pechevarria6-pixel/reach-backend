@@ -3,7 +3,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { placesFor, placeMenu, scenesFrom } from '../../lib/discovery/real-places.ts';
+import { placesFor, placeMenu, scenesFrom, acrossTheBorder } from '../../lib/discovery/real-places.ts';
 
 const CENTRE = { lat: 35.7796, lng: -78.6382 };
 // A mile north, near enough, at this latitude.
@@ -231,4 +231,44 @@ test('a count that reached the page limit is worded as a floor', () => {
   const places = Array.from({ length: 20000 }, (_, i) => ({ ref: `p${i}`, name: `R${i}`, kind: 'restaurant', interest: 'places to eat', url: null, city: null, source: 'osm' }));
   assert.match(scenesFrom(places, { floor: true })!.food, /^20,000\+ places to eat verified here/);
   assert.match(scenesFrom(places)!.food, /^20,000 places to eat verified here/);
+});
+
+// ── Whole regions: the border, and the wonders ────────────────────────
+
+test('a place across the border is not "nearby", however close', async () => {
+  // Mexico is read whole now, so Juárez's restaurants sit a mile from
+  // downtown El Paso in the table. Raleigh stands in for the border town.
+  const rows = [
+    venue('Across The Line Cantina', 0.2, { region: 'north-america/mexico' }),
+    venue('Home Side Diner', 0.4, { region: 'north-america/us/north-carolina' }),
+    venue('Swept Cafe', 0.5, { region: null }),
+  ];
+  const names = (await placesFor(fakeDb(rows).db, WHERE, {}, geocoder)).map(p => p.name);
+  assert.deepEqual(names, ['Home Side Diner', 'Swept Cafe'], 'the sweep\'s rows, which carry no region, are kept');
+});
+
+test('the border check never drops a place it cannot be sure of', () => {
+  assert.equal(acrossTheBorder('north-america/mexico', 'US'), true);
+  assert.equal(acrossTheBorder('north-america/mexico', 'mx'), false);
+  assert.equal(acrossTheBorder('north-america/mexico', null), false, 'no trip country, no guess');
+  assert.equal(acrossTheBorder(null, 'US'), false);
+  assert.equal(acrossTheBorder('not/a-region', 'US'), false);
+  // Nominatim calls Hong Kong "cn" and San Juan "us": neither is foreign to itself.
+  assert.equal(acrossTheBorder('asia/china/hong-kong', 'CN'), false);
+  assert.equal(acrossTheBorder('asia/china/hong-kong', 'HK'), false);
+  assert.equal(acrossTheBorder('north-america/us/puerto-rico', 'US'), false);
+  // The Ireland file holds Northern Ireland: Belfast is GB.
+  assert.equal(acrossTheBorder('europe/ireland-and-northern-ireland', 'GB'), false);
+});
+
+test('a plan to Machu Picchu is read around Aguas Calientes, without asking the geocoder', async () => {
+  const AGUAS = { lat: -13.1547, lng: -72.5254 };
+  const rows = [
+    { ...venue('Tree House Restaurant', 0), lat: AGUAS.lat + 0.002, lng: AGUAS.lng, region: 'south-america/peru', city: 'Aguas Calientes' },
+    // A Raleigh row, where a geocoder that guessed wrong would have looked.
+    venue('Somewhere Else Grill', 0.1),
+  ];
+  const refuses = (async () => { throw new Error('the geocoder was asked about a wonder'); }) as unknown as typeof fetch;
+  const names = (await placesFor(fakeDb(rows).db, { city: 'Machu Picchu', country: 'PE' }, {}, refuses)).map(p => p.name);
+  assert.deepEqual(names, ['Tree House Restaurant']);
 });

@@ -1,41 +1,43 @@
-// ─── Which Geofabrik files hold the world destinations ───────────────────
-// lib/discovery/world-destinations.ts lists towns outside the countries
-// regions.ts was written for. Rather than type a Geofabrik path for each —
-// the one path typed by hand in regions.ts that was wrong returned a 200 and
-// an HTML page — this reads Geofabrik's own index, which carries every
-// extract's polygon and download URL, and asks it:
+// ─── Which Geofabrik files the load may read, and which hold the world list ─
+// Reads Geofabrik's own index, which carries every extract's polygon and
+// download URL, and writes two generated tables:
 //
-//   for the town's centre and each probe point on its circle (the same
-//   probePoints build-seeds.mjs uses), which is the smallest extract whose
-//   polygon holds the point?
+//   lib/discovery/world-regions.generated.ts
+//     for each world destination (lib/discovery/world-destinations.ts), the
+//     files its thirty-mile circle reaches inside its own country, and the
+//     size of each;
 //
-// Smallest, because a country file is often far too big for one job:
-// France is four gigabytes, and Paris is in Île-de-France's few hundred
-// megabytes. Where a point falls in a country regions.ts already files a
-// particular way — US states, the UK's nations, Mexico — the file regions.ts
-// would pick is used instead, so a plan to Los Angeles and the world seed
-// for it land in one region rather than California and Southern California
-// both being read for the same streets.
+//   lib/discovery/geofabrik-regions.generated.ts
+//     every file the weekly load may be asked to read — the ones
+//     GeofabrikMap.regionAt could pick for some point — with its countries,
+//     and the size of every file in the base list (every US state and
+//     territory, the UK's nations, Mexico, the Bahamas and the world list's
+//     files). osm-ingest.mjs refuses any region not in it, because a wrong
+//     Geofabrik path does not 404: it redirects to the home page with a 200.
 //
-// Then every file chosen is checked against the server: its .md5 has to be
-// there and its .pbf has to answer as a download, not as a page. The size
-// is recorded, because the weekly job has two hours and about fourteen
-// gigabytes of disk.
+// The lookup itself (smallest extract, the US/UK/Mexico files regions.ts
+// always used, no overlays, no continents, no closed borders) is in
+// lib/discovery/geofabrik.ts, shared with build-seeds.mjs.
 //
-//   node scripts/ingest/world-regions.mjs                    # fetch the index, write the file
+// Every base file is checked against the server: its .md5 has to be there
+// and its .pbf has to answer as a download, not as a page.
+//
+//   node scripts/ingest/world-regions.mjs                    # fetch the index, write both files
 //   node scripts/ingest/world-regions.mjs --index index.json # use a copy already on disk
 //   node scripts/ingest/world-regions.mjs --check            # print, write nothing
 //
-// Writes lib/discovery/world-regions.generated.ts. Re-run it after changing
-// the destination list; the unit tests fail until you do.
+// Re-run it after changing the destination list (the unit tests fail until
+// you do), or when Geofabrik adds an extract a plan needs.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { WORLD_DESTINATIONS } from '../../lib/discovery/world-destinations.ts';
 import { probePoints, SEED_RADIUS_MILES, legacyRegions } from '../../lib/discovery/regions.ts';
+import { GeofabrikMap } from '../../lib/discovery/geofabrik.ts';
 
 const INDEX = 'https://download.geofabrik.de/index-v1.json';
 const BASE = 'https://download.geofabrik.de/';
 const AGENT = 'ReachIngest/1.0 (+https://www.alcanzar.io; hello@alcanzar.io)';
 const OUT = new URL('../../lib/discovery/world-regions.generated.ts', import.meta.url);
+const OUT_ALL = new URL('../../lib/discovery/geofabrik-regions.generated.ts', import.meta.url);
 
 const argv = process.argv.slice(2);
 const at = argv.indexOf('--index');
@@ -45,131 +47,23 @@ const index = at > -1
   ? JSON.parse(readFileSync(argv[at + 1], 'utf8'))
   : await (await fetch(INDEX, { headers: { 'User-Agent': AGENT } })).json();
 
-// ── Polygons ────────────────────────────────────────────────────────────
-const pathOf = (f) => String(f.properties?.urls?.pbf || '').replace(BASE, '').replace(/-latest\.osm\.pbf$/, '');
-
-function ringArea(ring) {
-  let a = 0;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) a += (ring[j][0] + ring[i][0]) * (ring[j][1] - ring[i][1]);
-  return Math.abs(a / 2);
-}
-function inRing(ring, x, y) {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i], [xj, yj] = ring[j];
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-const polygonsOf = (g) => g?.type === 'Polygon' ? [g.coordinates] : g?.type === 'MultiPolygon' ? g.coordinates : [];
-
-const extracts = index.features
-  .filter(f => f.properties?.urls?.pbf && f.geometry)
-  .map(f => {
-    const polys = polygonsOf(f.geometry);
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of polys) for (const [x, y] of p[0]) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
-    const area = polys.reduce((s, p) => s + ringArea(p[0]) - p.slice(1).reduce((h, r) => h + ringArea(r), 0), 0);
-    return { id: f.properties.id, parent: f.properties.parent ?? null, path: pathOf(f), polys, box: [minX, minY, maxX, maxY], area };
-  });
-const byId = new Map(extracts.map(e => [e.id, e]));
-
-const holds = (e, lat, lng) => lng >= e.box[0] && lng <= e.box[2] && lat >= e.box[1] && lat <= e.box[3]
-  && e.polys.some(p => inRing(p[0], lng, lat) && !p.slice(1).some(h => inRing(h, lng, lat)));
-
-const legacy = new Set(legacyRegions());
-
-// Files never read for a world seed, whatever a circle grazes. Seoul's
-// thirty miles cross the DMZ; nothing on the far side can be visited, and
-// a venue there must never reach a Seoul itinerary.
-const NEVER = new Set(['asia/north-korea']);
-
-// North Korea is the extreme case of a wider rule: a circle drawn by
-// distance does not know where a border is. Petra's thirty miles reach the
-// Israeli Arava, where the Wadi Araba border is closed and the nearest
-// crossing is at Aqaba; Singapore's reach Batam, a passport and a ferry
-// away; Hong Kong's reach Guangdong, which wants a mainland visa. Ingest and
-// the itinerary menu both filter by distance alone, so a file read here is a
-// file whose venues can be named as "nearby". A world seed therefore reads
-// only files inside the destination's own country.
-//
-// A file's country is its own ISO code in Geofabrik's index, else its
-// nearest ancestor's. Where the index is silent or incomplete it is set
-// here: Hong Kong and Macau are filed under China but are entered
-// separately, the Malaysia file also holds Singapore and Brunei, and the
-// GCC file holds Saudi Arabia although its codes leave it out.
-const COUNTRY_OF = {
-  'asia/china/hong-kong': ['HK'],
-  'asia/china/macau': ['MO'],
-  'asia/malaysia-singapore-brunei': ['MY', 'SG', 'BN'],
-  'asia/gcc-states': ['SA', 'QA', 'AE', 'OM', 'BH', 'KW'],
-};
-function countriesOf(path) {
-  for (let p = path; p; p = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '') {
-    if (COUNTRY_OF[p]) return COUNTRY_OF[p];
-    const e = byPath.get(p);
-    const iso = e && index.features.find(f => f.properties.id === e.id)?.properties?.['iso3166-1:alpha2'];
-    if (iso) return [].concat(iso).map(c => String(c).toUpperCase());
-  }
-  return [];
-}
-
-// Nesting is read from the download paths, not the index's `parent` field:
-// Geofabrik files New York's parent as "north-america", beside the whole-US
-// file, although its path says it is a piece of it.
-const byPath = new Map(extracts.map(e => [e.path, e]));
-const within = (inner, outer) => inner.path.startsWith(`${outer.path}/`);
-const hasPieces = (e) => extracts.some(x => within(x, e));
-const isCountry = (e) => Boolean(index.features.find(f => f.properties.id === e.id)?.properties?.['iso3166-1:alpha2']);
-/** A continent: a top-level file that is not a country (Russia is both). */
-const isContinent = (e) => !e.path.includes('/') && !isCountry(e);
-/** Not a country and not a piece of one: US Northeast, Alps, DACH. */
-const isOverlay = (e) => !isCountry(e) && !extracts.some(k => isCountry(k) && within(e, k));
-
-/**
- * The file for one point: regions.ts's own where it has one, else the
- * smallest extract — or null when the point is in no file worth reading.
- *
- * Two things a plain "smallest polygon" got wrong, both seen on the first run:
- *   - Geofabrik also serves overlays that cut across countries: US
- *     Northeast, Alps, DACH, Britain and Ireland. A probe point in Long
- *     Island Sound fell only in US Northeast, 1.8 GB, and New York would
- *     have read it. An overlay — a file that is neither a country nor a
- *     piece of one — is only used where no country holds the point.
- *     Continents are never used.
- *   - A point inside a country Geofabrik splits, but in none of its pieces
- *     (water, mostly), is not a reason to read the whole country.
- */
-function regionAt(lat, lng) {
-  const holders = extracts.filter(e => holds(e, lat, lng));
-  const inCountry = holders.some(isCountry);
-  const all = holders
-    .filter(h => !isContinent(h) && !(inCountry && isOverlay(h)))
-    .sort((a, b) => a.area - b.area);
-  if (!all.length) return null;
-  const smallest = all[0];
-  if (isCountry(smallest) && hasPieces(smallest)) return null;
-  // Walk up the path from the smallest: the first file regions.ts already
-  // knows wins, so the US, the UK and Mexico keep the files they always had.
-  for (let path = smallest.path; path.includes('/'); path = path.slice(0, path.lastIndexOf('/'))) {
-    if (legacy.has(path) && byPath.has(path)) return path;
-  }
-  return NEVER.has(smallest.path) ? null : smallest.path;
-}
+const map = new GeofabrikMap(index, legacyRegions());
 
 // ── Each destination ────────────────────────────────────────────────────
+// A world seed reads only files inside the destination's own country: see
+// regionsForTown in geofabrik.ts for why a circle must not cross a border.
 const out = {};
 const problems = [];
 for (const d of WORLD_DESTINATIONS) {
-  const centre = regionAt(d.lat, d.lng);
+  const centre = map.regionAt(d.lat, d.lng);
   if (!centre) { problems.push(`${d.name}: no extract holds its centre`); continue; }
-  if (!countriesOf(centre).includes(d.country)) { problems.push(`${d.name}: its own file ${centre} is not in ${d.country}`); continue; }
+  if (!map.countriesOf(centre).includes(d.country)) { problems.push(`${d.name}: its own file ${centre} is not in ${d.country}`); continue; }
   const regions = new Set([centre]);
   const abroad = new Set();
   for (const p of probePoints(d.lat, d.lng, SEED_RADIUS_MILES)) {
-    const r = regionAt(p.lat, p.lng);
+    const r = map.regionAt(p.lat, p.lng);
     if (!r || regions.has(r)) continue;
-    if (countriesOf(r).includes(d.country)) regions.add(r); else abroad.add(r);
+    if (map.countriesOf(r).includes(d.country)) regions.add(r); else abroad.add(r);
   }
   for (const r of abroad) console.log(`  ${d.name}: not reading ${r}, across the border`);
   // Centre first: it is the file the town is in; the rest are what its circle grazes.
@@ -177,10 +71,17 @@ for (const d of WORLD_DESTINATIONS) {
   console.log(`  ${d.name.padEnd(18)} ${out[d.name].join(', ')}`);
 }
 
-// ── Does Geofabrik actually serve each one? ─────────────────────────────
-const every = [...new Set(Object.values(out).flat())].sort();
+// ── Every file the load may read ────────────────────────────────────────
+const loadable = map.loadable();
+for (const r of [...legacyRegions(), ...Object.values(out).flat()]) {
+  if (!loadable.includes(r)) problems.push(`${r} is in the base list but not a file the lookup could pick`);
+}
+const countries = Object.fromEntries(loadable.map(p => [p, map.countriesOf(p)]));
+
+// ── Does Geofabrik actually serve each base file? ───────────────────────
+const base = [...new Set([...legacyRegions(), ...Object.values(out).flat()])].sort();
 const sizes = {};
-for (const region of every) {
+for (const region of base) {
   const url = `${BASE}${region}-latest.osm.pbf`;
   const md5 = await fetch(`${url}.md5`, { headers: { 'User-Agent': AGENT } });
   const body = md5.ok ? (await md5.text()).trim() : '';
@@ -195,8 +96,10 @@ for (const region of every) {
   sizes[region] = Math.round(bytes / 1e6);
   await new Promise(r => setTimeout(r, 250));
 }
-console.log(`\n${every.length} files:`);
-for (const r of every) console.log(`  ${String(sizes[r] ?? '?').padStart(6)} MB  ${r}`);
+const worldFiles = [...new Set(Object.values(out).flat())].sort();
+const worldSizes = Object.fromEntries(worldFiles.map(r => [r, sizes[r]]));
+console.log(`\n${base.length} base files, ${loadable.length} loadable in all:`);
+for (const r of base) console.log(`  ${String(sizes[r] ?? '?').padStart(6)} MB  ${r}`);
 
 if (problems.length) {
   console.error(`\n✗ ${problems.length} problem(s):\n  ${problems.join('\n  ')}`);
@@ -205,7 +108,7 @@ if (problems.length) {
 if (check) process.exit(0);
 
 const today = new Date().toISOString().slice(0, 10);
-const body = `// GENERATED by scripts/ingest/world-regions.mjs from ${INDEX} on ${today}.
+writeFileSync(OUT, `// GENERATED by scripts/ingest/world-regions.mjs from ${INDEX} on ${today}.
 // Do not edit by hand: change lib/discovery/world-destinations.ts and re-run it.
 //
 // For each world destination, the Geofabrik files its thirty-mile circle
@@ -216,7 +119,26 @@ const body = `// GENERATED by scripts/ingest/world-regions.mjs from ${INDEX} on 
 export const WORLD_REGIONS: Readonly<Record<string, readonly string[]>> = ${JSON.stringify(out, null, 2)};
 
 /** Size of each file in megabytes when this was generated, for planning the weekly job. */
-export const WORLD_REGION_MB: Readonly<Record<string, number>> = ${JSON.stringify(sizes, null, 2)};
-`;
-writeFileSync(OUT, body);
-console.log(`\nwrote ${OUT.pathname}`);
+export const WORLD_REGION_MB: Readonly<Record<string, number>> = ${JSON.stringify(worldSizes, null, 2)};
+`);
+writeFileSync(OUT_ALL, `// GENERATED by scripts/ingest/world-regions.mjs from ${INDEX} on ${today}.
+// Do not edit by hand: re-run the script.
+//
+// Every Geofabrik file the load may be asked to read, which is every file
+// GeofabrikMap.regionAt (lib/discovery/geofabrik.ts) could pick for some
+// point on Earth: never a continent, an overlay such as US Northeast, a
+// country Geofabrik splits into pieces, or North Korea. A region not listed
+// here is refused before anything is downloaded.
+
+/** Region path → the countries it holds (ISO 3166-1 alpha-2). */
+export const GEOFABRIK_REGIONS: Readonly<Record<string, readonly string[]>> = ${JSON.stringify(countries, null, 2)};
+
+/**
+ * Megabytes of each base file (every US state and territory, the UK's
+ * nations, Mexico, the Bahamas and the world list's files) when this was
+ * written. The workflow gives a region time by its size; a region not
+ * listed (one a plan added) gets the longest.
+ */
+export const REGION_MB: Readonly<Record<string, number>> = ${JSON.stringify(sizes, null, 2)};
+`);
+console.log(`\nwrote ${OUT.pathname}\nwrote ${OUT_ALL.pathname}`);

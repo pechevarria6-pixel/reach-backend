@@ -14,12 +14,18 @@
 // rather than sent to the nearest path that looks right. France, for
 // instance, is four gigabytes.
 //
-// The one exception is the world list (world-destinations.ts): the most
-// visited cities and the Seven Wonders' towns, matched to Geofabrik files
-// from Geofabrik's own index by scripts/ingest/world-regions.mjs rather
-// than typed here. Paris is read from Île-de-France, not from France.
+// Everywhere else is answered from Geofabrik's own index rather than typed
+// here: the world list (world-destinations.ts) by
+// scripts/ingest/world-regions.mjs, and every plan destination and Discover
+// area by build-seeds.mjs, both through GeofabrikMap (geofabrik.ts), which
+// walks up to this table's file wherever a point is in a country it files.
+// Paris is read from Île-de-France, not from France; a plan to Lyon from
+// Rhône-Alpes. The files the load may ever read are listed, from the index,
+// in geofabrik-regions.generated.ts.
 
 import { WORLD_REGIONS } from './world-regions.generated.ts';
+import { GEOFABRIK_REGIONS, REGION_MB } from './geofabrik-regions.generated.ts';
+import { GEOCODER_ALSO } from './geofabrik.ts';
 import { WORLD_DESTINATIONS, type WorldDestination } from './world-destinations.ts';
 
 /** Geofabrik's file for each US state, keyed by USPS code. */
@@ -38,6 +44,13 @@ const US_STATES: Record<string, string> = {
   // Territories Geofabrik files under the US.
   PR: 'puerto-rico', VI: 'us-virgin-islands',
 };
+
+/** The USPS code for a US state's region path ("NC" for north-carolina), or null. */
+export function usStateCode(region: string): string | null {
+  const file = String(region || '').replace(/^north-america\/us\//, '');
+  if (file === region) return null;
+  return Object.entries(US_STATES).find(([, s]) => s === file)?.[0] ?? null;
+}
 
 /** Whole countries, where one file is small enough to read in a job. */
 const COUNTRIES: Record<string, string> = {
@@ -93,15 +106,54 @@ export function legacyRegions(): string[] {
 }
 
 /**
- * Every region path the weekly load may read, for validating input: the
- * table above, and the files the world destinations were matched to from
- * Geofabrik's own index (world-regions.generated.ts).
+ * Every region path the load may read, for validating input: every file
+ * Geofabrik's own index offers that GeofabrikMap.regionAt could pick for
+ * some point (geofabrik-regions.generated.ts, written by
+ * scripts/ingest/world-regions.mjs from the index). A path typed by a person
+ * or stored in a seed row is checked against this before it reaches a URL.
  *
- * regionFor still answers only from the table. A plan to Lyon is not
- * guessed into a file; the world list is placed from its own coordinates.
+ * regionFor still answers only from the table above. A plan to Lyon is
+ * placed by its coordinates against Geofabrik's polygons (build-seeds.mjs),
+ * never guessed into a file from a country name.
  */
 export function knownRegions(): string[] {
+  return Object.keys(GEOFABRIK_REGIONS).sort();
+}
+
+/**
+ * The regions loaded whether or not anybody has planned a trip there: every
+ * US state and territory, the UK's nations, Mexico and the Bahamas (the
+ * table above), and every file the world list reads. Seeds add to this;
+ * they never take away from it.
+ */
+export function baseRegions(): string[] {
   return [...new Set([...legacyRegions(), ...Object.values(WORLD_REGIONS).flat()])].sort();
+}
+
+/**
+ * Every region the load reads: the base list, plus the region of every
+ * seed (every plan destination and Discover area placed on the map), each
+ * checked against the files Geofabrik offers. A seed naming a path nothing
+ * knows is left out, not read.
+ */
+export function regionList(seedRegions: Iterable<string> = []): string[] {
+  const known = new Set(knownRegions());
+  return [...new Set([...baseRegions(), ...[...seedRegions].filter(r => known.has(r))])].sort();
+}
+
+/**
+ * The country codes places in a region answer to: the file's own countries,
+ * and what the geocoder calls them (Hong Kong is "cn" to Nominatim). Empty
+ * for a region nothing knows, which callers read as "cannot say".
+ */
+export function regionCountries(region: string | null | undefined): string[] {
+  if (!region) return [];
+  return [...new Set([...(GEOFABRIK_REGIONS[region] ?? []), ...(GEOCODER_ALSO[region] ?? [])])];
+}
+
+/** The size of a region's download when last measured, in megabytes, or null. */
+export function regionMb(region: string): number | null {
+  return REGION_MB[region] ?? null;
 }
 
 /** The download for a region. `-latest` redirects to the dated file. */
@@ -112,14 +164,16 @@ export function geofabrikUrl(region: string): string {
 // ─── Seeds: the places the job reads around ─────────────────────────────
 
 /**
- * How far around a town the weekly load keeps places.
+ * How far around a town counts as "its" area: which files its circle
+ * reaches (so a town near a state line puts both states on the list), and
+ * what its count in ingest_runs.per_seed measures. The load itself reads
+ * every region whole; this no longer decides what is kept.
  *
  * Nothing reads further. The itinerary menu reads nearest first out to a
  * twenty-five mile box (real-places.ts RINGS_MILES), Discover fifteen, and
- * the booking lookup the same twenty-five. It was a hundred, which kept
- * places nothing would ever show, fetched neighbouring states and even
- * England for circles that grazed them, and filled the harvester's queue
- * with thousands of venues nobody would see.
+ * the booking lookup the same twenty-five. It was a hundred, which put
+ * neighbouring states and even England on the list for circles that grazed
+ * them.
  */
 export const SEED_RADIUS_MILES = 30;
 

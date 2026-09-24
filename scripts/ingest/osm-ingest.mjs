@@ -1,16 +1,21 @@
-// ─── The weekly map load: one Geofabrik region into discovery_venues ─────
+// ─── The map load: one Geofabrik region into discovery_venues ────────────
 // The sweep asks Overpass about one town at a time, and Overpass took 72
 // seconds to answer "nothing" for Washington. This reads the same map from
 // the other end: download a state's extract, cut it down with osmium to the
-// places worth going to, and keep the ones inside a seed's circle.
+// places worth going to, and keep every one of them — the whole region, not
+// only circles around the towns somebody has already planned.
 //
 // This file is plumbing: the download, the osmium calls, the command line.
 // Every decision about WHAT is written — which tags count, the name-and-
 // website rule, one row per place per interest, when a place has gone —
-// lives in lib/discovery/ingest.ts, where the tests can reach it.
+// lives in lib/discovery/ingest.ts, where the tests can reach it; which
+// regions run when is lib/discovery/ingest-schedule.ts.
 //
 //   node scripts/ingest/osm-ingest.mjs --list-regions
-//       the regions ingest_seeds names, as a JSON array (the workflow's matrix)
+//       every region the load reads, as a JSON array
+//   node scripts/ingest/osm-ingest.mjs --plan [--due]
+//       the workflow's matrix: {"count":N,"batches":[[{region,minutes}],…]},
+//       every region, or with --due only those a daily run should load
 //   node scripts/ingest/osm-ingest.mjs --region north-america/us/north-carolina
 //       download, filter, write, retire — the weekly job
 //   node scripts/ingest/osm-ingest.mjs --region … --dry-run
@@ -36,7 +41,8 @@ import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { credentials, rest, getAll } from './rest.mjs';
 import { ingestRegion, osmiumFilters, looksLikePbf } from '../../lib/discovery/ingest.ts';
-import { knownRegions, geofabrikUrl } from '../../lib/discovery/regions.ts';
+import { knownRegions, geofabrikUrl, regionList } from '../../lib/discovery/regions.ts';
+import { dueRegions, planBatches } from '../../lib/discovery/ingest-schedule.ts';
 
 const MIGRATION = 'sql/world-data-phase1-2026-09-24.sql';
 const AGENT = 'ReachIngest/1.0 (+https://www.alcanzar.io; hello@alcanzar.io)';
@@ -53,15 +59,46 @@ const die = (why) => { console.error(`✗ ${why}`); process.exit(1); };
 // names the table, so a wrong SUPABASE_URL read as "run the migration".
 const missingTable = (e) => /^(PGRST205|42P01|42703)$/.test(String(e?.code ?? ''));
 
-// ── --list-regions ─────────────────────────────────────────────────────
-if (flag('list-regions')) {
+// ── --list-regions / --plan ────────────────────────────────────────────
+// The list builds itself: every US state and territory, the UK's nations,
+// Mexico, the world list's files, and the region of every seed
+// (regionList). --plan cuts it into the workflow's batches; with --due, only
+// the regions a daily run should load (dueRegions).
+if (flag('list-regions') || flag('plan')) {
   const db = rest(credentials());
   const { data, error } = await getAll(db, 'ingest_seeds?select=region&order=region');
   if (error) die(`could not read ingest_seeds: ${error.code}${missingTable(error) ? ` — run ${MIGRATION}` : ''}`);
-  const known = new Set(knownRegions());
-  const regions = [...new Set((data ?? []).map(r => r.region))].filter(r => known.has(r)).sort();
-  // Only the array on stdout: the workflow reads it as JSON.
-  process.stdout.write(JSON.stringify(regions));
+  const seedRegions = new Set((data ?? []).map(r => r.region));
+  let regions = regionList(seedRegions);
+  // One region by hand (workflow_dispatch). Checked against the table, not
+  // just for shape: the name reaches a file path and a URL, and it was
+  // typed by a person — trimmed, because "puerto-rico " was once a region
+  // nothing knew.
+  const one = value('region')?.trim();
+  if (one) {
+    if (!knownRegions().includes(one)) die(`"${one}" is not a region lib/discovery/geofabrik-regions.generated.ts knows`);
+    regions = [one];
+  }
+  if (flag('list-regions')) {
+    // Only the array on stdout: a caller reads it as JSON.
+    process.stdout.write(JSON.stringify(regions));
+    process.exit(0);
+  }
+  if (flag('due') && !one) {
+    const runs = await getAll(db, 'ingest_runs?select=region,status,started_at,per_seed&status=eq.ok&order=started_at');
+    if (runs.error) die(`could not read ingest_runs: ${runs.error.code}${missingTable(runs.error) ? ` — run ${MIGRATION}` : ''}`);
+    const due = dueRegions({ regions, seedRegions, runs: runs.data ?? [] });
+    const why = {};
+    for (const d of due) why[d.why] = (why[d.why] ?? 0) + 1;
+    console.error(`${due.length} of ${regions.length} regions due: ${Object.entries(why).map(([k, n]) => `${n} ${k}`).join(', ') || 'none'}`);
+    regions = due.map(d => d.region);
+  } else {
+    console.error(`${regions.length} regions`);
+  }
+  let batches;
+  try { batches = planBatches(regions); } catch (e) { die(e instanceof Error ? e.message : String(e)); }
+  // Only the plan on stdout, as JSON; the counts above went to stderr.
+  process.stdout.write(JSON.stringify({ count: regions.length, batches }));
   process.exit(0);
 }
 
@@ -97,7 +134,8 @@ if (seedsFile) {
   if (error) die(`could not read the seeds: ${error.code}${missingTable(error) ? ` — run ${MIGRATION}` : ''}`);
   seeds = data ?? [];
 }
-if (!seeds.length) die(`no seeds in ${region} — run scripts/ingest/build-seeds.mjs --write first`);
+// No seeds is fine: the region is read whole either way. The seeds only
+// give the per-town counts.
 // Counts, not names. The Actions log is public, and a seed is a town
 // somebody put in a private plan or opened Discover in: a small town's name
 // beside a count points at a person's trip. The names and counts per seed

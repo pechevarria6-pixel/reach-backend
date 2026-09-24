@@ -144,6 +144,73 @@ export function worldDestination(city: string | null | undefined, countryCode?: 
   return matches.length === 1 ? matches[0] : null;
 }
 
+/**
+ * The names people type for each wonder, folded, mapped to the `site` the
+ * base towns above carry. A plan to "Machu Picchu" is a plan to the towns
+ * people sleep in to see it, not a search for a settlement of that name —
+ * Nominatim finds no town called Machu Picchu, and "Petra" alone is also a
+ * village in Mallorca.
+ */
+const SITE_NAMES: Readonly<Record<string, readonly string[]>> = {
+  'Machu Picchu': ['machu picchu', 'machu pichu', 'machupicchu'],
+  'Petra': ['petra', 'petra jordan'],
+  'Chichén Itzá': ['chichen itza', 'chichen-itza'],
+  'Taj Mahal': ['taj mahal'],
+  'Colosseum': ['colosseum', 'colosseo', 'coliseum', 'the colosseum', 'roman colosseum'],
+  'Christ the Redeemer': ['christ the redeemer', 'cristo redentor', 'corcovado'],
+  'Great Wall of China': ['great wall', 'great wall of china', 'the great wall', 'mutianyu', 'badaling'],
+  'Great Pyramid of Giza': ['pyramids of giza', 'great pyramid of giza', 'great pyramid', 'giza pyramids', 'pyramids of egypt', 'the pyramids'],
+};
+
+/** Where a site's country is, so "Petra, GR" is not sent to Jordan. */
+const SITE_COUNTRY: Readonly<Record<string, string>> = {
+  'Machu Picchu': 'PE', 'Petra': 'JO', 'Chichén Itzá': 'MX', 'Taj Mahal': 'IN',
+  'Colosseum': 'IT', 'Christ the Redeemer': 'BR', 'Great Wall of China': 'CN', 'Great Pyramid of Giza': 'EG',
+};
+
+/**
+ * The base towns for a plan whose destination is a wonder rather than a
+ * town: "Machu Picchu" is Aguas Calientes and Cusco, "Great Wall" is Beijing
+ * and Huairou, "Colosseum" is Rome. Empty when the name is not a site.
+ *
+ * The whole destination is compared, then the part before the first comma
+ * ("Petra, Jordan"). A country given as a two-letter code has to agree:
+ * Petra, GR is a village, not the Nabataean city.
+ */
+export function siteBase(city: string | null | undefined, countryCode?: string | null): WorldDestination[] {
+  const whole = fold(String(city || '')).replace(/[,.]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const first = fold(String(city || '').split(',')[0]);
+  if (!first) return [];
+  const cc = String(countryCode || '').trim().toUpperCase();
+  for (const [site, names] of Object.entries(SITE_NAMES)) {
+    if (!names.includes(whole) && !names.includes(first)) continue;
+    if (/^[A-Z]{2}$/.test(cc) && cc !== SITE_COUNTRY[site]) return [];
+    // "Great Wall of China (Mutianyu)" is the Great Wall too.
+    return WONDER_BASES.concat(TOP_CITIES).filter(d => d.site === site || d.site?.startsWith(`${site} (`));
+  }
+  return [];
+}
+
+/**
+ * The one base town a menu for a wonder is read around: the one nearest the
+ * site itself. A plan to Machu Picchu is read around Aguas Calientes, at the
+ * foot of it, not Cusco fifty miles off; the Great Wall around Huairou,
+ * beside Mutianyu, not central Beijing. The seeds still cover every base
+ * town (siteBase); this is only where "nearby" is measured from.
+ */
+export function siteTown(city: string | null | undefined, countryCode?: string | null): WorldDestination | null {
+  const bases = siteBase(city, countryCode);
+  if (!bases.length) return null;
+  const miles = (d: WorldDestination) => {
+    const site = WONDER_SITES[d.site ?? ''];
+    if (!site) return Infinity;
+    const dLat = (site.lat - d.lat) * 69;
+    const dLng = (site.lng - d.lng) * 69 * Math.cos((d.lat * Math.PI) / 180);
+    return Math.sqrt(dLat * dLat + dLng * dLng);
+  };
+  return [...bases].sort((a, b) => miles(a) - miles(b))[0];
+}
+
 /** The sites themselves, for checking each base town is close enough to its wonder. */
 export const WONDER_SITES: Readonly<Record<string, { lat: number; lng: number }>> = Object.freeze({
   'Chichén Itzá': { lat: 20.6843, lng: -88.5678 },

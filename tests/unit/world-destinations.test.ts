@@ -3,7 +3,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WORLD_DESTINATIONS, WONDER_SITES, worldDestination } from '../../lib/discovery/world-destinations.ts';
+import { WORLD_DESTINATIONS, WONDER_SITES, worldDestination, siteBase, siteTown } from '../../lib/discovery/world-destinations.ts';
 import { WORLD_REGIONS, WORLD_REGION_MB } from '../../lib/discovery/world-regions.generated.ts';
 import {
   knownRegions, legacyRegions, regionFor, geofabrikUrl, worldSeeds, worldTownFor, dedupeSeeds, SEED_RADIUS_MILES,
@@ -186,4 +186,32 @@ test("a plan's city finds its world town by name and country, and a namesake is 
 
 test('a world seed reads as far around its town as every other seed', () => {
   assert.equal(SEED_RADIUS_MILES, 30, 'world-regions.mjs probed thirty-mile circles; re-run it if this changes');
+});
+
+test('a plan to a wonder is a plan to the towns people sleep in to see it', () => {
+  const names = (city: string, cc?: string) => siteBase(city, cc).map(d => d.name).sort();
+  assert.deepEqual(names('Machu Picchu'), ['Aguas Calientes', 'Cusco']);
+  assert.deepEqual(names('Petra, Jordan'), ['Wadi Musa']);
+  assert.deepEqual(names('Chichen Itza', 'MX'), ['Pisté', 'Valladolid']);
+  assert.deepEqual(names('Chichén Itzá'), ['Pisté', 'Valladolid'], 'accents folded');
+  assert.deepEqual(names('Taj Mahal'), ['Agra']);
+  assert.deepEqual(names('Colosseum'), ['Rome']);
+  assert.deepEqual(names('Christ the Redeemer'), ['Rio de Janeiro']);
+  assert.deepEqual(names('Great Wall'), ['Beijing', 'Huairou']);
+  assert.deepEqual(names('Pyramids of Giza'), ['Giza']);
+});
+
+test('a site name is not guessed where the country says otherwise, and a town is not a site', () => {
+  assert.deepEqual(siteBase('Petra', 'GR'), [], 'Petra, GR is a village on Lesbos');
+  assert.deepEqual(siteBase('Paris', 'FR'), []);
+  assert.deepEqual(siteBase('Rome'), [], 'the town itself goes to the geocoder and the world list as before');
+  assert.deepEqual(siteBase(''), []);
+});
+
+test('a menu for a wonder is read around the base town nearest it', () => {
+  assert.equal(siteTown('Machu Picchu')?.name, 'Aguas Calientes', 'at its foot, not Cusco fifty miles off');
+  assert.equal(siteTown('Great Wall of China')?.name, 'Huairou', 'beside Mutianyu, not central Beijing');
+  assert.equal(siteTown('Chichen Itza')?.name, 'Pisté');
+  assert.equal(siteTown('Petra')?.name, 'Wadi Musa');
+  assert.equal(siteTown('Lisbon'), null);
 });
