@@ -4,6 +4,7 @@
 // and a zod schema that validates what comes back. tests/unit/trip-schema
 // asserts the two agree.
 import { z } from 'zod';
+import { IdeaClimateShape } from './contracts/idea-climate.ts';
 
 // Declaring the schema means the model cannot return prose, a markdown fence
 // or a truncated object: the API constrains generation to match. The old code
@@ -57,6 +58,18 @@ export const TripSchema = z.object({
 });
 
 export const TripsSchema = z.object({ trips: z.array(TripSchema) });
+
+/**
+ * What the route attaches to a trip idea after the model has answered, and
+ * never asks the model for — so these are not in TRIPS_JSON_SCHEMA, and the
+ * test that keeps the two schemas equal is about the model's part only.
+ * Listed here so the whole shape of an idea is written down in one file.
+ *
+ *   climate  NASA POWER averages for the idea's dates (lib/climate.ts
+ *            ideaClimate), and whether a weather no-go was checked.
+ */
+export const TripAttachments = z.object({ climate: IdeaClimateShape.nullish() });
+export const ATTACHED_TRIP_FIELDS = Object.keys(TripAttachments.shape) as Array<keyof typeof TripAttachments.shape>;
 
 // Each slot carries how you get in and what they take, not just what it is.
 // Reach books whatever it can; for everything else the traveller has to be

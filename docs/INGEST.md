@@ -444,3 +444,25 @@ LGPL's distribution terms are not triggered. If it is ever bundled into client
 code, the app must ship its licence text and allow the library to be replaced
 (which a separate npm dependency already does). Its own dependencies are
 `suncalc` (BSD-2-Clause) and `i18next` (MIT).
+
+## Climate normals (the `climate` job)
+
+The same workflow runs a second, independent job, **Climate normals**, which
+fills `place_climate` (`sql/climate-2026-09-24.sql`, run it first) with NASA
+POWER's monthly climatology for every seed and world destination:
+`node scripts/ingest/climate.mjs --cap 150`. It asks only for places with no
+row or a row over a year old, one request at a time with a pause, retrying a
+429/5xx with backoff, and never writes a failed answer. A failure turns the
+job red; the map load does not wait on it.
+
+- `--dry-run` counts what would be fetched (no requests to POWER, no writes).
+- `--sample "Moab,Cusco"` fetches and prints, never writes.
+
+Source and terms: NASA POWER (https://power.larc.nasa.gov). NASA data is not
+copyrighted and carries no restriction on commercial use; POWER asks to be
+credited ("Data from NASA Langley Research Center's POWER project, funded
+through the NASA Earth Science Division") and nothing may imply NASA
+endorses Reach. Every screen line carries "NASA POWER 1981–2020 averages for
+the area, not a forecast". See `lib/climate.ts` for what the numbers are and
+are not — in particular they are grid-cell averages at the cell's height,
+not the town's.

@@ -182,3 +182,24 @@ jobs:
     secrets:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+  # What the weather is usually like in every place above, from NASA POWER's
+  # climatology (scripts/ingest/climate.mjs, sql/climate-2026-09-24.sql).
+  # Its own job, needing nothing: a failure here shows red on the run and
+  # never stops or delays the map load. Only places with no row, or a row
+  # over a year old, are fetched — forty-year averages do not move — so most
+  # runs read the table and ask POWER for nothing.
+  climate:
+    name: Climate normals
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Fill what is missing
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/ingest/climate.mjs --cap 150

@@ -3,11 +3,15 @@
 // what came back, so a group where somebody ticked "hiking" could still be
 // handed a sunrise trek, and the one person who said no is the one who
 // finds out. This checks the words of each line against what can be
-// checked from words; the rest (long flights, cold weather, crowds, noise,
-// queues, standing, dressing up) are about the place, not the sentence, and
-// stay with the prompt — they are not claimed here.
+// checked from words; the rest (long flights, crowds, noise, queues,
+// standing, dressing up) are about the place, not the sentence, and stay
+// with the prompt — they are not claimed here. Cold weather and extreme heat
+// are about the place too, and are checked against the climate we hold for
+// it (lib/climate.ts climateBreach, applied in the trips route), never
+// against words: "escape the cold weather" is not a cold trip.
 
 import { isNegated } from './goal.ts';
+import { isWeatherVeto } from './climate.ts';
 
 const PATTERNS: Record<string, RegExp> = {
   camping: /\b(camp(ing|site|sites|ground|grounds)?|tents?|glamping)\b/i,
@@ -37,7 +41,7 @@ export function vetoBreach(text: string, vetoes: string[]): string | null {
   if (!t.trim()) return null;
   for (const raw of vetoes) {
     const v = String(raw || '').replace(/^custom:/, '').trim();
-    if (!v || NOT_FROM_WORDS.has(v)) continue;
+    if (!v || NOT_FROM_WORDS.has(v) || isWeatherVeto(v)) continue;
     const known = PATTERNS[v] ?? PATTERNS[v.toLowerCase()];
     if (!known && v.split(/\s+/).length > 3) continue;
     const re = new RegExp((known ?? new RegExp(`\\b${escape(v)}\\b`, 'i')).source, 'gi');

@@ -12,6 +12,8 @@ import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-
 import { withoutVetoed, tripBreach } from '@/lib/vetoes';
 import { splitVetoes, weatherLine } from '@/lib/weather-no-go';
 import { planReadiness, wentAheadWith, type ReadinessReport } from '@/lib/plan-readiness';
+import { howIsIt, climatePromptBlock, climateVetoes, COLD_HIGH_C, HOT_HIGH_C } from '@/lib/climate';
+import { readClimate, climateFor } from '@/lib/climate-store';
 import { generationHints } from '@/lib/traveler-profile';
 import { readProfiles } from '@/lib/quiz-store';
 import {
@@ -819,6 +821,20 @@ export async function POST(req: NextRequest) {
     console.log('[generate] verified places for this plan', { city: tripCity || destination, count: realPlaces.length });
     const menu = placeMenu(realPlaces);
 
+    // ── What the weather is usually like then ─────────────────────────
+    // NASA POWER's forty-year averages for the place on these dates, held in
+    // place_climate (lib/climate.ts). Given as data, so a cold month gets no
+    // beach day and the wettest months get somewhere indoors each day. None
+    // held — or no dates — and the prompt says nothing about the weather,
+    // which is the honest amount.
+    const climateCity = tripCity || fixedPlace || (isNightPlan ? nightCity : destination);
+    const heldClimate = startDate && climateCity
+      ? (await readClimate(supabase, { name: String(climateCity), country: tripCountry ?? null })).normals
+      : null;
+    const daysClimate = heldClimate ? howIsIt(heldClimate, String(startDate), endDate ? String(endDate) : String(startDate)) : null;
+    const climateBlock = daysClimate ? `\n${climatePromptBlock(daysClimate)}\n` : '';
+    if (startDate && !daysClimate) console.log('[generate] no climate held for this place', { place: climateCity });
+
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = wantFood.join(', ');
     // Said plainly either way. A menu with no Thai place next to "Food
@@ -853,7 +869,7 @@ export async function POST(req: NextRequest) {
       ? (isNightPlan ? `THE EVENING: ${calendarDays[0].replace(/^Day 1 — /, '')}.` : `THE DAYS:\n${calendarDays.join('\n')}\nPut anything that only happens on certain weekdays on the right day.`)
       : 'The dates are not fixed yet. Do not tie anything to a weekday or a season.';
     const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}.
-${whenLine}${shapeBlock} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
+${whenLine}${climateBlock}${shapeBlock} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
 
 ${solo ? 'One person, on their own.' : partyLine ?? `${groupSize} people going out together.`}
 ${realEvent ? eventFacts(realEvent) : ''}${act.length >= 2 && !realEvent ? `
@@ -938,7 +954,7 @@ The same rule covers the plan line itself. Name the place, describe the
 outing, do not slip in a policy: "no cover if you sit at the bar",
 "no reservations needed", "Sabaku's sister spot" — each asserts something
 about a business that would have to be checked, and none of them was.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
-${whenLine}${shapeBlock}
+${whenLine}${climateBlock}${shapeBlock}
 
 ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
@@ -1428,6 +1444,24 @@ you have made up; a day that is simply a good day is allowed to be one.`;
   }
 
   // ── STAGE 1: Fast — just destinations + cost estimates, NO itinerary ───────
+  // The weather, for a trip. Where the place is settled and we hold its
+  // climate, the averages for these dates go in as data. Where it is not,
+  // a weather no-go is said as the rule it now is: every idea is checked
+  // against the averages afterwards and dropped if it breaks it, so asking
+  // for somewhere that passes costs nobody an idea.
+  const weatherNoGo = climateVetoes(allVetoes);
+  const settledClimate = !isNightPlan && fixedPlace && startDate
+    ? (await readClimate(supabase, { name: fixedPlace })).normals : null;
+  const settledDays = settledClimate ? howIsIt(settledClimate, String(startDate), endDate ? String(endDate) : null) : null;
+  const noGoRule = [
+    weatherNoGo.cold ? `usually cold (daytime highs under ${COLD_HIGH_C}°C / ${Math.round(COLD_HIGH_C * 9 / 5 + 32)}°F)` : '',
+    weatherNoGo.heat ? `usually extremely hot (daytime highs of ${HOT_HIGH_C}°C / ${Math.round(HOT_HIGH_C * 9 / 5 + 32)}°F or more)` : '',
+  ].filter(Boolean).join(' or ');
+  const ideasClimateBlock = settledDays
+    ? `\n${climatePromptBlock(settledDays)}\n`
+    : (noGoRule && startDate
+      ? `\nWEATHER NO-GO: choose places that are not ${noGoRule} on these dates. Every idea is checked against NASA POWER 1981–2020 averages for its dates, and one that breaks this is dropped.\n`
+      : '');
   const nightWhere = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
   const prompt = isNightPlan ? `You are Reach. Generate exactly 3 options for ONE NIGHT OUT in ${nightCity || 'the user\'s city'}. BE FAST — overviews and honest costs, no itinerary yet.
 ${nightCity ? `ALL THREE MUST BE IN ${nightCity.toUpperCase()}. Every "destination" and "city" is there — not anywhere they live or anywhere nearby.` : ''}
@@ -1476,7 +1510,7 @@ ${solo
   ? `TRAVELLING: alone, ${nights} nights, $${effectiveBudget} budget`
   : `GROUP: ${groupSize} people, ${nights} nights, $${effectiveBudget}/person budget`}
 DEPARTING: ${departure} (${departureCode})
-DATES: ${startDate || 'flexible'} to ${endDate || 'flexible'}
+DATES: ${startDate || 'flexible'} to ${endDate || 'flexible'}${ideasClimateBlock}
 ${goal ? `WHAT THEY SAID THIS TRIP IS, IN THEIR OWN WORDS — this leads over
 everything below it:
 "${goal}"
@@ -1673,6 +1707,31 @@ Return JSON only, shaped exactly like this:
         );
       }
       trips = kept;
+    }
+    // ── The weather, checked rather than asked for ────────────────────
+    // Each idea gets what the weather is usually like on its dates, from the
+    // climate we hold (lib/climate.ts), and "Cold weather" — or heat — is
+    // now a rule about the place, not a line in the prompt: an idea that
+    // averages cold on the dates is dropped like any veto. An idea whose
+    // place we hold no climate for is kept, and its card says it was not
+    // checked rather than letting silence read as a pass.
+    if (trips?.length && !isNightPlan) {
+      const judged = await Promise.all(trips.map(async (t) => {
+        const got = await climateFor(supabase, { name: t.city || t.destination, country: t.country_code ?? null }, { start: startDate, end: endDate }, allVetoes);
+        return { t, climate: got.climate, breach: got.breach };
+      }));
+      const kept = judged.filter(j => {
+        if (j.breach) console.error('[trips generate] dropped an idea the weather rules out', { groupId, destination: j.t.destination, veto: j.breach, when: j.climate?.trip?.when, highC: j.climate?.trip?.highC });
+        return !j.breach;
+      });
+      for (const j of kept) (j.t as typeof j.t & { climate?: unknown }).climate = j.climate;
+      if (judged.length && !kept.length) {
+        return NextResponse.json(
+          { error: `Every idea we came up with is usually too ${judged.some(j => j.breach === 'coldWeather') ? 'cold' : 'hot'} on those dates, and that is a no-go for this trip — try other dates, or try again.` },
+          { status: 502 },
+        );
+      }
+      trips = kept.map(j => j.t);
     }
     // The schema cannot pin the array length, so the count is checked here.
     // Fewer than three is still worth showing — an empty list is not.

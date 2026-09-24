@@ -34,6 +34,8 @@ export interface TripIdea {
   vibe?: string;
   costs?: unknown;
   total_per_person?: number;
+  /** NASA POWER averages for the idea's dates, attached by the route (lib/trip-schema.ts TripAttachments). */
+  climate?: import('./climate.ts').IdeaClimate | null;
   /** The days, once written. Absent until then. */
   itinerary?: unknown[] | null;
   used_suggestions?: string[];

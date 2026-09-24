@@ -20,6 +20,8 @@ import { visibleCategories } from "@/lib/discovery/category";
 import { priceLabel } from "@/lib/discovery/price-label";
 import { createPlanSteps } from "@/lib/create-plan-steps";
 import { picksFrom, seedFromPick } from "@/lib/contracts/trip-pick";
+import { howIsIt, climateLine, bestMonthsLine, climateCredit, fahrenheitFirst } from "@/lib/climate";
+import { ideaClimateFrom } from "@/lib/contracts/idea-climate";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
@@ -5975,6 +5977,73 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
 }
 
 
+// ─── What the weather is usually like ─────────────────────────────────────
+// NASA POWER's forty-year averages (lib/climate.ts), never a forecast, and
+// always with the source under them. °F first for somebody whose locale is
+// American, °C for everybody else — the reader's own order, not ours.
+function readerFahrenheit(){
+  return fahrenheitFirst(null,typeof navigator!=="undefined"?navigator.language:null);
+}
+const climateSmall={fontSize:10.5,color:C.t3,marginTop:2,lineHeight:1.4};
+
+/** The weather line on a trip idea, from the climate the route attached. */
+function IdeaClimateNote({raw}){
+  const c=ideaClimateFrom(raw);
+  if(!c)return null;
+  const f=readerFahrenheit();
+  const line=c.trip?climateLine(c.trip,{fahrenheitFirst:f}):c.best;
+  // A weather no-go that could not be checked is said, so the silence is
+  // never read as a pass.
+  const unchecked=c.asked&&!c.checked
+    ?(!c.held?`We don't hold weather averages for ${c.place} yet, so this idea wasn't checked against the weather no-go.`
+      :!c.trip?"No dates yet, so this idea wasn't checked against the weather no-go."
+      :"These averages are for the high ground around it, so this idea couldn't be checked against the weather no-go.")
+    :null;
+  if(!line&&!unchecked)return null;
+  return(
+    <div style={{marginTop:10,fontSize:12,color:C.t2,lineHeight:1.5}}>
+      {line&&<div>🌤️ {line}</div>}
+      {line&&c.credit&&<div style={climateSmall}>{c.credit}</div>}
+      {unchecked&&<div style={{...climateSmall,color:C.t2}}>{unchecked}</div>}
+    </div>
+  );
+}
+
+/**
+ * The weather held for a place, read from /api/climate. With dates, what it
+ * is usually like then; as a hint (the When step), the best-weather months
+ * too. Nothing held and it says nothing — a hint, never a block.
+ */
+function PlaceClimate({city,country,lat=null,lng=null,startDate,endDate,hint=false}){
+  const [normals,setNormals]=useState(null);
+  useEffect(()=>{
+    let gone=false;
+    setNormals(null);
+    if(!city)return;
+    const q=new URLSearchParams({city});
+    if(country)q.set("country",country);
+    if(lat!=null&&lng!=null){q.set("lat",String(lat));q.set("lng",String(lng));}
+    fetch("/api/climate?"+q.toString())
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{if(!gone&&d?.climate)setNormals(d.climate);})
+      .catch(e=>console.error("[climate] could not read the climate",e));
+    return()=>{gone=true;};
+  },[city,country,lat,lng]);
+  if(!normals)return null;
+  const town=String(city).split(",")[0].trim();
+  const best=hint?bestMonthsLine(normals,town):null;
+  const then=startDate?howIsIt(normals,startDate,endDate||startDate):null;
+  const line=then?climateLine(then,{fahrenheitFirst:readerFahrenheit()}):null;
+  if(!best&&!line)return null;
+  return(
+    <div style={{margin:"0 0 14px",padding:"10px 12px",borderRadius:12,background:C.s2,border:`1px solid ${C.border}`,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+      {best&&<div>🗓️ {best}</div>}
+      {line&&<div style={best?{marginTop:4}:undefined}>🌤️ {line}</div>}
+      <div style={climateSmall}>{climateCredit(normals.period)}{hint?" — a hint, not a rule.":""}</div>
+    </div>
+  );
+}
+
 // ─── One trip idea, as a card ─────────────────────────────────────────────
 // The same card everywhere an idea is chosen from: a solo trip's options, a
 // group's saved ideas on the trip screen, and the plan's Vote tab. What can
@@ -6028,6 +6097,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
           <div style={{display:"inline-block",background:C.s3,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.t2,marginTop:8}}>
             {trip.vibe}
           </div>
+          <IdeaClimateNote raw={trip.climate}/>
           {/* What this option does about what somebody actually
               asked for, by name. The model has been writing these
               all along and no screen showed them, so the answer to
@@ -6857,7 +6927,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           body:JSON.stringify({
             groupId,startDate:sd||null,endDate:ed||null,
             detailTripId:trip.id,
-            tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
+            // The city and country too, as pickTripIdea sends them: the days
+            // are written from the place's verified venues and its weather,
+            // and both are looked up by the place, not the display name.
+            tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs,city:trip.city,country_code:trip.country_code},
             mode:night?"night":"trip",
             nightPrefs:night?(extra.nightPrefs||nightAnswers):{},
             departureCity:departure?.city||null,
@@ -8018,7 +8091,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 {whereLooking&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
                 {whereHits.map((h,i)=>(
                   <div key={i} {...pressable}
-                    onClick={()=>{setWhere({city:h.city||h.label.split(",")[0].trim(),country:h.country||null,label:h.label.split(",").slice(0,3).join(",")});setWhereHits([]);}}
+                    onClick={()=>{setWhere({city:h.city||h.label.split(",")[0].trim(),country:h.country||null,label:h.label.split(",").slice(0,3).join(","),lat:Number.isFinite(h.lat)?h.lat:null,lng:Number.isFinite(h.lng)?h.lng:null});setWhereHits([]);}}
                     style={{padding:"10px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,color:C.t1,cursor:"pointer",lineHeight:1.4}}>
                     {h.label}
                   </div>
@@ -8070,6 +8143,10 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                       a group finds out about the hard way. */}
                   {isWeekend?"Pick your weekend getaway dates.":"Pick the dates. Everyone gets asked before anything is booked."}
                 </div>
+                {where?.city&&(
+                  <PlaceClimate hint city={where.city} country={where.country} lat={where.lat??null} lng={where.lng??null}
+                    startDate={startDate||null} endDate={endDate||null}/>
+                )}
                 {isWeekend&&(
                   <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
                     {["This weekend","Next weekend","In 2 weeks","In a month"].map(preset=>(
@@ -9591,6 +9668,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
               ))}
             </div>
+            {/* What the weather is usually like on the plan's dates. Worked
+                out from the place and the dates the plan holds, every time it
+                is opened, so it moves with the dates and survives a reload —
+                nothing about the weather is stored on the plan to go stale. */}
+            {(plan.type==="trip"||plan.type==="weekend")&&plan.destinationCity&&plan.startDate&&(
+              <div style={{padding:"0 20px"}}>
+                <PlaceClimate city={plan.destinationCity} country={plan.destinationCountry} startDate={plan.startDate} endDate={plan.endDate}/>
+              </div>
+            )}
             {/* Why this trip. It was on the card they chose from and then
                 disappeared the moment they chose — so the one screen everybody
                 comes back to said nothing about why the trip is what it is.
