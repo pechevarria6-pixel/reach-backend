@@ -213,3 +213,20 @@ test('an evening happens where they said, then where they are, then home', () =>
   assert.equal(nightCityFor(null, null, 'Raleigh'), 'Raleigh');
   assert.equal(nightCityFor('  ', '', null), null);
 });
+
+import { partyFromGoal } from '../../lib/goal.ts';
+// Both from plan_preferences, both planned as one person on their own.
+test('a buddy makes two', () => {
+  assert.equal(partyFromGoal('Night out with my buddy who loves Thai food for his birthday'), 2);
+  assert.equal(partyFromGoal('Birthdays dinner in Charlotte to celebrate my buddy who loves greek food'), 2);
+});
+test('counts said as counts', () => {
+  assert.equal(partyFromGoal('dinner and a show friday with 3 friends'), 4);
+  assert.equal(partyFromGoal('a weekend away, the four of us'), 4);
+  assert.equal(partyFromGoal('family of five, somewhere warm'), 5);
+  assert.equal(partyFromGoal('drinks with friends'), 3);
+});
+test('nothing said, nothing assumed', () => {
+  assert.equal(partyFromGoal('A quiet weekend in Asheville'), null);
+  assert.equal(partyFromGoal('dinner in Raleigh'), null);
+});

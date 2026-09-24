@@ -457,3 +457,28 @@ export function nightCityFor(named: string | null, shown: string | null, home: s
   const clean = (v: string | null) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 120) : null);
   return clean(named) ?? clean(shown) ?? clean(home);
 }
+
+/**
+ * How many people the sentence says are going, when it says so.
+ *
+ * "Night out with my buddy who loves Thai food for his birthday" was planned
+ * as a solo evening — "a menu built for eating slowly on your own" — because
+ * the group had one member on Reach, and the buddy was not one of them. The
+ * sentence knew. Null when it does not say.
+ */
+const COMPANION = /\b(?:with|and|for|celebrat\w*|treating|taking)\s+(?:my|our)\s+(?:best\s+)?(?:buddy|friend|mate|pal|partner|wife|husband|girlfriend|boyfriend|fianc[eé]e?|spouse|sister|brother|mom|mum|dad|mother|father|son|daughter|cousin|colleague|coworker|date)\b/i;
+const NUMBERS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1 };
+export function partyFromGoal(goal: string | null | undefined): number | null {
+  const t = String(goal || '').toLowerCase();
+  if (!t.trim()) return null;
+  const n = (w: string) => NUMBERS[w] ?? (Number.isFinite(Number(w)) ? Number(w) : NaN);
+  let m = /\b(?:group|party|family) of (\w+)\b/.exec(t);
+  if (m && n(m[1]) >= 1) return Math.min(30, n(m[1]));
+  m = /\bwith (\w+) (?:friends|mates|buddies|people|others|guys|girls|coworkers|colleagues)\b/.exec(t);
+  if (m && n(m[1]) >= 1) return Math.min(30, n(m[1]) + 1);
+  m = /\b(?:the )?(\w+) of us\b/.exec(t);
+  if (m && n(m[1]) >= 2) return Math.min(30, n(m[1]));
+  if (/\bwith (?:some |a few |my |our )?(?:friends|mates|buddies|crew|squad|the guys|the girls)\b/.test(t)) return 3;
+  if (COMPANION.test(t) || /\bme and (?:my|a)\b/.test(t) || /\bdate night\b/.test(t)) return 2;
+  return null;
+}

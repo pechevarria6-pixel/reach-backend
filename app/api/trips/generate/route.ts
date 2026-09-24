@@ -14,7 +14,7 @@ import {
   optionsGate, notYetAnswered, isUndecided, type GroupAnswers,
 } from '@/lib/group-answers';
 import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
-import { placeFromGoal, nightCityFor } from '@/lib/goal';
+import { placeFromGoal, nightCityFor, partyFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
 import { realPlacesAmong } from '@/lib/discovery/is-place';
 import { within } from '@/lib/deadline';
@@ -429,10 +429,20 @@ export async function POST(req: NextRequest) {
   }
 
   const prefs = (members || []).map((m: any) => m.users).filter(Boolean);
-  const groupSize = prefs.length || 2;
+  // Who is going: the Reach members, or the party the sentence names, if
+  // that is more. "Night out with my buddy … for his birthday" came from a
+  // one-member group and was planned — and worded — as an evening alone:
+  // "a menu built for eating slowly on your own". The buddy is not on Reach;
+  // he is still going.
+  const saidParty = partyFromGoal(goal);
+  const groupSize = Math.max(prefs.length || 2, saidParty ?? 0);
+  const notOnReach = Math.max(0, groupSize - (prefs.length || groupSize));
   // Travelling alone is a different trip, not a smaller one. The prompt used
   // to say "GROUP: 1 people" and then plan for a committee.
   const solo = groupSize <= 1;
+  const partyLine = notOnReach > 0
+    ? `${groupSize} people — one of them is planning this; the other${notOnReach === 1 ? ' is' : 's are'} not on Reach. Plan for all ${groupSize} and never write as if anybody is alone.`
+    : null;
   // `let`, and recomputed if the saved plan turns out to be an evening.
   let nights = isNightPlan ? 1 : (startDate && endDate
     ? Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000)
@@ -746,7 +756,7 @@ export async function POST(req: NextRequest) {
     const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}.
 ${whenLine} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
 
-${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
+${solo ? 'One person, on their own.' : partyLine ?? `${groupSize} people going out together.`}
 ${realEvent ? eventFacts(realEvent) : ''}${act.length >= 2 && !realEvent ? `
 They mentioned something they want to see, and we could not find it in any
 listing. Do NOT invent a venue, a date or a show for it. Plan the evening
@@ -1283,7 +1293,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
 ${nightCity ? `ALL THREE MUST BE IN ${nightCity.toUpperCase()}. Every "destination" and "city" is there — not anywhere they live or anywhere nearby.` : ''}
 ${goal ? `WHAT THE NIGHT IS FOR, IN THEIR WORDS: ${goal}` : ''}
 
-${solo ? 'ONE PERSON, on their own.' : `GROUP: ${groupSize} people.`}
+${solo ? 'ONE PERSON, on their own.' : partyLine ? `GROUP: ${partyLine}` : `GROUP: ${groupSize} people.`}
 WHEN: ${startDate || 'soon'}${nightPrefs.time ? ` around ${nightPrefs.time}` : ''}
 WHERE IT SHOULD FEEL LIKE: ${nightPrefs.where || 'anywhere good'}
 ${(nightPrefs.kind || []).length ? 'WHAT THEY WANT OUT OF IT: ' + (nightPrefs.kind || []).join(', ') : ''}
