@@ -1,0 +1,4 @@
+[
+  { "name": "Raleigh", "lat": 35.7796, "lng": -78.6382, "region": "north-america/us/north-carolina", "radius_miles": 100, "source": "plan,profile" },
+  { "name": "Durham", "lat": 35.994, "lng": -78.8986, "region": "north-america/us/north-carolina", "radius_miles": 100, "source": "area" }
+]

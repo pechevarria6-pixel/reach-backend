@@ -45,6 +45,11 @@ export function matchesSelector(selector: string, tags: Record<string, string>):
     if (pattern) {
       try { return new RegExp(pattern[2], 'i').test(tags[pattern[1]] ?? ''); } catch { return false; }
     }
+    // A bare key — the `[name]` in `historic=memorial][name` — asks only that
+    // the tag is there. Split on '=' it became `tags.name === undefined`,
+    // which held for exactly the unnamed memorials the selector exists to
+    // keep out, so the sweep never credited a named one to history at all.
+    if (!part.includes('=')) return !!tags[part];
     const [k, v] = part.split('=');
     return tags[k] === v;
   });
@@ -89,8 +94,42 @@ export function osmRef(findingId: string): { type: string; id: number } | null {
   return m ? { type: m[1], id: Number(m[2]) } : null;
 }
 
-const websiteOf = (tags: Record<string, string> = {}) =>
+/** A place's own site, from whichever of the three tags mappers used. */
+export const websiteOf = (tags: Record<string, string> = {}): string | null =>
   tags.website || tags['contact:website'] || tags.url || null;
+
+/** The site as a link somebody can follow: "example.com" is not one. */
+export const siteUrl = (site: string): string => (site.startsWith('http') ? site : `https://${site}`);
+
+/**
+ * What the map calls it — "pottery", "arts centre", "hotel" — which is what
+ * the venue table stores as `kind`. Lodging answers first: a hotel that also
+ * carries `amenity=parking` is a hotel.
+ */
+export function whatOf(tags: Record<string, string> = {}): string {
+  const lodging = LODGING.has(tags.tourism ?? '') ? tags.tourism : '';
+  return (lodging || tags.craft || tags.shop || tags.amenity || tags.leisure || tags.tourism || '')
+    .replace(/_/g, ' ');
+}
+
+/** The tourism values that are somewhere to sleep, and nothing else. */
+export const LODGING = new Set(['hotel', 'guest_house', 'hostel', 'motel', 'apartment']);
+
+/**
+ * The tags that describe the visit — what they serve, what they take, how
+ * you get in — and none of the mapping bookkeeping.
+ */
+export function visitTagsOf(tags: Record<string, string> = {}): Record<string, string> {
+  return Object.fromEntries(Object.entries(tags).filter(([k]) =>
+    /^(cuisine|diet:|payment:|reservation|takeaway|outdoor_seating|wheelchair|drink:|smoking)/.test(k)));
+}
+
+/** "118 S Main St" where the map has a number, the street alone where it does not. */
+export function streetOf(tags: Record<string, string> = {}): string | null {
+  const street = tags['addr:street'];
+  if (!street) return null;
+  return tags['addr:housenumber'] ? `${tags['addr:housenumber']} ${street}` : street;
+}
 
 /**
  * The narrowest box a place has actually answered at.
@@ -233,8 +272,7 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
     seen.add(name.toLowerCase());
 
     const interest = claim(tags);
-    const what = (tags.craft || tags.shop || tags.amenity || tags.leisure || tags.tourism || '')
-      .replace(/_/g, ' ');
+    const what = whatOf(tags);
     const where = tags['addr:street'] || tags['addr:city'] || seeker.city;
 
     const finding: Finding = {
@@ -247,10 +285,10 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
       price: null,
       dist: null,
       category: interest.charAt(0).toUpperCase() + interest.slice(1),
-      url: site.startsWith('http') ? site : `https://${site}`,
+      url: siteUrl(site),
       // A studio is open on Tuesdays; it does not happen once.
       date: null,
-      venue: tags['addr:street'] || null,
+      venue: streetOf(tags),
       source: 'osm',
       because: interest,
       // `out center` gives a way or relation a point of its own, so a studio
@@ -265,8 +303,7 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
       osm: {
         phone: dialable(tags.phone || tags['contact:phone'], tags['addr:country'] || null),
         hours: tags.opening_hours || null,
-        tags: Object.fromEntries(Object.entries(tags).filter(([k]) =>
-          /^(cuisine|diet:|payment:|reservation|takeaway|outdoor_seating|wheelchair|drink:|smoking)/.test(k))),
+        tags: visitTagsOf(tags),
       },
     };
     // A caterer or a campus can carry a tag we asked for. Neither is a night out.

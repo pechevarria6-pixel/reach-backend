@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { openStreetMap, osmRef, tagsFor } from '@/lib/discovery/osm';
 import { kindFor } from '@/lib/discovery/taste';
+import { shapeBatches } from '@/lib/discovery/ingest';
 import type { Finding } from '@/lib/discovery/types';
 
 // Overpass is slow and this loops over areas. Give it room, but not so much
@@ -186,7 +187,11 @@ export async function GET(req: NextRequest) {
     // hid the whole city for a day.
     let wroteAny = false;
     let writeFailed = false;
-    for (const batch of [toRead, notToRead]) {
+    // Grouped by which columns each row carries: supabase-js writes a bulk
+    // upsert with every key any row has, and NULL where a row lacks one, so
+    // one venue with a phone in a batch used to wipe the phone number the
+    // platforms job had found for every other venue in it.
+    for (const batch of [...shapeBatches(toRead), ...shapeBatches(notToRead)]) {
       if (!batch.length) continue;
       let { error: wrote } = await db
         .from('discovery_venues')

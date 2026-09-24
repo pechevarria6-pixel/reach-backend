@@ -1,0 +1,104 @@
+# The weekly map load. See docs/INGEST.md.
+#
+# The repository is public, so three rules hold throughout:
+#   - the two secrets reach a step only through `env:`, never interpolated
+#     into a `run:` line, and nothing prints them;
+#   - a person's workflow_dispatch input is handed over through `env:` too,
+#     and the script checks it against the regions it knows before using it;
+#   - the workflow can read the repository and nothing more.
+name: OSM ingest
+
+on:
+  schedule:
+    # Mondays 06:17 UTC. Geofabrik rebuilds its extracts overnight, and an
+    # odd minute keeps us off the top of the hour everybody else picks.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'One Geofabrik region, e.g. north-america/us/north-carolina. Empty = every region with seeds.'
+        required: false
+        default: ''
+      accept_drop:
+        description: 'Accept a run that keeps under half of last time (only after deliberately removing seeds).'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osm-ingest
+  cancel-in-progress: false
+
+jobs:
+  regions:
+    name: Which regions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      regions: ${{ steps.list.outputs.regions }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - id: list
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ONLY_REGION: ${{ github.event.inputs.region }}
+        run: |
+          if [ -n "$ONLY_REGION" ]; then
+            regions=$(node -e 'process.stdout.write(JSON.stringify([process.env.ONLY_REGION]))')
+          else
+            regions=$(node scripts/ingest/osm-ingest.mjs --list-regions)
+          fi
+          echo "regions=$regions" >> "$GITHUB_OUTPUT"
+          echo "Regions: $regions"
+
+  ingest:
+    name: ${{ matrix.region }}
+    needs: regions
+    if: needs.regions.outputs.regions != '[]'
+    runs-on: ubuntu-24.04
+    # California's extract is over a gigabyte; filtering it is the slow part.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      # Two at a time: Geofabrik asks downloaders not to hammer it.
+      max-parallel: 2
+      matrix:
+        region: ${{ fromJSON(needs.regions.outputs.regions) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install osmium
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool && osmium --version
+      - id: week
+        env:
+          REGION: ${{ matrix.region }}
+        run: |
+          echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+          echo "slug=${REGION//\//_}" >> "$GITHUB_OUTPUT"
+      # This week's download, so a re-run after a failed write does not
+      # fetch the same gigabyte twice. The key changes every ISO week.
+      - uses: actions/cache@v4
+        with:
+          path: .pbf/${{ steps.week.outputs.slug }}.osm.pbf
+          key: pbf-${{ steps.week.outputs.slug }}-${{ steps.week.outputs.week }}
+      - name: Load
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          REGION: ${{ matrix.region }}
+          ACCEPT_DROP: ${{ github.event.inputs.accept_drop }}
+        run: |
+          if [ "$ACCEPT_DROP" = "true" ]; then
+            node scripts/ingest/osm-ingest.mjs --region "$REGION" --pbf-dir .pbf --accept-drop
+          else
+            node scripts/ingest/osm-ingest.mjs --region "$REGION" --pbf-dir .pbf
+          fi

@@ -110,9 +110,35 @@ const KINDS: Record<string, Kind> = Object.fromEntries([
   // Cafés are on every corner of every map; asking Overpass for all of them
   // in a thirty mile box is how a volunteer server gets knocked over.
   kind('coffee', '☕', [], 'specialty coffee', false),
+  // Somewhere to sleep. Held so the stay can be checked against the map one
+  // day, and never offered as an evening: nobody is sent to a hotel for
+  // dinner, and Reach does not book these rooms — the stay line on the
+  // booking screen quotes its own providers. Not harvested: a hotel's site is
+  // a booking engine, not a list of classes.
+  kind('places to stay', '🛏️', [
+    'tourism=hotel', 'tourism=guest_house', 'tourism=hostel', 'tourism=motel', 'tourism=apartment',
+  ], 'hotel', false),
   kind('jazz', '🎷', ['amenity=music_venue][name~"jazz",i', 'amenity=bar][name~"jazz",i'], 'jazz bar', true),
   kind('classical music', '🎻', ['amenity=theatre][name~"symphony|philharmonic|opera|orchestra",i'], 'classical concert', true),
 ].map(k => [k.key, k]));
+
+/**
+ * Every fixed kind the map can answer, in the order they are declared.
+ *
+ * The bulk load asks each place which of these it is, with the same
+ * selectors the sweep sends to Overpass, so a venue loaded from a download
+ * and the same venue found by the sweep are filed under the same words.
+ */
+export function mappableKinds(): Kind[] {
+  return Object.values(KINDS).filter(k => k.osm.length > 0);
+}
+
+/**
+ * The cuisines the quiz offers, as it saves them ("Veggie", "Barbecue").
+ * Discover looks a cuisine up as "<word> restaurants", so these are the
+ * cuisine rows worth holding; anything else lives in osm_tags.cuisine.
+ */
+export const QUIZ_CUISINES = ['italian', 'japanese', 'mexican', 'indian', 'thai', 'seafood', 'steak', 'veggie', 'barbecue'];
 
 const CUISINE_PATTERN: Record<string, string> = {
   veggie: 'vegetarian|vegan', vegetarian: 'vegetarian|vegan', vegan: 'vegan',
