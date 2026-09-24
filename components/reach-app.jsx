@@ -4037,9 +4037,11 @@ function knownFromPlan(plan){
   const nos=(plan.dealbreakers||[]).map(d=>
     DEALBREAKER_TO_NOWAY[String(d).toLowerCase().trim()]||("custom:"+d));
   if(nos.length)known.noWayJose=nos;
-  if(plan.budget>0)known.budget=String(plan.budget);
-  if(plan.startDate)known.startDate=plan.startDate;
-  if(plan.endDate)known.endDate=plan.endDate;
+  // Never its dates or its budget. The quiz is for a NEW trip: a group's
+  // Puerto Vallarta dates (Nov 2-9) and its $2,268 — which was our estimate
+  // for the option they picked, not an answer anybody gave — were pre-filled
+  // into the next trip and the budget question skipped. What somebody likes
+  // carries; when and how much is asked again.
   return Object.keys(known).length?known:null;
 }
 
@@ -4679,7 +4681,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
                 👌 Already got {carried.map(q=>KNOWN_LABELS[q.id]||q.id).join(", ")}
               </div>
               <div style={{fontSize:12,color:C.t2,lineHeight:1.6,marginBottom:8}}>
-                From when you set this up. {asked.length===1?"One more question":asked.length+" quick questions"} and we're off.
+                From your last trip. {asked.length===1?"One more question":asked.length+" quick questions"} and we're off.
               </div>
               <button onClick={()=>setReask(true)}
                 style={{background:"none",border:"none",padding:0,cursor:"pointer",
@@ -5473,7 +5475,12 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
   // it is what the person filled in a moment ago on the way here.
-  const latestPlan=(group?.plans||[])[(group?.plans||[]).length-1]||null;
+  // The newest trip, by when it was made. The last item in the list was
+  // taken as the latest, and the list comes back newest-first — so it was
+  // the OLDEST, and its answers were offered as this group's latest.
+  const latestPlan=[...(group?.plans||[])]
+    .filter(p=>p.status!=="cancelled"&&p.destStyle!=="undecided")
+    .sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")))[0]||null;
   // 0 the quiz · "wait" everybody's answers · 1 finding · 2 the options
   const [step,setStep]=useState(planId?"wait":0);
   // The group trip these options are for, once it exists.
@@ -11251,6 +11258,9 @@ export default function ReachApp({realUser,onSignOut}={}){
     hasIdeas:Array.isArray(p.trip_options?.options)&&p.trip_options.options.length>0,
     // Who set it up — one half of who organises it; the server decides.
     createdBy:p.created_by||null,
+    // When. Read by "the newest trip" and by which waiting plan came first,
+    // both of which saw null for every plan because this was never carried.
+    createdAt:p.created_at||null,
     // Why this trip, as the group was shown when they chose it. Without
     // reading it back, the reasons survived until the first reload.
     aiData:p.why_chosen?.length?{used_suggestions:p.why_chosen}:null,
