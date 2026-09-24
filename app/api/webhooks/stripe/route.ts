@@ -300,14 +300,19 @@ async function refundChanged(supabase: ReturnType<typeof createServerClient>, re
   if (['pending', 'requires_action', 'succeeded', 'failed', 'canceled'].includes(status)) {
     // By Stripe's id; failing that by the claim id the route put in metadata,
     // for a claim whose answer the route never recorded.
-    let { data: moved, error } = await supabase.from('refunds').update(fields).eq('stripe_refund_id', refund.id).select('id');
+    // Never out of failed or canceled: those are final at Stripe, and events
+    // arrive in no promised order — a late "succeeded" written over "failed"
+    // counted the money as gone for good and locked the payer out of it.
+    let { data: moved, error } = await supabase.from('refunds').update(fields).eq('stripe_refund_id', refund.id)
+      .not('status', 'in', '("failed","canceled")').select('id');
     if (!error && !moved?.length && claimId) {
       // Only the attempt this refund was made for. There is one row per
       // payment, so an event about attempt 1 arriving after attempt 2 was
       // claimed would otherwise write attempt 1's status and refund id over
       // a claim that is still at Stripe.
       const attempt = Math.max(1, Number(refund.metadata?.attempt ?? 1) || 1);
-      ({ data: moved, error } = await supabase.from('refunds').update(fields).eq('id', claimId).eq('attempt', attempt).select('id'));
+      ({ data: moved, error } = await supabase.from('refunds').update(fields).eq('id', claimId).eq('attempt', attempt)
+        .not('status', 'in', '("failed","canceled")').select('id'));
     }
     if (error && !isMissingTable(error)) {
       console.error('[webhooks/stripe] could not record a refund\'s new status', { refund: refund.id, status, code: error.code });

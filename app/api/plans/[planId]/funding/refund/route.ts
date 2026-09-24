@@ -41,7 +41,7 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
+import { requirePlanMember, requireUser, groupMemberIds, isFail } from '@/lib/auth';
 import { planSkips } from '@/lib/participation';
 import { report } from '@/lib/report';
 import {
@@ -119,7 +119,21 @@ async function takeLock(db: SupabaseClient, planId: string, userId: string):
 
 export async function POST(_req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
-  if (isFail(ctx)) return ctx.error;
+  if (isFail(ctx)) {
+    // Somebody who paid and then left the group is not a member any more,
+    // and a bare 403 left them nowhere to go for their money.
+    const who = await requireUser();
+    if (!isFail(who)) {
+      const { data: theirs } = await who.db.from('contributions').select('id')
+        .eq('plan_id', params.planId).eq('user_id', who.user.id).eq('status', 'succeeded').limit(1);
+      if (theirs?.length) {
+        return NextResponse.json({
+          error: "You're no longer in this group, so the refund can't be done in the app — email hello@alcanzar.io with the trip's name to ask for it back.",
+        }, { status: 403 });
+      }
+    }
+    return ctx.error;
+  }
   const planId = params.planId;
   const db = ctx.db;
 

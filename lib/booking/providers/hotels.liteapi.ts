@@ -304,11 +304,12 @@ export const liteApiHotels: BookingProvider = {
       }),
     });
     const conf = booked?.data;
+    // A 2xx with no booking id is not a refusal — the room may exist. Marked
+    // failed, it left what the plan keeps, the refund route paid it back, and
+    // "Price it again" could buy a second room. It is "outcome unknown", as a
+    // flight in the same state already is: held mid-booking and shown as in doubt.
     if (!conf?.bookingId) {
-      return {
-        vertical: 'hotel', mode: 'native', status: 'failed', provider: 'liteapi',
-        error: 'The hotel did not confirm the booking.', raw: conf,
-      };
+      throw new OutcomeUnknown('The hotel accepted the booking and sent no booking reference.');
     }
     return {
       vertical: 'hotel',

@@ -307,6 +307,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     request.maxPriceCents = checkedCents;
   }
 
+  // A refund being paid out on this plan right now: wait for it. Its money is
+  // not money to book with, and reading the payments mid-refund could buy a
+  // small price rise with the very money on its way back.
+  {
+    const { data: lock, error: lockErr } = await db.from('refund_locks').select('taken_at')
+      .eq('plan_id', booking.plan_id).gt('taken_at', new Date(Date.now() - 120_000).toISOString()).limit(1);
+    if (lockErr && !isMissingTable(lockErr)) {
+      console.error('[approve] could not check for a refund in progress', { planId: booking.plan_id, code: lockErr.code });
+    }
+    if (lock?.length) {
+      return NextResponse.json({ code: 'already_in_progress', error: 'A refund is going through on this trip — try booking again in a minute.' }, { status: 409 });
+    }
+  }
+
   // ── 3. The money ──────────────────────────────────────────────────────
   // After the price, so a plan funded for the old price is not waved through
   // at the new one. There is no way round it: `skipFundingCheck` let any

@@ -473,6 +473,25 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     }, { status: 409 });
   }
 
+  // Money still held stops a delete, as it stops calling off: the in-app
+  // refund needs the trip to exist, so deleting it would leave the payer an
+  // email as the only way to their money.
+  const { data: paid, error: paidErr } = await supabase.from('contributions')
+    .select('*').eq('plan_id', params.planId).eq('status', 'succeeded');
+  if (paidErr) {
+    console.error('[plans] could not check payments before deleting', { plan: params.planId, code: paidErr.code });
+    return NextResponse.json({ error: "We couldn't check this trip's payments — nothing was deleted" }, { status: 500 });
+  }
+  if (netCollectedCents(paid) > 0) {
+    const back = await refundsOpen(supabase, params.planId)
+      ? 'Whoever paid can take back what wasn\'t spent from the trip\'s checkout ("Refund what wasn\'t spent"), and then it can be deleted.'
+      : "Email hello@alcanzar.io with the trip's name to have it refunded.";
+    return NextResponse.json({
+      error: `Money paid towards this trip is still held, so it can't be deleted — that would leave nowhere to get it back from. ${back}`,
+      paidIn: true,
+    }, { status: 409 });
+  }
+
   // Quotes and proposals are not things in the world, so they go with the
   // plan — but as cancelled rows rather than as rows nobody can reach.
   const loose = (held ?? []).map(b => b.id);

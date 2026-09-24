@@ -77,6 +77,9 @@ export const viatorActivities: BookingProvider = {
     const json = await res.json().catch(() => null);
     if (res.ok && json === null) throw new OutcomeUnknown('Viator accepted the booking and its answer could not be read.');
     const ref = json?.bookingRef || json?.bookingReference;
+    // Accepted and no reference: the tour may be booked. Not a failure to
+    // refund and retry — the same "outcome unknown" as an unreadable answer.
+    if (res.ok && !ref) throw new OutcomeUnknown('Viator accepted the booking and sent no booking reference.');
     return {
       vertical: 'activity', mode: 'native',
       status: ref ? 'confirmed' : 'failed', provider: 'viator',
