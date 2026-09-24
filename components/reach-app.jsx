@@ -8191,6 +8191,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // Not once a group trip's ideas are decided: the vote is over, and where
   // it went is the trip's title.
   const tabs=[(!soloTrip&&plan.options.length>0&&!ideasDecided)?"vote":null,"overview","budget","bookings"].filter(Boolean);
+  // A tab that is not there is the overview, not a blank screen.
+  // (Setting this component's own state while rendering is allowed; React
+  // re-renders straight away with the corrected tab.)
+  if(!tabs.includes(atab))setAtab("overview");
 
   return(
     <div className="sc" style={{paddingBottom:0}}>
@@ -8447,7 +8451,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               </div>
             )}
             <div style={{padding:"0 20px"}}>
-              {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
+              {/* A vote needs something to vote on. With no options this opened
+                  a Vote tab that does not exist — a blank screen — so a plan
+                  with nothing to choose between is agreed instead. */}
+              {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&!(plan.options?.length>0)&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Agreed — let's book it"))}>{loading?"Saving…":"Agree on this plan"}</button>}
+              {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&plan.options?.length>0&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
               {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
               {plan.status==="voting"&&plan.destStyle!=="undecided"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
