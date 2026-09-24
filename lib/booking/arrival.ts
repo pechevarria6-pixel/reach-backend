@@ -28,8 +28,12 @@ export async function arrivalFor(opts: {
 }): Promise<Arrival | null> {
   const city = (opts.city || '').trim();
   const cc = (opts.countryCode || '').trim().toUpperCase();
-  // A world destination is placed from its own coordinates, not the geocoder.
-  const known = city ? worldDestination(city, cc || null) : null;
+  // A world destination is placed from its own coordinates, not the geocoder
+  // — but only when the plan names a country and it agrees. A name alone is
+  // not a place: "Athens, GA" and a Spanish "Valladolid" saved without a
+  // country are namesakes of towns on the list, and pinning them to Greece
+  // or Yucatán would throw out their own airport and fly the group abroad.
+  const known = city && /^[A-Z]{2}$/.test(cc) ? worldDestination(city, cc) : null;
   let here: { lat: number; lng: number } | null = known ? { lat: known.lat, lng: known.lng } : null;
   let asked = !!known;
   const town = async () => {

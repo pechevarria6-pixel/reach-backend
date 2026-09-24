@@ -74,6 +74,35 @@ test('every destination was matched to Geofabrik files, the town’s own first',
   assert.deepEqual(Object.keys(WORLD_REGIONS).sort(), WORLD_DESTINATIONS.map(d => d.name).sort(), 'no region for a town that left the list');
 });
 
+// Ingest and the itinerary menu both filter by distance alone, so every file
+// a world seed reads is a file whose venues can be named as "nearby". A
+// circle that crosses a border must not read the far side: Petra's reaches
+// the Israeli Arava across a closed border, Singapore's reaches Batam across
+// a ferry and a passport, Hong Kong's reaches Guangdong and a mainland visa.
+test("a world seed reads only its own country's files, whatever its circle crosses", () => {
+  const abroad: Record<string, RegExp> = {
+    'Wadi Musa': /^asia\/israel-and-palestine$/,
+    'Singapore': /^asia\/indonesia\//,
+    'Johor Bahru': /^asia\/indonesia\//,
+    'Hong Kong': /^asia\/china\/(?!hong-kong$)/,
+    'Macau': /^asia\/china\/(?!macau$)/,
+    'Shenzhen': /^asia\/china\/(hong-kong|macau)$/,
+    'Seoul': /^asia\/north-korea$/,
+    'Vienna': /^europe\/(slovakia|hungary|czech-republic)/,
+  };
+  for (const [town, far] of Object.entries(abroad)) {
+    for (const r of WORLD_REGIONS[town]) assert.doesNotMatch(r, far, `${town} reads ${r}, across a border`);
+  }
+  // In general: every file after the first sits beside it in the same country.
+  for (const d of WORLD_DESTINATIONS) {
+    const [centre, ...rest] = WORLD_REGIONS[d.name];
+    const country = centre.split('/').slice(0, -1).join('/');
+    for (const r of rest) {
+      assert.ok(country.includes('/') && r.startsWith(`${country}/`), `${d.name}: ${r} is not in ${centre}'s country`);
+    }
+  }
+});
+
 test('a world region is a file, never a continent, an overlay, or a country Geofabrik splits', () => {
   const all = new Set(Object.values(WORLD_REGIONS).flat());
   for (const r of all) {

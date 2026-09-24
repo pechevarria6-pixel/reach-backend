@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import { arrivalFor, OWN_AIRPORT_MILES } from '../../lib/booking/arrival.ts';
 
 const AIRPORTS = {
+  AHN: { name: 'Athens Ben Epps (Georgia)', latitude: 33.9486, longitude: -83.3263 },
+  ATH: { name: 'Athens (Greece)', latitude: 37.9364, longitude: 23.9445 },
   VLL: { name: 'Valladolid (Spain)', latitude: 41.7061, longitude: -4.8519 },
   AGU: { name: 'Aguascalientes (Mexico)', latitude: 21.7056, longitude: -102.3178 },
   CUZ: { name: 'Cusco', latitude: -13.5357, longitude: -71.9388 },
@@ -25,16 +27,23 @@ const airport = (iata: Code) => ({ type: 'airport', iata_code: iata, name: AIRPO
 let byName: Record<string, Code[]> = {};
 let nearby: Code[] = [];
 let asked: string[] = [];
+/** What the geocoder answers, by query; anything else it is asked fails the test. */
+let geocoded: Record<string, { lat: number; lng: number }> = {};
 const realFetch = globalThis.fetch;
 const realKey = process.env.DUFFEL_API_KEY;
 
 beforeEach(() => {
   process.env.DUFFEL_API_KEY = 'duffel_test_stub';
-  byName = {}; nearby = []; asked = [];
+  byName = {}; nearby = []; asked = []; geocoded = {};
   globalThis.fetch = (async (input: string | URL) => {
     const url = new URL(String(input));
     asked.push(url.host + url.pathname + url.search);
-    if (url.host.includes('nominatim')) throw new Error('the world list should not need the geocoder');
+    if (url.host.includes('nominatim')) {
+      const q = url.searchParams.get('q') ?? '';
+      const hit = geocoded[q];
+      if (!hit) throw new Error(`the world list should not need the geocoder (${q})`);
+      return new Response(JSON.stringify([{ lat: String(hit.lat), lon: String(hit.lng), display_name: q, class: 'place', type: 'city', address: {} }]), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
     const q = url.searchParams.get('query');
     const data = q != null ? (byName[q] ?? []).map(airport) : nearby.map(airport);
     return new Response(JSON.stringify({ data }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -80,4 +89,33 @@ test('Wadi Musa, for Petra, has no airport of its own and lands at the nearest',
 test('the check is a distance, and generous enough for a city code', () => {
   assert.ok(OWN_AIRPORT_MILES >= 40, "Stansted is 35 miles from London and is London's airport");
   assert.ok(OWN_AIRPORT_MILES < 200);
+});
+
+// A plan may be saved with a city and no country; the bookable route passes
+// countryCode ''. A name on the world list is then only a namesake, and the
+// town has to be placed from what the plan said, not from the list.
+test('Athens, GA with no country keeps its own airport and is not flown to Greece', async () => {
+  byName = { 'Athens, GA': ['AHN'] };
+  nearby = ['ATH'];
+  geocoded = { 'Athens, GA': { lat: 33.9519, lng: -83.3576 } };
+  assert.deepEqual(await arrivalFor({ city: 'Athens, GA', countryCode: '' }), { iata: 'AHN', gateway: null });
+  assert.deepEqual(await arrivalFor({ city: 'Athens, GA', countryCode: null }), { iata: 'AHN', gateway: null });
+});
+
+test('a Spanish Valladolid saved without a country keeps VLL, not Chichén Itzá', async () => {
+  byName = { 'Valladolid': ['VLL'] };
+  nearby = ['CZA', 'MID', 'CUN'];
+  geocoded = { 'Valladolid': { lat: 41.6523, lng: -4.7245 } };
+  const got = await arrivalFor({ city: 'Valladolid', countryCode: '' });
+  assert.deepEqual(got, { iata: 'VLL', gateway: null });
+});
+
+test('with no country and no direct match, the nearest airports are found around the geocoded town, not the namesake', async () => {
+  // Rome, GA: its own name finds nothing, so the search is by distance.
+  nearby = ['AHN'];
+  geocoded = { 'Rome, GA': { lat: 34.2570, lng: -85.1647 } };
+  await arrivalFor({ city: 'Rome, GA', countryCode: '' });
+  const near = asked.find(a => a.includes('lat='));
+  assert.ok(near, 'the nearest-airport search was made');
+  assert.match(near!, /lat=34\.25/, `searched around Georgia, not Italy: ${near}`);
 });

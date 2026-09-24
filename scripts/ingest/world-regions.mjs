@@ -84,6 +84,36 @@ const legacy = new Set(legacyRegions());
 // a venue there must never reach a Seoul itinerary.
 const NEVER = new Set(['asia/north-korea']);
 
+// North Korea is the extreme case of a wider rule: a circle drawn by
+// distance does not know where a border is. Petra's thirty miles reach the
+// Israeli Arava, where the Wadi Araba border is closed and the nearest
+// crossing is at Aqaba; Singapore's reach Batam, a passport and a ferry
+// away; Hong Kong's reach Guangdong, which wants a mainland visa. Ingest and
+// the itinerary menu both filter by distance alone, so a file read here is a
+// file whose venues can be named as "nearby". A world seed therefore reads
+// only files inside the destination's own country.
+//
+// A file's country is its own ISO code in Geofabrik's index, else its
+// nearest ancestor's. Where the index is silent or incomplete it is set
+// here: Hong Kong and Macau are filed under China but are entered
+// separately, the Malaysia file also holds Singapore and Brunei, and the
+// GCC file holds Saudi Arabia although its codes leave it out.
+const COUNTRY_OF = {
+  'asia/china/hong-kong': ['HK'],
+  'asia/china/macau': ['MO'],
+  'asia/malaysia-singapore-brunei': ['MY', 'SG', 'BN'],
+  'asia/gcc-states': ['SA', 'QA', 'AE', 'OM', 'BH', 'KW'],
+};
+function countriesOf(path) {
+  for (let p = path; p; p = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '') {
+    if (COUNTRY_OF[p]) return COUNTRY_OF[p];
+    const e = byPath.get(p);
+    const iso = e && index.features.find(f => f.properties.id === e.id)?.properties?.['iso3166-1:alpha2'];
+    if (iso) return [].concat(iso).map(c => String(c).toUpperCase());
+  }
+  return [];
+}
+
 // Nesting is read from the download paths, not the index's `parent` field:
 // Geofabrik files New York's parent as "north-america", beside the whole-US
 // file, although its path says it is a piece of it.
@@ -133,11 +163,15 @@ const problems = [];
 for (const d of WORLD_DESTINATIONS) {
   const centre = regionAt(d.lat, d.lng);
   if (!centre) { problems.push(`${d.name}: no extract holds its centre`); continue; }
+  if (!countriesOf(centre).includes(d.country)) { problems.push(`${d.name}: its own file ${centre} is not in ${d.country}`); continue; }
   const regions = new Set([centre]);
+  const abroad = new Set();
   for (const p of probePoints(d.lat, d.lng, SEED_RADIUS_MILES)) {
     const r = regionAt(p.lat, p.lng);
-    if (r) regions.add(r);
+    if (!r || regions.has(r)) continue;
+    if (countriesOf(r).includes(d.country)) regions.add(r); else abroad.add(r);
   }
+  for (const r of abroad) console.log(`  ${d.name}: not reading ${r}, across the border`);
   // Centre first: it is the file the town is in; the rest are what its circle grazes.
   out[d.name] = [centre, ...[...regions].filter(r => r !== centre).sort()];
   console.log(`  ${d.name.padEnd(18)} ${out[d.name].join(', ')}`);

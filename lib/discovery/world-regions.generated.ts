@@ -8,8 +8,7 @@
 /** Destination name → Geofabrik region paths, centre first. */
 export const WORLD_REGIONS: Readonly<Record<string, readonly string[]>> = {
   "Hong Kong": [
-    "asia/china/hong-kong",
-    "asia/china/guangdong"
+    "asia/china/hong-kong"
   ],
   "Bangkok": [
     "asia/thailand"
@@ -18,13 +17,10 @@ export const WORLD_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "europe/united-kingdom/england"
   ],
   "Macau": [
-    "asia/china/macau",
-    "asia/china/guangdong",
-    "asia/china/hong-kong"
+    "asia/china/macau"
   ],
   "Singapore": [
-    "asia/malaysia-singapore-brunei",
-    "asia/indonesia/sumatra"
+    "asia/malaysia-singapore-brunei"
   ],
   "Paris": [
     "europe/france/ile-de-france",
@@ -52,8 +48,7 @@ export const WORLD_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "europe/turkey"
   ],
   "Shenzhen": [
-    "asia/china/guangdong",
-    "asia/china/hong-kong"
+    "asia/china/guangdong"
   ],
   "Mumbai": [
     "asia/india/western-zone"
@@ -132,12 +127,10 @@ export const WORLD_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "asia/india/southern-zone"
   ],
   "Vienna": [
-    "europe/austria",
-    "europe/slovakia"
+    "europe/austria"
   ],
   "Johor Bahru": [
-    "asia/malaysia-singapore-brunei",
-    "asia/indonesia/sumatra"
+    "asia/malaysia-singapore-brunei"
   ],
   "Jaipur": [
     "asia/india/northern-zone"
@@ -202,8 +195,7 @@ export const WORLD_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "south-america/peru"
   ],
   "Wadi Musa": [
-    "asia/jordan",
-    "asia/israel-and-palestine"
+    "asia/jordan"
   ],
   "Giza": [
     "africa/egypt"
@@ -227,8 +219,6 @@ export const WORLD_REGION_MB: Readonly<Record<string, number>> = {
   "asia/india/southern-zone": 558,
   "asia/india/western-zone": 220,
   "asia/indonesia/nusa-tenggara": 176,
-  "asia/indonesia/sumatra": 283,
-  "asia/israel-and-palestine": 120,
   "asia/japan/kansai": 352,
   "asia/japan/kanto": 512,
   "asia/jordan": 31,
@@ -254,7 +244,6 @@ export const WORLD_REGION_MB: Readonly<Record<string, number>> = {
   "europe/netherlands/noord-holland": 189,
   "europe/netherlands/utrecht": 99,
   "europe/netherlands/zuid-holland": 211,
-  "europe/slovakia": 345,
   "europe/spain/castilla-la-mancha": 107,
   "europe/spain/cataluna": 270,
   "europe/spain/madrid": 85,
