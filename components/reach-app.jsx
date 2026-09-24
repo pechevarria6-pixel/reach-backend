@@ -19,6 +19,7 @@ import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { priceLabel } from "@/lib/discovery/price-label";
 import { createPlanSteps } from "@/lib/create-plan-steps";
+import { picksFrom, seedFromPick } from "@/lib/contracts/trip-pick";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
@@ -765,6 +766,136 @@ function NotificationsBell(){
   );
 }
 
+// ─── Ideas for you: trips Reach can stand behind ─────────────────────────
+// A few towns we hold checked venues for, ranked on the server from counts
+// and quiz answers (lib/recommendations/trip-picks.ts) — no model, so every
+// line is a number we hold, something they told us, or an estimate that
+// says it is one. One action per card: start that plan, already pointed at
+// the town. The × is "not for me", the same verdict Discover's cards use,
+// and it can be taken back while the card is still on screen.
+const BAND_PILL={night:"🌙 Night out",weekend:"🚗 Weekend",away:"✈️ Fly away"};
+function TripPicks({push,userLocation,toast,groups}){
+  const [state,setState]=useState("loading"); // loading|ready|error
+  const [data,setData]=useState({picks:[],reason:null,from:null});
+  // Refs hidden on this screen, so a card can say "Hidden" and offer undo.
+  const [hidden,setHidden]=useState(()=>new Set());
+  const [busy,setBusy]=useState(null);
+  useEffect(()=>{
+    let live=true;
+    const lat=userLocation?.lat, lng=userLocation?.lng;
+    const city=userLocation?.city||userLocation?.formatted||"";
+    const q=lat!=null&&lng!=null?`?lat=${lat}&lng=${lng}&city=${encodeURIComponent(city)}`:"";
+    setState("loading");
+    (async()=>{
+      try{
+        const r=await fetch("/api/recommendations/trips"+q);
+        if(!live)return;
+        if(!r.ok){console.error("[home] trip ideas returned",r.status);setState("error");return;}
+        setData(picksFrom(await r.json()));
+        setState("ready");
+      }catch(e){console.error("[home] trip ideas failed",e);if(live)setState("error");}
+    })();
+    return()=>{live=false;};
+  },[userLocation?.lat,userLocation?.lng]);
+
+  const dismiss=async(p)=>{
+    if(busy)return;
+    setBusy(p.ref);
+    try{
+      const r=await fetch("/api/recommendations/feedback",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({itemRef:p.ref,verdict:"not_interested",vertical:"trip",title:p.title})});
+      if(!r.ok){const e=await r.json().catch(()=>({}));toast(e.error||"Couldn't hide that just now");return;}
+      setHidden(h=>new Set([...h,p.ref]));
+    }catch(e){console.error("[home] could not hide a trip idea",e);toast("Couldn't hide that — check your connection");}
+    finally{setBusy(null);}
+  };
+  const undo=async(p)=>{
+    if(busy)return;
+    setBusy(p.ref);
+    try{
+      const r=await fetch("/api/recommendations/feedback?itemRef="+encodeURIComponent(p.ref),{method:"DELETE"});
+      if(!r.ok){toast("Couldn't bring it back just now");return;}
+      setHidden(h=>{const n=new Set(h);n.delete(p.ref);return n;});
+    }catch(e){console.error("[home] could not undo",e);toast("Couldn't bring it back — check your connection");}
+    finally{setBusy(null);}
+  };
+  // Starts the plan already pointed at the town. The group it was chosen
+  // for is only pre-selected if this device still has it.
+  const start=(p)=>{
+    const seed=seedFromPick(p);
+    const gid=seed.groupId&&groups.some(g=>g.id===seed.groupId)?seed.groupId:null;
+    push("createPlan",{fresh:true,seed,...(gid?{defaultGroupId:gid}:{})});
+  };
+
+  // Near you already says Reach does not know where you are, with the way
+  // to fix it. Saying it twice on one screen is the redundancy rule.
+  if(state==="ready"&&data.reason==="no_location")return null;
+  const money=n=>"$"+Number(n).toLocaleString("en-US");
+  return(
+    <>
+      <div style={{padding:"4px 20px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+        <span className="sl">Ideas for you</span>
+        {data.from&&<span style={{fontSize:11,color:C.t3,textAlign:"right"}}>From {data.from}</span>}
+      </div>
+      {/* A no-go nothing we hold can check (cold weather, crowds), said as
+          plainly as the ones we did apply so "No nightclubs" on a card never
+          reads as if every no-go was honoured. Once, above the row: it is
+          the same sentence for every drive and flight in it. */}
+      {state==="ready"&&[...new Set(data.picks.filter(p=>!hidden.has(p.ref)).map(p=>p.unchecked).filter(Boolean))].map(u=>(
+        <div key={u} style={{margin:"-4px 20px 10px",fontSize:12,color:C.t2,lineHeight:1.5}}>⚠︎ {u}</div>
+      ))}
+      {state!=="ready"||!data.picks.length?(
+        <div style={{margin:"0 20px 18px",padding:"14px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+          {state==="loading"?"Looking at the towns we've checked…"
+            :state==="error"?"Couldn't put ideas together just now. Try again shortly."
+            :data.reason==="all_dismissed"?"You've passed on every town we'd suggest for now. New ones appear as Reach checks more places."
+            :"Nothing we've checked closely enough to suggest yet. Reach checks more towns every week."}
+        </div>
+      ):(
+        <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
+          {data.picks.map(p=>hidden.has(p.ref)?(
+            <div key={p.ref} style={{minWidth:250,maxWidth:250,flexShrink:0,background:C.s1,border:`1px dashed ${C.border}`,borderRadius:20,padding:16,display:"flex",flexDirection:"column",justifyContent:"center",gap:8}}>
+              <div style={{fontSize:13,color:C.t2}}>Hidden — {p.destination.city} won't be suggested again.</div>
+              <button className="bsm" disabled={busy===p.ref} onClick={()=>undo(p)} style={{alignSelf:"flex-start"}}>Undo</button>
+            </div>
+          ):(
+            <div key={p.ref} style={{minWidth:250,maxWidth:250,flexShrink:0,background:C.s1,border:`1px solid ${C.border}`,borderRadius:20,padding:16,display:"flex",flexDirection:"column",gap:6,overflow:"hidden"}}>
+              {/* The photo slot. Empty until the destination-photo work fills
+                  p.photo; a card without one simply has no picture, never a
+                  stand-in of somewhere else. The credit travels with it. */}
+              {p.photo?.url&&(
+                <div style={{margin:"-16px -16px 6px",position:"relative"}}>
+                  <img src={p.photo.url} alt={p.photo.alt} loading="lazy"
+                    style={{display:"block",width:"100%",height:120,objectFit:"cover"}}
+                    onError={e=>{e.currentTarget.parentElement.style.display="none";}}/>
+                  {p.photo.credit&&<div style={{position:"absolute",right:8,bottom:6,fontSize:9.5,color:"rgba(255,255,255,.8)",textShadow:"0 1px 2px rgba(0,0,0,.7)"}}>📷 {p.photo.credit}</div>}
+                </div>
+              )}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                <span className="pill pill-p">{BAND_PILL[p.band]}</span>
+                <button aria-label={`Not for me: ${p.title}`} disabled={busy===p.ref} onClick={()=>dismiss(p)}
+                  style={{background:"none",border:"none",color:C.t3,fontSize:18,lineHeight:1,cursor:"pointer",padding:4}}>×</button>
+              </div>
+              <div style={{fontFamily:"var(--font-display)",fontSize:19,color:C.t1,lineHeight:1.2,marginTop:2}}>{p.title}</div>
+              <div style={{fontSize:11.5,color:C.t3}}>{p.who} · {p.howFar}</div>
+              <div style={{fontSize:13,color:C.t1,lineHeight:1.45}}>{p.held}.</div>
+              {p.matched&&<div style={{fontSize:12,color:C.t2,lineHeight:1.45}}>{p.matched}</div>}
+              {p.leftOut&&<div style={{fontSize:11.5,color:C.t3,lineHeight:1.45}}>{p.leftOut}</div>}
+              <div style={{marginTop:"auto",paddingTop:6}}>
+                <div style={{fontSize:13,color:C.t1,fontWeight:600}}>
+                  About {money(p.cost.low)}–{money(p.cost.high)}{p.cost.each?" each":""}
+                </div>
+                <div style={{fontSize:10.5,color:C.t3,lineHeight:1.4,marginTop:2}}>{p.cost.label}</div>
+                <button className="bsm bsm-p" style={{marginTop:10,width:"100%"}} onClick={()=>start(p)}>{p.cta}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
   // The server has no idea what time it is where you are. Anything that reads
   // the clock waits for the browser rather than guessing and being corrected.
@@ -1123,6 +1254,11 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
         </div>
       </div>
       )}
+      {/* Trips worth taking, from towns we hold checked venues for. Each
+          card's one action starts a plan already pointed at that town, which
+          nothing else on Home does: "＋ New plan" and "Sort one evening"
+          start a blank one. */}
+      <TripPicks push={push} userLocation={userLocation} toast={toast} groups={groups}/>
       {/* Answering this makes every other screen better, so it sits above
           the ways in rather than buried in a settings list. It goes away the
           moment it is answered. */}
@@ -7363,7 +7499,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 }
 
 
-function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user,departure,fresh}){
+function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user,departure,fresh,seed}){
   // ── Draft persistence: load saved progress on mount ──────
   const DRAFT_KEY="reach_plan_draft";
   // SSR-safe localStorage helpers — only run in browser
@@ -7375,8 +7511,12 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   // Initialize state without calling localStorage at module level
   const [step,setStep]=useState(0);
   const [gid,setGid]=useState(defaultGroupId||null);
-  const [planName,setPlanName]=useState("");
-  const [planType,setPlanType]=useState(null);
+  // `seed` is a Home trip idea (lib/contracts/trip-pick.ts seedFromPick):
+  // the kind of plan, the town, a name and a suggested length. It always
+  // arrives with `fresh`, so it starts a new plan and never an old draft.
+  // Every field stays theirs to change.
+  const [planName,setPlanName]=useState(seed?.planName||"");
+  const [planType,setPlanType]=useState(seed?.planType||null);
   const [eventDate,setEventDate]=useState("");
   const [eventTime,setEventTime]=useState("");
   const [startDate,setStartDate]=useState("");
@@ -7387,7 +7527,10 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   const [concertGenre,setConcertGenre]=useState(null);
   const [accom,setAccom]=useState(null);
   // Where the plan happens: a place the map confirmed, with its country.
-  const [where,setWhere]=useState(null);           // {city,country,label}
+  const [where,setWhere]=useState(seed?.where?.city?seed.where:null);           // {city,country,label}
+  // How long the idea was for, in nights. It sets the return date from the
+  // first day picked, until they pick a return date of their own.
+  const [suggestedNights,setSuggestedNights]=useState(seed?.nights>0?seed.nights:0);
   const [whereQuery,setWhereQuery]=useState("");
   const [whereHits,setWhereHits]=useState([]);
   const [whereLooking,setWhereLooking]=useState(false);
@@ -7443,6 +7586,10 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       if(draft.budget)setBudget(draft.budget);
       if(draft.voting!==undefined)setVoting(draft.voting);
       if(draft.vopts)setVopts(draft.vopts);
+      // Both were missing from this list, so a draft came back with Where
+      // empty and the suggested length gone.
+      if(draft.where?.city)setWhere(draft.where);
+      if(draft.suggestedNights>0)setSuggestedNights(draft.suggestedNights);
     }
     setDraftLoaded(true);
   },[]);
@@ -7478,14 +7625,40 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   };
 
   // Auto-save draft whenever state changes
+  //
+  // A plan started from a Home idea is filled in on mount, and saving that
+  // straight away would replace a half-finished draft of theirs with a stub
+  // for a town they only tapped on. So a seeded plan is saved from the first
+  // change they make, not before.
+  const seededAs=useRef(null);
   useEffect(()=>{
     if(!planType&&!gid)return; // nothing to save yet
-    saveDraft({step,gid,planName,planType,eventDate,eventTime,startDate,endDate,vibe,dest,cuisine,concertGenre,accom,bks,budget,voting,vopts});
-  },[step,gid,planName,planType,eventDate,eventTime,startDate,endDate,vibe,dest,cuisine,concertGenre,accom,bks,budget,voting,vopts]);
+    const draft={step,gid,planName,planType,eventDate,eventTime,startDate,endDate,vibe,dest,cuisine,concertGenre,accom,bks,budget,voting,vopts,where,suggestedNights};
+    if(seed&&seededAs.current!=="changed"){
+      const now=JSON.stringify(draft);
+      if(seededAs.current===null){seededAs.current=now;return;}
+      if(seededAs.current===now)return;
+      seededAs.current="changed";
+    }
+    saveDraft(draft);
+  },[step,gid,planName,planType,eventDate,eventTime,startDate,endDate,vibe,dest,cuisine,concertGenre,accom,bks,budget,voting,vopts,where,suggestedNights]);
 
   const hasDraftProgress=!!(planType||gid);
+  // The first day, and the return date with it when the idea had a length.
+  const pickStart=(v)=>{
+    setStartDate(v);
+    if(suggestedNights>0&&v){
+      const [y,m,d]=v.split("-").map(Number);
+      if(y&&m&&d)setEndDate(today(new Date(y,m-1,d+suggestedNights)));
+    }
+  };
+  const pickEnd=(v)=>{setEndDate(v);setSuggestedNights(0);};
 
   const handleBack=()=>{
+    // A Home idea they only looked at: nothing of theirs was typed, so there
+    // is nothing to save or discard, and "Discard" must not clear an older
+    // draft that is still sitting there.
+    if(seed&&seededAs.current!=="changed"){onBack();return;}
     if(hasDraftProgress&&step>0){
       setShowExitConfirm(true);
     } else if(hasDraftProgress&&step===0){
@@ -7868,13 +8041,18 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 <div style={{display:"flex",gap:10,marginBottom:12}}>
                   <div style={{flex:1}}>
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>{isWeekend?"Friday":"Departure"}</div>
-                    <input aria-label="First day" type="date" className="inp" value={startDate} min={today()} onChange={e=>setStartDate(e.target.value)} style={{color:C.t1}}/>
+                    <input aria-label="First day" type="date" className="inp" value={startDate} min={today()} onChange={e=>pickStart(e.target.value)} style={{color:C.t1}}/>
                   </div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>{isWeekend?"Sunday":"Return"}</div>
-                    <input aria-label="Last day" type="date" className="inp" value={endDate} min={startDate} onChange={e=>setEndDate(e.target.value)} style={{color:C.t1}}/>
+                    <input aria-label="Last day" type="date" className="inp" value={endDate} min={startDate} onChange={e=>pickEnd(e.target.value)} style={{color:C.t1}}/>
                   </div>
                 </div>
+                {suggestedNights>0&&(
+                  <div style={{fontSize:12,color:C.t3,marginBottom:12,lineHeight:1.5}}>
+                    The idea was {suggestedNights} night{suggestedNights===1?"":"s"}, so the return date follows the first day. Change either.
+                  </div>
+                )}
                 {nights()>0&&(
                   <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:14,padding:"12px 16px",marginBottom:14,textAlign:"center"}}>
                     <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>{getDurationLabel()}</div>
