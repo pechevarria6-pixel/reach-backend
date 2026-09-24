@@ -22,6 +22,9 @@ const ROW = {
   venue_phone: null,
   venue_note: 'Pub Trivia Night — every Wednesday Night at 7 PM',
   venue_note_credit: 'https://www.redbear.beer/',
+  // The act's picture from the listing that sold the ticket.
+  venue_image_url: 'https://s1.ticketm.net/dam/a/1b2/milk-carton-kids_RETINA_PORTRAIT_16_9.jpg',
+  venue_image_credit: 'Ticketmaster',
   sort_order: 1,
 };
 

@@ -19,7 +19,7 @@
 // nobody had planned yet held nothing, however much the map knew about it.
 // Now every qualifying place in the extract is kept, and the seeds only say
 // which regions to read and how much each town can see (per_seed).
-import { matchesSelector, websiteOf, siteUrl, whatOf, visitTagsOf, streetOf, LODGING } from './osm.ts';
+import { matchesSelector, websiteOf, siteUrl, whatOf, keptTagsOf, streetOf, LODGING } from './osm.ts';
 import { mappableKinds, kindFor, QUIZ_CUISINES } from './taste.ts';
 import { canTurnUp } from './rules.ts';
 import { dialable } from './phone.ts';
@@ -207,7 +207,8 @@ export function rowsFor(
   // no longer the map's to quote.
   const phone = dialable(tags.phone || tags['contact:phone'], tags['addr:country'] || null);
   const hours = (tags.opening_hours || '').trim();
-  const visit = visitTagsOf(tags);
+  // The visit tags, and the ones naming a photograph of the place.
+  const visit = keptTagsOf(tags);
   // The map's own town, or nothing. The nearest seed's name would put a
   // Baltimore bar "in Washington".
   const city = tags['addr:city']?.trim();

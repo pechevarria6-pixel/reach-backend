@@ -10,6 +10,7 @@
 // around one at all — there is no third option where we make up where a band
 // is playing.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { eventPhoto } from './place-photo.ts';
 
 export interface RealEvent {
   title: string;
@@ -20,6 +21,8 @@ export interface RealEvent {
   /** Where tickets are actually sold. */
   url: string | null;
   source: 'cache' | 'ticketmaster';
+  /** The act's picture from the listing itself, with its credit. Never searched for. */
+  photo?: { url: string; credit: string } | null;
 }
 
 /** Words that describe the outing rather than name the act. */
@@ -74,14 +77,20 @@ export async function eventFromCache(
 ): Promise<RealEvent | null> {
   if (words.length < 2) return null;
 
-  const { data, error } = await db
+  const ask = (columns: string) => db
     .from('discovery_events')
-    .select('title, venue_name, city, starts_on, booking_url')
+    .select(columns)
     .eq('source', 'ticketmaster')
     .not('starts_on', 'is', null)
     .gte('starts_on', new Date().toISOString().slice(0, 10))
     .order('starts_on')
-    .limit(400);
+    .limit(400) as unknown as Promise<{ data: Record<string, any>[] | null; error: { code?: string; message?: string } | null }>;
+  // The act's picture arrives in sql/place-photos-2026-09-24.sql; until
+  // then the event is found exactly as before, without one.
+  let { data, error } = await ask('title, venue_name, city, starts_on, booking_url, image_url, image_credit');
+  if (error && /image_url|image_credit/.test(error.message || '')) {
+    ({ data, error } = await ask('title, venue_name, city, starts_on, booking_url'));
+  }
 
   if (error) {
     console.error('[find-event] could not read the cached events', { code: error.code });
@@ -98,6 +107,7 @@ export async function eventFromCache(
     startsOn: hit.starts_on ?? null,
     url: hit.booking_url ?? null,
     source: 'cache',
+    photo: hit.image_url && hit.image_credit ? { url: String(hit.image_url), credit: String(hit.image_credit) } : null,
   };
 }
 
@@ -142,6 +152,7 @@ export async function eventFromProvider(
       _embedded?: { venues?: { name?: string; city?: { name?: string } }[] };
     };
     const venue = e._embedded?.venues?.[0];
+    const photo = eventPhoto(raw);
     return {
       title: e.name,
       venue: venue?.name ?? null,
@@ -149,6 +160,7 @@ export async function eventFromProvider(
       startsOn: e.dates?.start?.localDate ?? null,
       url: e.url,
       source: 'ticketmaster',
+      photo: photo ? { url: photo.url, credit: photo.credit } : null,
     };
   } catch (err) {
     console.error('[find-event] could not ask the provider', err instanceof Error ? err.message : 'failed');

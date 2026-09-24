@@ -10,6 +10,7 @@
 import type { Finding, SourceResult, Seeker } from './types.ts';
 import { usableCategory } from './category';
 import { notRuledOut } from './rules.ts';
+import { eventPhoto } from './place-photo.ts';
 
 const EMOJI: Record<string, string> = {
   Music: '🎵', Sports: '🏆', 'Arts & Theatre': '🎭',
@@ -87,6 +88,9 @@ export async function ticketmaster(seeker: Seeker): Promise<SourceResult> {
       // and "Wine tasting". A comedy night and a club night both arrive
       // this way. `|| 'Event'` never caught it: a non-empty string is truthy.
       const segment = usableCategory(e.classifications?.[0]?.segment?.name) ?? 'Event';
+      // The act's own picture from this listing — never Ticketmaster's
+      // generic category art, which is a crowd at somebody else's gig.
+      const photo = eventPhoto(e);
       return {
         id: e.id,
         title: e.name,
@@ -108,6 +112,10 @@ export async function ticketmaster(seeker: Seeker): Promise<SourceResult> {
         // not worth storing.
         lat: Number(venue?.location?.latitude) || null,
         lng: Number(venue?.location?.longitude) || null,
+        image: photo?.url ?? null,
+        imageCredit: photo?.credit ?? null,
+        imageLink: null,
+        imageOf: photo?.of ?? null,
       };
     })
     .filter((f: Finding) => notRuledOut(`${f.title} ${f.category}`, seeker.avoid));

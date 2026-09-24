@@ -8,7 +8,7 @@ import { refundsOpen } from '@/lib/refunds';
 import { impactOfDateChange, describeImpact, needsConfirmation, stillWorksFor } from '@/lib/date-change';
 import { z } from 'zod';
 import { track } from '@/lib/track';
-import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
+import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
 import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle } from '@/lib/trip-vote';
@@ -263,11 +263,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   // this is when it gets the one creating a trip with a destination gets.
   if (onlyIfUndecided === true && updates.destination_city) {
     const photo = await within(
-      destinationPhoto([updates.destination_city, updates.destination_country].filter(Boolean).join(', ')),
+      cachedDestinationPhoto(supabase, [updates.destination_city, updates.destination_country].filter(Boolean).join(', ')),
       3000, 'the destination photo',
     ).catch(() => null);
     // Never the picture without the credit: a photograph is somebody's work.
-    if (photo) Object.assign(updates, { image_url: photo.url, image_credit: credit(photo), image_source: photo.source });
+    if (photo) Object.assign(updates, { image_url: photo.url, image_credit: photo.credit, image_source: photo.source });
   }
   // Same guard as POST /api/plans: never hand Postgres a display string.
   if ('start_date' in updates) updates.start_date = toDateOrNull(updates.start_date);

@@ -39,6 +39,19 @@ export interface Finding {
    * gradient, which is better than somebody else's photograph.
    */
   image?: string | null;
+  /**
+   * Whose picture it is — "Jane Doe / Wikimedia Commons, CC BY-SA 4.0",
+   * "Ticketmaster", "the venue's website (example.com)". Never null when
+   * `image` is set: see lib/discovery/place-photo.ts.
+   */
+  imageCredit?: string | null;
+  /** Where the credit can be followed, when there is a page for it. */
+  imageLink?: string | null;
+  /**
+   * What the picture shows when it is not the card's own subject — a class
+   * shown with its studio's photo, a gig with its hall's. Alt text says it.
+   */
+  imageOf?: string | null;
 }
 
 export type SourceName = 'ticketmaster' | 'yelp-events' | 'yelp-places' | 'osm' | 'harvest';

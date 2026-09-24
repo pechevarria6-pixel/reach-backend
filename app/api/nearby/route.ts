@@ -191,6 +191,10 @@ export async function GET(req: NextRequest) {
     when_text: e.meta || null,
     booking_url: e.url,
     interest: e.category,
+    // The same picture the card has, so the day list shows the same thing.
+    image: e.image && e.imageCredit ? e.image : null,
+    image_credit: e.image && e.imageCredit ? e.imageCredit : null,
+    image_of: e.imageOf ?? null,
   })), day, 7);
 
   return NextResponse.json({

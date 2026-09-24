@@ -22,6 +22,10 @@ export interface OnEvent {
   booking_url?: string | null;
   interest?: string | null;
   city?: string | null;
+  /** The finding's own photo and whose it is — carried, never looked up. */
+  image?: string | null;
+  image_credit?: string | null;
+  image_of?: string | null;
 }
 
 export interface OnDay {

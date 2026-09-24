@@ -11,6 +11,7 @@ import type { Finding, SourceResult, Seeker } from './types.ts';
 import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor } from './taste.ts';
 import { dayWhere } from '../calendar.ts';
+import { rowPhoto } from './place-photo.ts';
 
 /**
  * The area a point belongs to, rounded to about seven miles. Everybody in a
@@ -84,15 +85,26 @@ const DISCOVER_RINGS = [3, 15];
 /** Rows asked for per interest per box. */
 const PER_INTEREST = 60;
 
-const VENUE_COLUMNS = 'osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url';
+const VENUE_COLUMNS = 'osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url, image_source';
+/** The credit and page of a Wikimedia photo: sql/place-photos-2026-09-24.sql. */
+const PHOTO_COLUMNS = ', image_credit, image_link';
 type CachedVenue = {
   osm_type: string; osm_id: number; name: string; lat: number; lng: number; city: string | null;
-  website: string | null; interest: string; kind: string | null; street: string | null; image_url?: string | null;
+  website: string | null; interest: string; kind: string | null; street: string | null;
+  image_url?: string | null; image_source?: string | null; image_credit?: string | null; image_link?: string | null;
 };
 
 /** gone_at arrives in sql/world-data-phase1-2026-09-24.sql. */
 const goneAtMissing = (e: { code?: string; message?: string } | null) =>
   !!e && (e.code === '42703' || /gone_at/.test(e.message || ''));
+
+/**
+ * The photo columns arrive in sql/place-photos-2026-09-24.sql. Until then a
+ * read naming them is retried without, and a venue shows only what it could
+ * before: its own site's og:image, credited to the site.
+ */
+export const photoColumnsMissing = (e: { code?: string; message?: string } | null) =>
+  !!e && (e.code === '42703' || e.code === 'PGRST204') && /image_credit|image_link|image_url|image_checked_at/.test(e.message || '');
 
 export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<SourceResult> {
   const keys = lookedFor(seeker);
@@ -102,12 +114,13 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
   // without the filter is exactly the old behaviour rather than an empty
   // screen. Learned once per request, not once per interest.
   let live = true;
+  let photos = true;
   const readOne = async (key: string, miles: number) => {
     const { dLat, dLng } = box(seeker, miles);
-    const q = (withGone: boolean) => {
+    const q = (withGone: boolean, withPhotos: boolean) => {
       let r = db
         .from('discovery_venues')
-        .select(VENUE_COLUMNS)
+        .select(withPhotos ? VENUE_COLUMNS + PHOTO_COLUMNS : VENUE_COLUMNS)
         .in('interest', asStored([key]))
         .gte('lat', seeker.lat - dLat).lte('lat', seeker.lat + dLat)
         .gte('lng', seeker.lng - dLng).lte('lng', seeker.lng + dLng);
@@ -115,8 +128,16 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
       if (withGone) r = r.is('gone_at', null);
       return r.limit(PER_INTEREST) as unknown as Promise<{ data: CachedVenue[] | null; error: { code?: string; message?: string } | null }>;
     };
-    let res = await q(live);
-    if (live && goneAtMissing(res.error)) { live = false; res = await q(false); }
+    // Each pending migration is learned once per request and retried past.
+    // Decided by what THIS read asked for, not by the shared flag: the
+    // interests are read in parallel, and a read that failed while another
+    // was already switching the flag used to give up instead of retrying —
+    // which on a database without the photo columns emptied every interest
+    // but one (measured on Raleigh: 8 findings instead of 40).
+    let usePhotos = photos, useGone = live;
+    let res = await q(useGone, usePhotos);
+    if (usePhotos && photoColumnsMissing(res.error)) { photos = usePhotos = false; res = await q(useGone, false); }
+    if (useGone && goneAtMissing(res.error)) { live = useGone = false; res = await q(false, usePhotos); }
     return res;
   };
 
@@ -154,6 +175,8 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
   const all = (data ?? [])
     .map((v): Finding & { miles: number } => {
       const miles = milesBetween(seeker.lat, seeker.lng, v.lat, v.lng);
+      // Only a photo this row vouches for, with whose it is.
+      const photo = rowPhoto(v);
       return {
         id: `osm_${v.osm_type}_${v.osm_id}_${kindFor(v.interest).key}`,
         title: v.name,
@@ -165,7 +188,9 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
         dist: `${Math.max(1, Math.round(miles))} mi`,
         category: label(v.interest),
         url: v.website,
-        image: (v as { image_url?: string | null }).image_url ?? null,
+        image: photo?.url ?? null,
+        imageCredit: photo?.credit ?? null,
+        imageLink: photo?.link ?? null,
         // A studio is open on Tuesdays. It does not happen once, and giving it
         // a date is what made the detail screen ask people to pick one.
         date: null,
@@ -217,6 +242,9 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   // The bounding box then has to be applied here rather than in the query,
   // because it can no longer be expressed against a joined table alone.
   const COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues(name, lat, lng, city, street)';
+  // The same with the pictures: the event's own (a cached Ticketmaster
+  // gig's act) and its venue's. sql/place-photos-2026-09-24.sql.
+  const PHOTO_EVENT_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, image_url, image_credit, discovery_venues(name, lat, lng, city, street, website, image_url, image_source, image_credit, image_link)';
   const fresh = new Date().toISOString();
 
   // Two questions, because the two kinds of row are filed differently.
@@ -243,12 +271,14 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   const upcoming = `starts_on.is.null,starts_on.gte.${day}`;
   // Written out rather than derived, so the client can type the rows.
   const HARVEST_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues!inner(name, lat, lng, city, street)';
+  const PHOTO_HARVEST_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, image_url, image_credit, discovery_venues!inner(name, lat, lng, city, street, website, image_url, image_source, image_credit, image_link)';
+  let photos = true;
   // A class at a venue the weekly map loads have retired is not on: the
   // studio's site outliving the studio is not evidence it still runs. Same
   // pending-migration fallback as cachedVenues, so an unmigrated database
   // reads exactly as it did before gone_at existed.
   const readHarvested = (live: boolean) => {
-    let q = db.from('discovery_events').select(HARVEST_COLUMNS)
+    let q = db.from('discovery_events').select(photos ? PHOTO_HARVEST_COLUMNS : HARVEST_COLUMNS)
       .eq('source', 'harvest').in('interest', asStored(keys)).gt('stale_after', fresh)
       .gte('discovery_venues.lat', seeker.lat - near.dLat).lte('discovery_venues.lat', seeker.lat + near.dLat)
       .gte('discovery_venues.lng', seeker.lng - near.dLng).lte('discovery_venues.lng', seeker.lng + near.dLng);
@@ -263,18 +293,31 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
     }
     return first;
   };
-  const [harvested, external] = await Promise.all([
-    readLiveHarvested(),
-    db.from('discovery_events').select(COLUMNS)
-      .neq('source', 'harvest').gt('stale_after', fresh)
-      .gte('lat', seeker.lat - far.dLat).lte('lat', seeker.lat + far.dLat)
-      .gte('lng', seeker.lng - far.dLng).lte('lng', seeker.lng + far.dLng)
-      .or(upcoming)
-      .order('starts_on', { ascending: true, nullsFirst: false }).limit(60),
-  ]);
+  const readExternal = () => db.from('discovery_events').select(photos ? PHOTO_EVENT_COLUMNS : COLUMNS)
+    .neq('source', 'harvest').gt('stale_after', fresh)
+    .gte('lat', seeker.lat - far.dLat).lte('lat', seeker.lat + far.dLat)
+    .gte('lng', seeker.lng - far.dLng).lte('lng', seeker.lng + far.dLng)
+    .or(upcoming)
+    .order('starts_on', { ascending: true, nullsFirst: false }).limit(60);
+  let [harvested, external] = await Promise.all([readLiveHarvested(), readExternal()]);
+  // Before the photo migration, both reads again without the pictures —
+  // what Discover read before they existed.
+  if (photoColumnsMissing(harvested.error) || photoColumnsMissing(external.error)) {
+    photos = false;
+    [harvested, external] = await Promise.all([readLiveHarvested(), readExternal()]);
+  }
 
   const error = harvested.error ?? external.error;
-  const data = [...(harvested.data ?? []), ...(external.data ?? [])];
+  // Typed by hand: the select is one of two strings, so supabase-js cannot
+  // read the shape off it.
+  type EventRow = {
+    id: string | number; title: string; starts_on: string | null; when_text: string | null;
+    price_text: string | null; booking_url: string; interest: string; source: string | null;
+    venue_name: string | null; lat: number | null; lng: number | null; city: string | null;
+    image_url?: string | null; image_credit?: string | null;
+    discovery_venues: unknown;
+  };
+  const data = [...(harvested.data ?? []), ...(external.data ?? [])] as unknown as EventRow[];
 
   if (error) {
     console.error('[discover/cache] could not read events', error.message);
@@ -289,7 +332,16 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
     .filter(e => !e.starts_on || e.starts_on >= today)
     .map((e): Finding => {
       const joined = (Array.isArray(e.discovery_venues) ? e.discovery_venues[0] : e.discovery_venues) as
-        { name: string; lat: number; lng: number; city: string | null; street: string | null } | null;
+        { name: string; lat: number; lng: number; city: string | null; street: string | null;
+          website?: string | null; image_url?: string | null; image_source?: string | null;
+          image_credit?: string | null; image_link?: string | null } | null;
+      // The event's own picture, kept with its credit when it was cached
+      // (a Ticketmaster act); else the photo of the venue it hangs off.
+      const own = (e as { image_url?: string | null }).image_url;
+      const ownCredit = (e as { image_credit?: string | null }).image_credit;
+      const photo = own && ownCredit && /^https:\/\//.test(own)
+        ? { url: own, credit: ownCredit, link: null, of: null }
+        : joined ? (() => { const p = rowPhoto(joined); return p ? { ...p, of: joined.name } : null; })() : null;
       // Whichever knows where this is: the venue we found, or the row itself.
       const venue = joined ?? (e.venue_name || e.lat != null
         ? { name: String(e.venue_name ?? ''), lat: Number(e.lat), lng: Number(e.lng), city: e.city ?? null, street: null }
@@ -313,6 +365,10 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
         // gets its results.
         source: (e.source && e.source !== 'harvest' ? e.source : 'harvest') as Finding['source'],
         because: becauseOf(seeker, e.interest),
+        image: photo?.url ?? null,
+        imageCredit: photo?.credit ?? null,
+        imageLink: photo?.link ?? null,
+        imageOf: photo?.of ?? null,
         lat: Number.isFinite(venue?.lat as number) ? (venue?.lat as number) : null,
         lng: Number.isFinite(venue?.lng as number) ? (venue?.lng as number) : null,
       };
@@ -418,12 +474,23 @@ export async function rememberEvents(
       lat: f.lat,
       lng: f.lng,
       city: null,
+      // The act's picture as the listing gave it, with its credit — or
+      // neither. A picture without a credit is not kept.
+      image_url: f.image && f.imageCredit ? f.image : null,
+      image_credit: f.image && f.imageCredit ? f.imageCredit : null,
       found_at: new Date().toISOString(),
       stale_after: new Date(Date.now() + CACHE_DAYS * 86400_000).toISOString(),
     }));
   if (!rows.length) return 0;
 
-  const { error } = await db.from('discovery_events').upsert(rows, { onConflict: 'source,external_id' });
+  let { error } = await db.from('discovery_events').upsert(rows, { onConflict: 'source,external_id' });
+  if (photoColumnsMissing(error)) {
+    // sql/place-photos-2026-09-24.sql not run yet: keep the events without
+    // their pictures rather than not at all.
+    console.error('[discover/cache] event pictures not stored — run sql/place-photos-2026-09-24.sql');
+    ({ error } = await db.from('discovery_events').upsert(
+      rows.map(({ image_url: _u, image_credit: _c, ...rest }) => rest), { onConflict: 'source,external_id' }));
+  }
   if (error) {
     // Never fatal, and never surfaced. Discover has already answered from the
     // live call by the time this runs; failing to keep a copy is a slower

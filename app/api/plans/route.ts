@@ -3,7 +3,7 @@ import { requireUser, isFail } from '@/lib/auth';
 import { toDateOrNull, nightsBetween } from '@/lib/dates';
 import { z } from 'zod';
 import { track } from '@/lib/track';
-import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
+import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { placesFor } from '@/lib/discovery/real-places';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
@@ -80,8 +80,9 @@ export async function POST(req: NextRequest) {
   // looked up from either would be of somewhere nobody is going. It gets its
   // picture when an option is picked (PATCH /api/plans/[planId]).
   const undecided = body.destination_style === UNDECIDED;
+  // Kept per destination, so the second trip to a town does not ask again.
   const photo = undecided ? null : await within(
-    destinationPhoto([body.destination_city, body.destination_country].filter(Boolean).join(', ') || body.title || ''),
+    cachedDestinationPhoto(supabase, [body.destination_city, body.destination_country].filter(Boolean).join(', ') || body.title || ''),
     3000, 'the destination photo',
   ).catch(() => null);
 
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest) {
     solo_mode: body.solo_mode === true && soloGroup,
     why_chosen: body.why_chosen?.length ? body.why_chosen : null,
     // Never the picture without the credit: a photograph is somebody's work.
-    ...(photo ? { image_url: photo.url, image_credit: credit(photo), image_source: photo.source } : {}),
+    ...(photo ? { image_url: photo.url, image_credit: photo.credit, image_source: photo.source } : {}),
     created_by: user.id,
   };
 

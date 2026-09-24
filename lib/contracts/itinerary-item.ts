@@ -48,6 +48,13 @@ export const ItineraryItemRow = z.object({
   /** What is on there, in the venue's own words, read off their page. */
   venue_note: z.string().nullish(),
   venue_note_credit: z.string().nullish(),
+  /**
+   * A photo of the venue or act the line names, and whose it is. Attached
+   * by the generator from the row it cited or the listing that sold the
+   * ticket; never looked up by name. Both or neither.
+   */
+  venue_image_url: z.string().nullish(),
+  venue_image_credit: z.string().nullish(),
   sort_order: z.number().nullish(),
 });
 export type ItineraryItemRow = z.infer<typeof ItineraryItemRow>;
@@ -70,6 +77,8 @@ export interface ItineraryItem {
   venue_phone: string | null;
   venue_note: string | null;
   venue_note_credit: string | null;
+  venue_image_url: string | null;
+  venue_image_credit: string | null;
 }
 
 /**
@@ -83,7 +92,7 @@ export const ITEM_COLUMNS = [
   'id', 'scheduled_time', 'title', 'subtitle', 'type', 'confirmation_number',
   'is_confirmed', 'cost_cents', 'booking_mode', 'payment_note', 'because',
   'venue_website', 'venue_name', 'venue_phone', 'venue_note',
-  'venue_note_credit', 'sort_order',
+  'venue_note_credit', 'venue_image_url', 'venue_image_credit', 'sort_order',
 ].join(', ');
 
 /** A database row, as the screen wants it. The only place this is done. */
@@ -106,7 +115,16 @@ export function itemFromRow(row: Record<string, unknown>): ItineraryItem {
     venue_phone: r.venue_phone ?? null,
     venue_note: r.venue_note ?? null,
     venue_note_credit: r.venue_note_credit ?? null,
+    // Never the picture without its credit.
+    ...photoPair(r.venue_image_url, r.venue_image_credit),
   };
+}
+
+/** A photo and its credit, both or neither — and only an https picture. */
+function photoPair(url: unknown, credit: unknown): { venue_image_url: string | null; venue_image_credit: string | null } {
+  const u = typeof url === 'string' && /^https:\/\//.test(url) ? url.slice(0, 1000) : null;
+  const c = typeof credit === 'string' && credit.trim() ? credit.trim().slice(0, 200) : null;
+  return u && c ? { venue_image_url: u, venue_image_credit: c } : { venue_image_url: null, venue_image_credit: null };
 }
 
 /**
@@ -155,6 +173,7 @@ export function rowFromItem(item: Record<string, unknown>, sortOrder: number): R
     venue_name: item.venue_name ?? null,
     venue_phone: item.venue_phone ?? null,
     venue_note: item.venue_note ?? null,
+    ...photoPair(item.venue_image_url, item.venue_image_credit),
     sort_order: sortOrder,
   };
 }
@@ -174,6 +193,8 @@ export const FACTS_THAT_MUST_SURVIVE: { row: keyof ItineraryItemRow; item: keyof
   { row: 'payment_note', item: 'payment_note' },
   { row: 'booking_mode', item: 'booking_mode' },
   { row: 'because', item: 'because' },
+  { row: 'venue_image_url', item: 'venue_image_url' },
+  { row: 'venue_image_credit', item: 'venue_image_credit' },
 ];
 
 /**

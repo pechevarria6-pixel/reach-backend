@@ -22,6 +22,7 @@ import { placeFromGoal, nightCityFor, partyFromGoal } from '@/lib/goal';
 import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
 import { realPlacesAmong } from '@/lib/discovery/is-place';
 import { within } from '@/lib/deadline';
+import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { locate } from '@/lib/discovery/geocode';
 import { normalise } from '@/lib/discovery/verify';
 import { withoutStayClaim } from '@/lib/stay-claims';
@@ -1046,6 +1047,13 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       //
       // Attached to the slot that actually names the event rather than to a
       // fixed position, because which slot holds it is the model's choice.
+      // A picture is attached below from a row or a listing, never taken
+      // from the model: whatever it wrote into these is cleared first.
+      for (const day of days) {
+        for (const slot of [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])]) {
+          if (slot) { slot.place_photo = null; slot.place_photo_credit = null; }
+        }
+      }
       if (realEvent?.url) {
         const marks = [realEvent.venue, realEvent.title].filter(Boolean).map(v => normalise(String(v)));
         let attached = false;
@@ -1056,6 +1064,8 @@ you have made up; a day that is simply a good day is allowed to be one.`;
             if (!marks.some(m => m && here.includes(m))) continue;
             slot.ticket_url = realEvent.url;
             slot.venue = realEvent.venue ?? null;
+            // The act's picture, from the same listing that sold the ticket.
+            if (realEvent.photo) { slot.place_photo = realEvent.photo.url; slot.place_photo_credit = realEvent.photo.credit; }
             attached = true;
           }
         }
@@ -1141,6 +1151,13 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           if (cited?.url && !slot.ticket_url) {
             slot.place_url = cited.url;
             slot.venue = slot.venue ?? cited.name;
+          }
+          // A picture of the place this line names — from the row it cited,
+          // with its credit, and only that row. A slot that cites nothing
+          // gets no picture, however confidently it names somewhere.
+          if (cited?.photo && !slot.ticket_url) {
+            slot.place_photo = cited.photo.url;
+            slot.place_photo_credit = cited.photo.credit;
           }
           // What is on there, read off the venue's own page. Carried on the
           // slot rather than left to the model to mention, because it is the
@@ -1663,6 +1680,16 @@ Return JSON only, shaped exactly like this:
     // we hold nothing the line says so, which is a fair thing to tell
     // somebody choosing between three places.
     await Promise.all(trips.map(async (trip) => {
+      // A picture of the place the idea goes to, kept per destination so
+      // the same town is asked about once (lib/discovery/destination-photo).
+      // Alongside the count, never in front of it, and on a short leash: an
+      // idea without a photograph is the card as it always looked. A night
+      // out gets none — its card is about an evening at named venues, and a
+      // skyline over it would read as a picture of them.
+      const photoing = isNightPlan ? Promise.resolve(null) : within(
+        cachedDestinationPhoto(supabase, String(trip.destination || trip.city || '')),
+        4000, 'the destination photo',
+      ).catch(() => null);
       const counted = { floor: false };
       const places = await placesFor(
         supabase,
@@ -1673,6 +1700,9 @@ Return JSON only, shaped exactly like this:
         { perKind: Infinity, max: Infinity, counted },
       ).catch(() => [] as RealPlace[]);
 
+      const photo = await photoing;
+      // Never the picture without its credit.
+      if (photo?.credit) (trip as Record<string, unknown>).photo = { url: photo.url, credit: photo.credit, source: photo.source };
       const scenes = scenesFrom(places, { floor: counted.floor });
       if (scenes) {
         trip.food_scene = scenes.food;

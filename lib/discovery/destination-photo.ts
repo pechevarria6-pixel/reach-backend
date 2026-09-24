@@ -67,7 +67,10 @@ export function articleTitle(destination: string): string | null {
 export async function destinationPhoto(
   destination: string,
   fetchImpl: typeof fetch = fetch,
+  /** Counts a lookup that could not be made, so a miss is not cached for it. */
+  asked?: { failed: number },
 ): Promise<DestinationPhoto | null> {
+  const failed = () => { if (asked) asked.failed += 1; return null; };
   const title = articleTitle(destination);
   if (!title) return null;
 
@@ -76,7 +79,7 @@ export async function destinationPhoto(
       + `&pithumbsize=1200&titles=${encodeURIComponent(title)}`
       + '&format=json&formatversion=2&redirects=1';
     const res = await fetchImpl(q, { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
+    if (!res.ok) return failed();
 
     const json = await res.json() as {
       query?: { pages?: { thumbnail?: { source: string; width: number; height: number }; pageimage?: string }[] };
@@ -108,7 +111,7 @@ export async function destinationPhoto(
     const infoQ = `${API}?action=query&titles=File:${encodeURIComponent(page.pageimage)}`
       + '&prop=imageinfo&iiprop=extmetadata|url&format=json&formatversion=2';
     const infoRes = await fetchImpl(infoQ, { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(8000) });
-    if (!infoRes.ok) return null;
+    if (!infoRes.ok) return failed();
 
     const infoJson = await infoRes.json() as {
       query?: { pages?: { imageinfo?: { descriptionurl?: string; extmetadata?: Record<string, { value?: string }> }[] }[] };
@@ -122,11 +125,90 @@ export async function destinationPhoto(
   } catch {
     // Unreachable is not "no photograph of Charleston exists". The card keeps
     // the gradient and the next generation asks again.
-    return null;
+    return failed();
   }
 }
 
 /** The line shown under or over the picture. Short, and always present. */
 export function credit(photo: DestinationPhoto): string {
   return [photo.artist, photo.licence].filter(Boolean).join(' · ');
+}
+
+// ─── Kept, so nobody waits on Wikipedia twice for Moab ──────────────────
+// Every trip idea, every plan card and every pick asked Wikipedia again for
+// the same town. The answer is kept per destination in destination_photos
+// (sql/place-photos-2026-09-24.sql), a miss included, so the second trip to
+// Charleston costs one indexed read. Until the table exists this is exactly
+// the live lookup it replaces.
+
+/** A destination's photo as a card shows it. */
+export interface CardPhoto {
+  url: string;
+  /** "Quintin Soloviev · CC BY 4.0" — the plan card's long-standing form. */
+  credit: string;
+  source: string | null;
+  width: number | null;
+  height: number | null;
+}
+
+/** How long a miss stands before the town is asked about again. */
+export const MISS_DAYS = 14;
+
+/** The key a destination is kept under: its article title, lower-cased. */
+export function destinationKey(destination: string): string | null {
+  const t = articleTitle(destination);
+  return t ? t.toLowerCase() : null;
+}
+
+type Db = { from: (t: string) => any };
+const tableMissing = (e: { code?: string; message?: string } | null | undefined) =>
+  !!e && (e.code === 'PGRST205' || e.code === '42P01' || /destination_photos/.test(e.message || ''));
+
+/**
+ * A destination's photo, from the kept answer when there is one, else from
+ * Wikipedia — and then kept. Null is a real answer and is kept too, unless
+ * the lookup could not be made at all.
+ */
+export async function cachedDestinationPhoto(
+  db: Db,
+  destination: string,
+  opts: { fetchImpl?: typeof fetch; now?: Date } = {},
+): Promise<CardPhoto | null> {
+  const key = destinationKey(destination);
+  if (!key) return null;
+  const now = opts.now ?? new Date();
+
+  let canKeep = true;
+  try {
+    const { data, error } = await db.from('destination_photos')
+      .select('url, credit, source, width, height, checked_at').eq('destination', key).maybeSingle();
+    if (error) {
+      canKeep = !tableMissing(error);
+      if (canKeep) console.error('[destination-photo] could not read the kept photo', { key, code: error.code });
+    } else if (data) {
+      if (data.url && data.credit) return { url: data.url, credit: data.credit, source: data.source ?? null, width: data.width ?? null, height: data.height ?? null };
+      const age = now.getTime() - new Date(data.checked_at).getTime();
+      if (!data.url && age < MISS_DAYS * 86400_000) return null;
+    }
+  } catch {
+    canKeep = false;
+  }
+
+  const asked = { failed: 0 };
+  const live = await destinationPhoto(destination, opts.fetchImpl ?? fetch, asked);
+  const photo: CardPhoto | null = live
+    ? { url: live.url, credit: credit(live), source: live.source, width: live.width ?? null, height: live.height ?? null }
+    : null;
+
+  if (canKeep && (photo || asked.failed === 0)) {
+    try {
+      const { error } = await db.from('destination_photos').upsert({
+        destination: key, url: photo?.url ?? null, credit: photo?.credit ?? null, source: photo?.source ?? null,
+        width: photo?.width ?? null, height: photo?.height ?? null, checked_at: now.toISOString(),
+      }, { onConflict: 'destination' });
+      // Keeping it is a courtesy to the next card; failing to is not this one's problem.
+      if (error && !tableMissing(error)) console.error('[destination-photo] could not keep the photo', { key, code: error.code });
+    } catch { /* see above */ }
+  }
+  return photo;
 }

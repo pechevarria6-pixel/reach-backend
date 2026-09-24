@@ -498,6 +498,11 @@ function slotRow(raw,{time,sub="",fallback,cost}){
       :(sl.place_url?{venue_website:sl.place_url,venue_name:sl.venue||null}:{})),
     ...(sl.whats_on?{venue_note:sl.whats_on}:{}),
     ...(sl.place_phone&&!sl.ticket_url?{venue_phone:sl.place_phone}:{}),
+    // A picture of the place or act this line names — attached by the
+    // server from the row it cited or the listing that sold the ticket, and
+    // only with whose it is. Both or neither.
+    ...(sl.place_photo&&sl.place_photo_credit
+      ?{venue_image_url:sl.place_photo,venue_image_credit:sl.place_photo_credit}:{}),
   };
 }
 
@@ -605,6 +610,45 @@ function isTempId(id){
 // the one place to let Reach notify their phone — asked only when they tap,
 // and on an iPhone in Safari, told plainly that Apple only allows it once
 // Reach is on the Home Screen, rather than a button that does nothing.
+// ─── A photograph of the thing on the card ───────────────────────────────
+// Every picture here was attached on the server from the row it sits on —
+// the venue's own map entry, its own website, the listing that sells the
+// ticket, the destination's encyclopaedia page — and arrives with whose it
+// is (lib/discovery/place-photo.ts). Nothing on this side looks one up.
+//
+// The frame is a render prop so a card's picture and its credit, which sit
+// in different parts of the card, fail together: a photo that will not load
+// takes its credit with it, and the card underneath is the gradient it has
+// always been. Absolutely positioned inside a box whose size the card
+// already fixed, so a photo arriving late never moves anything.
+function PhotoFrame({src,alt,children}){
+  const [bad,setBad]=useState(null);
+  const ok=!!src&&/^https:\/\//.test(String(src))&&bad!==src;
+  const img=ok?(
+    <img src={src} alt={alt||""} loading="lazy" decoding="async" referrerPolicy="no-referrer"
+      onError={()=>setBad(src)}
+      style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+  ):null;
+  return children({ok,img});
+}
+
+/** "Photo: Jane Doe / Wikimedia Commons, CC BY-SA 4.0", linked where it can be followed. */
+function PhotoCredit({credit,link,style}){
+  if(!credit)return null;
+  const text=`Photo: ${credit}`;
+  const base={fontSize:10,color:C.t3,lineHeight:1.35,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%",...style};
+  return link&&/^https:\/\//.test(String(link))
+    ?<a href={link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
+        title={text} style={{...base,display:"block",textDecoration:"none"}}>{text}</a>
+    :<div title={text} style={base}>{text}</div>;
+}
+
+/** What a photo is of, for its alt text. Said plainly: a hall is not the band. */
+function photoAlt(of,title){
+  const what=String(of||title||"").trim();
+  return what?`Photo of ${what}`:"Photo";
+}
+
 // OpenStreetMap's licence (ODbL) asks for a credit wherever its data is
 // shown, and every venue Reach names comes from it. The duty applied from the
 // first sweep; the credit was never there.
@@ -1019,16 +1063,17 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
       {(alsoComing.length>0||groups.length>0)&&(
       <div style={{display:"flex",gap:12,padding:"0 20px 18px",overflowX:"auto",scrollbarWidth:"none"}}>
         {alsoComing.map(plan=>(
-          <div key={plan.id} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
+          <PhotoFrame key={plan.id} src={plan.imageUrl&&plan.imageCredit?plan.imageUrl:null}
+            alt={photoAlt(plan.destinationCity,plan.title)}>{({ok:hasPhoto,img})=>(
+          <div {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
             style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
               // A picture of the place they are actually going. The gradient
               // stays underneath, so a photo that fails to load leaves the
               // card as it always looked rather than a white rectangle.
-              ...(plan.imageUrl?{backgroundImage:`url(${JSON.stringify(plan.imageUrl).slice(1,-1)})`,
-                backgroundSize:"cover",backgroundPosition:"center"}:{}),
               position:"relative",overflow:"hidden"}}>
+            {img}
             {/* Dark enough to read white text on any photograph. */}
-            {plan.imageUrl&&(
+            {hasPhoto&&(
               <div style={{position:"absolute",inset:0,
                 background:"linear-gradient(160deg,rgba(0,0,0,.28),rgba(0,0,0,.78))"}}/>
             )}
@@ -1055,13 +1100,14 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
               {/* Whose photograph it is. A picture is somebody's work, and
                   the licence it is free under asks for the credit — so it
                   travels with the picture or the picture is not shown. */}
-              {plan.imageUrl&&plan.imageCredit&&(
+              {hasPhoto&&(
                 <div style={{fontSize:9.5,color:"rgba(255,255,255,.55)",marginTop:8,lineHeight:1.3}}>
-                  📷 {plan.imageCredit}
+                  Photo: {plan.imageCredit}
                 </div>
               )}
             </div>
           </div>
+          )}</PhotoFrame>
         ))}
         <div {...pressable} onClick={()=>push("createPlan",{fresh:true})} style={{minWidth:130,background:"transparent",border:`2px dashed ${C.border}`,borderRadius:20,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,padding:20,cursor:"pointer",flexShrink:0}}>
           <div style={{fontSize:24,color:C.t3}}>＋</div>
@@ -1771,7 +1817,12 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
               </div>
               <div style={{fontSize:12,color:C.t3,marginBottom:12}}>{plural(d.events.length,"thing","things")} we've found on</div>
               {d.events.map((e,i)=>(
-                <div key={`${e.id||"e"}-${i}`} style={{padding:"11px 0",borderTop:`1px solid ${C.border}`}}>
+                <PhotoFrame key={`${e.id||"e"}-${i}`} src={e.image&&e.image_credit?e.image:null} alt={photoAlt(e.image_of,e.title)}>{({ok,img})=>(
+                <div style={{padding:"11px 0",borderTop:`1px solid ${C.border}`,display:"flex",gap:12,alignItems:"flex-start"}}>
+                  {/* A small square of the thing itself, same size on every
+                      row that has one, so the list reads evenly. */}
+                  {ok&&<div style={{width:56,height:56,flexShrink:0,borderRadius:10,overflow:"hidden",position:"relative",background:C.s2}}>{img}</div>}
+                  <div style={{flex:1,minWidth:0}}>
                   {e.booking_url
                     ?<a href={e.booking_url} target="_blank" rel="noopener noreferrer"
                         style={{fontSize:14,fontWeight:600,color:C.t1,textDecoration:"none",lineHeight:1.35}}>{e.title} ↗</a>
@@ -1779,7 +1830,10 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
                   <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.45}}>
                     {[e.when_text||e.venue_name,e.recurring?"every week":null].filter(Boolean).join(" · ")}
                   </div>
+                  {ok&&<PhotoCredit credit={e.image_credit} style={{marginTop:2}}/>}
+                  </div>
                 </div>
+                )}</PhotoFrame>
               ))}
             </div>
           </div>
@@ -1807,19 +1861,20 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
         </div>
       )}
       {shown.map(exp=>(
+        <PhotoFrame key={exp.id} src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok:hasPhoto,img})=>(
         /* Named, so it can be found. These were anonymous divs, which is why
            the end-to-end test for "clicking a card opens the detail view"
            matched nothing and passed without ever clicking one. */
-        <div key={exp.id} className="exp-card" style={{margin:"0 20px 14px",borderRadius:20,overflow:"hidden",
+        <div className="exp-card" style={{margin:"0 20px 14px",borderRadius:20,overflow:"hidden",
           border:"1px solid "+C.border,cursor:"pointer",position:"relative"}}
           onClick={()=>push("expDetail",{exp,groups})}>
           {/* A real picture of the actual place where there is one. The
               gradient stays underneath, so a photo that fails to load leaves
               the card as it always looked rather than a white gap, and the
-              dark overlay above keeps the title readable on any image. */}
-          <div style={{height:175,background:exp.bg,position:"relative",
-            ...(exp.image?{backgroundImage:`url(${JSON.stringify(exp.image).slice(1,-1)})`,
-              backgroundSize:"cover",backgroundPosition:"center"}:{})}}>
+              dark overlay above keeps the title readable on any image. The
+              height is fixed, so the card is the same size either way. */}
+          <div style={{height:175,background:exp.bg,position:"relative",overflow:"hidden"}}>
+            {img}
             <div style={{position:"absolute",inset:0,
               background:"linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.85))",
               display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:16}}>
@@ -1886,8 +1941,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
             </div>
           </div>
           <div style={{background:C.s1,padding:"12px 16px",display:"flex",
-            justifyContent:"space-between",alignItems:"center"}}>
-            <div>
+            justifyContent:"space-between",alignItems:"center",gap:10}}>
+            <div style={{flex:1,minWidth:0}}>
               {/* Only what we know — see lib/discovery/price-label.ts. This
                   said "Price at the door" about parks, and "per person,
                   all-in" under prices nobody had checked were either. */}
@@ -1898,6 +1953,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
                 {exp.because?`Because you like ${String(exp.because).toLowerCase()}`
                   :exp.isLocal?"Near you":(priceLabel(exp).note||"")}
               </div>
+              {/* Whose picture it is, wherever there is one. */}
+              {hasPhoto&&<PhotoCredit credit={exp.imageCredit} link={exp.imageLink} style={{marginTop:3}}/>}
             </div>
             {/* This used to be a "Share with group" button whose entire
                 handler was a toast saying it had been shared. The screen
@@ -1908,6 +1965,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
             </button>
           </div>
         </div>
+        )}</PhotoFrame>
       ))}
       {shown.length>0&&<OsmCredit style={{padding:"0 20px 12px"}}/>}
 
@@ -2077,7 +2135,9 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   return(
     <div className="sc" style={{paddingBottom:0}}>
       {/* Header */}
-      <div style={{height:200,background:exp.bg||`linear-gradient(135deg,#1a1060,${C.accent})`,position:"relative",flexShrink:0}}>
+      <PhotoFrame src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok:hasPhoto,img})=>(<>
+      <div style={{height:200,background:exp.bg||`linear-gradient(135deg,#1a1060,${C.accent})`,position:"relative",flexShrink:0,overflow:"hidden"}}>
+        {img}
         <ScreenHeader onBack={onBack} overlay/>
         <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 40%,rgba(0,0,0,.9))",display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:20}}>
           <div style={{fontSize:40,marginBottom:8}}>{exp.emoji||"🎯"}</div>
@@ -2090,6 +2150,8 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
           </div>
         )}
       </div>
+      {hasPhoto&&<PhotoCredit credit={exp.imageCredit} link={exp.imageLink} style={{padding:"6px 20px 0"}}/>}
+      </>)}</PhotoFrame>
 
       <div style={{padding:20,overflowY:"auto",flex:1}}>
         {/* Price + type */}
@@ -3897,7 +3959,11 @@ function expFromFinding(e){
   return {
     id:"local_"+e.id,
     source:e.source||null,
-    image:e.image||null,
+    // The picture and whose it is travel together, or neither does.
+    image:e.image&&e.imageCredit?e.image:null,
+    imageCredit:e.image&&e.imageCredit?e.imageCredit:null,
+    imageLink:e.imageLink||null,
+    imageOf:e.imageOf||null,
     title:e.title,
     sub:e.meta,
     emoji:e.emoji,
@@ -5760,6 +5826,16 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
   return(
     <div style={{margin:"0 20px 20px"}}>
       <div style={{background:C.s1,border:"2px solid "+(voted?C.accentText:C.border),borderRadius:20,overflow:"hidden",transition:"border-color .2s"}}>
+        {/* The place the idea goes to, from its encyclopaedia page, with
+            whose photograph it is. Fixed height, so the card does not jump
+            when it arrives; nothing at all when there is none. */}
+        <PhotoFrame src={trip.photo?.url&&trip.photo?.credit?trip.photo.url:null}
+          alt={photoAlt(trip.city||trip.destination,trip.destination)}>{({ok,img})=>ok?(
+          <div>
+            <div style={{height:150,position:"relative",overflow:"hidden",background:C.s2}}>{img}</div>
+            <PhotoCredit credit={trip.photo.credit} style={{padding:"5px 18px 0"}}/>
+          </div>
+        ):null}</PhotoFrame>
         {/* Trip header */}
         <div style={{padding:"18px 18px 14px",background:voted?C.accentDim:C.s2}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -9646,6 +9722,17 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     <div className="it-cont">
                       <div style={{display:"flex",alignItems:"center",gap:6}}><span>{tIc[item.type]||"📌"}</span><div className="it-tt">{item.title}</div></div>
                       <div className="it-sb">{item.sub}</div>
+                      {/* The place or act this line names, from the row it
+                          cited or the listing that sold the ticket. A box of
+                          fixed height, so a picture loading late moves
+                          nothing; gone entirely if it will not load. */}
+                      <PhotoFrame src={item.venue_image_url&&item.venue_image_credit?item.venue_image_url:null}
+                        alt={photoAlt(item.venue_name,item.title)}>{({ok,img})=>ok?(
+                        <div style={{marginTop:8,maxWidth:360}}>
+                          <div style={{height:120,position:"relative",overflow:"hidden",borderRadius:10,background:C.s2}}>{img}</div>
+                          <PhotoCredit credit={item.venue_image_credit} style={{marginTop:3}}/>
+                        </div>
+                      ):null}</PhotoFrame>
                       {/* Reach books what it can. For the rest, the practical
                           details belong here rather than at the door. */}
                       {(item.booking_mode||item.payment_note)&&(

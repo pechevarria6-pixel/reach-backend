@@ -29,6 +29,7 @@ import { dialable } from './phone.ts';
 import { closedThroughout, neverOpen, windowFor } from './hours.ts';
 import { regionCountries, geocoderNames } from './regions.ts';
 import { siteTown } from './world-destinations.ts';
+import { rowPhoto } from './place-photo.ts';
 
 /** What the map calls somewhere to sleep, once underscores are spaces. */
 const LODGING_KIND = /\b(hotel|guest ?house|hostel|motel|apartment)s?\b/i;
@@ -79,6 +80,12 @@ export interface RealPlace {
   phone?: string | null;
   /** Where to reserve, when the venue's own page names a booking page. */
   reserveUrl?: string | null;
+  /**
+   * A photograph of this place, from this row: its map entry's Wikimedia
+   * image or its own site's og:image, with whose it is. Carried onto the
+   * itinerary line that cites it; never looked up by name.
+   */
+  photo?: { url: string; credit: string } | null;
 }
 
 export type Reservation = 'required' | 'recommended' | 'yes' | 'no' | null;
@@ -166,6 +173,7 @@ type VenueRow = {
   region?: string | null;
   /** The countries the map load could tell it is in (see ingest.ts); null before it has said. */
   countries?: string[] | null;
+  image_url?: string | null; image_source?: string | null; image_credit?: string | null; image_link?: string | null;
 };
 type ReadError = { code?: string; message?: string } | null;
 /** A held row as the menu uses it. */
@@ -174,6 +182,7 @@ type Shaped = {
   url: string | null; city: string | null; street: string | null; hours: string | null;
   miles: number; cuisine: string;
   reservation: Reservation; phone: string | null; reserveUrl: string | null;
+  photo: { url: string; credit: string } | null;
 };
 
 /**
@@ -245,6 +254,8 @@ async function venuesInBox(
   const except = (opts.except ?? []).filter(listable);
   const also = opts.also ?? ((q: any) => q);
   const FULL = 'id, name, kind, interest, website, city, street, lat, lng, osm_tags, opening_hours, phone, reservation_url, region';
+  // The same with the venue's photo and its credit: sql/place-photos-2026-09-24.sql.
+  const PHOTOS = `${FULL}, image_url, image_source, image_credit`;
   const BASIC = 'id, name, kind, interest, website, city, street, lat, lng';
   const read = async (columns: string, live: boolean): Promise<{ data: VenueRow[]; error: ReadError; floor?: boolean }> => {
     const out: VenueRow[] = [];
@@ -270,18 +281,35 @@ async function venuesInBox(
     return { data: out, error: null, floor: true };
   };
   const pending = (e: ReadError) => !!e && (e.code === '42703' || /gone_at|osm_tags|opening_hours|countries/.test(e.message || ''));
-  // countries is the newest column of all (sql/venue-countries-2026-09-24.sql).
-  // Without it the border check reads the region, as it did before.
-  const newest = await read(`${FULL}, countries`, true);
-  if (!pending(newest.error)) return newest;
-  console.error('[real-places] reading venues without countries — run sql/venue-countries-2026-09-24.sql', { code: newest.error?.code, message: newest.error?.message });
-  const first = await read(FULL, true);
+  // The two newest columns, each its own migration: the photo and its credit
+  // (sql/place-photos-2026-09-24.sql) and the countries a row may be in
+  // (sql/venue-countries-2026-09-24.sql). Either missing, it is dropped and
+  // the rest read as before — no picture, or the border check on the region.
+  const photoMissing = (e: ReadError) => !!e && /image_credit|image_url|image_source/.test(e.message || '');
+  const countriesMissing = (e: ReadError) => !!e && /countries/.test(e.message || '');
+  let rich = PHOTOS;
+  let withCountries = true;
+  const attempt = async (live: boolean) => {
+    for (;;) {
+      const r = await read(withCountries ? `${rich}, countries` : rich, live);
+      if (rich !== FULL && photoMissing(r.error)) {
+        console.error('[real-places] reading venues without their photos — run sql/place-photos-2026-09-24.sql', { code: r.error?.code });
+        rich = FULL; continue;
+      }
+      if (withCountries && countriesMissing(r.error)) {
+        console.error('[real-places] reading venues without countries — run sql/venue-countries-2026-09-24.sql', { code: r.error?.code });
+        withCountries = false; continue;
+      }
+      return r;
+    }
+  };
+  const first = await attempt(true);
   if (!pending(first.error)) return first;
-  // gone_at is the newest column, so it is the likeliest to be missing: keep
-  // the hours and the cuisine and drop only the filter. Nothing has been
-  // marked gone before the column exists, so the answer is the same.
+  // gone_at is the likeliest of the rest to be missing: keep the hours and
+  // the cuisine and drop only the filter. Nothing has been marked gone
+  // before the column exists, so the answer is the same.
   console.error('[real-places] reading venues without gone_at — run sql/world-data-phase1-2026-09-24.sql', { code: first.error?.code, message: first.error?.message });
-  const second = await read(FULL, false);
+  const second = await attempt(false);
   if (!pending(second.error)) return second;
   console.error('[real-places] reading venues without osm_tags or opening_hours — run sql/venue-hours-2026-09-23.sql', { code: second.error?.code, message: second.error?.message });
   return read(BASIC, false);
@@ -404,6 +432,7 @@ export async function placesFor(
         reservation: takesBookings((v.osm_tags ?? {}).reservation),
         phone: dialable(v.phone || (v.osm_tags ?? {}).phone || (v.osm_tags ?? {})['contact:phone'], countryCode),
         reserveUrl: /^https?:\/\//i.test(String(v.reservation_url || '')) ? String(v.reservation_url) : null,
+        photo: (() => { const p = rowPhoto(v); return p ? { url: p.url, credit: p.credit } : null; })(),
       };
     }
     shaped.set(key, out);
@@ -482,6 +511,7 @@ export async function placesFor(
     ref, name: r.name, kind: r.kind, interest: r.interest, url: r.url, city: r.city, source: 'osm',
     street: r.street, hours: r.hours,
     reservation: r.reservation, phone: r.phone, reserveUrl: r.reserveUrl,
+    photo: r.photo,
     ...(forFood ? { forFood } : {}),
   });
 

@@ -107,6 +107,13 @@ export const SlotSchema = z.object({
   whats_on: z.string().nullish(),
   /** The place's number, dialable. Attached by the route from the row, never by the model. */
   place_phone: z.string().nullish(),
+  /**
+   * A photo of the place or act this line names, and whose it is. Attached
+   * by the route from the row it cited or the listing that sells the
+   * ticket, never by the model — so it is of that place or it is absent.
+   */
+  place_photo: z.string().nullish(),
+  place_photo_credit: z.string().nullish(),
   // Whose wish this answers, when it answers one. "Peter asked for one big
   // night out." Nullish rather than optional: plenty of a good day is just a
   // good day, and a model with nothing to say should send null rather than

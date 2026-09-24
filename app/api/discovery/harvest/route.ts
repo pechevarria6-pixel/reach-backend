@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
   const queue = (which: 'due' | 'new', live: boolean) => {
     let q = db
       .from('discovery_venues')
-      .select('id, name, website, interest, last_harvested_at, harvest_status')
+      .select('id, name, website, interest, last_harvested_at, harvest_status, image_source')
       .in('interest', worthReading);
     // Read long enough ago, by each venue's own back-off — and never a venue
     // the sweep marked as not worth reading. A skipped venue is never stamped
@@ -183,7 +183,12 @@ export async function GET(req: NextRequest) {
       // no extra request, and only when they publish one. Left alone rather
       // than overwritten with null, so a site that stops serving og:image
       // for a week does not blank a card that was working.
-      ...(result.imageUrl ? { image_url: result.imageUrl, image_source: 'og' } : {}),
+      //
+      // Never over a Wikimedia photo. That one came from the venue's own map
+      // entry and carries an author and a licence (lib/discovery/photo-job);
+      // the share image is the lesser source and waits behind it.
+      ...(result.imageUrl && (venue as { image_source?: string | null }).image_source !== 'wikimedia'
+        ? { image_url: result.imageUrl, image_source: 'og' } : {}),
     }).eq('id', venue.id);
     if (marked) console.error('[discovery/harvest] could not mark the venue harvested', venue.name, marked.message);
   }

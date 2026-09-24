@@ -16,6 +16,7 @@ import { dialable } from './phone.ts';
 import type { Finding, SourceResult, Seeker } from './types.ts';
 import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor } from './taste.ts';
+import { photoTagsOf } from './place-photo.ts';
 
 // Overpass is run by volunteers on donated hardware and the main instance
 // answers 504 under load — a dense city and a wide box is enough to do it.
@@ -122,6 +123,16 @@ export const LODGING = new Set(['hotel', 'guest_house', 'hostel', 'motel', 'apar
 export function visitTagsOf(tags: Record<string, string> = {}): Record<string, string> {
   return Object.fromEntries(Object.entries(tags).filter(([k]) =>
     /^(cuisine|diet:|payment:|reservation|takeaway|outdoor_seating|wheelchair|drink:|smoking)/.test(k)));
+}
+
+/**
+ * What a venue row keeps of its map entry: the visit tags, and the tags
+ * that name a photograph of the place (wikidata, wikimedia_commons, image).
+ * The second set is what lets the photo job find a picture OF this place
+ * from its own entry rather than by searching for its name.
+ */
+export function keptTagsOf(tags: Record<string, string> = {}): Record<string, string> {
+  return { ...visitTagsOf(tags), ...photoTagsOf(tags) };
 }
 
 /** "118 S Main St" where the map has a number, the street alone where it does not. */
@@ -303,7 +314,7 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
       osm: {
         phone: dialable(tags.phone || tags['contact:phone'], tags['addr:country'] || null),
         hours: tags.opening_hours || null,
-        tags: visitTagsOf(tags),
+        tags: keptTagsOf(tags),
       },
     };
     // A caterer or a campus can carry a tag we asked for. Neither is a night out.
