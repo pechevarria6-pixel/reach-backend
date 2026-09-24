@@ -111,7 +111,7 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
     if (/venue_image/.test(error.message || '')) {
       console.error('[itinerary] saving without venue photos — run sql/place-photos-2026-09-24.sql');
       const { error: again } = await supabase.from('itinerary_items').insert(
-        toWrite.map(({ venue_image_url, venue_image_credit, ...rest }: any) => rest),
+        toWrite.map(({ venue_image_url, venue_image_credit, venue_image_of, venue_image_link, ...rest }: any) => rest),
       );
       if (!again) return null;
       if (!/column .* does not exist|could not find the .* column/i.test(again.message || '') && again.code !== 'PGRST204') {
@@ -123,7 +123,7 @@ export async function PUT(req: NextRequest, { params }: { params: { planId: stri
       + ' run sql/itinerary-practicals-2026-09-14.sql,'
       + ' sql/itinerary-because-2026-09-18.sql and sql/place-photos-2026-09-24.sql');
     const { error: retry } = await supabase.from('itinerary_items').insert(
-      toWrite.map(({ booking_mode, payment_note, because, venue_image_url, venue_image_credit, ...rest }: any) => rest),
+      toWrite.map(({ booking_mode, payment_note, because, venue_image_url, venue_image_credit, venue_image_of, venue_image_link, ...rest }: any) => rest),
     );
     return retry ? (retry.message || 'insert failed') : null;
   });

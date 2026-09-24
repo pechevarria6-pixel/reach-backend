@@ -104,7 +104,7 @@ const goneAtMissing = (e: { code?: string; message?: string } | null) =>
  * before: its own site's og:image, credited to the site.
  */
 export const photoColumnsMissing = (e: { code?: string; message?: string } | null) =>
-  !!e && (e.code === '42703' || e.code === 'PGRST204') && /image_credit|image_link|image_url|image_checked_at/.test(e.message || '');
+  !!e && (e.code === '42703' || e.code === 'PGRST204') && /image_credit|image_link|image_url|image_checked_at|image_of/.test(e.message || '');
 
 export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<SourceResult> {
   const keys = lookedFor(seeker);
@@ -244,7 +244,7 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   const COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues(name, lat, lng, city, street)';
   // The same with the pictures: the event's own (a cached Ticketmaster
   // gig's act) and its venue's. sql/place-photos-2026-09-24.sql.
-  const PHOTO_EVENT_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, image_url, image_credit, discovery_venues(name, lat, lng, city, street, website, image_url, image_source, image_credit, image_link)';
+  const PHOTO_EVENT_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, image_url, image_credit, image_of, discovery_venues(name, lat, lng, city, street, website, image_url, image_source, image_credit, image_link)';
   const fresh = new Date().toISOString();
 
   // Two questions, because the two kinds of row are filed differently.
@@ -271,7 +271,7 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   const upcoming = `starts_on.is.null,starts_on.gte.${day}`;
   // Written out rather than derived, so the client can type the rows.
   const HARVEST_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues!inner(name, lat, lng, city, street)';
-  const PHOTO_HARVEST_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, image_url, image_credit, discovery_venues!inner(name, lat, lng, city, street, website, image_url, image_source, image_credit, image_link)';
+  const PHOTO_HARVEST_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, image_url, image_credit, image_of, discovery_venues!inner(name, lat, lng, city, street, website, image_url, image_source, image_credit, image_link)';
   let photos = true;
   // A class at a venue the weekly map loads have retired is not on: the
   // studio's site outliving the studio is not evidence it still runs. Same
@@ -339,8 +339,11 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
       // (a Ticketmaster act); else the photo of the venue it hangs off.
       const own = (e as { image_url?: string | null }).image_url;
       const ownCredit = (e as { image_credit?: string | null }).image_credit;
+      // What it is of was kept with it: a gig whose listing had no act art
+      // stored its hall's, and that picture is of the hall, not the gig.
+      const ownOf = (e as { image_of?: string | null }).image_of ?? null;
       const photo = own && ownCredit && /^https:\/\//.test(own)
-        ? { url: own, credit: ownCredit, link: null, of: null }
+        ? { url: own, credit: ownCredit, link: null, of: ownOf }
         : joined ? (() => { const p = rowPhoto(joined); return p ? { ...p, of: joined.name } : null; })() : null;
       // Whichever knows where this is: the venue we found, or the row itself.
       const venue = joined ?? (e.venue_name || e.lat != null
@@ -478,6 +481,9 @@ export async function rememberEvents(
       // neither. A picture without a credit is not kept.
       image_url: f.image && f.imageCredit ? f.image : null,
       image_credit: f.image && f.imageCredit ? f.imageCredit : null,
+      // Whose picture it is — the act, the event or the hall — so a cached
+      // card describes it as the live one did.
+      image_of: f.image && f.imageCredit ? (f.imageOf ?? null) : null,
       found_at: new Date().toISOString(),
       stale_after: new Date(Date.now() + CACHE_DAYS * 86400_000).toISOString(),
     }));
@@ -489,7 +495,7 @@ export async function rememberEvents(
     // their pictures rather than not at all.
     console.error('[discover/cache] event pictures not stored — run sql/place-photos-2026-09-24.sql');
     ({ error } = await db.from('discovery_events').upsert(
-      rows.map(({ image_url: _u, image_credit: _c, ...rest }) => rest), { onConflict: 'source,external_id' }));
+      rows.map(({ image_url: _u, image_credit: _c, image_of: _o, ...rest }) => rest), { onConflict: 'source,external_id' }));
   }
   if (error) {
     // Never fatal, and never surfaced. Discover has already answered from the

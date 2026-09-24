@@ -21,8 +21,11 @@ export interface RealEvent {
   /** Where tickets are actually sold. */
   url: string | null;
   source: 'cache' | 'ticketmaster';
-  /** The act's picture from the listing itself, with its credit. Never searched for. */
-  photo?: { url: string; credit: string } | null;
+  /**
+   * The act's picture from the listing itself, with its credit and what it
+   * is of — the act, the event or, failing both, the hall. Never searched for.
+   */
+  photo?: { url: string; credit: string; of: string | null } | null;
 }
 
 /** Words that describe the outing rather than name the act. */
@@ -87,8 +90,8 @@ export async function eventFromCache(
     .limit(400) as unknown as Promise<{ data: Record<string, any>[] | null; error: { code?: string; message?: string } | null }>;
   // The act's picture arrives in sql/place-photos-2026-09-24.sql; until
   // then the event is found exactly as before, without one.
-  let { data, error } = await ask('title, venue_name, city, starts_on, booking_url, image_url, image_credit');
-  if (error && /image_url|image_credit/.test(error.message || '')) {
+  let { data, error } = await ask('title, venue_name, city, starts_on, booking_url, image_url, image_credit, image_of');
+  if (error && /image_url|image_credit|image_of/.test(error.message || '')) {
     ({ data, error } = await ask('title, venue_name, city, starts_on, booking_url'));
   }
 
@@ -107,7 +110,8 @@ export async function eventFromCache(
     startsOn: hit.starts_on ?? null,
     url: hit.booking_url ?? null,
     source: 'cache',
-    photo: hit.image_url && hit.image_credit ? { url: String(hit.image_url), credit: String(hit.image_credit) } : null,
+    photo: hit.image_url && hit.image_credit
+      ? { url: String(hit.image_url), credit: String(hit.image_credit), of: hit.image_of ? String(hit.image_of) : null } : null,
   };
 }
 
@@ -160,7 +164,9 @@ export async function eventFromProvider(
       startsOn: e.dates?.start?.localDate ?? null,
       url: e.url,
       source: 'ticketmaster',
-      photo: photo ? { url: photo.url, credit: photo.credit } : null,
+      // `of` travels with it: the line names the venue, and the picture may
+      // be the band.
+      photo: photo ? { url: photo.url, credit: photo.credit, of: photo.of ?? null } : null,
     };
   } catch (err) {
     console.error('[find-event] could not ask the provider', err instanceof Error ? err.message : 'failed');

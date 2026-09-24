@@ -37,14 +37,22 @@ comment on column public.discovery_venues.image_credit is
 -- venue), kept with the cached row so a cached gig looks like the live one.
 alter table public.discovery_events
   add column if not exists image_url text,
-  add column if not exists image_credit text;
+  add column if not exists image_credit text,
+  -- What the picture is of — the act, the event, or its hall when the
+  -- listing had neither — for its alt text. A hall is not the band.
+  add column if not exists image_of text;
 
 -- ── Itinerary lines ─────────────────────────────────────────────────────
 -- The photo of the verified venue a line names, attached by the generator
 -- from the row it cited — never looked up by name.
 alter table public.itinerary_items
   add column if not exists venue_image_url text,
-  add column if not exists venue_image_credit text;
+  add column if not exists venue_image_credit text,
+  -- What the picture is of. A gig's line names the venue; its picture is
+  -- usually the band.
+  add column if not exists venue_image_of text,
+  -- The picture's page (a Commons file), so its credit can be followed.
+  add column if not exists venue_image_link text;
 
 -- ── Destinations ────────────────────────────────────────────────────────
 -- Wikipedia's page image for a destination, looked up once and kept, so a

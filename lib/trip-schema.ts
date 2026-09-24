@@ -114,6 +114,10 @@ export const SlotSchema = z.object({
    */
   place_photo: z.string().nullish(),
   place_photo_credit: z.string().nullish(),
+  /** What the photo is of — the act, or the place — for its alt text. Attached by the route. */
+  place_photo_of: z.string().nullish(),
+  /** The photo's page (a Commons file), so its credit can be followed. Attached by the route. */
+  place_photo_link: z.string().nullish(),
   // Whose wish this answers, when it answers one. "Peter asked for one big
   // night out." Nullish rather than optional: plenty of a good day is just a
   // good day, and a model with nothing to say should send null rather than

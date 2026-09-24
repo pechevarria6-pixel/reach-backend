@@ -25,6 +25,7 @@ const ROW = {
   // The act's picture from the listing that sold the ticket.
   venue_image_url: 'https://s1.ticketm.net/dam/a/1b2/milk-carton-kids_RETINA_PORTRAIT_16_9.jpg',
   venue_image_credit: 'Ticketmaster',
+  venue_image_of: 'The Milk Carton Kids',
   sort_order: 1,
 };
 

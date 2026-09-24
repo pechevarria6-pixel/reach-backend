@@ -55,6 +55,13 @@ export const ItineraryItemRow = z.object({
    */
   venue_image_url: z.string().nullish(),
   venue_image_credit: z.string().nullish(),
+  /**
+   * What the picture is of — the act, the event or the place — for its alt
+   * text. The line names the venue; a gig's picture is usually the band.
+   */
+  venue_image_of: z.string().nullish(),
+  /** The picture's page (a Commons file), so its credit can be followed. */
+  venue_image_link: z.string().nullish(),
   sort_order: z.number().nullish(),
 });
 export type ItineraryItemRow = z.infer<typeof ItineraryItemRow>;
@@ -79,6 +86,8 @@ export interface ItineraryItem {
   venue_note_credit: string | null;
   venue_image_url: string | null;
   venue_image_credit: string | null;
+  venue_image_of: string | null;
+  venue_image_link: string | null;
 }
 
 /**
@@ -92,7 +101,8 @@ export const ITEM_COLUMNS = [
   'id', 'scheduled_time', 'title', 'subtitle', 'type', 'confirmation_number',
   'is_confirmed', 'cost_cents', 'booking_mode', 'payment_note', 'because',
   'venue_website', 'venue_name', 'venue_phone', 'venue_note',
-  'venue_note_credit', 'venue_image_url', 'venue_image_credit', 'sort_order',
+  'venue_note_credit', 'venue_image_url', 'venue_image_credit', 'venue_image_of',
+  'venue_image_link', 'sort_order',
 ].join(', ');
 
 /** A database row, as the screen wants it. The only place this is done. */
@@ -116,15 +126,23 @@ export function itemFromRow(row: Record<string, unknown>): ItineraryItem {
     venue_note: r.venue_note ?? null,
     venue_note_credit: r.venue_note_credit ?? null,
     // Never the picture without its credit.
-    ...photoPair(r.venue_image_url, r.venue_image_credit),
+    ...photoPair(r.venue_image_url, r.venue_image_credit, r.venue_image_of, r.venue_image_link),
   };
 }
 
-/** A photo and its credit, both or neither — and only an https picture. */
-function photoPair(url: unknown, credit: unknown): { venue_image_url: string | null; venue_image_credit: string | null } {
+/**
+ * A photo and its credit, both or neither — and only an https picture. What
+ * it is of goes only with a picture: there is nothing to describe without one.
+ */
+function photoPair(url: unknown, credit: unknown, of: unknown, link: unknown):
+  { venue_image_url: string | null; venue_image_credit: string | null; venue_image_of: string | null; venue_image_link: string | null } {
   const u = typeof url === 'string' && /^https:\/\//.test(url) ? url.slice(0, 1000) : null;
   const c = typeof credit === 'string' && credit.trim() ? credit.trim().slice(0, 200) : null;
-  return u && c ? { venue_image_url: u, venue_image_credit: c } : { venue_image_url: null, venue_image_credit: null };
+  const o = typeof of === 'string' && of.trim() ? of.trim().slice(0, 200) : null;
+  const l = typeof link === 'string' && /^https:\/\//.test(link) ? link.slice(0, 1000) : null;
+  return u && c
+    ? { venue_image_url: u, venue_image_credit: c, venue_image_of: o, venue_image_link: l }
+    : { venue_image_url: null, venue_image_credit: null, venue_image_of: null, venue_image_link: null };
 }
 
 /**
@@ -173,7 +191,7 @@ export function rowFromItem(item: Record<string, unknown>, sortOrder: number): R
     venue_name: item.venue_name ?? null,
     venue_phone: item.venue_phone ?? null,
     venue_note: item.venue_note ?? null,
-    ...photoPair(item.venue_image_url, item.venue_image_credit),
+    ...photoPair(item.venue_image_url, item.venue_image_credit, item.venue_image_of, item.venue_image_link),
     sort_order: sortOrder,
   };
 }
@@ -195,6 +213,8 @@ export const FACTS_THAT_MUST_SURVIVE: { row: keyof ItineraryItemRow; item: keyof
   { row: 'because', item: 'because' },
   { row: 'venue_image_url', item: 'venue_image_url' },
   { row: 'venue_image_credit', item: 'venue_image_credit' },
+  { row: 'venue_image_of', item: 'venue_image_of' },
+  { row: 'venue_image_link', item: 'venue_image_link' },
 ];
 
 /**

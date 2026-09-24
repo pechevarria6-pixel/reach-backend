@@ -195,6 +195,8 @@ export async function GET(req: NextRequest) {
     image: e.image && e.imageCredit ? e.image : null,
     image_credit: e.image && e.imageCredit ? e.imageCredit : null,
     image_of: e.imageOf ?? null,
+    // The file's page, so the credit on the day list can be followed.
+    image_link: e.image && e.imageCredit ? (e.imageLink ?? null) : null,
   })), day, 7);
 
   return NextResponse.json({

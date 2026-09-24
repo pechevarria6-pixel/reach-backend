@@ -231,7 +231,10 @@ export function nameWords(name: string): string[] {
     .replace(/&/g, ' and ').split(/[^a-z0-9]+/).filter(w => w && !FILLER.has(w));
 }
 
-/** 'exact', 'close' or null: how well two names agree. */
+/**
+ * 'exact', 'close' or null: how well the venue's name `a` agrees with an
+ * item's name `b`. Not symmetric, on purpose — see the one-word rule below.
+ */
 export function nameAgreement(a: string, b: string): 'exact' | 'close' | null {
   const x = nameWords(a), y = nameWords(b);
   if (!x.length || !y.length) return null;
@@ -242,7 +245,15 @@ export function nameAgreement(a: string, b: string): 'exact' | 'close' | null {
   const jaccard = shared / new Set([...x, ...y]).size;
   // Every word of the shorter name, or most of both — and never on the
   // strength of one shared word alone ("Showbox" is two venues).
-  return shared >= 1 && (within || jaccard >= 0.5) && (shared >= 2 || Math.min(X.size, Y.size) === 1) ? 'close' : null;
+  //
+  // The one exception is a venue whose own name IS one word: "Showbox" is
+  // all of "The Showbox at the Market", and the kilometre check does the rest.
+  // The other way round is not the same place: an item called "Southpoint"
+  // is the mall the AMC Southpoint 17 stands in, and an item called
+  // "Carolina" is not the Carolina Theatre. Something whose whole name is
+  // one word of the venue's is what contains it, or what it is named after
+  // — and it is always within a kilometre, so distance cannot catch it.
+  return shared >= 1 && (within || jaccard >= 0.5) && (shared >= 2 || X.size === 1) ? 'close' : null;
 }
 
 function kmBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {

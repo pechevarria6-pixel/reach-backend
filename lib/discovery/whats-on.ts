@@ -26,6 +26,7 @@ export interface OnEvent {
   image?: string | null;
   image_credit?: string | null;
   image_of?: string | null;
+  image_link?: string | null;
 }
 
 export interface OnDay {

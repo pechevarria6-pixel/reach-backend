@@ -501,8 +501,10 @@ function slotRow(raw,{time,sub="",fallback,cost}){
     // A picture of the place or act this line names — attached by the
     // server from the row it cited or the listing that sold the ticket, and
     // only with whose it is. Both or neither.
+    // What it is of travels with it: on a gig's line the venue is named and
+    // the picture is the band.
     ...(sl.place_photo&&sl.place_photo_credit
-      ?{venue_image_url:sl.place_photo,venue_image_credit:sl.place_photo_credit}:{}),
+      ?{venue_image_url:sl.place_photo,venue_image_credit:sl.place_photo_credit,venue_image_of:sl.place_photo_of||null,venue_image_link:sl.place_photo_link||null}:{}),
   };
 }
 
@@ -632,15 +634,21 @@ function PhotoFrame({src,alt,children}){
   return children({ok,img});
 }
 
-/** "Photo: Jane Doe / Wikimedia Commons, CC BY-SA 4.0", linked where it can be followed. */
+/**
+ * "Photo: Jane Doe / Wikimedia Commons, CC BY-SA 4.0", linked where it can be followed.
+ *
+ * Wrapped, never cut short. It was one line with an ellipsis, and the licence
+ * comes last — so on a phone the part the licence requires was the part cut
+ * off, and a title attribute is nothing on a touch screen.
+ */
 function PhotoCredit({credit,link,style}){
   if(!credit)return null;
   const text=`Photo: ${credit}`;
-  const base={fontSize:10,color:C.t3,lineHeight:1.35,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%",...style};
+  const base={fontSize:10,color:C.t3,lineHeight:1.35,whiteSpace:"normal",overflowWrap:"anywhere",maxWidth:"100%",...style};
   return link&&/^https:\/\//.test(String(link))
     ?<a href={link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
-        title={text} style={{...base,display:"block",textDecoration:"none"}}>{text}</a>
-    :<div title={text} style={base}>{text}</div>;
+        style={{...base,display:"block",textDecoration:"none"}}>{text}</a>
+    :<div style={base}>{text}</div>;
 }
 
 /** What a photo is of, for its alt text. Said plainly: a hall is not the band. */
@@ -1830,7 +1838,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
                   <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.45}}>
                     {[e.when_text||e.venue_name,e.recurring?"every week":null].filter(Boolean).join(" · ")}
                   </div>
-                  {ok&&<PhotoCredit credit={e.image_credit} style={{marginTop:2}}/>}
+                  {ok&&<PhotoCredit credit={e.image_credit} link={e.image_link} style={{marginTop:2}}/>}
                   </div>
                 </div>
                 )}</PhotoFrame>
@@ -5833,7 +5841,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
           alt={photoAlt(trip.city||trip.destination,trip.destination)}>{({ok,img})=>ok?(
           <div>
             <div style={{height:150,position:"relative",overflow:"hidden",background:C.s2}}>{img}</div>
-            <PhotoCredit credit={trip.photo.credit} style={{padding:"5px 18px 0"}}/>
+            <PhotoCredit credit={trip.photo.credit} link={trip.photo.source} style={{padding:"5px 18px 0"}}/>
           </div>
         ):null}</PhotoFrame>
         {/* Trip header */}
@@ -9727,10 +9735,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           fixed height, so a picture loading late moves
                           nothing; gone entirely if it will not load. */}
                       <PhotoFrame src={item.venue_image_url&&item.venue_image_credit?item.venue_image_url:null}
-                        alt={photoAlt(item.venue_name,item.title)}>{({ok,img})=>ok?(
+                        alt={photoAlt(item.venue_image_of,item.title)}>{({ok,img})=>ok?(
                         <div style={{marginTop:8,maxWidth:360}}>
                           <div style={{height:120,position:"relative",overflow:"hidden",borderRadius:10,background:C.s2}}>{img}</div>
-                          <PhotoCredit credit={item.venue_image_credit} style={{marginTop:3}}/>
+                          <PhotoCredit credit={item.venue_image_credit} link={item.venue_image_link} style={{marginTop:3}}/>
                         </div>
                       ):null}</PhotoFrame>
                       {/* Reach books what it can. For the rest, the practical

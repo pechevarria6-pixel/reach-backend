@@ -9,7 +9,8 @@ import {
 } from '../../lib/discovery/place-photo.ts';
 import { photoUpdate, resolvePhotos } from '../../lib/discovery/photo-job.ts';
 import { keptTagsOf } from '../../lib/discovery/osm.ts';
-import { cachedVenues, cachedEvents } from '../../lib/discovery/cache.ts';
+import { cachedVenues, cachedEvents, rememberEvents } from '../../lib/discovery/cache.ts';
+import { eventFromProvider } from '../../lib/discovery/find-event.ts';
 import { cachedDestinationPhoto, destinationKey } from '../../lib/discovery/destination-photo.ts';
 import { itemFromRow, rowFromItem } from '../../lib/contracts/itinerary-item.ts';
 
@@ -128,7 +129,19 @@ test('a map entry\'s wikidata item has to be this place, and its image of it', (
     { ok: false, why: 'person' }, 'the actress, not the theatre');
   assert.deepEqual(sameThing({ name: 'Showbox SoDo', lat: 47.5866, lng: -122.3341 },
     { names: ['The Showbox'], at: { lat: 47.6085, lng: -122.3395 }, person: false, file: 'Seattle - Showbox marquee 01.jpg' }),
-  { ok: false, why: 'far' }, 'the other Showbox, 2.4 km away');
+  { ok: false, why: 'name' }, 'the other Showbox, 2.4 km away: one word of its name is not its name');
+  assert.deepEqual(sameThing({ name: 'Showbox', lat: 47.5866, lng: -122.3341 },
+    { names: ['The Showbox SoDo'], at: { lat: 47.6085, lng: -122.3395 }, person: false, file: 'Seattle - Showbox marquee 01.jpg' }),
+  { ok: false, why: 'far' }, 'a one-word venue name still needs the kilometre');
+  // 2026-09-24 review: an item named by one word of the venue's name passed
+  // the name check whenever it was within a kilometre — which the place a
+  // venue stands in always is.
+  assert.deepEqual(sameThing({ name: 'AMC Southpoint 17', lat: 35.9036, lng: -78.9446, city: 'Durham' },
+    { names: ['The Streets at Southpoint', 'Southpoint'], at: { lat: 35.9040, lng: -78.9440 }, person: false, file: 'Southpoint fountain.jpg' }),
+  { ok: false, why: 'name' }, 'the mall it stands in, by its one-word alias');
+  assert.deepEqual(sameThing({ name: 'Carolina Theatre', lat: 35.9953, lng: -78.9020, city: 'Durham' },
+    { names: ['Carolina'], at: { lat: 35.9970, lng: -78.9000 }, person: false, file: 'Carolina Hurricanes arena.jpg' }),
+  { ok: false, why: 'name' }, 'a neighbour whose whole name is one word of the venue\'s');
   assert.deepEqual(sameThing({ name: 'Leif Erikson Statue', lat: 47.68, lng: -122.406 },
     { names: ['Leif Erikson Statue'], at: { lat: 47.6799, lng: -122.406 }, person: false, file: 'Shilshole Bay Marina Washington6.jpg' }),
   { ok: false, why: 'not_of_it' }, 'the marina it stands in');
@@ -145,7 +158,10 @@ test('a map entry\'s wikidata item has to be this place, and its image of it', (
 test('names agree exactly, closely, or not at all', () => {
   assert.equal(nameAgreement('Théâtre de la Bastille', 'theatre de la bastille'), 'exact');
   assert.equal(nameAgreement('Pope House Museum', 'Pope House'), 'close');
-  assert.equal(nameAgreement('Showbox SoDo', 'The Showbox'), 'close', 'close enough to need the kilometre check');
+  assert.equal(nameAgreement('Showbox SoDo', 'The Showbox'), null, 'the item is named by one word of the venue: another place');
+  assert.equal(nameAgreement('Showbox', 'The Showbox at the Market'), 'close', 'the venue is named by one word: close enough to need the kilometre');
+  assert.equal(nameAgreement('AMC Southpoint 17', 'Southpoint'), null, 'the mall, not the cinema');
+  assert.equal(nameAgreement('Carolina Theatre', 'Carolina'), null);
   assert.equal(nameAgreement('Tolbooth Museum', 'Stonehaven Tolbooth'), null);
   assert.equal(nameAgreement('Laogai Museum', 'Laogai Research Foundation'), null);
   assert.equal(fileNamesThing('Paris 75005 Grande Galerie de l\'Evolution.jpg', ['Jardin des Plantes'], null), false);
@@ -364,6 +380,88 @@ test('a cached gig shows the act\'s picture it was stored with; a class shows it
   assert.equal(cls.image, 'https://studio.example/room.jpg');
   assert.equal(cls.imageOf, 'Studio', 'the alt text says it is the studio, not the class');
   assert.equal(findings.find(f => f.title === 'Uncredited')!.image, null);
+});
+
+// 2026-09-24 review: what a picture is of was dropped on the way to the
+// itinerary line and to the cache, so the alt text named the wrong thing —
+// the venue over the band's photo, the gig over its hall's.
+test('a cached gig keeps whose picture it is — a hall stays a hall', async () => {
+  const day = '2099-01-01';
+  const { db } = readDb({
+    discovery_events: [
+      { id: 1, title: 'Hurricanes v Bruins', starts_on: day, source: 'ticketmaster', interest: 'sports', booking_url: 'https://tm.example/1',
+        venue_name: 'PNC Arena', lat: 35.80, lng: -78.72, image_url: 'https://s1.ticketm.net/dam/pnc.jpg', image_credit: 'Ticketmaster', image_of: 'PNC Arena' },
+    ],
+  });
+  const { findings } = await cachedEvents(db, SEEKER);
+  assert.equal(findings[0].imageOf, 'PNC Arena', 'the picture is of the hall, not "Hurricanes v Bruins"');
+
+  const written: Record<string, unknown>[] = [];
+  const store = { from: () => ({ upsert: async (rows: Record<string, unknown>[]) => { written.push(...rows); return { error: null }; } }) } as any;
+  await rememberEvents(store, [{ ...findings[0], id: 'tm_1', source: 'ticketmaster' } as any], () => 'sports');
+  assert.equal(written[0].image_of, 'PNC Arena', 'stored with whose it is');
+  written.length = 0;
+  await rememberEvents(store, [{ ...findings[0], id: 'tm_1', source: 'ticketmaster', imageCredit: null } as any], () => 'sports');
+  assert.equal(written[0].image_of, null, 'nothing to describe without a picture');
+});
+
+test('an event found for an itinerary keeps whose picture it is', async () => {
+  const prior = process.env.TICKETMASTER_API_KEY;
+  process.env.TICKETMASTER_API_KEY = 'test';
+  try {
+    const listing = {
+      name: 'The Milk Carton Kids', url: 'https://www.ticketmaster.com/e/1', dates: { start: { localDate: '2099-01-01' } },
+      images: [img('16_9', 1024, false, 'event')],
+      _embedded: { attractions: [{ name: 'The Milk Carton Kids', images: [img('16_9', 1024, false, 'mck')] }], venues: [{ name: '9:30 CLUB', city: { name: 'Washington' } }] },
+    };
+    const fake = (async () => new Response(JSON.stringify({ _embedded: { events: [listing] } }), { status: 200 })) as typeof fetch;
+    const found = await eventFromProvider(['milk', 'carton', 'kids'], 'Washington', fake);
+    assert.equal(found?.venue, '9:30 CLUB');
+    assert.equal(found?.photo?.of, 'The Milk Carton Kids', 'the line names the venue; the picture is the band');
+  } finally {
+    if (prior === undefined) delete process.env.TICKETMASTER_API_KEY; else process.env.TICKETMASTER_API_KEY = prior;
+  }
+});
+
+test('an itinerary line\'s alt text says what the picture is of, not which venue the line names', () => {
+  const row = { title: 'See The Milk Carton Kids live at 9:30 CLUB.', venue_name: '9:30 CLUB',
+    venue_image_url: 'https://s1.ticketm.net/dam/mck.jpg', venue_image_credit: 'Ticketmaster', venue_image_of: 'The Milk Carton Kids' };
+  const item = itemFromRow(row);
+  assert.equal(item.venue_image_of, 'The Milk Carton Kids');
+  assert.equal(rowFromItem(item as unknown as Record<string, unknown>, 0).venue_image_of, 'The Milk Carton Kids');
+  assert.equal(itemFromRow({ title: 'x', venue_image_of: 'A band' }).venue_image_of, null, 'nothing to describe without a picture');
+  const src = read('app/api/trips/generate/route.ts');
+  assert.match(src, /slot\.place_photo_of = realEvent\.photo\.of/, 'the act, from the listing');
+  assert.match(src, /slot\.place_photo_of = cited\.name/, 'the place, from the row it cited');
+  assert.match(src, /slot\.place_photo_of = null; slot\.place_photo_link = null; \}/, "whatever the model wrote is cleared");
+  const app = read('components/reach-app.jsx');
+  assert.ok(app.includes('venue_image_of:sl.place_photo_of||null'), 'slotRow carries it');
+  assert.ok(app.includes('alt={photoAlt(item.venue_image_of,item.title)}'), 'the line describes its picture, not its venue');
+  assert.ok(!app.includes('photoAlt(item.venue_name'), 'never the venue the line names');
+});
+
+// 2026-09-24 review: the credit was one line with an ellipsis and the
+// licence last, so on a phone the licence was what got cut — and three of
+// the places it appeared had no link to follow either.
+test('a photo credit is shown whole, and can be followed wherever we hold its page', () => {
+  const app = read('components/reach-app.jsx');
+  const credit = app.slice(app.indexOf('function PhotoCredit('), app.indexOf('function photoAlt('));
+  assert.ok(credit.length > 0);
+  assert.doesNotMatch(credit, /nowrap|ellipsis/, 'the licence comes last; cutting the line cuts the licence');
+  assert.doesNotMatch(credit, /title=\{text\}/, 'a tooltip is nothing on a touch screen');
+  const uses = app.match(/<PhotoCredit [^>]*\/>/g) ?? [];
+  assert.ok(uses.length >= 5);
+  for (const u of uses) assert.match(u, /link=\{/, `a credit with no way to its source: ${u}`);
+  assert.ok(app.includes('venue_image_link:sl.place_photo_link||null'), 'slotRow carries the page');
+  const src = read('app/api/trips/generate/route.ts');
+  assert.match(src, /slot\.place_photo_link = cited\.photo\.link/);
+  assert.match(read('app/api/nearby/route.ts'), /image_link: e\.image && e\.imageCredit \? \(e\.imageLink/);
+  const row = { title: 'Museum morning', venue_image_url: 'https://upload.wikimedia.org/a.jpg', venue_image_credit: 'J / Wikimedia Commons, CC BY-SA 4.0',
+    venue_image_link: 'https://commons.wikimedia.org/wiki/File:a.jpg' };
+  const item = itemFromRow(row);
+  assert.equal(item.venue_image_link, row.venue_image_link);
+  assert.equal(rowFromItem(item as unknown as Record<string, unknown>, 0).venue_image_link, row.venue_image_link);
+  assert.equal(itemFromRow({ ...row, venue_image_link: 'javascript:alert(1)' }).venue_image_link, null);
 });
 
 // ─── Destinations, kept ──────────────────────────────────────────────────

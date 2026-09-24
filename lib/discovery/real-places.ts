@@ -85,7 +85,7 @@ export interface RealPlace {
    * image or its own site's og:image, with whose it is. Carried onto the
    * itinerary line that cites it; never looked up by name.
    */
-  photo?: { url: string; credit: string } | null;
+  photo?: { url: string; credit: string; link?: string | null } | null;
 }
 
 export type Reservation = 'required' | 'recommended' | 'yes' | 'no' | null;
@@ -182,7 +182,7 @@ type Shaped = {
   url: string | null; city: string | null; street: string | null; hours: string | null;
   miles: number; cuisine: string;
   reservation: Reservation; phone: string | null; reserveUrl: string | null;
-  photo: { url: string; credit: string } | null;
+  photo: { url: string; credit: string; link: string | null } | null;
 };
 
 /**
@@ -432,7 +432,7 @@ export async function placesFor(
         reservation: takesBookings((v.osm_tags ?? {}).reservation),
         phone: dialable(v.phone || (v.osm_tags ?? {}).phone || (v.osm_tags ?? {})['contact:phone'], countryCode),
         reserveUrl: /^https?:\/\//i.test(String(v.reservation_url || '')) ? String(v.reservation_url) : null,
-        photo: (() => { const p = rowPhoto(v); return p ? { url: p.url, credit: p.credit } : null; })(),
+        photo: (() => { const p = rowPhoto(v); return p ? { url: p.url, credit: p.credit, link: p.link ?? null } : null; })(),
       };
     }
     shaped.set(key, out);

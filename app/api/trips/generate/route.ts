@@ -1051,7 +1051,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // from the model: whatever it wrote into these is cleared first.
       for (const day of days) {
         for (const slot of [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])]) {
-          if (slot) { slot.place_photo = null; slot.place_photo_credit = null; }
+          if (slot) { slot.place_photo = null; slot.place_photo_credit = null; slot.place_photo_of = null; slot.place_photo_link = null; }
         }
       }
       if (realEvent?.url) {
@@ -1065,7 +1065,9 @@ you have made up; a day that is simply a good day is allowed to be one.`;
             slot.ticket_url = realEvent.url;
             slot.venue = realEvent.venue ?? null;
             // The act's picture, from the same listing that sold the ticket.
-            if (realEvent.photo) { slot.place_photo = realEvent.photo.url; slot.place_photo_credit = realEvent.photo.credit; }
+            // And what it is of: the line names the venue, the picture is
+            // usually the band.
+            if (realEvent.photo) { slot.place_photo = realEvent.photo.url; slot.place_photo_credit = realEvent.photo.credit; slot.place_photo_of = realEvent.photo.of ?? null; }
             attached = true;
           }
         }
@@ -1158,6 +1160,8 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           if (cited?.photo && !slot.ticket_url) {
             slot.place_photo = cited.photo.url;
             slot.place_photo_credit = cited.photo.credit;
+            slot.place_photo_of = cited.name ?? null;
+            slot.place_photo_link = cited.photo.link ?? null;
           }
           // What is on there, read off the venue's own page. Carried on the
           // slot rather than left to the model to mention, because it is the
