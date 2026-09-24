@@ -69,35 +69,86 @@ function box(seeker: Seeker, miles = 15) {
   return { dLat, dLng };
 }
 
+/**
+ * The boxes Discover reads, nearest first, out to its fifteen miles.
+ *
+ * One fifteen-mile box across every interest, capped at three hundred rows
+ * and in no order, was fine while a city held a few dozen places. Once the
+ * weekly map load has filled a city, "places to eat" alone is thousands of
+ * rows in that box, the three hundred are whichever the database hands back
+ * first, and the museum somebody actually likes is never read. So each
+ * interest is read on its own, near first, and only an interest that has
+ * not found its share close by is looked for further out.
+ */
+const DISCOVER_RINGS = [3, 15];
+/** Rows asked for per interest per box. */
+const PER_INTEREST = 60;
+
+const VENUE_COLUMNS = 'osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url';
+type CachedVenue = {
+  osm_type: string; osm_id: number; name: string; lat: number; lng: number; city: string | null;
+  website: string | null; interest: string; kind: string | null; street: string | null; image_url?: string | null;
+};
+
+/** gone_at arrives in sql/world-data-phase1-2026-09-24.sql. */
+const goneAtMissing = (e: { code?: string; message?: string } | null) =>
+  !!e && (e.code === '42703' || /gone_at/.test(e.message || ''));
+
 export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<SourceResult> {
   const keys = lookedFor(seeker);
   if (!keys.length) return { source: 'osm', status: 'ok', findings: [] };
-  const { dLat, dLng } = box(seeker);
 
-  const read = (live: boolean) => {
-    let q = db
-      .from('discovery_venues')
-      .select('osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url')
-      .in('interest', asStored(keys))
-      .gte('lat', seeker.lat - dLat).lte('lat', seeker.lat + dLat)
-      .gte('lng', seeker.lng - dLng).lte('lng', seeker.lng + dLng);
-    // A place two weekly map loads in a row did not find is not a card.
-    if (live) q = q.is('gone_at', null);
-    return q.limit(300);
+  // Until the migration has run nothing has been marked gone, so reading
+  // without the filter is exactly the old behaviour rather than an empty
+  // screen. Learned once per request, not once per interest.
+  let live = true;
+  const readOne = async (key: string, miles: number) => {
+    const { dLat, dLng } = box(seeker, miles);
+    const q = (withGone: boolean) => {
+      let r = db
+        .from('discovery_venues')
+        .select(VENUE_COLUMNS)
+        .in('interest', asStored([key]))
+        .gte('lat', seeker.lat - dLat).lte('lat', seeker.lat + dLat)
+        .gte('lng', seeker.lng - dLng).lte('lng', seeker.lng + dLng);
+      // A place two weekly map loads in a row did not find is not a card.
+      if (withGone) r = r.is('gone_at', null);
+      return r.limit(PER_INTEREST) as unknown as Promise<{ data: CachedVenue[] | null; error: { code?: string; message?: string } | null }>;
+    };
+    let res = await q(live);
+    if (live && goneAtMissing(res.error)) { live = false; res = await q(false); }
+    return res;
   };
-  let { data, error } = await read(true);
-  // gone_at arrives in sql/world-data-phase1-2026-09-24.sql. Until it has
-  // run nothing has been marked gone, so reading without the filter is
-  // exactly the old behaviour rather than an empty screen.
-  if (error && (error.code === '42703' || /gone_at/.test(error.message || ''))) {
-    ({ data, error } = await read(false));
+
+  // A row is usable if it could become a card: the same filters as below.
+  const usable = (v: CachedVenue) =>
+    canTurnUp(v.name, [String(v.kind || '')]) && notRuledOut(`${v.name} ${v.kind || ''}`, seeker.avoid);
+
+  const byId = new Map<string, CachedVenue>();
+  let error: { code?: string; message?: string } | null = null;
+  let wanted = keys;
+  for (const miles of DISCOVER_RINGS) {
+    if (!wanted.length) break;
+    const results = await Promise.all(wanted.map(async key => ({ key, ...(await readOne(key, miles)) })));
+    const short: string[] = [];
+    for (const r of results) {
+      if (r.error) { error = r.error; continue; }
+      const rows = r.data ?? [];
+      for (const v of rows) byId.set(`${v.osm_type}/${v.osm_id}/${v.interest}`, v);
+      if (rows.filter(usable).length < PER_KIND) short.push(r.key);
+    }
+    if (error) break;
+    wanted = short;
   }
+  const data = [...byId.values()];
 
   if (error) {
     // A missing table means the migration has not been run. That is worth
     // saying plainly in the log rather than looking like an empty city.
     console.error('[discover/cache] could not read venues', error.message);
-    return { source: 'osm', status: 'error', findings: [], detail: error.message };
+    // One interest's read failing is not the city being empty: what the
+    // others found is still true. Nothing at all is an error, and says so.
+    if (!data.length) return { source: 'osm', status: 'error', findings: [], detail: error.message };
   }
 
   const all = (data ?? [])
@@ -192,13 +243,28 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
   const upcoming = `starts_on.is.null,starts_on.gte.${day}`;
   // Written out rather than derived, so the client can type the rows.
   const HARVEST_COLUMNS = 'id, title, starts_on, when_text, price_text, booking_url, interest, source, venue_name, lat, lng, city, discovery_venues!inner(name, lat, lng, city, street)';
-  const [harvested, external] = await Promise.all([
-    db.from('discovery_events').select(HARVEST_COLUMNS)
+  // A class at a venue the weekly map loads have retired is not on: the
+  // studio's site outliving the studio is not evidence it still runs. Same
+  // pending-migration fallback as cachedVenues, so an unmigrated database
+  // reads exactly as it did before gone_at existed.
+  const readHarvested = (live: boolean) => {
+    let q = db.from('discovery_events').select(HARVEST_COLUMNS)
       .eq('source', 'harvest').in('interest', asStored(keys)).gt('stale_after', fresh)
       .gte('discovery_venues.lat', seeker.lat - near.dLat).lte('discovery_venues.lat', seeker.lat + near.dLat)
-      .gte('discovery_venues.lng', seeker.lng - near.dLng).lte('discovery_venues.lng', seeker.lng + near.dLng)
-      .or(upcoming)
-      .order('starts_on', { ascending: true, nullsFirst: false }).limit(60),
+      .gte('discovery_venues.lng', seeker.lng - near.dLng).lte('discovery_venues.lng', seeker.lng + near.dLng);
+    if (live) q = q.is('discovery_venues.gone_at', null);
+    return q.or(upcoming)
+      .order('starts_on', { ascending: true, nullsFirst: false }).limit(60);
+  };
+  const readLiveHarvested = async () => {
+    const first = await readHarvested(true);
+    if (first.error && (first.error.code === '42703' || /gone_at/.test(first.error.message || ''))) {
+      return readHarvested(false);
+    }
+    return first;
+  };
+  const [harvested, external] = await Promise.all([
+    readLiveHarvested(),
     db.from('discovery_events').select(COLUMNS)
       .neq('source', 'harvest').gt('stale_after', fresh)
       .gte('lat', seeker.lat - far.dLat).lte('lat', seeker.lat + far.dLat)

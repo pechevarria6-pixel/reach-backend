@@ -25,7 +25,7 @@ import { locate } from './geocode.ts';
 import { noteArea, milesBetween } from './cache.ts';
 import { canTurnUp } from './rules.ts';
 import { normalise } from './verify.ts';
-import { closedThroughout, windowFor } from './hours.ts';
+import { closedThroughout, neverOpen, windowFor } from './hours.ts';
 
 /** What the map calls somewhere to sleep, once underscores are spaces. */
 const LODGING_KIND = /\b(hotel|guest ?house|hostel|motel|apartment)s?\b/i;
@@ -174,12 +174,17 @@ async function venuesInBox(
   db: SupabaseClient,
   at: { lat: number; lng: number },
   miles: number,
-  opts: { except?: string[]; all?: boolean; also?: (q: any) => any } = {},
-): Promise<{ data: VenueRow[]; error: ReadError }> {
+  // `also` is told whether this attempt can see osm_tags, so a filter that
+  // names the column can leave it out on the pending-migration retry rather
+  // than failing all three attempts on the same missing column.
+  opts: { except?: string[]; all?: boolean; also?: (q: any, tags: boolean) => any } = {},
+): Promise<{ data: VenueRow[]; error: ReadError; floor?: boolean }> {
   const { dLat, dLng } = boxAround(at.lat, miles);
   const except = (opts.except ?? []).filter(listable);
   const also = opts.also ?? ((q: any) => q);
-  const read = async (columns: string, live: boolean): Promise<{ data: VenueRow[]; error: ReadError }> => {
+  const FULL = 'id, name, kind, interest, website, city, street, lat, lng, osm_tags, opening_hours';
+  const BASIC = 'id, name, kind, interest, website, city, street, lat, lng';
+  const read = async (columns: string, live: boolean): Promise<{ data: VenueRow[]; error: ReadError; floor?: boolean }> => {
     const out: VenueRow[] = [];
     for (let page = 0; page < (opts.all ? MAX_PAGES : 1); page++) {
       let q = db.from('discovery_venues')
@@ -191,7 +196,7 @@ async function venuesInBox(
       // A null kind is filed by its interest and cannot be named here, so
       // it is always let through.
       if (except.length) q = q.or(`kind.is.null,kind.not.in.(${except.map(k => `"${k}"`).join(',')})`);
-      q = also(q);
+      q = also(q, columns === FULL);
       const { data, error } = await (opts.all
         ? q.order('id').range(page * PAGE, page * PAGE + PAGE - 1)
         : q.limit(PER_BOX)) as unknown as { data: VenueRow[] | null; error: ReadError };
@@ -200,19 +205,18 @@ async function venuesInBox(
       if (!opts.all || (data ?? []).length < PAGE) return { data: out, error: null };
     }
     console.error('[real-places] counted to the page limit — the number is a floor', { miles, rows: out.length });
-    return { data: out, error: null };
+    return { data: out, error: null, floor: true };
   };
-  const FULL = 'id, name, kind, interest, website, city, street, lat, lng, osm_tags, opening_hours';
-  const BASIC = 'id, name, kind, interest, website, city, street, lat, lng';
   const pending = (e: ReadError) => !!e && (e.code === '42703' || /gone_at|osm_tags|opening_hours/.test(e.message || ''));
   const first = await read(FULL, true);
   if (!pending(first.error)) return first;
   // gone_at is the newest column, so it is the likeliest to be missing: keep
   // the hours and the cuisine and drop only the filter. Nothing has been
   // marked gone before the column exists, so the answer is the same.
-  console.error('[real-places] reading venues without gone_at — run sql/world-data-phase1-2026-09-24.sql', { code: first.error?.code });
+  console.error('[real-places] reading venues without gone_at — run sql/world-data-phase1-2026-09-24.sql', { code: first.error?.code, message: first.error?.message });
   const second = await read(FULL, false);
   if (!pending(second.error)) return second;
+  console.error('[real-places] reading venues without osm_tags or opening_hours — run sql/venue-hours-2026-09-23.sql', { code: second.error?.code, message: second.error?.message });
   return read(BASIC, false);
 }
 
@@ -233,7 +237,15 @@ export async function placesFor(
   // A menu is capped so it can be read; a count must not be, or the number
   // is an artifact of the cap rather than a fact about the town. "10 places
   // to eat verified here" was true of the list and false of the place.
-  opts: { perKind?: number; max?: number; days?: { from: string; to: string } | null; wantFood?: string[] } = {},
+  //
+  // `eveningOut` says the plan is a night out, so food and drink are checked
+  // against the evening rather than the day (see windowFor). `counted` is
+  // told whether a count reached the page limit, which makes every number
+  // taken from it a floor.
+  opts: {
+    perKind?: number; max?: number; days?: { from: string; to: string } | null; wantFood?: string[];
+    eveningOut?: boolean; counted?: { floor: boolean };
+  } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<RealPlace[]> {
   const perKind = opts.perKind ?? PER_KIND;
@@ -293,8 +305,14 @@ export async function placesFor(
     // Shut on the plan's own days, going by hours the map records and we
     // could parse. No date, no hours, or hours we cannot read: kept. See
     // lib/discovery/hours.ts for why the rule leans that way.
-    if (usable && !(opts.days && closedThroughout(v.opening_hours, opts.days,
-      windowFor(kind, v.interest, opts.days), { lat: at.lat, lng: at.lng, countryCode }))) {
+    //
+    // Undated, the one thing hours can still settle is a place that is never
+    // open: "off" or "closed" says shut whatever the date turns out to be.
+    const here = { lat: at.lat, lng: at.lng, countryCode };
+    const shut = opts.days
+      ? closedThroughout(v.opening_hours, opts.days, windowFor(kind, v.interest, !!opts.eveningOut), here)
+      : neverOpen(v.opening_hours, here);
+    if (usable && !shut) {
       out = {
         id: v.id,
         rawKind: v.kind ?? null,
@@ -336,8 +354,9 @@ export async function placesFor(
     const except = [...perKindNow.entries()]
       .filter(([, c]) => c >= perKind)
       .flatMap(([k]) => [...(rawKinds.get(k) ?? [])]);
-    const { data, error } = await venuesInBox(db, at, miles, { except, all: !Number.isFinite(max) });
+    const { data, error, floor } = await venuesInBox(db, at, miles, { except, all: !Number.isFinite(max) });
     if (error) { readError = error; break; }
+    if (floor && opts.counted) opts.counted.floor = true;
     for (const v of data) if (!held.has(String(v.id))) held.set(String(v.id), v);
   }
 
@@ -358,9 +377,13 @@ export async function placesFor(
   for (const want of wants) {
     const word = want.replace(/[^a-z\s-]/g, '').trim();
     if (word.length < 3) continue;
-    const { data } = await venuesInBox(db, at, RINGS_MILES[RINGS_MILES.length - 1], {
-      also: q => q.or(`name.ilike.*${word}*,interest.ilike.*${word}*,kind.ilike.*${word}*,osm_tags->>cuisine.ilike.*${word}*`),
+    // The cuisine clause only where the column exists: naming a missing
+    // osm_tags in the filter failed every retry, and the food asked for was
+    // quietly never looked for.
+    const { data, error } = await venuesInBox(db, at, RINGS_MILES[RINGS_MILES.length - 1], {
+      also: (q, tags) => q.or(`name.ilike.*${word}*,interest.ilike.*${word}*,kind.ilike.*${word}*${tags ? `,osm_tags->>cuisine.ilike.*${word}*` : ''}`),
     });
+    if (error) console.error('[real-places] could not look for the food asked for', { want: word, code: error.code, message: error.message });
     for (const v of data) if (!held.has(String(v.id))) held.set(String(v.id), v);
   }
 
@@ -407,10 +430,17 @@ export async function placesFor(
     if (places.length >= max) break;
   }
   // What is on at those places, from their own pages.
-  if (places.length) {
+  //
+  // Not for a count. A count is every place in twenty-five miles — twenty
+  // thousand of them in a city — and it wants numbers, not listings: asking
+  // for their events put thousands of ids in one URL, which PostgREST
+  // refuses as too long, and matched each row to its place with a scan of
+  // the whole list, twenty thousand times over, for each of three trips.
+  if (places.length && Number.isFinite(max)) {
+    const byName = new Map(places.map(p => [p.name, p] as const));
     const ids = new Map<string, RealPlace>();
     for (const r of rows) {
-      const p = places.find(x => x.name === r.name);
+      const p = byName.get(r.name);
       if (p && r.id) ids.set(String(r.id), p);
     }
     if (ids.size) {
@@ -760,10 +790,15 @@ export function wouldMangle(text: string, removed: string[]): boolean {
 // cannot be wrong.
 
 /** The scene lines for a town, from the venues we hold, or null for none. */
-export function scenesFrom(places: RealPlace[]): { food: string; music: string } | null {
+export function scenesFrom(places: RealPlace[], opts: { floor?: boolean } = {}): { food: string; music: string } | null {
   if (!places.length) return null;
 
-  const count = (test: (p: RealPlace) => boolean) => places.filter(test).length;
+  // A count that stopped at the page limit is a floor, and says so: "20,000+"
+  // is true of a city where "20,000" would be a number about our reader.
+  const count = (test: (p: RealPlace) => boolean) => {
+    const n = places.filter(test).length;
+    return n && opts.floor ? `${n.toLocaleString('en-US')}+` : n ? n.toLocaleString('en-US') : 0;
+  };
   const isFood = (p: RealPlace) =>
     /restaurant|cafe|bakery|marketplace|food|deli|pub/i.test(`${p.kind} ${p.interest ?? ''}`);
   const isDrink = (p: RealPlace) => /brewery|bar|wine|pub|distiller/i.test(`${p.kind} ${p.interest ?? ''}`);

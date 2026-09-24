@@ -728,7 +728,9 @@ export async function POST(req: NextRequest) {
       supabase,
       // For an evening, never the option's title: it is a name, not a place.
       { city: tripCity || fixedPlace || (isNightPlan ? nightCity : destination), country: tripCountry ?? null, interests: [...cuisines, ...activityVibes, ...musicGenres] },
-      { days: startDate ? { from: String(startDate), to: String(endDate || startDate) } : null, wantFood },
+      // A night out is judged on the evening; a day trip on one date is not
+      // a night out, and needs somewhere open for lunch.
+      { days: startDate ? { from: String(startDate), to: String(endDate || startDate) } : null, wantFood, eveningOut: isNightPlan },
     ).catch((err) => {
       console.error('[generate] could not read the real places', err instanceof Error ? err.message : 'failed');
       return [];
@@ -1597,15 +1599,17 @@ Return JSON only, shaped exactly like this:
     // we hold nothing the line says so, which is a fair thing to tell
     // somebody choosing between three places.
     await Promise.all(trips.map(async (trip) => {
+      const counted = { floor: false };
       const places = await placesFor(
         supabase,
         { city: trip.city || trip.destination, country: trip.country_code ?? null, interests: [...cuisines, ...musicGenres, ...activityVibes] },
         // Uncapped: this is counted, not read, and a count taken off a
         // shortened list is a number about the list rather than the town.
-        { perKind: Infinity, max: Infinity },
+        // Where even the page limit is reached, the count says "+".
+        { perKind: Infinity, max: Infinity, counted },
       ).catch(() => [] as RealPlace[]);
 
-      const scenes = scenesFrom(places);
+      const scenes = scenesFrom(places, { floor: counted.floor });
       if (scenes) {
         trip.food_scene = scenes.food;
         trip.music_scene = scenes.music;

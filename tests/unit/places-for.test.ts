@@ -3,7 +3,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { placesFor, placeMenu } from '../../lib/discovery/real-places.ts';
+import { placesFor, placeMenu, scenesFrom } from '../../lib/discovery/real-places.ts';
 
 const CENTRE = { lat: 35.7796, lng: -78.6382 };
 // A mile north, near enough, at this latitude.
@@ -43,7 +43,7 @@ function term(t: string): (r: Row) => boolean {
 }
 
 /** Just enough of supabase-js for placesFor: filters, limit, range, and nothing else. */
-function fakeDb(venues: Row[], opts: { noGoneAt?: boolean } = {}) {
+function fakeDb(venues: Row[], opts: { noGoneAt?: boolean; noOsmTags?: boolean } = {}) {
   const reads: Array<{ table: string; rows: number }> = [];
   const from = (table: string) => {
     const filters: Array<(r: Row) => boolean> = [];
@@ -51,7 +51,11 @@ function fakeDb(venues: Row[], opts: { noGoneAt?: boolean } = {}) {
     let error: { code: string; message: string } | null = null;
     const rows = table === 'discovery_venues' ? venues : [];
     const b: any = {
-      select(cols: string) { if (opts.noGoneAt && /gone_at/.test(cols)) error = { code: '42703', message: 'column gone_at does not exist' }; return b; },
+      select(cols: string) {
+        if (opts.noGoneAt && /gone_at/.test(cols)) error = { code: '42703', message: 'column gone_at does not exist' };
+        if (opts.noOsmTags && /osm_tags|opening_hours/.test(cols)) error = { code: '42703', message: 'column discovery_venues.osm_tags does not exist' };
+        return b;
+      },
       gte(c: string, v: number) { filters.push(r => Number(r[c]) >= v); return b; },
       lte(c: string, v: number) { filters.push(r => Number(r[c]) <= v); return b; },
       gt() { return b; },
@@ -63,7 +67,9 @@ function fakeDb(venues: Row[], opts: { noGoneAt?: boolean } = {}) {
         filters.push(r => r[c] == null);
         return b;
       },
-      or(expr: string) { const fs = terms(expr).map(term); filters.push(r => fs.some(f => f(r))); return b; },
+      or(expr: string) {
+        if (opts.noOsmTags && /osm_tags/.test(expr)) error = { code: '42703', message: 'column discovery_venues.osm_tags does not exist' };
+        const fs = terms(expr).map(term); filters.push(r => fs.some(f => f(r))); return b; },
       order() { return b; },
       limit(n: number) { limit = n; return b; },
       range(a: number, z: number) { start = a; end = z; return b; },
@@ -177,4 +183,52 @@ test('a count reads the whole radius, not a capped list', async () => {
   const { db } = fakeDb(rows);
   const places = await placesFor(db, WHERE, { perKind: Infinity, max: Infinity }, geocoder);
   assert.equal(places.length, 1500);
+});
+
+test('the food asked for is still found before the hours migration has run', async () => {
+  // osm_tags missing: the cuisine clause named it and every retry failed, so
+  // the Thai place fifteen miles out was never read.
+  const near = Array.from({ length: 12 }, (_, i) => venue(`Ramen Bar ${i}`, 0.2 + i * 0.05));
+  const thai = venue('Lemongrass Thai', 15);
+  const { db } = fakeDb([...near, thai], { noGoneAt: true, noOsmTags: true });
+  const names = (await placesFor(db, WHERE, { wantFood: ['thai'] }, geocoder)).map(p => p.name);
+  assert.ok(names.includes('Lemongrass Thai'), names.join(', '));
+});
+
+test('an undated plan does not name a place the map says is shut for good', async () => {
+  const rows = [
+    venue('Shut Down Diner', 0.2, { opening_hours: 'off' }),
+    venue('Closed Cafe', 0.3, { opening_hours: 'closed' }),
+    venue('Wednesday Supper Club', 0.4, { opening_hours: 'We 19:00-22:00' }),
+    venue('Nobody Mapped Hours', 0.5),
+  ];
+  const names = (await placesFor(fakeDb(rows).db, WHERE, { days: null }, geocoder)).map(p => p.name);
+  assert.deepEqual(names, ['Wednesday Supper Club', 'Nobody Mapped Hours']);
+});
+
+test('a day trip on one date keeps the lunch place a night out drops', async () => {
+  const rows = [venue('Lunch Counter', 0.2, { kind: 'cafe', opening_hours: 'Mo-Su 07:00-15:00' }), venue('Supper Room', 0.3)];
+  const monday = { from: '2026-09-28', to: '2026-09-28' };
+  const dayTrip = (await placesFor(fakeDb(rows).db, WHERE, { days: monday }, geocoder)).map(p => p.name);
+  assert.deepEqual(dayTrip, ['Lunch Counter', 'Supper Room']);
+  const nightOut = (await placesFor(fakeDb(rows).db, WHERE, { days: monday, eveningOut: true }, geocoder)).map(p => p.name);
+  assert.deepEqual(nightOut, ['Supper Room']);
+});
+
+test('a count asks for no listings, and says when it stopped at the page limit', async () => {
+  const rows = Array.from({ length: 1200 }, (_, i) => venue(`Spot ${i}`, (i % 20) + 0.1));
+  const { db } = fakeDb(rows);
+  const tables: string[] = [];
+  const spy = { from: (t: string) => { tables.push(t); return db.from(t); } } as any;
+  const counted = { floor: false };
+  const places = await placesFor(spy, WHERE, { perKind: Infinity, max: Infinity, counted }, geocoder);
+  assert.equal(places.length, 1200);
+  assert.ok(!tables.includes('discovery_events'), 'thousands of ids in one URL is a request PostgREST refuses');
+  assert.equal(counted.floor, false, 'under the page limit the count is exact');
+});
+
+test('a count that reached the page limit is worded as a floor', () => {
+  const places = Array.from({ length: 20000 }, (_, i) => ({ ref: `p${i}`, name: `R${i}`, kind: 'restaurant', interest: 'places to eat', url: null, city: null, source: 'osm' }));
+  assert.match(scenesFrom(places, { floor: true })!.food, /^20,000\+ places to eat verified here/);
+  assert.match(scenesFrom(places)!.food, /^20,000 places to eat verified here/);
 });

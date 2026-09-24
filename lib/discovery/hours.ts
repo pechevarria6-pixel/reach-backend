@@ -32,15 +32,18 @@ export function eveningKind(kind: string, interest: string | null): boolean {
 }
 
 /**
- * The window to check a place against, for a plan with these dates.
+ * The window to check a place against.
  *
- * One date with food, drink or a show is an evening out, so the evening is
- * what matters: a café that closes at four is no use for it. Anything else,
- * and anything on a trip of several days, is judged on the whole day — a
- * museum is for the afternoon, and a lunch spot is lunch on day two.
+ * `eveningOut` is whether the plan is a night out, and it has to be said:
+ * it cannot be read off the dates. A single date was taken to mean an
+ * evening, so a day trip — lunch included — had every café that shuts at
+ * three dropped from its menu. On a night out, food, drink and a show are
+ * judged on the evening, because a café that closes at four is no use for
+ * it. Everything else, and everything on any other plan, is judged on the
+ * whole day: a museum is for the afternoon, and a lunch spot is lunch.
  */
-export function windowFor(kind: string, interest: string | null, days: { from: string; to: string }): Window {
-  return days.from === days.to && eveningKind(kind, interest) ? 'evening' : 'day';
+export function windowFor(kind: string, interest: string | null, eveningOut: boolean): Window {
+  return eveningOut && eveningKind(kind, interest) ? 'evening' : 'day';
 }
 
 /** The dates from `from` to `to`, inclusive, as local calendar days. At most a fortnight. */
@@ -103,6 +106,43 @@ export function closedThroughout(
       // Open and unknown stretches both come back here. Only none at all is closed.
       return oh.getOpenIntervals(start, end).length === 0;
     });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the hours say the place is never open, whatever the date.
+ *
+ * For a plan with no dates, where there is no day to check. "off" and
+ * "closed" are how the map says a place has shut, and they mean it on every
+ * day there is; a menu that prints "hours per OpenStreetMap: off" under a
+ * place it offers has named somewhere its own source says is shut.
+ *
+ * Checked across a whole year from `from`, so seasonal hours ("Jun-Aug
+ * 10:00-18:00") and one day a week are open, not never. The same lean as
+ * closedThroughout: no hours, hours that do not parse, and any open or
+ * unknown stretch all keep the place.
+ */
+export function neverOpen(
+  hours: string | null | undefined,
+  where?: HoursPlace | null,
+  from: Date = new Date(),
+): boolean {
+  const text = String(hours || '').trim();
+  if (!text) return false;
+  let oh: OpeningHours;
+  try {
+    const nominatim = where && Number.isFinite(where.lat) && Number.isFinite(where.lng)
+      ? { lat: where.lat, lon: where.lng, address: { country_code: String(where.countryCode || '').toLowerCase(), state: '' } }
+      : null;
+    oh = new OpeningHours(text, nominatim as never);
+  } catch {
+    return false;
+  }
+  try {
+    const end = new Date(from.getTime() + 366 * 86400_000);
+    return oh.getOpenIntervals(from, end).length === 0;
   } catch {
     return false;
   }
