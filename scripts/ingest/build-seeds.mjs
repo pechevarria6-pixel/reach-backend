@@ -36,7 +36,7 @@
 // last_ingested_at are left alone, and nothing is deleted.
 import { readFileSync } from 'node:fs';
 import { credentials, rest, getAll } from './rest.mjs';
-import { locate } from '../../lib/discovery/geocode.ts';
+import { locateOrFail } from '../../lib/discovery/geocode.ts';
 import { GeofabrikMap } from '../../lib/discovery/geofabrik.ts';
 import { seedCandidates, worldSeeds, nameKey, legacyRegions, knownRegions, regionList } from '../../lib/discovery/regions.ts';
 import { placeSeeds, politeGeocoder, memoFromSeeds, DEFAULT_GEOCODE_CAP } from '../../lib/discovery/seed-build.ts';
@@ -118,7 +118,7 @@ const flush = async () => {
   if (error) { memoFailed += rows.length; console.log(`::warning::could not remember ${rows.length} places: ${error.code}`); }
 };
 
-const geocoder = politeGeocoder({ locate: (city, country, fetchImpl) => locate(city, country, fetchImpl), cap });
+const geocoder = politeGeocoder({ locate: (city, country, fetchImpl) => locateOrFail(city, country, fetchImpl), cap });
 const placed = await placeSeeds({
   candidates,
   memo,

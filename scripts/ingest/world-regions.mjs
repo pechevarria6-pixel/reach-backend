@@ -49,11 +49,20 @@ const index = at > -1
 
 const map = new GeofabrikMap(index, legacyRegions());
 
+// ── The index's own country codes, checked before anything trusts them ──
+// Geofabrik gave five Pacific territories Vanuatu's code and Pitcairn the
+// Marshall Islands'. A code on two files that are not one inside the other
+// is a mistake until somebody checks it against Nominatim and settles it in
+// COUNTRY_OF / GEOCODER_ALSO (lib/discovery/geofabrik.ts).
+const problems = [];
+for (const { code, paths } of map.sharedCodes()) {
+  problems.push(`the index gives ${code} to ${paths.join(', ')} — settle it in COUNTRY_OF`);
+}
+
 // ── Each destination ────────────────────────────────────────────────────
 // A world seed reads only files inside the destination's own country: see
 // regionsForTown in geofabrik.ts for why a circle must not cross a border.
 const out = {};
-const problems = [];
 for (const d of WORLD_DESTINATIONS) {
   const centre = map.regionAt(d.lat, d.lng);
   if (!centre) { problems.push(`${d.name}: no extract holds its centre`); continue; }

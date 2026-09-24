@@ -208,6 +208,41 @@ test('a site name is not guessed where the country says otherwise, and a town is
   assert.deepEqual(siteBase(''), []);
 });
 
+test('a namesake after a comma, or with another country, is not the wonder', () => {
+  // Each of these went to the wonder before: a Mallorca trip got a menu of
+  // Wadi Musa's venues.
+  for (const cc of [null, undefined, '']) {
+    assert.equal(siteTown('Petra, Mallorca', cc), null, 'a village in Mallorca');
+    assert.equal(siteTown('Corcovado, Costa Rica', cc), null, 'a national park');
+    assert.equal(siteTown('Coliseum, Oakland', cc), null, 'an arena');
+    assert.equal(siteTown('Great Wall, Minnesota', cc), null);
+    assert.equal(siteTown('Colosseum, Las Vegas, NV', cc), null);
+  }
+  assert.equal(siteTown('Petra, Mallorca', 'Spain'), null, 'a country given by name');
+  assert.equal(siteTown('Corcovado, Costa Rica', 'Costa Rica'), null);
+  assert.equal(siteTown('Corcovado', 'Costa Rica'), null);
+  assert.equal(siteTown('Corcovado', 'CR'), null);
+  assert.equal(siteTown('Coliseum', 'United States'), null);
+  // The seed builder asks with the plan's name and region joined.
+  assert.deepEqual(siteBase('Petra, Illes Balears', 'ES'), []);
+  assert.deepEqual(siteBase('Coliseum, CA', 'US'), []);
+});
+
+test('the wonder\'s own country or city after the comma still means the wonder', () => {
+  const names = (city: string, cc?: string | null) => siteBase(city, cc).map(d => d.name).sort();
+  assert.deepEqual(names('Petra, Jordan'), ['Wadi Musa']);
+  assert.deepEqual(names('Petra, JO'), ['Wadi Musa']);
+  assert.deepEqual(names('Petra Jordan'), ['Wadi Musa']);
+  assert.deepEqual(names('Petra', 'Jordan'), ['Wadi Musa'], 'the country given by name');
+  assert.deepEqual(names('Colosseum, Rome, Italy'), ['Rome']);
+  assert.deepEqual(names('Corcovado, Rio de Janeiro, Brazil', 'BR'), ['Rio de Janeiro']);
+  assert.deepEqual(names('Machu Picchu, Cusco, Peru', 'PE'), ['Aguas Calientes', 'Cusco']);
+  assert.deepEqual(names('Chichén Itzá, Yucatán, México'), ['Pisté', 'Valladolid']);
+  assert.deepEqual(names('Great Wall, Huairou'), ['Beijing', 'Huairou']);
+  assert.deepEqual(names('Taj Mahal, Agra, India', 'IN'), ['Agra']);
+  assert.deepEqual(names('Great Pyramid of Giza, Egypt'), ['Giza']);
+});
+
 test('a menu for a wonder is read around the base town nearest it', () => {
   assert.equal(siteTown('Machu Picchu')?.name, 'Aguas Calientes', 'at its foot, not Cusco fifty miles off');
   assert.equal(siteTown('Great Wall of China')?.name, 'Huairou', 'beside Mutianyu, not central Beijing');

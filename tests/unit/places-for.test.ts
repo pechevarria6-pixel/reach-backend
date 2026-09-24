@@ -261,6 +261,22 @@ test('the border check never drops a place it cannot be sure of', () => {
   assert.equal(acrossTheBorder('europe/ireland-and-northern-ireland', 'GB'), false);
 });
 
+test('a French or American territory keeps its own venues: Papeete, Cayenne, Guam', () => {
+  // The codes Nominatim gives each town, checked on 2026-09-24.
+  assert.equal(acrossTheBorder('australia-oceania/polynesie-francaise', 'fr'), false, 'Papeete');
+  assert.equal(acrossTheBorder('australia-oceania/polynesie-francaise', 'PF'), false);
+  assert.equal(acrossTheBorder('europe/france/guyane', 'fr'), false, 'Cayenne');
+  assert.equal(acrossTheBorder('australia-oceania/american-oceania', 'us'), false, 'Hagåtña, Guam');
+  assert.equal(acrossTheBorder('australia-oceania/american-oceania', 'GU'), false);
+  assert.equal(acrossTheBorder('australia-oceania/american-oceania', 'AS'), false, 'Pago Pago');
+  assert.equal(acrossTheBorder('australia-oceania/wallis-et-futuna', 'fr'), false, 'Mata-Utu');
+  assert.equal(acrossTheBorder('australia-oceania/tokelau', 'tk'), false, 'Fakaofo');
+  assert.equal(acrossTheBorder('australia-oceania/pitcairn-islands', 'pn'), false, 'Adamstown');
+  // And none of them is Vanuatu any more.
+  assert.equal(acrossTheBorder('australia-oceania/polynesie-francaise', 'VU'), true);
+  assert.equal(acrossTheBorder('australia-oceania/american-oceania', 'VU'), true);
+});
+
 test('a plan to Machu Picchu is read around Aguas Calientes, without asking the geocoder', async () => {
   const AGUAS = { lat: -13.1547, lng: -72.5254 };
   const rows = [

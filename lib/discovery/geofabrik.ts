@@ -65,6 +65,17 @@ export const COUNTRY_OF: Readonly<Record<string, readonly string[]>> = {
   'asia/malaysia-singapore-brunei': ['MY', 'SG', 'BN'],
   'asia/gcc-states': ['SA', 'QA', 'AE', 'OM', 'BH', 'KW'],
   'europe/ireland-and-northern-ireland': ['IE', 'GB'],
+  // The index gives these Vanuatu's code (VU), or the Marshall Islands'
+  // (MH) for Pitcairn: a copy-paste in Geofabrik's own data, seen on
+  // 2026-09-24. Trusted, it filed every venue in Tahiti as Vanuatu's and a
+  // Papeete trip lost all of them to the border check. The codes here are
+  // ISO 3166-1's own; what Nominatim calls them is in GEOCODER_ALSO.
+  'australia-oceania/polynesie-francaise': ['PF'],
+  'australia-oceania/wallis-et-futuna': ['WF'],
+  'australia-oceania/ile-de-clipperton': ['FR'],
+  'australia-oceania/american-oceania': ['AS', 'GU', 'MP', 'UM'],
+  'australia-oceania/tokelau': ['TK'],
+  'australia-oceania/pitcairn-islands': ['PN'],
 };
 
 /**
@@ -80,6 +91,13 @@ export const GEOCODER_ALSO: Readonly<Record<string, readonly string[]>> = {
   'asia/china/macau': ['CN'],
   'north-america/us/puerto-rico': ['US'],
   'north-america/us/us-virgin-islands': ['US'],
+  // Also checked on 2026-09-24: Papeete, Mata-Utu, Cayenne and Clipperton
+  // answer "fr"; Hagåtña, Pago Pago, Saipan and Wake Island answer "us".
+  // (Fakaofo answers "tk" and Adamstown "pn", their own codes above.)
+  'australia-oceania/polynesie-francaise': ['FR'],
+  'australia-oceania/wallis-et-futuna': ['FR'],
+  'europe/france/guyane': ['FR'],
+  'australia-oceania/american-oceania': ['US'],
 };
 
 const pathOf = (pbf: string) => String(pbf || '').replace(BASE, '').replace(/-latest\.osm\.pbf$/, '');
@@ -159,6 +177,27 @@ export class GeofabrikMap {
       if (e?.iso.length) return [...e.iso];
     }
     return [];
+  }
+
+  /**
+   * Country codes the index gives to two files that are not one inside the
+   * other, where COUNTRY_OF does not settle which is right. Two countries do
+   * not share an ISO code, so each of these is a mistake in the index until
+   * somebody checks: the generator refuses to write while any is open,
+   * because a wrong code here drops a whole territory's venues as foreign.
+   */
+  sharedCodes(): Array<{ code: string; paths: string[] }> {
+    const by = new Map<string, Extract[]>();
+    for (const e of this.extracts) {
+      if (COUNTRY_OF[e.path]) continue;
+      for (const c of e.iso) by.set(c, [...(by.get(c) ?? []), e]);
+    }
+    const out: Array<{ code: string; paths: string[] }> = [];
+    for (const [code, files] of by) {
+      const apart = files.filter(f => !files.some(g => g !== f && (this.within(f, g) || this.within(g, f))));
+      if (apart.length > 1) out.push({ code, paths: apart.map(f => f.path).sort() });
+    }
+    return out.sort((a, b) => a.code.localeCompare(b.code));
   }
 
   /**
@@ -254,4 +293,42 @@ export function regionsForTown(
     else abroad.add(r);
   }
   return { regions: [home, ...regions.slice(1).sort()], abroad: [...abroad].sort() };
+}
+
+/**
+ * For a feature read from `region`'s file, the file in another country that
+ * owns its point, or null when the point is this file's (or nobody's).
+ *
+ * Geofabrik cuts each extract a little wide of the border, and not evenly:
+ * Mexico's file reaches north over San Luis, Arizona and San Ysidro, while
+ * Arizona's and California's stop at the line. The table has one row per
+ * place, so whichever file was loaded last used to decide which country a
+ * border venue was in — and a San Luis, AZ restaurant filed under Mexico is
+ * dropped from a Yuma trip as "across the border".
+ *
+ * The owner is the file regionAt picks for the point (the smallest file that
+ * holds it, the legacy files first), which is the same answer whichever file
+ * is being read: the result no longer depends on the order of the loads.
+ * Only an owner in a different country counts; two US states sharing a
+ * sliver of each other are the same country either way.
+ */
+export function ownerAbroad(map: GeofabrikMap, region: string): (at: { lat: number; lng: number }) => string | null {
+  const mine = new Set(map.countriesOf(region));
+  if (!mine.size) return () => null;
+  const self = map.extracts.find(e => e.path === region);
+  // Only another country's file whose box meets this one's can own a point
+  // in it; everything else is ruled out without a polygon test.
+  const others = map.extracts.filter(e => {
+    if (e.path === region) return false;
+    const theirs = map.countriesOf(e.path);
+    if (!theirs.length || theirs.some(c => mine.has(c))) return false;
+    return !self || (e.box[0] <= self.box[2] && e.box[2] >= self.box[0] && e.box[1] <= self.box[3] && e.box[3] >= self.box[1]);
+  });
+  return (at) => {
+    if (!others.some(e => at.lng >= e.box[0] && at.lng <= e.box[2] && at.lat >= e.box[1] && at.lat <= e.box[3])) return null;
+    const owner = map.regionAt(at.lat, at.lng);
+    if (!owner || owner === region) return null;
+    const theirs = map.countriesOf(owner);
+    return theirs.length && !theirs.some(c => mine.has(c)) ? owner : null;
+  };
 }

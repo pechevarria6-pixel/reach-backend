@@ -12,6 +12,7 @@
 // looked up at all: a number we cannot tie to this town is not one to offer.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { milesBetween } from './cache.ts';
+import { acrossTheBorder } from './real-places.ts';
 
 /** The menu reads twenty-five miles around a town; so does this. */
 export const HELD_VENUE_MILES = 25;
@@ -34,7 +35,7 @@ export function likeExactly(name: string): string {
 const same = (a: string, b: string) =>
   a.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim() === b.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
 
-type Row = HeldVenue & { name: string; lat: number | null; lng: number | null };
+type Row = HeldVenue & { name: string; lat: number | null; lng: number | null; region?: string | null };
 type ReadError = { code?: string; message?: string } | null;
 
 /**
@@ -42,22 +43,32 @@ type ReadError = { code?: string; message?: string } | null;
  * null. `error` is set only for a failure worth logging; a column a pending
  * migration has not added yet reads as "nothing held", which is the honest
  * degraded state for a booking lookup.
+ *
+ * `country` is the trip's (ISO 3166-1, as the geocoder gives it). A row
+ * filed in another country's region is not this trip's venue however near
+ * it is: downtown Ciudad Juárez is a mile or two from the point El Paso
+ * geocodes to, and the whole-region load holds Mexico's file, so without
+ * this an El Paso dinner could be offered a +52 number. The same rule as
+ * the menu's (acrossTheBorder), which drops a row only when both countries
+ * are known.
  */
 export async function heldVenueNear(
   db: SupabaseClient,
   name: string,
   at: { lat: number; lng: number } | null,
-  miles = HELD_VENUE_MILES,
+  opts: { country?: string | null; miles?: number } = {},
 ): Promise<{ venue: HeldVenue | null; error: ReadError }> {
+  const miles = opts.miles ?? HELD_VENUE_MILES;
   const wanted = String(name || '').trim();
   if (!wanted || !at || !Number.isFinite(at.lat) || !Number.isFinite(at.lng)) return { venue: null, error: null };
   const dLat = miles / 69;
   const dLng = miles / Math.max(1, 69 * Math.cos((at.lat * Math.PI) / 180));
 
-  const read = (live: boolean) => {
+  // `migrated`: gone_at and region, both from sql/world-data-phase1-2026-09-24.sql.
+  const read = (migrated: boolean) => {
     let q = db
       .from('discovery_venues')
-      .select('name, lat, lng, reservation_platform, reservation_url, phone')
+      .select(`name, lat, lng, reservation_platform, reservation_url, phone${migrated ? ', region' : ''}`)
       .ilike('name', likeExactly(wanted))
       // The weekly map load holds hotels too. A table line is never a
       // hotel's front desk, even when the two share a name.
@@ -65,12 +76,13 @@ export async function heldVenueNear(
       .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
       .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng);
     // A place two weekly loads in a row did not find is not somewhere to ring.
-    if (live) q = q.is('gone_at', null);
+    if (migrated) q = q.is('gone_at', null);
     return q.limit(20) as unknown as Promise<{ data: Row[] | null; error: ReadError }>;
   };
   let { data, error } = await read(true);
-  // gone_at arrives in sql/world-data-phase1-2026-09-24.sql; before it, nothing is gone.
-  if (error && (error.code === '42703' || /gone_at/.test(error.message || ''))) ({ data, error } = await read(false));
+  // gone_at and region arrive in sql/world-data-phase1-2026-09-24.sql; before
+  // it nothing is gone, and no row has a region (so none is across a border).
+  if (error && (error.code === '42703' || /gone_at|region/.test(error.message || ''))) ({ data, error } = await read(false));
   if (error) {
     const pending = /reservation_platform|reservation_url|phone|schema cache/i.test(error.message || '');
     return { venue: null, error: pending ? null : error };
@@ -78,6 +90,7 @@ export async function heldVenueNear(
 
   const best = (data ?? [])
     .filter(r => same(String(r.name || ''), wanted) && Number.isFinite(Number(r.lat)) && Number.isFinite(Number(r.lng)))
+    .filter(r => !acrossTheBorder(r.region, opts.country))
     .map(r => ({ r, miles: milesBetween(at.lat, at.lng, Number(r.lat), Number(r.lng)) }))
     .sort((a, b) => a.miles - b.miles)[0]?.r;
   if (!best) return { venue: null, error: null };

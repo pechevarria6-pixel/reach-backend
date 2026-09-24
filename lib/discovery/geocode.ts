@@ -60,18 +60,43 @@ type NominatimAddress = { country_code?: string; 'ISO3166-2-lvl4'?: string };
  * Null Island is refused for the same reason /api/nearby had to refuse it:
  * 0,0 is a real point in the Gulf of Guinea and a bug everywhere else, and
  * a box around it would confirm nothing and claim to have checked.
+ *
+ * Null here means both "no such town" and "could not ask". A caller that
+ * remembers the answer must use `locateOrFail`, which tells them apart.
  */
 export async function locate(
   city: string,
   country?: string | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Located | null> {
+  const found = await locateOrFail(city, country, fetchImpl);
+  return found === 'failed' ? null : found;
+}
+
+/**
+ * Where a town is; null only when Nominatim answered and found no
+ * settlement; 'failed' when the question never got an answer (a 5xx, a
+ * timeout, the network, a body that is not the JSON it promised).
+ *
+ * The difference matters to anything that remembers the answer: the seed
+ * builder keeps "not found" for 30 days, and one 503 stored as "not found"
+ * would leave a planned town with no venues for a month.
+ */
+export async function locateOrFail(
+  city: string,
+  country?: string | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Located | null | 'failed'> {
   const town = String(city || '').trim();
   if (!town) return null;
 
   const q = [town, country].filter(Boolean).join(', ');
   const url = `${API}?q=${encodeURIComponent(q)}&format=json&limit=1&addressdetails=1`;
 
+  let hits: {
+    lat?: string; lon?: string; display_name?: string; class?: string; type?: string;
+    address?: NominatimAddress;
+  }[];
   try {
     const res = await fetchImpl(url, {
       headers: { 'User-Agent': AGENT },
@@ -80,36 +105,32 @@ export async function locate(
       // same one.
       next: { revalidate: 86400 },
     } as RequestInit);
-    if (!res.ok) return null;
-
-    const hits = await res.json() as {
-      lat?: string; lon?: string; display_name?: string; class?: string; type?: string;
-      address?: NominatimAddress;
-    }[];
-    const hit = Array.isArray(hits) ? hits[0] : null;
-    if (!hit) return null;
-
-    // A canal is not a town. See SETTLEMENT above for why this is here.
-    if (!isSettlement(hit.class, hit.type)) return null;
-
-    const lat = Number(hit.lat);
-    const lng = Number(hit.lon);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    if (lat === 0 && lng === 0) return null;
-
-    // The first part of the display name is the town itself; the rest is the
-    // county and country, which Wikivoyage does not title its pages with.
-    const name = String(hit.display_name || town).split(',')[0].trim() || town;
-    return {
-      lat, lng, name, from: q,
-      countryCode: hit.address?.country_code ?? null,
-      subdivision: hit.address?.['ISO3166-2-lvl4'] ?? null,
-    };
+    if (!res.ok) return 'failed';
+    hits = await res.json();
   } catch {
-    // Unreachable is not "no such town". The caller checks nothing rather
-    // than checking the wrong place.
-    return null;
+    // Unreachable is not "no such town".
+    return 'failed';
   }
+  if (!Array.isArray(hits)) return 'failed';
+  const hit = hits[0];
+  if (!hit) return null;
+
+  // A canal is not a town. See SETTLEMENT above for why this is here.
+  if (!isSettlement(hit.class, hit.type)) return null;
+
+  const lat = Number(hit.lat);
+  const lng = Number(hit.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat === 0 && lng === 0) return null;
+
+  // The first part of the display name is the town itself; the rest is the
+  // county and country, which Wikivoyage does not title its pages with.
+  const name = String(hit.display_name || town).split(',')[0].trim() || town;
+  return {
+    lat, lng, name, from: q,
+    countryCode: hit.address?.country_code ?? null,
+    subdivision: hit.address?.['ISO3166-2-lvl4'] ?? null,
+  };
 }
 
 /**

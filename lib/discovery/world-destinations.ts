@@ -169,24 +169,59 @@ const SITE_COUNTRY: Readonly<Record<string, string>> = {
 };
 
 /**
+ * What may follow a site's name after a comma and still mean that site:
+ * its country, spelt out or as a code, and the city or province it is in.
+ * The base towns' own names are allowed too ("Great Wall, Huairou").
+ * Anything else means a namesake: "Corcovado, Costa Rica" is a national
+ * park, "Petra, Mallorca" a village, "Coliseum, Oakland" an arena.
+ */
+const SITE_PLACES: Readonly<Record<string, readonly string[]>> = {
+  'Machu Picchu': ['peru', 'perú', 'pe', 'cusco', 'cuzco', 'urubamba'],
+  'Petra': ['jordan', 'jo', 'maan', "ma'an"],
+  'Chichén Itzá': ['mexico', 'méxico', 'mx', 'yucatan', 'yucatán'],
+  'Taj Mahal': ['india', 'in', 'agra', 'uttar pradesh'],
+  'Colosseum': ['italy', 'italia', 'it', 'rome', 'roma', 'lazio'],
+  'Christ the Redeemer': ['brazil', 'brasil', 'br', 'rio', 'rio de janeiro'],
+  'Great Wall of China': ['china', 'cn', 'beijing', 'peking'],
+  'Great Pyramid of Giza': ['egypt', 'eg', 'giza', 'cairo'],
+};
+
+const basesOf = (site: string) =>
+  WONDER_BASES.concat(TOP_CITIES).filter(d => d.site === site || d.site?.startsWith(`${site} (`));
+
+/** Whether a folded place (a comma part, or the country given) is the site's own. */
+function ownPlace(site: string, part: string): boolean {
+  const p = fold(part).replace(/\./g, '').trim();
+  if (!p) return true;
+  return SITE_PLACES[site].map(fold).includes(p) || basesOf(site).some(b => fold(b.name) === p);
+}
+
+/**
  * The base towns for a plan whose destination is a wonder rather than a
  * town: "Machu Picchu" is Aguas Calientes and Cusco, "Great Wall" is Beijing
  * and Huairou, "Colosseum" is Rome. Empty when the name is not a site.
  *
- * The whole destination is compared, then the part before the first comma
- * ("Petra, Jordan"). A country given as a two-letter code has to agree:
- * Petra, GR is a village, not the Nabataean city.
+ * The part before the first comma has to be one of the site's names, and
+ * every part after it the site's own country or city ("Petra, Jordan",
+ * "Colosseum, Rome, Italy"). The country given with the plan, as a code or
+ * a name, has to be the site's too. Anything else is a namesake and goes to
+ * the geocoder like any other town: "Petra, Mallorca", "Corcovado, Costa
+ * Rica", "Coliseum, Oakland", "Great Wall, Minnesota", Petra with GR.
  */
 export function siteBase(city: string | null | undefined, countryCode?: string | null): WorldDestination[] {
+  const parts = String(city || '').split(',').map(p => fold(p).replace(/\./g, '').trim());
   const whole = fold(String(city || '')).replace(/[,.]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const first = fold(String(city || '').split(',')[0]);
+  const first = parts[0];
   if (!first) return [];
-  const cc = String(countryCode || '').trim().toUpperCase();
+  const given = String(countryCode || '').trim();
   for (const [site, names] of Object.entries(SITE_NAMES)) {
-    if (!names.includes(whole) && !names.includes(first)) continue;
-    if (/^[A-Z]{2}$/.test(cc) && cc !== SITE_COUNTRY[site]) return [];
+    // "Petra Jordan" typed without the comma is one of the names itself.
+    const byWhole = names.includes(whole);
+    if (!byWhole && !names.includes(first)) continue;
+    if (!byWhole && !parts.slice(1).every(p => ownPlace(site, p))) return [];
+    if (given && !(given.toUpperCase() === SITE_COUNTRY[site] || ownPlace(site, given))) return [];
     // "Great Wall of China (Mutianyu)" is the Great Wall too.
-    return WONDER_BASES.concat(TOP_CITIES).filter(d => d.site === site || d.site?.startsWith(`${site} (`));
+    return basesOf(site);
   }
   return [];
 }

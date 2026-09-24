@@ -54,7 +54,15 @@ export function queryKey(c: { name: string; region?: string | null; country?: st
   return [nameKey(c.name), nameKey(String(c.region || '')), String(c.country || '').trim().toUpperCase()].join('|');
 }
 
-export type Geocode = (query: string, country: string | null) => Promise<Located | null | 'stopped'>;
+/**
+ * Located; null for "Nominatim answered and found no such town" (remembered
+ * for NOT_FOUND_DAYS); 'failed' for a question that got no answer (asked
+ * again next run, never remembered); 'stopped' when this run asks no more.
+ */
+export type Geocode = (query: string, country: string | null) => Promise<Located | null | 'failed' | 'stopped'>;
+
+/** Failed requests in a row after which Nominatim is taken to be down for this run. */
+export const FAILURES_BEFORE_STOP = 3;
 
 /**
  * Nominatim, asked politely: one request a second, at most `cap` in a run,
@@ -65,7 +73,8 @@ export type Geocode = (query: string, country: string | null) => Promise<Located
  * count, so the settlement rule and the Null Island rule stay in one place.
  */
 export function politeGeocoder(opts: {
-  locate: (city: string, country: string | null, fetchImpl: typeof fetch) => Promise<Located | null>;
+  /** geocode.ts's `locateOrFail`, or `locate` (a failure is still caught at the fetch). */
+  locate: (city: string, country: string | null, fetchImpl: typeof fetch) => Promise<Located | null | 'failed'>;
   fetchImpl?: typeof fetch;
   cap?: number;
   spacingMs?: number;
@@ -80,15 +89,28 @@ export function politeGeocoder(opts: {
   let asked = 0;
   let last = -Infinity;
   let stopped: string | null = null;
+  let failedInRow = 0;
+  // Whether the request behind the current answer failed. `locate` turns a
+  // 5xx, a timeout and a dropped connection into null, the same null as "no
+  // such town"; this is how the difference survives it.
+  let thisFailed = false;
 
   const counted = (async (url: RequestInfo | URL, init?: RequestInit) => {
     const wait = last + spacing - clock();
     if (wait > 0) await sleep(wait);
     last = clock();
     asked++;
-    const res = await fetchImpl(url, init);
+    let res: Response;
+    try {
+      res = await fetchImpl(url, init);
+    } catch (e) {
+      thisFailed = true;
+      throw e;
+    }
     if (res.status === 429 || res.status === 403) {
       stopped = `Nominatim answered ${res.status} after ${asked} request${asked === 1 ? '' : 's'}`;
+    } else if (!res.ok) {
+      thisFailed = true;
     }
     return res;
   }) as typeof fetch;
@@ -96,10 +118,24 @@ export function politeGeocoder(opts: {
   const geocode: Geocode = async (query, country) => {
     if (stopped) return 'stopped';
     if (asked >= cap) { stopped = `reached this run's cap of ${cap} requests`; return 'stopped'; }
-    const found = await opts.locate(query, country, counted);
+    thisFailed = false;
+    let found: Located | null | 'failed';
+    try {
+      found = await opts.locate(query, country, counted);
+    } catch {
+      found = 'failed';
+    }
     // A refused request comes back from locate as null, which is not "no
     // such town" and must not be remembered as one.
     if (stopped) return 'stopped';
+    if (found === 'failed' || thisFailed) {
+      failedInRow++;
+      if (failedInRow >= FAILURES_BEFORE_STOP) {
+        stopped = `${failedInRow} Nominatim requests in a row got no answer (5xx, timeout or network)`;
+      }
+      return 'failed';
+    }
+    failedInRow = 0;
     return found;
   };
   return { geocode, asked: () => asked, stopped: () => stopped };
@@ -233,7 +269,9 @@ export async function placeSeeds(input: {
       } else {
         const hint = [c.region].filter(Boolean).join(', ');
         const found = await input.geocode(hint ? `${c.name}, ${hint}` : c.name, c.country ?? null);
-        if (found === 'stopped') { waiting++; continue; }
+        // Stopped, or asked and not answered: either way nothing was learned,
+        // so nothing is remembered and the town is asked about next run.
+        if (found === 'stopped' || found === 'failed') { waiting++; continue; }
         if (!found) {
           await keep({ query_key: key, name: c.name, lat: null, lng: null, country_code: null, asked_at: now.toISOString() });
           skipped.push(`${c.name} — the geocoder could not place it`);

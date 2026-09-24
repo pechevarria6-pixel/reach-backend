@@ -24,7 +24,8 @@
 //       no download, no osmium, no database: a fixture run
 //
 // Other flags: --pbf-dir <dir> (where downloads are kept; default .pbf),
-// --pbf <file> (a download already on disk), --accept-drop (see docs/INGEST.md),
+// --pbf <file> (a download already on disk), --index <file> (Geofabrik's
+// index-v1.json on disk, for the border check), --accept-drop (see docs/INGEST.md),
 // --names (print seed names and per-seed counts; never in the public Actions log),
 // --published-md5 (print Geofabrik's current checksum for --region and exit).
 //
@@ -41,7 +42,8 @@ import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { credentials, rest, getAll } from './rest.mjs';
 import { ingestRegion, osmiumFilters, looksLikePbf } from '../../lib/discovery/ingest.ts';
-import { knownRegions, geofabrikUrl, regionList } from '../../lib/discovery/regions.ts';
+import { knownRegions, geofabrikUrl, regionList, legacyRegions } from '../../lib/discovery/regions.ts';
+import { GeofabrikMap, ownerAbroad } from '../../lib/discovery/geofabrik.ts';
 import { dueRegions, planBatches } from '../../lib/discovery/ingest-schedule.ts';
 
 const MIGRATION = 'sql/world-data-phase1-2026-09-24.sql';
@@ -281,6 +283,32 @@ async function* exported(pbf) {
   await done;
 }
 
+// ── Whose side of the border each point is on ─────────────────────────
+// Geofabrik's polygons overlap at borders (Mexico's reaches over San Luis,
+// Arizona), and the table has one row per place, so without this the last
+// file loaded would decide which country a border venue is in. The index is
+// one request; a load that cannot read it does not guess, it goes red.
+// --index <file> uses a copy on disk; a --features fixture run without one
+// skips the check and says so.
+let abroad = null;
+const indexFile = value('index');
+if (indexFile || !featuresFile) {
+  let index;
+  try {
+    index = indexFile
+      ? JSON.parse(readFileSync(indexFile, 'utf8'))
+      : await (await fetch('https://download.geofabrik.de/index-v1.json', { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(120_000) })).json();
+  } catch (e) {
+    die(`could not read Geofabrik's index, so could not tell which side of a border a place is on: ${e instanceof Error ? e.message : e}`);
+  }
+  const map = new GeofabrikMap(index, legacyRegions());
+  if (map.extracts.length < 100) die(`Geofabrik's index holds ${map.extracts.length} extracts — not believing it`);
+  if (!map.has(region)) die(`${region} is not in Geofabrik's index`);
+  abroad = ownerAbroad(map, region);
+} else {
+  console.log('  (fixture run without --index: places another country\'s file owns are not set aside)');
+}
+
 // ── The run ────────────────────────────────────────────────────────────
 
 let features;
@@ -304,6 +332,7 @@ try {
     seeds,
     features,
     acceptDrop: flag('accept-drop'),
+    ...(abroad ? { ownerAbroad: abroad } : {}),
   });
 } catch (e) {
   // osmium dying half way through the export lands here.

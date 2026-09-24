@@ -197,7 +197,11 @@ was typed after it ("Fayetteville, NC"), and the plan's country.
 - **Once per town, ever.** Nominatim is asked only about a town it has never
   been asked about. The answer — found or not — is kept in `ingest_places`
   under the name, state and country as typed, and read back on every later
-  run; "not found" is asked again after thirty days.
+  run; "not found" is asked again after thirty days. Only an answer is
+  kept: a request that failed (a 5xx, the 8-second timeout, the network, a
+  body that is not JSON) is not "not found" and is asked again next run
+  (`locateOrFail()`). Three failures in a row stop the asking for the run,
+  the same way a 429 does.
 - **At most one request a second, at most 100 a run.** A 429 (or a 403, how
   Nominatim answers a blocked agent) stops the asking at once and cleanly:
   everything already placed is written, and the rest wait for tomorrow. The
@@ -270,8 +274,29 @@ restaurants are in the table beside San Diego's and Ciudad Juárez's a mile
 from downtown El Paso. The menu drops a row whose region's countries do not
 include the trip's (`acrossTheBorder()`), and only when both are known: a
 sweep row (no region) is kept, and Hong Kong's rows answer to "cn" because
-that is what Nominatim calls Hong Kong. Discover does not have the trip's
+that is what Nominatim calls Hong Kong. The booking screen's venue lookup
+(`heldVenueNear()`) applies the same rule, so an El Paso dinner is never
+offered the Juárez branch's +52 number. Discover does not have the trip's
 country and does not filter yet (see "Still open").
+
+A row's region has to be right for this to mean anything, and Geofabrik's
+polygons overlap unevenly at borders: Mexico's reaches north over San Luis,
+Arizona and San Ysidro, while Arizona's and California's stop at the line.
+So a load sets aside a feature whose point another country's file owns
+(`ownerAbroad()`: the file `regionAt` picks, the same answer whichever file
+is being read) and counts it as `another_country`; that file writes it.
+Without this the last file loaded decided a border venue's country. The load
+reads Geofabrik's index for it (one request; `--index <file>` for a copy on
+disk) and goes red if it cannot.
+
+The index's own country codes are not trusted blind either. On 2026-09-24 it
+gave French Polynesia, Wallis and Futuna, Clipperton, Tokelau and American
+Oceania Vanuatu's code, and Pitcairn the Marshall Islands', which would have
+dropped every Tahiti venue from a Papeete trip. `COUNTRY_OF` and
+`GEOCODER_ALSO` in `lib/discovery/geofabrik.ts` settle them (checked against
+Nominatim: Papeete and Cayenne answer "fr", Guam and Pago Pago "us"), and
+`world-regions.mjs` refuses to write while any code sits on two unrelated
+files.
 
 Each place carries `street` and `hours` (the map's `opening_hours`). The menu
 prints them as `hours per OpenStreetMap: …` and tells the model they are

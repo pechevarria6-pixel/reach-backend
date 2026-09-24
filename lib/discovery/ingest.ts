@@ -149,7 +149,7 @@ export interface VenueRow {
   harvest_status?: 'skip';
 }
 
-export type Skip = 'no_name' | 'no_website' | 'no_point' | 'not_a_kind' | 'cannot_turn_up' | 'no_id';
+export type Skip = 'no_name' | 'no_website' | 'no_point' | 'not_a_kind' | 'cannot_turn_up' | 'no_id' | 'another_country';
 
 /**
  * The rows one mapped feature becomes, or why it becomes none.
@@ -489,6 +489,14 @@ export async function ingestRegion(input: {
    * deliberate change to what the load keeps; see docs/INGEST.md.
    */
   acceptDrop?: boolean;
+  /**
+   * The file in another country that owns a point, or null when it is this
+   * region's: geofabrik.ts's ownerAbroad. A feature another country's file
+   * owns is left for that file to write, so a venue's region — and with it
+   * the country the menu's border check reads — never depends on which
+   * file happened to be loaded last.
+   */
+  ownerAbroad?: (at: { lat: number; lng: number }) => string | null;
 }): Promise<IngestReport> {
   const { db, region, seeds } = input;
   const log = input.log ?? (line => console.log(line));
@@ -560,6 +568,10 @@ export async function ingestRegion(input: {
       continue;
     }
     const first = out.rows[0];
+    if (input.ownerAbroad?.({ lat: first.lat, lng: first.lng })) {
+      report.skipped.another_country = (report.skipped.another_country ?? 0) + 1;
+      continue;
+    }
     const key = `${first.osm_type}/${first.osm_id}`;
     if (!places.has(key)) {
       places.add(key);

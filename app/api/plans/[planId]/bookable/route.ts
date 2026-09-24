@@ -413,7 +413,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   // Where the trip is on the map, for finding its restaurants in our venue
   // table. Asked once, and only when there is a restaurant line to look up.
-  let placed: Promise<{ lat: number; lng: number } | null> | null = null;
+  let placed: Promise<{ lat: number; lng: number; countryCode?: string | null } | null> | null = null;
   const tripPoint = () => (placed ??= locatePlan(plan).catch(() => null));
 
   for (const item of candidates as Item[]) {
@@ -456,7 +456,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       const venueName = (item.venue_name || '').trim();
       const at = venueName ? await tripPoint() : null;
       if (venueName && !at) console.error('[bookable] could not place this trip, so no venue details are offered', { planId: params.planId });
-      const { venue, error: venueError } = await heldVenueNear(ctx.db, venueName, at);
+      // And in the trip's country: El Paso's restaurants, not the Juárez
+      // branch a mile across the river. The geocoder's code first, as the
+      // menu uses it; the stored country only when it is a code.
+      const tripCountry = at?.countryCode || (/^[A-Z]{2}$/.test(countryCode) ? countryCode : null);
+      const { venue, error: venueError } = await heldVenueNear(ctx.db, venueName, at, { country: tripCountry });
       // A column that does not exist yet means the migration is pending, and
       // every restaurant falls to the phone lane — which is the honest
       // degraded state, not an error (heldVenueNear reports those as none).

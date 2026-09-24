@@ -126,3 +126,42 @@ test('the committed table never offers a continent, a split country, an overlay 
   assert.deepEqual(silent, []);
   assert.ok(known.size > 300, `only ${known.size} files: the table was cut short`);
 });
+
+// ── The index's own country codes are not trusted blind ────────────────
+
+test('a code the index gives two unrelated files is reported, until COUNTRY_OF settles it', () => {
+  const wrong = new GeofabrikMap({ features: [
+    extract('australia-oceania/vanuatu', box(166, -21, 171, -13), ['VU']),
+    extract('australia-oceania/tonga', box(-176, -23, -173, -15), ['VU']),
+    extract('australia-oceania/marshall-islands', box(160, 4, 173, 15), ['MH']),
+    extract('australia-oceania/nauru', box(166.8, -0.6, 167, -0.5), ['MH']),
+    extract('north-america/us', box(-125, 32.5, -66, 50), ['US']),
+    extract('north-america/us/texas', box(-107, 25, -93, 37), ['US']),
+  ] });
+  assert.deepEqual(wrong.sharedCodes(), [
+    { code: 'MH', paths: ['australia-oceania/marshall-islands', 'australia-oceania/nauru'] },
+    { code: 'VU', paths: ['australia-oceania/tonga', 'australia-oceania/vanuatu'] },
+  ], 'a state inside its own country sharing the code is not a mistake');
+  // The files Geofabrik got wrong on 2026-09-24 are settled in COUNTRY_OF.
+  const real = new GeofabrikMap({ features: [
+    extract('australia-oceania/vanuatu', box(166, -21, 171, -13), ['VU']),
+    extract('australia-oceania/polynesie-francaise', box(-155, -28, -134, -7), ['VU']),
+    extract('australia-oceania/american-oceania', box(144, -15, -168, 21), ['VU']),
+    extract('australia-oceania/marshall-islands', box(160, 4, 173, 15), ['MH']),
+    extract('australia-oceania/pitcairn-islands', box(-131, -26, -124, -23), ['MH']),
+  ] });
+  assert.deepEqual(real.sharedCodes(), []);
+  assert.deepEqual(real.countriesOf('australia-oceania/polynesie-francaise'), ['PF']);
+});
+
+test('the committed table gives Vanuatu\'s and the Marshall Islands\' codes to them alone', () => {
+  const holding = (c: string) => Object.entries(GEOFABRIK_REGIONS).filter(([, codes]) => codes.includes(c)).map(([p]) => p);
+  assert.deepEqual(holding('VU'), ['australia-oceania/vanuatu']);
+  assert.deepEqual(holding('MH'), ['australia-oceania/marshall-islands']);
+  assert.deepEqual(GEOFABRIK_REGIONS['australia-oceania/polynesie-francaise'], ['PF']);
+  assert.deepEqual(GEOFABRIK_REGIONS['australia-oceania/wallis-et-futuna'], ['WF']);
+  assert.deepEqual(GEOFABRIK_REGIONS['australia-oceania/ile-de-clipperton'], ['FR']);
+  assert.deepEqual(GEOFABRIK_REGIONS['australia-oceania/american-oceania'], ['AS', 'GU', 'MP', 'UM']);
+  assert.deepEqual(GEOFABRIK_REGIONS['australia-oceania/tokelau'], ['TK']);
+  assert.deepEqual(GEOFABRIK_REGIONS['australia-oceania/pitcairn-islands'], ['PN']);
+});

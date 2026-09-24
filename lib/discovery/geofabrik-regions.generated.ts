@@ -442,7 +442,10 @@ export const GEOFABRIK_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "YE"
   ],
   "australia-oceania/american-oceania": [
-    "VU"
+    "AS",
+    "GU",
+    "MP",
+    "UM"
   ],
   "australia-oceania/australia/act": [
     "AU"
@@ -493,7 +496,7 @@ export const GEOFABRIK_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "FJ"
   ],
   "australia-oceania/ile-de-clipperton": [
-    "VU"
+    "FR"
   ],
   "australia-oceania/kiribati": [
     "KI"
@@ -523,10 +526,10 @@ export const GEOFABRIK_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "PG"
   ],
   "australia-oceania/pitcairn-islands": [
-    "MH"
+    "PN"
   ],
   "australia-oceania/polynesie-francaise": [
-    "VU"
+    "PF"
   ],
   "australia-oceania/samoa": [
     "WS"
@@ -535,7 +538,7 @@ export const GEOFABRIK_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "SB"
   ],
   "australia-oceania/tokelau": [
-    "VU"
+    "TK"
   ],
   "australia-oceania/tonga": [
     "TO"
@@ -547,7 +550,7 @@ export const GEOFABRIK_REGIONS: Readonly<Record<string, readonly string[]>> = {
     "VU"
   ],
   "australia-oceania/wallis-et-futuna": [
-    "VU"
+    "WF"
   ],
   "central-america/bahamas": [
     "BS"
