@@ -157,12 +157,14 @@ export function sendAnswersNeeded(to: string, opts: { planTitle: string; groupNa
 
 export function sendBookingConfirmation(to: string, opts: {
   planTitle: string;
-  items: Array<{ label: string; detail?: string | null; confirmation?: string | null }>;
+  booked: Array<{ label: string; detail?: string | null; confirmation?: string | null }>;
+  failed: Array<{ label: string }>;
+  held: Array<{ label: string }>;
   url: string;
 }) {
   // This used to paste JSON.stringify(details) into a <pre> block and send it
   // to a customer.
-  const rows = opts.items.map(i => `
+  const rows = opts.booked.map(i => `
     <tr>
       <td style="padding:10px 0;border-bottom:1px solid #EFE8DA;">
         <div style="font-weight:600;font-size:14px;">${escape(i.label)}</div>
@@ -172,16 +174,26 @@ export function sendBookingConfirmation(to: string, opts: {
         ${i.confirmation ? escape(i.confirmation) : ''}
       </td>
     </tr>`).join('');
+  const names = (xs: Array<{ label: string }>) => escape(xs.map(x => x.label.toLowerCase()).join(', '));
 
-  // One booking at a time: this is sent as each one is confirmed, so it says
-  // what was booked — never "everything is confirmed" over a hotel while the
-  // flight is still to go.
-  const what = opts.items.length === 1 ? opts.items[0].label : `${opts.items.length} bookings`;
-  return send(to, `Booked — ${what} for ${opts.planTitle}`, shell('Booked', `
+  // Sent once, when nothing is waiting any more, and it says what happened:
+  // "everything is confirmed" only when that is what happened.
+  const whole = !opts.failed.length && !opts.held.length;
+  const failedLine = opts.failed.length
+    ? `<p style="font-size:14px;line-height:1.6;margin:18px 0 0;"><strong>Didn't go through:</strong> ${names(opts.failed)}. Nothing was charged for it — open the trip to try again or pick another option.</p>`
+    : '';
+  const heldLine = opts.held.length
+    ? `<p style="font-size:14px;line-height:1.6;margin:12px 0 0;"><strong>Held back for later:</strong> ${names(opts.held)}. Not booked yet — book it from the trip whenever you're ready.</p>`
+    : '';
+  return send(to, whole ? `Booked — ${opts.planTitle}` : `Booked so far — ${opts.planTitle}`, shell(whole ? 'Booked' : 'Booked so far', `
     <p style="font-size:15px;line-height:1.6;margin:0 0 18px;">
-      This is booked for <strong>${escape(opts.planTitle)}</strong>. Anything else on the trip is on its own list in the app.
+      ${whole
+        ? `Everything Reach books for <strong>${escape(opts.planTitle)}</strong> is confirmed.`
+        : `Here is where the bookings for <strong>${escape(opts.planTitle)}</strong> stand.`}
+      Anything you book yourself is on the list in the app.
     </p>
     <table style="width:100%;border-collapse:collapse;">${rows}</table>
+    ${failedLine}${heldLine}
     <p style="margin-top:22px;"><a href="${escape(opts.url)}" style="${emailButtonStyle}">Open your itinerary</a></p>`),
   'booking confirmation');
 }

@@ -52,6 +52,7 @@ import { partyChange } from '@/lib/booking/party';
 import { atVersion, claimBooking, finishClaim, midClaim, M1 } from '@/lib/booking/claim';
 import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 import { sendBookingConfirmation } from '@/lib/email';
+import { bookingSummary } from '@/lib/booking/summary';
 import { track } from '@/lib/track';
 import { reportPaidFailure } from '@/lib/paid-failure';
 import { pinQuoted, termsChanged } from '@/lib/booking/pin';
@@ -485,38 +486,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return refuse(500, { error: 'This was booked but we could not save it. Do not book it again — we have been told.' });
   }
 
-  // Nothing told anyone their booking had happened. The template for this
-  // has existed since the first version and was never called from anywhere.
-  if (result.status === 'confirmed') {
-    const [{ data: person }, { data: plan }] = await Promise.all([
-      db.from('users').select('email').eq('id', ctx.user.id).maybeSingle(),
-      db.from('plans').select('title').eq('id', booking.plan_id).maybeSingle(),
-    ]);
-    if (person?.email) {
-      const base = appUrl(req);
-      // Best-effort: a mail failure must not turn a successful booking into
-      // an error the caller has to interpret.
-      const v = String(updated.vertical ?? '');
-      const mail = await sendBookingConfirmation(person.email, {
-        planTitle: plan?.title || 'your trip',
-        items: [{
-          label: v ? `${v[0].toUpperCase()}${v.slice(1)}` : 'Booking',
-          detail: result.detail || (updated.detail as string | null) || null,
-          confirmation: result.providerRef || (updated.provider_ref as string | null) || null,
-        }],
-        url: `${base.replace(/\/$/, '')}/home`,
-      });
-      if (!mail.sent) console.error('[approve] confirmation email not sent', mail);
-    }
-  }
-
   // ── The plan itself ─────────────────────────────────────────────────
   // Booked when nothing is waiting, mid-booking, pending or failed, and at
   // least one thing came back done. `pending` used to pass: a flight the
   // priced-concierge lane had taken money for, with nobody booking it, read
   // as a booked trip.
   const { data: siblings, error: siblingError } = await db
-    .from('bookings').select('status').eq('plan_id', booking.plan_id);
+    .from('bookings').select('status, vertical, detail, provider_ref').eq('plan_id', booking.plan_id);
   if (siblingError) {
     console.error('[approve] could not read the plan\'s other bookings', { planId: booking.plan_id, error: siblingError.message });
   } else if (planBooked((siblings ?? []).map(b => b.status)) && ctx.plan.status !== 'booked') {
@@ -524,6 +500,28 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .update({ status: 'booked', booked_at: new Date().toISOString() })
       .eq('id', booking.plan_id);
     if (planError) console.error('[approve] could not mark the plan booked', { planId: booking.plan_id, error: planError.message });
+  }
+
+  // One email for the round, sent by whichever approval leaves nothing
+  // waiting — not one per booking, each headed as if it were the lot. Two
+  // approvals finishing in the same instant can both see nothing waiting and
+  // both send; none finishing can leave it unsent, because the last to write
+  // reads everyone else's row.
+  const summary = !siblingError && result.status === 'confirmed' ? bookingSummary(siblings ?? []) : null;
+  if (summary) {
+    const [{ data: person }, { data: plan }] = await Promise.all([
+      db.from('users').select('email').eq('id', ctx.user.id).maybeSingle(),
+      db.from('plans').select('title').eq('id', booking.plan_id).maybeSingle(),
+    ]);
+    if (person?.email) {
+      // Best-effort: a mail failure must not turn a successful booking into
+      // an error the caller has to interpret.
+      const mail = await sendBookingConfirmation(person.email, {
+        planTitle: plan?.title || 'your trip', ...summary,
+        url: `${appUrl(req).replace(/\/$/, '')}/home`,
+      });
+      if (!mail.sent) console.error('[approve] confirmation email not sent', mail);
+    }
   }
 
   return NextResponse.json({ status: updated.status, booking: updated });
