@@ -20,6 +20,7 @@ import { notOnBooked } from '@/lib/joining';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { track } from '@/lib/track';
 import { cancelUnpaidIntent, UNPAID_STATES } from '@/lib/stripe-intents';
+import { refundsOpen } from '@/lib/refunds';
 
 async function fundingStatus(
   db: SupabaseClient, planId: string, groupId: string, userId: string, budgetCents: number
@@ -118,6 +119,10 @@ async function fundingStatus(
     myShareCents,
     myPaidCents,
     myRemainingCents: Math.max(0, myShareCents - myPaidCents),
+    // Whether "Refund what wasn't spent" can work yet. Before
+    // sql/wave1-refunds-2026-09-22.sql runs, every press answered 503 under a
+    // screen saying the money could be taken back from it.
+    refundsOpen: await refundsOpen(db, planId),
     contributions: contributions || [],
   };
 }

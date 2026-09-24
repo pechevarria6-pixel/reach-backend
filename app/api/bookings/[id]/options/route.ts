@@ -113,9 +113,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .select('id').eq('plan_id', booking.plan_id).eq('status', 'succeeded').limit(1);
     if (paidErr) console.error('[options] could not check payments before re-pricing', { id: params.id, code: paidErr.code });
     if (paidErr || paid?.length) {
+      const kind = booking.vertical === 'hotel' ? 'hotel' : 'flight';
       return NextResponse.json({
         code: 'paid',
-        error: `Somebody has already paid towards this trip, so it isn't priced again for a different number of people — what they paid against stays as it is. To change it, pick a different ${booking.vertical === 'hotel' ? 'hotel' : 'flight'} from the options. Nothing was changed.`,
+        error: `Somebody has already paid towards this trip, so it isn't priced again for a different number of people — what they paid against stays as it is. To change it, pick a different ${kind} from the options. Nothing was changed.`,
       }, { status: 409 });
     }
   }
@@ -133,9 +134,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     ?? (booking.vertical === 'hotel' ? request.hotel?.hotelId : request.flight?.offerKey)
     ?? undefined;
   if (!key) {
+    const kind = booking.vertical === 'hotel' ? 'hotel' : 'flights';
     return NextResponse.json({
       code: 'pick',
-      error: `We didn't keep which ${booking.vertical === 'hotel' ? 'hotel' : 'flights'} this was when it was priced, so it can't be priced again as the same one. Pick one from the options. Nothing was changed.`,
+      error: `We didn't keep which ${kind} this was when it was priced, so it can't be priced again as the same one. Pick one from the options. Nothing was changed.`,
     }, { status: 409 });
   }
   if (booking.vertical === 'hotel' && request.hotel) {

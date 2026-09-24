@@ -54,10 +54,27 @@ export function pinQuoted<T extends Payload>(request: T, vertical: unknown, raw:
 }
 
 /**
+ * The earliest time a hotel rate lists a cancellation charge from, as the
+ * hotel wrote it (to the minute), from LiteAPI's
+ * `cancellationPolicies.cancelPolicyInfos`. Which clock it is in is not
+ * given, so it is never converted. Null when the rate did not say.
+ */
+export function cancelChargeFrom(infos: unknown): string | null {
+  if (!Array.isArray(infos)) return null;
+  const times = infos
+    .map(i => obj(i)?.cancelTime)
+    .filter((t): t is string => typeof t === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(t))
+    .map(t => t.slice(0, 16).replace('T', ' '))
+    .sort();
+  return times[0] ?? null;
+}
+
+/**
  * The terms approval holds a fresh quote to: what the screen showed before
  * anybody paid. A flight's are its conditions in words; a hotel's is the
- * rate's own refundable flag (RFN / NRFN). Null when nothing was shown, and
- * then nothing is compared.
+ * rate's own refundable flag (RFN / NRFN) and, for a refundable rate, the
+ * deadline the screen named ("a charge for cancelling from …"). Null when
+ * nothing was shown, and then nothing is compared.
  */
 export function shownTerms(vertical: unknown, raw: unknown): string | null {
   const r = obj(raw);
@@ -67,8 +84,24 @@ export function shownTerms(vertical: unknown, raw: unknown): string | null {
     return terms ? terms.join(' | ') : null;
   }
   if (vertical === 'hotel') {
-    const tag = obj(r.cancellationPolicies)?.refundableTag;
-    return typeof tag === 'string' && tag ? tag : null;
+    const policies = obj(r.cancellationPolicies);
+    const tag = policies?.refundableTag;
+    if (typeof tag !== 'string' || !tag) return null;
+    const from = tag === 'RFN' ? cancelChargeFrom(policies?.cancelPolicyInfos) : null;
+    return from ? `${tag} from ${from}` : tag;
   }
   return null;
+}
+
+/**
+ * Whether a fresh quote is on other terms than the ones shown. A hotel rate
+ * stored before its deadline was read is held to its refundable flag alone:
+ * the screen named no deadline for it, so none is compared.
+ */
+export function termsChanged(vertical: unknown, shownRaw: unknown, freshRaw: unknown): boolean {
+  const shown = shownTerms(vertical, shownRaw);
+  if (!shown) return false;
+  const fresh = shownTerms(vertical, freshRaw);
+  if (vertical === 'hotel' && !shown.includes(' from ')) return (fresh ?? '').split(' from ')[0] !== shown;
+  return fresh !== shown;
 }

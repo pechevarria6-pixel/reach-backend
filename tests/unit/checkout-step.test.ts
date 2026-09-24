@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  checkoutState, supportMailto, refundWords, termsFor, holdWords, namesMe, SUPPORT_EMAIL,
+  checkoutState, supportMailto, refundWords, termsFor, PRICE_CHECK_WORDS, TERMS_KEPT_WORDS, namesMe, SUPPORT_EMAIL,
   type CheckoutRow, type FundingView,
 } from '../../lib/checkout.ts';
 import { approveOutcome, nextStepFor, stillProblems } from '../../lib/booking/approve-outcome.ts';
@@ -127,6 +127,58 @@ test('"someone else is booking this" goes once the other press has finished', ()
   assert.deepEqual(left.map(p => p.bookingId), ['b', 'c']);
 });
 
+test('a booking the provider refused is priced again, never "tried again" into nothing', () => {
+  // Approval marks a refused row failed and only runs rows still waiting, so
+  // "Try again" skipped it and landed on the done screen.
+  const left = stillProblems([
+    { bookingId: 'f', step: 'retry' as const },
+    { bookingId: 'w', step: 'retry' as const },
+  ], [{ id: 'f', status: 'failed' }, { id: 'w', status: 'awaiting_approval' }]);
+  assert.deepEqual(left.map(p => [p.bookingId, p.step]), [['f', 'price_again'], ['w', 'retry']]);
+  const src = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(src, /p\.step==="price_again"/);
+});
+
+// ─── Only what Reach buys is Book it's to book ───────────────────────────
+
+const TICKET: CheckoutRow = { id: 't', vertical: 'event', status: 'awaiting_approval', price_cents: 9000, mode: 'redirect', provider: 'ticketmaster', itinerary_item_id: 'l3' };
+
+test('a night out whose only row is a seller\'s ticket has nothing to pay', () => {
+  assert.equal(checkoutState([TICKET]).step, 'nothing');
+  assert.equal(checkoutState([TICKET], { funding: { memberCount: 1, targetCents: 0, collectedCents: 0, funded: true, myPaidCents: 0, myRemainingCents: 0 } }).step, 'nothing');
+  assert.deepEqual(checkoutState([TICKET]).waiting, []);
+});
+
+test('a paid plan never offers Book it for a ticket Reach cannot buy', () => {
+  const s = checkoutState([{ ...HOTEL, status: 'confirmed' }, TICKET], {
+    funding: fund({ targetCents: 40000, collectedCents: 40000, funded: true, myPaidCents: 40000, myRemainingCents: 0 }),
+  });
+  assert.equal(s.step, 'booked');
+  assert.equal(s.canBook, false);
+  // And the button's own loop asks approval for what checkout counts, no more.
+  const src = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(src, /const waiting=checkoutState\(fresh\|\|\[\]\)\.waiting;/);
+});
+
+// ─── A booking that may already be bought ───────────────────────────────
+
+test('a booking mid-claim is never offered to Book it, and past any answer is in doubt', () => {
+  const t0 = '2026-09-24T12:00:00.000Z';
+  const mid: CheckoutRow = { ...HOTEL, approved_at: t0, updated_at: t0 };
+  const paid = { memberCount: 1, targetCents: 40000, collectedCents: 40000, funded: true, myPaidCents: 40000, myRemainingCents: 0 };
+  const now = checkoutState([mid], { funding: paid, now: new Date('2026-09-24T12:00:30Z') });
+  assert.equal(now.step, 'in_progress');
+  assert.deepEqual(now.waiting, []);
+  const later = checkoutState([mid], { funding: paid, now: new Date('2026-09-24T12:30:00Z') });
+  assert.equal(later.step, 'in_doubt');
+  assert.deepEqual(later.inDoubt.map(r => r.id), ['h']);
+  // Approval's own note says so at once, whatever the clock.
+  const unknown = checkoutState([{ ...mid, status: 'booking', error: 'outcome unknown: timed out' }], { funding: paid, now: new Date('2026-09-24T12:00:05Z') });
+  assert.equal(unknown.step, 'in_doubt');
+  const src = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(src, /s==="in_doubt"/);
+});
+
 // ─── Writing in, and getting money back ─────────────────────────────────
 
 test('the email link carries the plan and the payment references', () => {
@@ -160,14 +212,19 @@ test('a fare\'s terms are shown, and unknown terms are said as unknown', () => {
   assert.equal(termsFor({ vertical: 'restaurant', status: 'awaiting_approval' }), null);
 });
 
-test('the price hold says when it ends, and says so once it has', () => {
-  const now = new Date('2026-09-24T14:00:00Z');
-  assert.match(holdWords('2026-09-24T14:30:00Z', now) ?? '', /^Price held until .*today/);
-  assert.match(holdWords('2026-09-24T13:30:00Z', now) ?? '', /hold has ended/);
-  assert.equal(holdWords(null, now), null);
-  assert.equal(holdWords('not a date', now), null);
-  const t = termsFor({ vertical: 'flight', mode: 'native', status: 'awaiting_approval', priceHeldUntil: '2026-09-24T14:30:00Z' }, now);
-  assert.match(t?.hold ?? '', /Price held until/);
+test('no price is said to be held: it is checked again when it is booked', () => {
+  // Approval prices every fare again and Duffel's book() a third time; the
+  // offer's expiry held nothing for the traveller.
+  assert.doesNotMatch(PRICE_CHECK_WORDS, /held/i);
+  assert.match(PRICE_CHECK_WORDS, /checked again when it's booked/);
+  const t = termsFor({ vertical: 'flight', mode: 'native', status: 'awaiting_approval' });
+  assert.deepEqual(Object.keys(t ?? {}), ['terms', 'kept']);
+  // "Nothing is booked on other terms" only under terms approval compares.
+  assert.equal(t?.kept, null);
+  assert.equal(termsFor({ vertical: 'hotel', mode: 'native', status: 'awaiting_approval', conditions: ['Non-refundable'] })?.kept, TERMS_KEPT_WORDS);
+  const src = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.doesNotMatch(src, /Price held until/);
+  assert.match(src, /PRICE_CHECK_WORDS/);
 });
 
 test('the Profile button is offered to somebody the refusal names', () => {

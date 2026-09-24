@@ -353,7 +353,7 @@ export const duffelFlights: BookingProvider = {
     if (offerExpired(raw?.expiresAt)) {
       // Should not happen — the quote was made a moment ago — but an offer
       // that lapses between the two calls must not be paid for.
-      return fail('That fare was held and has just lapsed. Search again for a current price.');
+      return fail("That fare's offer lapsed while it was being booked, so nothing was bought. Price it again for a current fare.");
     }
 
     const passengerIds = raw?.passengerIds ?? [];

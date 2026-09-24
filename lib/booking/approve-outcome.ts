@@ -72,7 +72,13 @@ export type NextStep =
   /** Nothing to choose between on this screen: change it on the plan. */
   | 'plan'
   /** Somebody else is booking it, or it may have gone through: look again, never book again. */
-  | 'recheck';
+  | 'recheck'
+  /**
+   * The provider refused the booking itself and approval marked the row
+   * failed. Approval only runs rows still waiting, so "Try again" skipped it
+   * and landed on the done screen; pricing the line again is the way on.
+   */
+  | 'price_again';
 
 export function nextStepFor(o: ApproveOutcome, vertical: string | null | undefined): NextStep {
   if (o.kind === 'busy' || o.kind === 'unknown' || o.code === 'changed') return 'recheck';
@@ -94,5 +100,10 @@ export function stillProblems<T extends { bookingId: string; step: NextStep }>(
   problems: T[], rowsAfter: { id?: string | null; status?: string | null }[] | null | undefined,
 ): T[] {
   const now = new Map((rowsAfter ?? []).map(r => [String(r.id), String(r.status ?? '')]));
-  return problems.filter(p => p.step !== 'recheck' || !['confirmed', 'redirected'].includes(now.get(p.bookingId) ?? ''));
+  return problems
+    .filter(p => p.step !== 'recheck' || !['confirmed', 'redirected'].includes(now.get(p.bookingId) ?? ''))
+    // Read again, a row the provider refused is failed, and running approval
+    // again would pass it by. Only the refusal that left it waiting — "we
+    // couldn't check the price" — is worth another press of the same button.
+    .map(p => (p.step === 'retry' && now.get(p.bookingId) === 'failed' ? { ...p, step: 'price_again' as NextStep } : p));
 }

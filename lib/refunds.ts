@@ -661,6 +661,26 @@ export function isMissingTable(e: { code?: string; message?: string } | null | u
 }
 
 /**
+ * Whether the refund route can give money back at all: the refunds
+ * migration's two tables are there and Stripe has a secret key. Without them
+ * the route answers 503 to every press, so checkout offers the button and
+ * says "from this screen" only when this is true. A read that fails for any
+ * other reason says nothing about the migration and leaves the button on —
+ * the route then gives its own answer.
+ */
+export async function refundsOpen(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: { from: (t: string) => any }, planId: string, stripeKey: string | undefined = process.env.STRIPE_SECRET_KEY,
+): Promise<boolean> {
+  if (!stripeKey || !/^(sk|rk)_/.test(stripeKey)) return false;
+  const [locks, claims] = await Promise.all([
+    db.from('refund_locks').select('plan_id').eq('plan_id', planId).limit(1),
+    db.from('refunds').select('id').eq('plan_id', planId).limit(1),
+  ]);
+  return !isMissingTable(locks?.error) && !isMissingTable(claims?.error);
+}
+
+/**
  * What the owner is told when a booking fails after money was collected, or
  * null when nothing was collected — a failure before anybody paid is the
  * ordinary case the checkout screen already handles, and alerting on it
@@ -680,6 +700,8 @@ export function paidFailureNotice(input: {
   what?: string | null;
   reason?: string | null;
   collectedCents: number;
+  /** Whether the checkout refund button works yet (refundsOpen). Unknown is said as not yet. */
+  refundsOpen?: boolean;
 }): { subject: string; lines: string[] } | null {
   const collected = cents(input.collectedCents);
   if (collected <= 0) return null;
@@ -691,7 +713,9 @@ export function paidFailureNotice(input: {
       `Booking: ${input.bookingId}${input.what ? ` · ${input.what}` : ''}`,
       `What the provider said: ${input.reason?.trim() || 'no reason given'}`,
       `Money collected on this plan: ${dollars(collected)}`,
-      'Nothing retries this booking on its own. Each person who paid can take back what was not spent from the trip\'s checkout screen ("Refund what wasn\'t spent"); it refunds only their own payments. To refund anybody else, use the Stripe dashboard; the webhook records it on the plan.',
+      input.refundsOpen === true
+        ? 'Nothing retries this booking on its own. Each person who paid can take back what was not spent from the trip\'s checkout screen ("Refund what wasn\'t spent"); it refunds only their own payments. To refund anybody else, use the Stripe dashboard; the webhook records it on the plan.'
+        : `Nothing retries this booking on its own. Refunds cannot be taken from the app until ${REFUNDS_MIGRATION} has run, so checkout does not offer the button and points payers to this inbox: refund from the Stripe dashboard; the webhook records it on the plan.`,
     ],
   };
 }

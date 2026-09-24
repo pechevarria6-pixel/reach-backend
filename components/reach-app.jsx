@@ -8,7 +8,7 @@ import { planSections, daysAway, today, countdown, groupSchedule, byName, monthG
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
-import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL } from "@/lib/checkout";
+import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL, PRICE_CHECK_WORDS } from "@/lib/checkout";
 import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild } from "@/lib/itinerary-rebuild";
@@ -7634,6 +7634,9 @@ function PlacePrompt({onPick,onCancel,toast}){
   );
 }
 
+// "hotel already booked", "flight on hold": one thing somebody who joined
+// later is not on (lib/joining.ts). Booked, held and paid-towards said apart.
+const notOnWords=({vertical:kind,booked,held})=>kind+" "+(booked?"already booked":held?"on hold":"already paid towards");
 function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab,departure}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
@@ -8396,7 +8399,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       said apart: a flight only paid towards is not booked. When
                       the server could not read it (null), neither is said. */}
                   {(funding?.notOnBooked?.[uid]||[]).length
-                    ?<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}>Not on the {funding.notOnBooked[uid].map(i=>`${i.vertical} ${i.booked?"already booked":i.held?"on hold":"already paid towards"}`).join(" or the ")}</span>
+                    ?<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}>Not on the {funding.notOnBooked[uid].map(notOnWords).join(" or the ")}</span>
                     :funding?.notOnBooked===null?null:<span className="pill pill-g" style={{fontSize:10}}>✓ In</span>}
                 </div>
               ):null;})}
@@ -9468,7 +9471,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   const [payReady,setPayReady]=useState(false);
   const stripeRef=useRef(null); const elementsRef=useRef(null); const payRef=useRef(null);
 
-  const fmt=c=>"$"+((c||0)/100).toLocaleString(undefined,{maximumFractionDigits:0});
+  // To the cent. Rounded to whole dollars, "Pay $12 more" sat over an $11.90
+  // charge and a price rise read differently here than in the server's own
+  // sentence beside it. Whole amounts still read as "$40".
+  const fmt=c=>{const n=Math.round(c||0);return "$"+(n/100).toLocaleString(undefined,n%100?{minimumFractionDigits:2,maximumFractionDigits:2}:{maximumFractionDigits:0});};
   const targetCents=funding?.targetCents||0;
   // The server owns the split. This used to divide by plan.participants.length
   // — a field the API never returns — so it fell back to 1 and every member
@@ -9695,7 +9701,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // The server's claim stops a double booking; this stops the screen from
   // racing itself into "someone else is booking this" about its own press.
   const approvingRef=useRef(false);
-  const approveAll=async(acceptNewPrice)=>{
+  // `accept` is a yes to one rise the screen named — { bookingId, cents } —
+  // and nothing else. It was a bare true, sent for every waiting row, and the
+  // server took whatever rise each one held: a row this screen never named,
+  // or a newer, higher price another device recorded after it loaded.
+  const approveAll=async(accept)=>{
     if(approvingRef.current)return;
     approvingRef.current=true;
     setBusy(true); setNotice(""); setPhase("approving");
@@ -9711,7 +9721,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         console.error("[checkout] could not refresh bookings, using cached",e);
         fresh=bookings;
       }
-      const waiting=(fresh||[]).filter(b=>b.status==="awaiting_approval");
+      // What checkout counts as Book it's to book (lib/checkout.ts): only what
+      // Reach buys, and nothing mid-booking. A Ticketmaster seat or a flight
+      // handed to the airline has its own "buy it there" on its row; sending
+      // it here marked it handed over and called that booking.
+      const waiting=checkoutState(fresh||[]).waiting;
       // Each refusal is kept with the booking it is about and the way on from
       // it (lib/booking/approve-outcome.ts), so the screen can put "Try
       // again", "See other hotels" or "Add your travel details" next to the
@@ -9725,7 +9739,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
           // the longest deadline and still gets one — longer than the server's
           // own 60 seconds, so a booking that went through is never read here
           // as one that failed.
-          const r=await fetchWithin(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(acceptNewPrice?{acceptNewPrice:true}:{})},70000,"the booking");
+          const r=await fetchWithin(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(accept&&accept.bookingId===b.id?{acceptNewPrice:true,acceptedCents:accept.cents}:{})},70000,"the booking");
           o=approveOutcome(r.status,await r.json().catch(()=>({})));
         }catch(e){
           // No answer is not a refusal: the server may still be booking it.
@@ -9734,7 +9748,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
             message:"We didn't hear back in time, so this may still be going through. Don't book it again — check again in a minute."};
         }
         if(o.kind==="priceUp"){
-          setPriceRise({title:itemTitle(b,lineTitle(b)),oldCents:o.oldCents,newCents:o.newCents});
+          setPriceRise({bookingId:b.id,title:itemTitle(b,lineTitle(b)),oldCents:o.oldCents,newCents:o.newCents});
           await refresh(fresh); setPhase("priceUp"); return;
         }
         if(o.kind==="reprice"){ setRepriceIds([b.id]); setMsg(o.message||""); setRepriceStuck(false); await refresh(fresh); setPhase("reprice"); return; }
@@ -9858,23 +9872,37 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // that took it. Only for somebody who paid — the route refunds the
   // caller's own payments and nobody else's. The amount is the server's to
   // work out, and its answer is shown as it comes.
-  const refundBox=(lead)=>(
+  //
+  // The button only where the refund route can run (funding.refundsOpen):
+  // before sql/wave1-refunds-2026-09-22.sql it answered 503 to every press.
+  // Then the inbox is the way, said as that. `email:false` where the screen
+  // already has the same link underneath, so it is never there twice.
+  const canRefund=funding?.refundsOpen===true;
+  const refundBox=(lead,{email=true}={})=>(
     <div style={{margin:"0 0 14px",padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,textAlign:"left"}}>
       {lead&&<div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4,lineHeight:1.4}}>{lead}</div>}
-      <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:10}}>
-        A refund gives back what you paid beyond your share of anything booked or still being booked, the same way you paid.
+      <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:(canRefund||email)?10:0}}>
+        {canRefund
+          ?"A refund gives back what you paid beyond your share of anything booked or still being booked, the same way you paid."
+          :`Refunds can't be taken from the app yet. Write to ${SUPPORT_EMAIL} with this trip's name and your payment reference, and the money is refunded from Stripe.`}
       </div>
       {refundNote&&(
         <div style={{fontSize:12.5,color:refundNote.ok?C.green:C.t1,lineHeight:1.5,marginBottom:10}}>{refundNote.text}</div>
       )}
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-        <button disabled={refunding} onClick={askRefund}
-          style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:refunding?"progress":"pointer",opacity:refunding?.6:1}}>
-          {refunding?"Asking Stripe…":"Refund what wasn't spent"}
-        </button>
-        <a href={writeIn("Money paid for a trip")}
-          style={{color:C.accentText,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Email {SUPPORT_EMAIL} →</a>
-      </div>
+      {(canRefund||email)&&(
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+          {canRefund&&(
+            <button disabled={refunding} onClick={askRefund}
+              style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:refunding?"progress":"pointer",opacity:refunding?.6:1}}>
+              {refunding?"Asking Stripe…":"Refund what wasn't spent"}
+            </button>
+          )}
+          {email&&(
+            <a href={writeIn("Money paid for a trip")}
+              style={{color:C.accentText,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Email {SUPPORT_EMAIL} →</a>
+          )}
+        </div>
+      )}
     </div>
   );
   // The itinerary line a booking was made from, so a row the provider never
@@ -9978,9 +10006,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     <div style={{color:C.t3,fontSize:12.5,lineHeight:1.5,marginBottom:20}}>
       If you accept, it is booked at the new price when the trip's money covers it. If that means more to pay, checkout shows how much before anything is charged.
     </div>
-    <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>
-      {priceRise?.newCents?`Accept ${fmt(priceRise.newCents)} and book it`:"Accept the new price and book it"}
-    </button>
+    {/* A yes to this price on this booking. Without a figure there is
+        nothing to say yes to, so only the other options are offered. */}
+    {priceRise?.bookingId&&priceRise?.newCents?(
+      <button disabled={busy} onClick={()=>approveAll({bookingId:priceRise.bookingId,cents:priceRise.newCents})} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>
+        Accept {fmt(priceRise.newCents)} and book it
+      </button>
+    ):null}
     {/* Hotels and flights have other options priced beside them; the
         Book tab's panel is where those are chosen. */}
     <div {...pressable} onClick={()=>replace?replace("planDetail",{planId,groupId,initialTab:"bookings"}):onBack()} style={{marginTop:14,color:C.accentText,fontSize:13,fontWeight:600,cursor:"pointer"}}>See other options instead</div>
@@ -10066,6 +10098,21 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               {p.step==="retry"&&(
                 <button disabled={busy} onClick={()=>approveAll(false)} style={btn}>Try again</button>
               )}
+              {/* The provider refused it and it is marked failed: approval
+                  passes a failed row by, so "Try again" did nothing. Pricing
+                  the line again is the way on, with the page for whatever
+                  detail the reason names. */}
+              {p.step==="price_again"&&(()=>{
+                const fix=fixFor(row?.error||p.message);
+                return(
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {fix&&goToProfileSection&&(
+                      <button onClick={()=>goToProfileSection(fix.section)} style={btn}>{fix.label}</button>
+                    )}
+                    <button onClick={()=>{setPhase("loading");load();}} style={btn}>Price it again</button>
+                  </div>
+                );
+              })()}
               {p.step==="other_options"&&row&&(
                 <ChoicePanel booking={row} vertical={row.vertical} toast={toast} onChanged={()=>{setPhase("loading");load();}}/>
               )}
@@ -10080,7 +10127,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
             </div>
           );
         })}
-        {spare>0&&refundBox(null)}
+        {spare>0&&refundBox(null,{email:false})}
         <a href={writeIn("A booking that didn't go through",{bookings:problems.map(p=>p.bookingId)})}
           style={{display:"block",textAlign:"center",margin:"4px 0 16px",color:C.accentText,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>
           Email {SUPPORT_EMAIL} with the references →
@@ -10438,7 +10485,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         </div>
         );
       })()}
-      {/* What the fare or the room allows, and how long its price is held,
+      {/* What the fare or the room allows, and what happens to its price,
           before anybody pays towards it or books it. The flight quote has
           stored Duffel's change and refund terms since it was written, and
           this screen dropped them: somebody paid their share of a
@@ -10456,9 +10503,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               <div key={f.id} style={{padding:"7px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
                 <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{itemTitle(f,lineTitle({itinerary_item_id:f.itineraryItemId}))}</div>
                 <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginTop:2}}>{t.terms}</div>
-                {t.hold&&<div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:2}}>{t.hold}</div>}
+                {t.kept&&<div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:2}}>{t.kept}</div>}
               </div>
             ))}
+            {/* Once, for the whole block: what approval does to the price
+                between now and the booking. It used to name a time the price was "held" to,
+                over the offer's expiry, a hold nothing used. */}
+            <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`}}>{PRICE_CHECK_WORDS}</div>
           </div>
         );
       })()}
@@ -10518,7 +10569,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               {myPaid>0
                 ?refundBox(`You paid ${fmt(myPaid)}, and nothing was booked.`)
                 :(<div style={{margin:"0 4px 14px",fontSize:13,color:C.t1,lineHeight:1.5}}>
-                    {fmt(collected)} was paid towards this trip and nothing was booked. Whoever paid can get it back from this screen.
+                    {fmt(collected)} was paid towards this trip and nothing was booked. {canRefund
+                      ?"Whoever paid can get it back from this screen."
+                      :`Whoever paid can ask for it back at ${SUPPORT_EMAIL}.`}
                   </div>)}
               {/* The failed rows below carry their own "Try these again".
                   Offered here only when there are none, so the same action
@@ -10551,6 +10604,24 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         );
         if(s==="in_progress")return(
           <button onClick={()=>{setPhase("loading");load();}} style={big}>Check again</button>
+        );
+        // Sent to the provider and never answered, or stuck past any answer.
+        // It may be bought, so there is no Book it — only who to ask, with
+        // the references written in, and a fresh look.
+        if(s==="in_doubt")return(
+          <div>
+            <div style={{margin:"0 4px 14px",padding:"12px 14px",background:C.amberDim,border:`1px solid ${C.border}`,borderRadius:14,textAlign:"left"}}>
+              {checkout.inDoubt.map((b,i)=>(
+                <div key={b.id||i} style={{fontSize:12.5,color:C.t1,fontWeight:600,lineHeight:1.5}}>{itemTitle(b,lineTitle(b))}</div>
+              ))}
+              <div style={{fontSize:12,color:C.t2,lineHeight:1.5,margin:"4px 0 10px"}}>
+                {checkout.inDoubt.length===1?"This was":"These were"} sent to the provider and no answer came back, so {checkout.inDoubt.length===1?"it":"they"} may already be bought. Don't book {checkout.inDoubt.length===1?"it":"them"} again. {SUPPORT_EMAIL} can find out which, from the references.
+              </div>
+              <a href={writeIn("A booking that may have gone through",{bookings:checkout.inDoubt.map(b=>b.id).filter(Boolean)})}
+                style={{color:C.accentText,fontSize:12.5,fontWeight:700,textDecoration:"none"}}>Email {SUPPORT_EMAIL} →</a>
+            </div>
+            <button onClick={()=>{setPhase("loading");load();}} style={big}>Check again</button>
+          </div>
         );
         // Bought, and some of what was paid not spent — a booking failed
         // after the money came in. The refund sits beside the way out.
@@ -10659,6 +10730,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
             ?(participants>1?"Your part is paid. It can be booked once the others have paid theirs.":null)
           :checkout.step==="in_progress"
             ?"A booking is with the provider right now. Check again in a moment rather than booking anything twice."
+          :checkout.step==="in_doubt"
+            ?null
           :checkout.step==="booked"
             ?"Nothing is waiting to be booked. Each line above says where it stands."
           :checkout.step==="paid_nothing_booked"

@@ -3,6 +3,8 @@ import { requireUser, isFail } from '@/lib/auth';
 import { toDateOrNull } from '@/lib/dates';
 import { tidyLegacy } from '@/lib/checkout';
 import { holdsSomething } from '@/lib/booking/claim';
+import { netCollectedCents } from '@/lib/booking/approval';
+import { refundsOpen } from '@/lib/refunds';
 import { impactOfDateChange, describeImpact, needsConfirmation, stillWorksFor } from '@/lib/date-change';
 import { z } from 'zod';
 import { track } from '@/lib/track';
@@ -192,15 +194,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
       }, { status: 409 });
     }
     // Money paid in is the same: calling the trip off does not give it back.
+    // Money still held, that is: `*` so refunded_cents counts from the moment
+    // its migration runs, and a trip whose payers have taken their money back
+    // can be called off. Any payment was refused for good, even refunded.
     const { data: paid, error: paidErr } = await supabase.from('contributions')
-      .select('id').eq('plan_id', params.planId).eq('status', 'succeeded').limit(1);
+      .select('*').eq('plan_id', params.planId).eq('status', 'succeeded');
     if (paidErr) {
       console.error('[plans PATCH] could not check payments before calling off', { planId: params.planId, code: paidErr.code });
       return NextResponse.json({ error: "We couldn't check this trip's payments — nothing was changed." }, { status: 503 });
     }
-    if (paid?.length) {
+    if (netCollectedCents(paid) > 0) {
+      // The way to the money, where there is one: the checkout button, once
+      // the refunds migration has run; the inbox until then.
+      const back = await refundsOpen(supabase, params.planId)
+        ? 'Whoever paid can take back what wasn\'t spent from the trip\'s checkout ("Refund what wasn\'t spent"), and then it can be called off.'
+        : "Email hello@alcanzar.io with the trip's name to have it refunded.";
       return NextResponse.json({
-        error: "Somebody has already paid towards this trip, so it can't be called off from here — calling it off wouldn't give their money back. Email hello@alcanzar.io with the trip's name.",
+        error: `Money paid towards this trip is still held, so it can't be called off from here — calling it off wouldn't give it back. ${back}`,
         paidIn: true,
       }, { status: 409 });
     }

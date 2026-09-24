@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  netCollectedCents, fundingOf, priceRose, acceptedPrice, isPurchase, unpriced,
+  netCollectedCents, fundingOf, priceRose, acceptedPrice, acceptedStale, isPurchase, unpriced,
   planBooked, travellersMissing, airlineOnly, type Person,
 } from '../../lib/booking/approval.ts';
 import { claimBooking, finishClaim } from '../../lib/booking/claim.ts';
@@ -48,7 +48,20 @@ test('"accept the new price" means nothing unless a new price was offered', () =
   assert.equal(acceptedPrice({ acceptNewPrice: true }, {}), null);
   assert.equal(acceptedPrice({}, { pending_price_cents: 12000 }), null);
   assert.equal(acceptedPrice({ acceptNewPrice: 'yes' }, { pending_price_cents: 12000 }), null);
-  assert.equal(acceptedPrice({ acceptNewPrice: true }, { pending_price_cents: 12000 }), 12000);
+  assert.equal(acceptedPrice({ acceptNewPrice: true, acceptedCents: 12000 }, { pending_price_cents: 12000 }), 12000);
+});
+
+test('accepting a rise accepts the price that was shown, and only that one', () => {
+  // "Accept" was sent for every waiting row and took whatever each held: a
+  // rise the screen never named, or a newer one recorded on another device.
+  assert.equal(acceptedPrice({ acceptNewPrice: true }, { pending_price_cents: 12000 }), null, 'no figure, no yes');
+  assert.equal(acceptedPrice({ acceptNewPrice: true, acceptedCents: 12000 }, { pending_price_cents: 13500 }), null);
+  assert.equal(acceptedStale({ acceptNewPrice: true, acceptedCents: 12000 }, { pending_price_cents: 13500 }), true, 'moved again: said as a new rise');
+  assert.equal(acceptedStale({ acceptNewPrice: true, acceptedCents: 12000 }, { pending_price_cents: 12000 }), false);
+  assert.equal(acceptedStale({}, { pending_price_cents: 12000 }), false, 'nothing accepted, nothing stale');
+  assert.equal(acceptedStale({ acceptNewPrice: true, acceptedCents: 12000 }, { pending_price_cents: null }), false);
+  const approve = readFileSync('app/api/bookings/[id]/approve/route.ts', 'utf8');
+  assert.match(approve, /if \(acceptedStale\(body, booking\)\) \{\s*return refuse\(409, \{\s*code: 'price_changed'/);
 });
 
 test('a hotel, flight or activity with no price is not bought', () => {

@@ -122,18 +122,17 @@ const FLIGHT_ROW = {
   },
 };
 
-test('a flight\'s terms and its price hold survive the crossing', () => {
+test('a flight\'s terms survive the crossing, and no price "hold" is claimed', () => {
   const f = bookingFacts(FLIGHT_ROW);
   assert.deepEqual(f.conditions, ['No changes once booked', 'Non-refundable']);
-  // The offer's own expiry is the clock that stops a booking; the two-day
-  // guarantee is a different thing and is not what is shown.
-  assert.equal(f.priceHeldUntil, '2026-11-01T12:30:00Z');
+  // The offer's expiry is not a price anybody holds: approval prices the fare
+  // again when it books. Carrying it to the screen is what said "held".
+  assert.equal('priceHeldUntil' in f, false);
 });
 
 test('terms nobody gave are null, never an empty "no conditions"', () => {
   const none = bookingFacts({ ...FLIGHT_ROW, response_payload: { conditions: [] } });
   assert.equal(none.conditions, null);
-  assert.equal(none.priceHeldUntil, null);
   assert.equal(bookingFacts({ ...FLIGHT_ROW, response_payload: null }).conditions, null);
 });
 
@@ -142,4 +141,11 @@ test('a hotel rate\'s own refundable flag is read, and nothing else is guessed',
   assert.deepEqual(bookingFacts({ ...hotel, response_payload: { cancellationPolicies: { refundableTag: 'NRFN' } } }).conditions, ['Non-refundable']);
   assert.match(String(bookingFacts({ ...hotel, response_payload: { cancellationPolicies: { refundableTag: 'RFN' } } }).conditions), /Refundable/);
   assert.equal(bookingFacts({ ...hotel, response_payload: { hotelId: 'lp1' } }).conditions, null);
+  // Refundable until when: the earliest charge the rate lists, or said as not sent.
+  const rfn = bookingFacts({ ...hotel, response_payload: { cancellationPolicies: { refundableTag: 'RFN', cancelPolicyInfos: [
+    { cancelTime: '2026-11-01 12:00:00', amount: 120, type: 'amount' }, { cancelTime: '2026-10-30 18:00:00', amount: 60, type: 'amount' },
+  ] } } }).conditions;
+  assert.match(String(rfn), /a charge for cancelling from 2026-10-30 18:00/);
+  const noDeadline = bookingFacts({ ...hotel, response_payload: { cancellationPolicies: { refundableTag: 'RFN' } } }).conditions;
+  assert.match(String(noDeadline), /didn't send its cancellation deadline/);
 });

@@ -5,7 +5,7 @@
 //   402 { code: 'not_funded', funding: { targetCents, collectedCents, shortfallCents, funded } }
 //   409 { code: 'already_in_progress', status }             somebody else has it, or it is done
 //   409 { code: 'changed' }                                 the row moved while this ran; reopen it
-//   409 { code: 'price_changed', oldCents, newCents }       accept with { acceptNewPrice: true }
+//   409 { code: 'price_changed', oldCents, newCents }       accept with { acceptNewPrice: true, acceptedCents: newCents }
 //   409 { code: 'party_changed', quoted, now }              price it again for who is going
 //   409 { code: 'unavailable', error }                      cannot be booked as it stands
 //   502 { code: 'provider_failed', error }                  the provider refused; nothing was bought
@@ -13,8 +13,10 @@
 // and 401/403/404 from sign-in and lookup, 500 when our own database fails.
 // Every response except 200 and outcome_unknown means nothing was bought.
 //
-// Body (optional): { acceptNewPrice?: true } — only counts when this route
-// has told somebody about a new price (bookings.pending_price_cents).
+// Body (optional): { acceptNewPrice?: true, acceptedCents: number } — only
+// counts when this route has told somebody about a new price
+// (bookings.pending_price_cents) and acceptedCents is that price exactly. A
+// price that moved again since is answered as price_changed with the new one.
 //
 // Nothing books until this fires. In order:
 //   1. who is on it — every member of the group except anybody sitting this
@@ -43,7 +45,7 @@ import { isOutcomeUnknown, type BookingItemRequest, type BookingItemResult, type
 import { readSkips } from '@/lib/participation';
 import { travellersFor } from '@/lib/essentials-server';
 import {
-  acceptedPrice, airlineOnly, fundingAt, fundingOf, isPurchase, planBooked, priceRose,
+  acceptedPrice, acceptedStale, airlineOnly, fundingAt, fundingOf, isPurchase, planBooked, priceRose,
   repriceAdvice, travellersMissing, unpriced, type Person,
 } from '@/lib/booking/approval';
 import { partyChange } from '@/lib/booking/party';
@@ -52,7 +54,7 @@ import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 import { sendBookingConfirmation } from '@/lib/email';
 import { track } from '@/lib/track';
 import { reportPaidFailure } from '@/lib/paid-failure';
-import { shownTerms } from '@/lib/booking/pin';
+import { pinQuoted, termsChanged } from '@/lib/booking/pin';
 import { withClaims, isMissingTable, type ContributionRow, type RefundClaim } from '@/lib/refunds';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -185,6 +187,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       // whichever hotel came first — not the one anybody agreed to.
       return unavailable(`We did not keep which hotel this was when it was priced. ${advice}`);
     }
+    if (vertical === 'flight') {
+      // The flight is pinned by default, as the hotel is. A row stored before
+      // /api/bookings pinned it still carries the quote's own offerKey, and
+      // is held to that; without one, Duffel's quote would take the cheapest
+      // fare on the route at this moment — flights nobody was shown.
+      Object.assign(request, pinQuoted(request as unknown as Record<string, unknown>, vertical, booking.response_payload));
+      if (!request.flight?.offerKey) {
+        return unavailable(`We did not keep which flights these were when they were priced. ${advice}`);
+      }
+    }
 
     let people: Person[];
     try {
@@ -224,6 +236,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // ── 2. The price ──────────────────────────────────────────────────────
   let priceCents = Number(booking.price_cents) || 0;
+  if (acceptedStale(body, booking)) {
+    return refuse(409, {
+      code: 'price_changed', oldCents: priceCents, newCents: Number(booking.pending_price_cents),
+      error: 'The price moved again after you saw it. Nothing was booked.',
+    });
+  }
   const accepted = acceptedPrice(body, booking);
   if (accepted !== null) {
     const { data: moved, error } = await atVersion(db.from('bookings')
@@ -263,8 +281,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // other; a hotel books the first rate the hotel offers now, and a room
     // shown as refundable must not quietly become one that is not. Rows
     // priced before pinning are held to what they showed the same way.
-    const shown = shownTerms(vertical, booking.response_payload);
-    if (shown && shownTerms(vertical, fresh.raw) !== shown) {
+    if (termsChanged(vertical, booking.response_payload, fresh.raw)) {
       return unavailable(vertical === 'hotel'
         ? "That room is no longer offered on the cancellation terms you were shown, so nothing was booked. Pick it again or another hotel from the options."
         : 'That fare is no longer on sale on the terms you were shown, so nothing was booked. Pick another from the options.');
@@ -328,7 +345,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         error: `The price went up by $${(rise / 100).toFixed(2)} since it was priced, so there is $${(funding.shortfallCents / 100).toFixed(2)} more to pay in before it can be booked.`,
       });
     }
-    return refuse(402, { code: 'not_funded', funding, error: 'Not everybody has paid their share yet.' });
+    // Worded for a trip of one as much as a group: whose money is missing is
+    // the funding figures' to say, and checkout says it from them.
+    return refuse(402, { code: 'not_funded', funding, error: "The money paid in doesn't cover this yet, so nothing was booked." });
   }
 
   // ── 4. The claim ──────────────────────────────────────────────────────

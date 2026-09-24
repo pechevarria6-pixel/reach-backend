@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import {
   refundOutcome, netPaidCents, collectedCents, refundColumnPresent, planRefund,
   keptBookings, spentThenCancelled, refusal, refundIdempotencyKey, afterStripeRefund,
-  isMissingColumn, isMissingTable, paidFailureNotice, paymentRefundCents, goneCents,
+  isMissingColumn, isMissingTable, paidFailureNotice, refundsOpen, paymentRefundCents, goneCents,
   claimAtStripe, liveRefundedCents, refundReply, refundRequestBody, claimRequest, openClaimToCheck,
   withClaims, OPEN_CLAIM_CHECK_MS,
   type ContributionRow, type RefundClaim,
@@ -297,7 +297,7 @@ test('the owner alert describes only ways to refund that exist', () => {
   // is the Stripe dashboard. The button the email names must be on the
   // checkout screen, word for word, or the email describes a way out nobody
   // can find.
-  const n = paidFailureNotice({ planId: 'p1', bookingId: 'b1', collectedCents: 100 })!;
+  const n = paidFailureNotice({ planId: 'p1', bookingId: 'b1', collectedCents: 100, refundsOpen: true })!;
   const text = n.lines.join(' ');
   assert.doesNotMatch(text, /funding\/refund|POST /);
   assert.match(text, /Stripe dashboard/);
@@ -308,6 +308,25 @@ test('the owner alert describes only ways to refund that exist', () => {
   const screen = readFileSync('components/reach-app.jsx', 'utf8');
   assert.ok(screen.includes(`"${label}"`), `"${label}" is not a button on the checkout screen`);
   assert.match(screen, /\/api\/plans\/\$\{planId\}\/funding\/refund/, 'and the button calls the refund route');
+});
+
+test('before the refunds migration, the alert and the screen offer no button that answers 503', async () => {
+  const shut = paidFailureNotice({ planId: 'p1', bookingId: 'b1', collectedCents: 100 })!.lines.join(' ');
+  assert.doesNotMatch(shut, /Refund what wasn't spent/);
+  assert.match(shut, /Stripe dashboard/);
+  assert.match(shut, /wave1-refunds-2026-09-22\.sql/);
+  const missing = { error: { code: 'PGRST205', message: 'Could not find the table public.refund_locks' } };
+  const there = { error: null };
+  const db = (answer: unknown) => ({ from: () => ({ select: () => ({ eq: () => ({ limit: async () => answer }) }) }) });
+  assert.equal(await refundsOpen(db(missing), 'p1', 'sk_test_x'), false);
+  assert.equal(await refundsOpen(db(there), 'p1', 'sk_test_x'), true);
+  assert.equal(await refundsOpen(db(there), 'p1', 'mk_1U4'), false, 'no secret key, no refunds');
+  assert.equal(await refundsOpen(db({ error: { code: '42501', message: 'permission denied for table refund_locks' } }), 'p1', 'sk_test_x'), true,
+    'a permission error is not the migration missing');
+  const screen = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(screen, /funding\?\.refundsOpen===true/);
+  const funding = readFileSync('app/api/plans/[planId]/funding/route.ts', 'utf8');
+  assert.match(funding, /refundsOpen: await refundsOpen\(db, planId\)/);
 });
 
 // ── Review fixes (2026-09-23) ───────────────────────────────────────────

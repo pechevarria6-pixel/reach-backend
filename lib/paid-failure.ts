@@ -16,7 +16,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { report } from '@/lib/report';
 import { sendPaidFailureAlert } from '@/lib/email';
-import { collectedCents, paidFailureNotice, type ContributionRow } from '@/lib/refunds';
+import { collectedCents, paidFailureNotice, refundsOpen, type ContributionRow } from '@/lib/refunds';
 
 export async function reportPaidFailure(
   db: SupabaseClient,
@@ -50,6 +50,8 @@ export async function reportPaidFailure(
       what,
       reason,
       collectedCents: collected,
+      // Named only when a payer can actually press it.
+      refundsOpen: await refundsOpen(db, booking.plan_id).catch(() => false),
     });
     // Nothing collected: the checkout screen already handles a failure
     // before payment, and alerting on those would bury the ones that matter.

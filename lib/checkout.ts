@@ -20,6 +20,7 @@
 // collapse only what is genuinely the same row.
 
 import { reachBuys } from './booking/charged.ts';
+import { midClaim } from './booking/claim.ts';
 
 export type CheckoutRow = {
   id?: string;
@@ -32,6 +33,10 @@ export type CheckoutRow = {
   status?: string | null;
   itinerary_item_id?: string | null;
   scheduled_date?: string | null;
+  /** The claim stamp approval leaves (lib/booking/claim.ts), and its note. */
+  approved_at?: string | null;
+  updated_at?: string | null;
+  error?: string | null;
 };
 
 
@@ -266,6 +271,11 @@ export type CheckoutStep =
   | 'waiting'
   /** A booking is with the provider at this moment. */
   | 'in_progress'
+  /**
+   * Sent to the provider and never answered, or stuck mid-booking past any
+   * answer: it may be bought. Never booked again from here.
+   */
+  | 'in_doubt'
   /** Nothing waiting, and something is bought. */
   | 'booked'
   /** Money was paid in, nothing was bought, and nothing is waiting. */
@@ -283,8 +293,10 @@ export interface CheckoutState {
   step: CheckoutStep;
   /** Whether "Book it" may run approval now. */
   canBook: boolean;
-  /** Rows approval would be asked to book. */
+  /** Rows approval would be asked to book: only what Reach buys, and nothing mid-booking. */
   waiting: CheckoutRow[];
+  /** Rows that may already be bought and cannot be told apart from bought yet. */
+  inDoubt: CheckoutRow[];
   /** Rows the provider refused. The pay button stays shut while any exist. */
   broken: CheckoutRow[];
   /** Confirmed bookings that are the same journey. Never empty-checked away. */
@@ -314,9 +326,27 @@ export interface CheckoutState {
  * Everything the screen needs to decide what to show and whether to let
  * anybody pay.
  */
+/**
+ * How long approval can take (its route allows 60 seconds). A row still
+ * mid-booking after this is not "with the provider right now" any more: the
+ * request that held it has ended, and it may or may not be bought.
+ */
+export const APPROVAL_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * Mid-booking with no answer coming: approval's own "outcome unknown" note,
+ * or a claim older than any approval can run.
+ */
+export function inDoubtRow(r: CheckoutRow, now: Date = new Date()): boolean {
+  if (!midClaim(r)) return false;
+  if (/^outcome unknown/i.test(String(r.error ?? ''))) return true;
+  const at = Date.parse(String(r.updated_at ?? r.approved_at ?? ''));
+  return Number.isFinite(at) && now.getTime() - at > APPROVAL_WINDOW_MS;
+}
+
 export function checkoutState(
   rows: CheckoutRow[],
-  opts: { ignoreBroken?: boolean; funding?: FundingView | null } = {},
+  opts: { ignoreBroken?: boolean; funding?: FundingView | null; now?: Date } = {},
 ): CheckoutState {
   const deduped = dedupe(rows ?? []);
   const chargeable = deduped.filter(charged);
@@ -361,11 +391,24 @@ export function checkoutState(
   // never to the first.
   const nothingToCharge = chargeable.length === 0 && conciergeCount === 0;
 
-  const waiting = deduped.filter(r => r.status === 'awaiting_approval');
+  // What "Book it" would send to approval: only what Reach buys. A
+  // Ticketmaster seat or a flight handed to the airline waiting on the list
+  // is bought on the seller's own site — it has its own "buy it there" on
+  // its row — and counting it here took a ticket-only night out from
+  // "Nothing to pay" to a greyed-out button, and offered a paid plan
+  // "Book it" for a ticket Reach cannot buy.
+  //
+  // Nothing mid-booking either: before sql/wave1-bookings-2026-09-22.sql such
+  // a row still reads awaiting_approval, and pressing Book on it only ever
+  // answered "somebody else is booking this".
+  const now = opts.now ?? new Date();
+  const inDoubt = chargeable.filter(r => inDoubtRow(r, now));
+  const waiting = chargeable.filter(r => r.status === 'awaiting_approval' && !midClaim(r));
   const blocked = unpricedCharged.length > 0 || (broken.length > 0 && opts.ignoreBroken !== true);
   const step = stepOf({
     funding: opts.funding ?? null, waiting, blocked, canPay, nothingToCharge,
-    inProgress: chargeable.filter(r => r.status === 'booking').length,
+    inProgress: chargeable.filter(r => midClaim(r) && !inDoubtRow(r, now)).length,
+    inDoubt: inDoubt.length,
     // 'pending' on a row Reach pays for is money handed to a provider that
     // has not answered yet. It may be bought, so "nothing was booked" would
     // be a guess.
@@ -377,6 +420,7 @@ export function checkoutState(
     step,
     canBook: step === 'book',
     waiting,
+    inDoubt,
     broken,
     clashes: doubleBooked(deduped),
     totalCents,
@@ -416,6 +460,7 @@ function stepOf(s: {
   canPay: boolean;
   nothingToCharge: boolean;
   inProgress: number;
+  inDoubt: number;
   bought: number;
 }): CheckoutStep {
   const f = s.funding;
@@ -435,6 +480,7 @@ function stepOf(s: {
     return (f.memberCount ?? 1) > 1 && collected < target ? 'waiting' : 'blocked';
   }
   if (s.inProgress > 0) return 'in_progress';
+  if (s.inDoubt > 0) return 'in_doubt';
   if (s.bought > 0) return 'booked';
   if (collected > 0) return 'paid_nothing_booked';
   return s.nothingToCharge ? 'nothing' : 'blocked';
@@ -558,10 +604,15 @@ export function refundWords(status: number, body: unknown): { ok: boolean; text:
 }
 
 // ─── What is known about a fare before paying for it ────────────────────
-// Duffel says, for every offer, whether the fare can be changed or refunded
-// and until when its price is held. The quote stored both; the screen
-// showed neither, so somebody paid their share of a non-refundable fare
-// having been told nothing about it.
+// Duffel says, for every offer, whether the fare can be changed or refunded.
+// The quote stored it; the screen showed nothing, so somebody paid their
+// share of a non-refundable fare having been told nothing about it.
+//
+// What is shown is what is bought. The flight is pinned to these flights on
+// this fare (lib/booking/pin.ts), and approval refuses a flight or a room
+// whose terms are no longer the ones shown. The price is not held: approval
+// prices it again when it is booked, and the screen says exactly that — it
+// said "Price held until …" over Duffel's offer expiry, a hold nothing used.
 
 export interface TermsInput {
   vertical?: string | null;
@@ -569,15 +620,25 @@ export interface TermsInput {
   provider?: string | null;
   status?: string | null;
   conditions?: string[] | null;
-  priceHeldUntil?: string | null;
 }
 
+/** What happens to the price between now and the booking — what approval does, and no more. */
+export const PRICE_CHECK_WORDS =
+  "Prices are checked again when it's booked, and can move until then. A rise of more than $25 or 5% is put to you first, and nothing is bought for more than the trip's money covers.";
+
 /**
- * The terms line and the hold line for one row, or null when the row is not
- * something Reach is about to buy. Unknown terms are said as unknown, never
- * left blank: silence reads as "no catch".
+ * Said under terms approval holds the booking to (termsChanged in
+ * lib/booking/pin.ts). Only under known terms: where the provider said
+ * nothing, nothing is compared, and this would be a promise.
  */
-export function termsFor(row: TermsInput, now: Date = new Date()): { terms: string; hold: string | null } | null {
+export const TERMS_KEPT_WORDS = "If it's no longer offered on these terms, nothing is booked and you pick again.";
+
+/**
+ * The terms line for one row, or null when the row is not something Reach
+ * is about to buy. Unknown terms are said as unknown, never left blank:
+ * silence reads as "no catch".
+ */
+export function termsFor(row: TermsInput): { terms: string; kept: string | null } | null {
   if (!['flight', 'hotel'].includes(String(row.vertical))) return null;
   if (row.status !== 'awaiting_approval') return null;
   if (!reachBuys(row)) return null;
@@ -587,28 +648,7 @@ export function termsFor(row: TermsInput, now: Date = new Date()): { terms: stri
     : row.vertical === 'flight'
       ? "The airline hasn't said whether this fare can be changed or refunded."
       : "The hotel hasn't said whether this room can be cancelled.";
-  return { terms, hold: holdWords(row.priceHeldUntil, now) };
-}
-
-/**
- * When the provider's price stops being held. Approval prices every fare
- * again before it books, so after this time the price may move — and a rise
- * is asked about, or paid in, before anything is bought.
- */
-export function holdWords(iso: string | null | undefined, now: Date = new Date()): string | null {
-  if (!iso) return null;
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return null;
-  if (at.getTime() <= now.getTime()) {
-    return 'The price hold has ended. The fare is checked again when it is booked.';
-  }
-  // Local time, the traveller's own clock, never UTC.
-  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
-  const time = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  const when = sameDay
-    ? `${time} today`
-    : `${at.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}, ${time}`;
-  return `Price held until ${when}. After that the fare is checked again when it is booked.`;
+  return { terms, kept: said.length ? TERMS_KEPT_WORDS : null };
 }
 
 // ─── Is it me they're waiting on? ───────────────────────────────────────

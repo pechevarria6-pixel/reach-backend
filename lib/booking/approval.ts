@@ -61,12 +61,29 @@ export function priceRose(oldCents: number, newCents: number | null | undefined)
  * is such a price: one approval recorded in `pending_price_cents`.
  */
 export function acceptedPrice(
-  body: { acceptNewPrice?: unknown } | null | undefined,
+  body: { acceptNewPrice?: unknown; acceptedCents?: unknown } | null | undefined,
   booking: { pending_price_cents?: unknown },
 ): number | null {
   if (body?.acceptNewPrice !== true) return null;
   const pending = Number(booking.pending_price_cents);
-  return Number.isFinite(pending) && pending > 0 ? Math.round(pending) : null;
+  if (!(Number.isFinite(pending) && pending > 0)) return null;
+  // Yes to the price that was shown, and only that one. "Accept" used to be
+  // sent for every waiting row and took whatever rise each one held — a rise
+  // on a row the screen never named, or a newer, higher one recorded from
+  // another device after the screen loaded.
+  return Number(body.acceptedCents) === Math.round(pending) ? Math.round(pending) : null;
+}
+
+/**
+ * Somebody accepted a price, and it is not the one now waiting on the row:
+ * it moved again after they saw it. Said as a new rise, never taken.
+ */
+export function acceptedStale(
+  body: { acceptNewPrice?: unknown; acceptedCents?: unknown } | null | undefined,
+  booking: { pending_price_cents?: unknown },
+): boolean {
+  return body?.acceptNewPrice === true && acceptedPrice(body, booking) === null
+    && Number(booking.pending_price_cents) > 0;
 }
 
 /** Things Reach buys with the group's money. */

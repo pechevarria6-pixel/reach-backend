@@ -12,6 +12,7 @@
 // stack. So the facts live here and the screen imports them; the screen
 // keeps its icons and its wording, which are presentation and belong to it.
 import { z } from 'zod';
+import { cancelChargeFrom } from '../booking/pin.ts';
 
 export const BookingRow = z.object({
   id: z.string(),
@@ -70,8 +71,6 @@ export interface BookingFacts {
    * out loud, because a blank reads as "no catch".
    */
   conditions: string[] | null;
-  /** When the provider stops holding this price (ISO), where it said. */
-  priceHeldUntil: string | null;
 }
 
 /**
@@ -106,7 +105,6 @@ export function bookingFacts(row: Record<string, unknown>): BookingFacts {
     payload: r.response_payload ?? null,
     itineraryItemId: r.itinerary_item_id ?? null,
     conditions: conditionsOf(r.vertical ?? null, r.response_payload),
-    priceHeldUntil: heldUntilOf(r.response_payload),
   };
 }
 
@@ -119,11 +117,19 @@ export function bookingFacts(row: Record<string, unknown>): BookingFacts {
  *
  * Hotels: the LiteAPI rate is stored whole, and its
  * `cancellationPolicies.refundableTag` is the rate's own flag — RFN or NRFN.
- * Anything else is not guessed at.
+ * "Refundable" on its own left out when: a refundable rate is refundable
+ * until a deadline the hotel sets. That comes from the rate's
+ * `cancellationPolicies.cancelPolicyInfos` — the earliest `cancelTime` from
+ * which the hotel lists a charge — said in the hotel's own words, since which
+ * clock it is in is not given. Not checked against a live LiteAPI answer (the
+ * key in .env.local is a placeholder), so when that list is missing or
+ * unreadable the line says the deadline was not sent rather than inventing
+ * one. Anything else is not guessed at.
  */
 export function conditionsOf(vertical: string | null, payload: unknown): string[] | null {
   const p = (payload && typeof payload === 'object' ? payload : {}) as {
-    conditions?: unknown; cancellationPolicies?: { refundableTag?: unknown } | null;
+    conditions?: unknown;
+    cancellationPolicies?: { refundableTag?: unknown; cancelPolicyInfos?: unknown } | null;
   };
   if (vertical === 'flight') {
     const said = Array.isArray(p.conditions)
@@ -134,17 +140,17 @@ export function conditionsOf(vertical: string | null, payload: unknown): string[
   if (vertical === 'hotel') {
     const tag = p.cancellationPolicies?.refundableTag;
     if (tag === 'NRFN') return ['Non-refundable'];
-    if (tag === 'RFN') return ['Refundable, on the hotel\'s cancellation terms'];
+    if (tag === 'RFN') {
+      const from = cancelChargeFrom(p.cancellationPolicies?.cancelPolicyInfos);
+      return [from
+        ? `Refundable on the hotel's cancellation terms — the hotel lists a charge for cancelling from ${from}`
+        : "Refundable on the hotel's cancellation terms. The hotel didn't send its cancellation deadline, so check it with them before counting on a refund"];
+    }
     return null;
   }
   return null;
 }
 
-/** The offer's own expiry, as the flight quote stored it. */
-function heldUntilOf(payload: unknown): string | null {
-  const at = (payload && typeof payload === 'object' ? payload : {}) as { expiresAt?: unknown };
-  return typeof at.expiresAt === 'string' && !Number.isNaN(Date.parse(at.expiresAt)) ? at.expiresAt : null;
-}
 
 /**
  * The same, for a screen.
