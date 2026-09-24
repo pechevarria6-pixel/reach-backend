@@ -1,6 +1,7 @@
 // ─── GET /api/recommendations/trips ──────────────────────────────────────
-// Query: ?lat=&lng=&city= (optional — this device's position; the home
-// city stands in without it)
+// Query: ?lat=&lng=&city=&airport= (optional — this device's position and
+// the airport of that place; the home city and home airport stand in
+// without them)
 //
 // A few trips worth taking, for Home: a night out near them, a weekend's
 // drive, a flight away. Each one is a town we hold checked venues for,
@@ -11,7 +12,7 @@
 // lib/recommendations/trip-picks.ts for the rules.
 //
 // Dismissing one goes through /api/recommendations/feedback with
-// itemRef "trip:<town>|<country>" and verdict "not_interested"; this route
+// itemRef "trip:<candidate key>" and verdict "not_interested"; this route
 // reads those back and leaves the town out.
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
@@ -33,10 +34,11 @@ export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams;
   const at = whereFrom(params);
   const city = String(params.get('city') ?? '').trim().slice(0, 120) || null;
+  const airport = String(params.get('airport') ?? '').trim().slice(0, 3) || null;
 
   try {
     const snap = await snapshot(ctx.db);
-    const { person, from } = await personFor(ctx.db, ctx.user.id, { at, city, candidates: snap.candidates });
+    const { person, from } = await personFor(ctx.db, ctx.user.id, { at, city, airport, candidates: snap.candidates });
     const { picks, reason } = pickTrips(snap.candidates, snap.holdings, person);
 
     // Checked against the same contract the card reads with. A card that

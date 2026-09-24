@@ -5,10 +5,11 @@ import assert from 'node:assert/strict';
 import {
   pickTrips, candidatesFrom, tally, vetoedRow, clearsFloor, bandFor, estimate, tierOf,
   partyTier, plannedKeys, leaningOf, notATown, heldLine, matchedLine, whoFor, isAbroad,
-  isPlanned, whereName, uncheckedLine, LONG_FLIGHT_MILES,
+  isPlanned, whereName, uncheckedLine, LONG_FLIGHT_MILES, homeTownOf, startingAirport, nameTags,
   FLOOR, type Candidate, type Holdings, type Person,
 } from '../../lib/recommendations/trip-picks.ts';
 import { TripPickSchema, picksFrom, seedFromPick } from '../../lib/contracts/trip-pick.ts';
+import { readFileSync } from 'node:fs';
 
 // Raleigh, and towns at known distances from it.
 const RALEIGH = { lat: 35.7804, lng: -78.6391 };
@@ -114,7 +115,7 @@ test('a vetoed kind never drives a pick', () => {
 });
 
 test("somebody else's veto in the group counts too, and is said without naming them", () => {
-  const g = { id: 'g1', name: 'Beach Crew', members: [{ no_way_jose: ['Clubs'] }] };
+  const g = { id: 'g1', name: 'Beach Crew', members: [{ no_way_jose: ['Clubs'] }, {}] };
   const { picks } = pickTrips(all, holdingsFor(), person({ group: g }), { max: 10 });
   const ash = picks.find(p => p.destination.city === 'Asheville')!;
   // The twenty nightclubs filed as live music are gone; the twelve rooms stay.
@@ -148,12 +149,12 @@ test('solo copy speaks to one person', () => {
   }
 });
 
-test('group copy names the group and how many, and never one member', () => {
+test("group copy says who it is for by count, and never one member", () => {
   const g = { id: 'g1', name: 'Beach Crew', members: [{ favorite_activities: ['Museums & history'] }, {}, {}] };
   const { picks } = pickTrips(all, holdingsFor(), person({ group: g }), { max: 10 });
   assert.ok(picks.length);
   for (const p of picks) {
-    assert.equal(p.who, 'Beach Crew · four of you');
+    assert.equal(p.who, 'For the four of you');
     assert.equal(p.cost.each, true);
     assert.equal(p.groupId, 'g1');
     if (p.matched) assert.match(p.matched, /up in your group's answers\.$/);
@@ -339,8 +340,9 @@ test('the plan starts pointed at the town, with its kind, length and group', () 
 // ── Review findings, 2026-09-24 ──────────────────────────────────────────
 
 test('a no-go we cannot check is said plainly, never passed over', () => {
-  // The Raleigh user's own answers: cold weather and clubs.
-  const g = { id: 'g1', name: 'Ali and Pete', members: [{ no_way_jose: ['Cold weather', 'Clubs'] }] };
+  // The Raleigh user's group's answers: cold weather and clubs. Three of
+  // them, so "somebody" names nobody (a pair is its own test below).
+  const g = { id: 'g1', name: 'Ali and Pete', members: [{ no_way_jose: ['Cold weather', 'Clubs'] }, {}] };
   const { picks } = pickTrips(all, holdingsFor(), person({ group: g }), { max: 10 });
   const away = picks.filter(p => p.band !== 'night');
   assert.ok(away.length);
@@ -350,10 +352,13 @@ test('a no-go we cannot check is said plainly, never passed over', () => {
   // The night out is the town they live in; nothing to warn about.
   assert.equal(picks.find(p => p.band === 'night')!.unchecked, null);
   // Solo, and two at once.
-  assert.equal(uncheckedLine(['Cold weather', 'Big crowds'], false),
+  assert.equal(uncheckedLine(['Cold weather', 'Big crowds']),
     "You ruled out cold weather and big crowds. Reach doesn't hold weather or crowd data yet, so trips away aren't checked for them.");
   // A no-go we can check is not listed as unchecked.
-  assert.equal(uncheckedLine(['Clubs', 'Camping', 'Early mornings'], false), null);
+  assert.equal(uncheckedLine(['Clubs', 'Camping', 'Early mornings']), null);
+  // Their own first, then the group's, and nothing said twice.
+  assert.equal(uncheckedLine(['Cold weather'], ['Cold weather', 'Big crowds']),
+    "You ruled out cold weather. Reach doesn't hold weather data yet, so trips away aren't checked for it. Somebody in the group ruled out big crowds. Reach doesn't hold crowd data yet, so trips away aren't checked for it.");
   const none = pickTrips(all, holdingsFor(), person(), { max: 10 }).picks;
   assert.ok(none.every(p => p.unchecked === null));
 });
@@ -450,4 +455,149 @@ test('a blended v3 profile is read through the scorer\'s own parser', () => {
   // "A bit of everything" is a profile, not a missing one.
   assert.deepEqual(leaningOf({ traveler_profile: { primary: null, secondary: null, dials: {}, unanswered: ['pace', 'novelty', 'energy', 'crowd'] }, favorite_activities: ['Breweries'] }),
     { primary: null, secondary: null, dials: {} });
+});
+
+// ── Review findings, second pass ─────────────────────────────────────────
+
+test('the home city is matched with its state or country, never by the town name alone', () => {
+  const c = candidatesFrom({
+    world: [
+      { name: 'Athens', country: 'GR', lat: 37.98, lng: 23.73, rank: 43 },
+      { name: 'Paris', country: 'FR', lat: 48.8566, lng: 2.3522, rank: 6 },
+    ],
+    seeds: [
+      { name: 'Aberdeen', lat: 35.1315, lng: -79.4295, region: 'north-america/us/north-carolina' },
+      { name: 'Southern Pines', lat: 35.1740, lng: -79.3923, region: 'north-america/us/north-carolina' },
+      { name: 'Pittsburgh', lat: 40.44, lng: -79.99, region: 'north-america/us/pennsylvania' },
+    ],
+    areas: [],
+  });
+  for (const elsewhere of ['Aberdeen, Scotland', 'Aberdeen, South Dakota', 'Athens, Georgia', 'Paris, Texas', 'Aberdeen, SD']) {
+    assert.equal(homeTownOf(elsewhere, c), null, elsewhere);
+  }
+  assert.equal(homeTownOf('Aberdeen, North Carolina', c)?.label, 'Aberdeen, North Carolina');
+  assert.equal(homeTownOf('Aberdeen, NC', c)?.label, 'Aberdeen, North Carolina');
+  assert.equal(homeTownOf('Southern Pines, NC, USA', c)?.name, 'Southern Pines', 'a folded town is still their town');
+  assert.equal(homeTownOf('Pittsburgh, Pennsylvania', c)?.name, 'Pittsburgh');
+  assert.equal(homeTownOf('Athens, Greece', c)?.name, 'Athens');
+  assert.equal(homeTownOf('Paris, France', c)?.name, 'Paris');
+  // Nothing after the name: only one town could be meant.
+  assert.equal(homeTownOf('Pittsburgh', c)?.name, 'Pittsburgh');
+});
+
+test('in a pair, the other person\'s no-gos and drinking are applied but never said back', () => {
+  const pair = (m: Record<string, unknown>) => person({ group: { id: 'g1', name: 'Ali and Pete', members: [m], names: ['Ali Khan'] } });
+  const sober = pickTrips(all, holdingsFor(), pair({ drink_style: 'Not drinking' }), { max: 10 }).picks;
+  const clubs = pickTrips(all, holdingsFor(), pair({ no_way_jose: ['Clubs', 'Cold weather', 'Long flights'] }), { max: 10 }).picks;
+  assert.ok(sober.length && clubs.length);
+  for (const p of [...sober, ...clubs]) {
+    const said = [p.who, p.held, p.matched, p.leftOut, p.unchecked, p.cost.label].join(' ');
+    assert.doesNotMatch(said, /somebody|not drinking|ruled/i, said);
+  }
+  // Applied all the same: no bars counted, no nightclubs, no long flights.
+  assert.ok(sober.every(p => !/brewer/i.test(p.held)));
+  const ash = clubs.find(p => p.destination.city === 'Asheville')!;
+  assert.match(ash.held, /12 live-music venues/);
+  assert.ok(!clubs.some(p => p.band === 'away' && p.miles > LONG_FLIGHT_MILES));
+  // The reader's own answers are theirs to hear, group or not.
+  const mine = person({
+    me: { favorite_activities: ['Live music'], drink_style: 'Not drinking', no_way_jose: ['Cold weather'] },
+    group: { id: 'g1', name: 'x', members: [{ no_way_jose: ['Clubs'] }], names: ['Ali'] },
+  });
+  const own = pickTrips(all, holdingsFor(), mine, { max: 10 }).picks.find(p => p.band === 'weekend')!;
+  assert.equal(own.leftOut, "Picked without the bars, since you're not drinking.");
+  assert.match(own.unchecked ?? '', /^You ruled out cold weather\./);
+  // Three or more: "somebody" names nobody, so a no-go is said; somebody
+  // else not drinking still never is.
+  const three = person({ group: { id: 'g1', name: 'x', members: [{ drink_style: 'Not drinking' }, {}], names: ['Ali', 'Sam'] } });
+  for (const p of pickTrips(all, holdingsFor(), three, { max: 10 }).picks) {
+    assert.doesNotMatch(p.leftOut ?? '', /drinking|bars/i);
+  }
+});
+
+test("a card says who it is for by the people, never the group's own name", () => {
+  const g = (names: Array<string | null>, n = names.length) => ({ id: 'g', name: 'Ali and Pete, go to St. Augustine', members: Array.from({ length: n }, () => ({})), names });
+  assert.equal(whoFor(g(['Ali Khan'])), 'For you and Ali');
+  assert.equal(whoFor(g(['Sam', 'Ali'])), 'For you, Ali and Sam');
+  assert.equal(whoFor(g(['Ali', 'Sam', 'Jo'])), 'For the four of you');
+  assert.equal(whoFor(g([null])), 'For the two of you', 'no name held: counted, not guessed');
+  assert.equal(whoFor(g(['ali@example.com'])), 'For the two of you');
+  const { picks } = pickTrips(all, holdingsFor(), person({ group: g(['Ali']) }), { max: 10 });
+  assert.ok(picks.length);
+  for (const p of picks) assert.doesNotMatch(p.who, /St\. Augustine/);
+});
+
+test('two towns of one name in one country keep their own counts and their own dismissal', () => {
+  const c = candidatesFrom({
+    world: [],
+    seeds: [
+      { name: 'Portland', lat: 45.52, lng: -122.68, region: 'north-america/us/oregon' },
+      { name: 'Portland', lat: 43.66, lng: -70.26, region: 'north-america/us/maine' },
+      { name: 'Fayetteville', lat: 35.05, lng: -78.88, region: 'north-america/us/north-carolina' },
+    ],
+    areas: [
+      { city: 'Fayetteville, AR', lat: 36.06, lng: -94.16 },
+      { city: 'Springfield', lat: 39.78, lng: -89.65 },
+      { city: 'Springfield', lat: 37.21, lng: -93.29 },
+    ],
+  });
+  const keys = c.map(x => x.key);
+  assert.equal(new Set(keys).size, keys.length, keys.join(' '));
+  assert.ok(keys.includes('portland|US|oregon') && keys.includes('portland|US|maine'));
+  assert.ok(keys.includes('fayetteville|US|north carolina') && keys.includes('fayetteville|US|arkansas'));
+  // A dismissal of one is not a dismissal of the other.
+  const pdx = c.find(x => x.key === 'portland|US|oregon')!;
+  const me = person({ home: { lat: 43.9, lng: -70.5 }, dismissed: new Set([pdx.key]) });
+  const hs = new Map(c.map(x => [x.key, city(1)] as [string, Holdings]));
+  const shown = pickTrips(c, hs, me, { max: 10 }).picks.map(p => p.destination.city);
+  assert.ok(shown.some(x => /Portland, Maine/.test(x)));
+  assert.ok(!shown.some(x => /Portland, Oregon/.test(x)));
+});
+
+test('a Karaoke no-go finds karaoke bars by their name, and says so', () => {
+  assert.deepEqual(nameTags('Novabox Karaoke'), ['karaoke']);
+  assert.deepEqual(nameTags('BAM Karaoke Box Etoile'), ['karaoke']);
+  assert.deepEqual(nameTags('The Blue Note'), []);
+  const h = held({
+    'places to eat|restaurant': 40, 'live music|music venue': 8,
+    'live music|nightclub|karaoke': 5, 'live music|nightclub': 3,
+  });
+  const t = tally(h, ['Karaoke'], false);
+  assert.equal(t.byInterest.get('live music'), 11, 'karaoke rooms are not counted as live music');
+  assert.equal(t.removedAs.get('karaoke bars'), 5);
+  const kTown = town('Karaokeville', 35.3, -80.4);
+  const hs = new Map([[raleigh.key, city(1)], [kTown.key, h]]);
+  const solo = person({ me: { favorite_activities: ['Live music'], no_way_jose: ['Karaoke'] } });
+  const card = pickTrips([raleigh, kTown], hs, solo).picks.find(p => p.destination.city === 'Karaokeville')!;
+  assert.match(card.held, /11 live-music venues/);
+  assert.equal(card.leftOut, 'No karaoke bars, as you asked.');
+  // A clubs no-go still says nightclubs, and a seafood one says what it took.
+  assert.equal(tally(h, ['Clubs'], false).removedAs.get('nightclubs'), 8);
+});
+
+test("a flight card names the airport of the place it was measured from", () => {
+  const seattleNow = { lat: 47.6, lng: -122.3 };
+  assert.equal(startingAirport({ at: seattleNow, sent: 'sea', homeAirport: 'RDU' }), 'SEA');
+  assert.equal(startingAirport({ at: seattleNow, sent: null, homeAirport: 'RDU' }), null, 'never the home airport for somewhere else');
+  assert.equal(startingAirport({ at: null, sent: 'SEA', homeAirport: 'rdu' }), 'RDU');
+  assert.equal(startingAirport({ at: seattleNow, sent: 'Seattle', homeAirport: 'RDU' }), null);
+  // And the card says "a flight away" rather than guess.
+  const { picks } = pickTrips(all, holdingsFor(), person({ homeAirport: null }), { max: 10 });
+  const away = picks.find(p => p.band === 'away')!;
+  assert.match(away.howFar, /miles — a flight away$/);
+  // The Home card sends the device's own airport with its position.
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  const body = app.slice(app.indexOf('function TripPicks('), app.indexOf('function TripPicks(') + 1500);
+  assert.match(body, /&airport=\$\{encodeURIComponent\(air\)\}/);
+});
+
+test("changing the plan's kind lets go of the idea's length", () => {
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  const i = app.indexOf('{id:"trip",e:"✈️",l:"Trip"}');
+  assert.ok(i > 0);
+  const typeStep = app.slice(i, i + 800);
+  assert.match(typeStep, /if\(t\.id!==planType\)setSuggestedNights\(0\);\s*setPlanType\(t\.id\);/);
+  // The weekend presets set both days, so the length no longer decides either.
+  const j = app.indexOf('["This weekend","Next weekend","In 2 weeks","In a month"]');
+  assert.match(app.slice(j, j + 1500), /setEndDate\(today\(sun\)\);[\s\S]{0,200}setSuggestedNights\(0\);/);
 });

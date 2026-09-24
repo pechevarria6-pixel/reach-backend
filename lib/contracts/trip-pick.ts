@@ -15,7 +15,7 @@
 import { z } from 'zod';
 
 export const TripPickSchema = z.object({
-  /** recommendation_feedback.item_ref, "trip:<town>|<country>". */
+  /** recommendation_feedback.item_ref, "trip:<candidate key>" (town|country, and the US state when known). */
   ref: z.string().min(1),
   band: z.enum(['night', 'weekend', 'away']),
   /** The kind of plan CreatePlanFlow starts on. */

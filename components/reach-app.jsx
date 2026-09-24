@@ -784,7 +784,11 @@ function TripPicks({push,userLocation,toast,groups}){
     let live=true;
     const lat=userLocation?.lat, lng=userLocation?.lng;
     const city=userLocation?.city||userLocation?.formatted||"";
-    const q=lat!=null&&lng!=null?`?lat=${lat}&lng=${lng}&city=${encodeURIComponent(city)}`:"";
+    // The airport of this same place, so a flight card never measures from
+    // here and names the airport at home. None known: the card says "a
+    // flight away" rather than guess.
+    const air=userLocation?.airport||"";
+    const q=lat!=null&&lng!=null?`?lat=${lat}&lng=${lng}&city=${encodeURIComponent(city)}${air?`&airport=${encodeURIComponent(air)}`:""}`:"";
     setState("loading");
     (async()=>{
       try{
@@ -796,7 +800,7 @@ function TripPicks({push,userLocation,toast,groups}){
       }catch(e){console.error("[home] trip ideas failed",e);if(live)setState("error");}
     })();
     return()=>{live=false;};
-  },[userLocation?.lat,userLocation?.lng]);
+  },[userLocation?.lat,userLocation?.lng,userLocation?.airport]);
 
   const dismiss=async(p)=>{
     if(busy)return;
@@ -7940,7 +7944,13 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
             <div className="sl" style={{margin:"14px 0 10px"}}>What are you planning?</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               {[{id:"trip",e:"✈️",l:"Trip"},{id:"restaurant",e:"🍽️",l:"Dinner out"},{id:"concert",e:"🎵",l:"Concert"},{id:"weekend",e:"🏡",l:"Weekend Away"}].map(t=>(
-                <button key={t.id} onClick={()=>setPlanType(t.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${planType===t.id?C.accentText:C.border}`,background:planType===t.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
+                <button key={t.id} onClick={()=>{
+                  // A Home idea's length belonged to its kind: "4 nights in
+                  // Seattle" turned into a weekend is Friday to Sunday, not
+                  // Friday to Tuesday, so the length goes with the change.
+                  if(t.id!==planType)setSuggestedNights(0);
+                  setPlanType(t.id);
+                }} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${planType===t.id?C.accentText:C.border}`,background:planType===t.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
                   <div style={{fontSize:26,marginBottom:6}}>{t.e}</div><div style={{fontSize:13,fontWeight:600,color:C.t1}}>{t.l}</div>
                 </button>
               ))}
@@ -8032,6 +8042,9 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                         const sun=new Date(fri.getFullYear(),fri.getMonth(),fri.getDate()+2);
                         setStartDate(today(fri));
                         setEndDate(today(sun));
+                        // The preset chose both days; the idea's length no
+                        // longer decides the return date.
+                        setSuggestedNights(0);
                       }} style={{padding:"7px 14px",borderRadius:20,border:`1px solid ${C.border}`,background:C.s2,color:C.t2,fontSize:12,fontWeight:500,cursor:"pointer"}}>
                         {preset}
                       </button>

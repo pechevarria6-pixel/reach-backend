@@ -7,10 +7,9 @@
 // Read-only. Nothing here writes.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { latestPerItem, type Feedback, type Verdict } from '../recommendation-memory.ts';
-import { nameKey } from '../discovery/regions.ts';
 import { locate } from '../discovery/geocode.ts';
 import { today } from '../calendar.ts';
-import { milesBetween, plannedKeys, type Candidate, type Person, type Taste } from './trip-picks.ts';
+import { homeTownOf, milesBetween, plannedKeys, startingAirport, type Candidate, type Person, type Taste } from './trip-picks.ts';
 
 /** The quiz columns a member's answers are read from. Never returned to anybody. */
 const TASTE = 'id, favorite_activities, cuisines, music_genres, nightlife_style, drink_style, no_way_jose, budget_range';
@@ -26,7 +25,7 @@ export interface PersonRead {
 export async function personFor(
   db: SupabaseClient,
   userId: string,
-  opts: { at?: { lat: number; lng: number } | null; city?: string | null; candidates: Candidate[] },
+  opts: { at?: { lat: number; lng: number } | null; city?: string | null; airport?: string | null; candidates: Candidate[] },
 ): Promise<PersonRead> {
   // select('*') so quiz v3's traveler_profile is read when its migration has
   // run and simply absent when it has not — naming the column would fail the
@@ -64,9 +63,17 @@ export async function personFor(
   if (withPeople[0]) {
     const g = withPeople[0];
     const ids = others(g.id);
-    const { data: rows, error } = await db.from('users').select(TASTE).in('id', ids);
+    // Their names too, for "For you and Ali" — never the group's own name,
+    // which is usually an occasion (see whoFor). Split off at once so a
+    // name never rides along inside somebody's answers.
+    const { data: rows, error } = await db.from('users').select(`${TASTE}, name`).in('id', ids);
     if (error) console.error('[trip-picks] could not read the group', { code: error.code });
-    group = { id: g.id, name: String(g.name || 'your group'), members: (rows ?? []) as Taste[] };
+    const read = (rows ?? []) as Array<Taste & { name?: string | null }>;
+    group = {
+      id: g.id, name: String(g.name || 'your group'),
+      members: read.map(({ name: _n, ...taste }) => taste as Taste),
+      names: read.map(r => (typeof r.name === 'string' ? r.name : null)),
+    };
     // Somebody whose row could not be read still counts as going.
     while (group.members.length < ids.length) group.members.push({});
   }
@@ -93,8 +100,9 @@ export async function personFor(
   let home = opts.at ?? null;
   let from: string | null = home ? ((opts.city || '').trim() || homeCity || null) : null;
   if (!home && homeCity) {
-    const town = nameKey(homeCity.split(',')[0]);
-    const known = opts.candidates.find(c => nameKey(c.name) === town);
+    // The whole string decides, state or country included: "Athens,
+    // Georgia" is not the Athens on the world list (homeTownOf).
+    const known = homeTownOf(homeCity, opts.candidates);
     if (known) home = { lat: known.lat, lng: known.lng };
     else {
       const placed = await locate(homeCity).catch(() => null);
@@ -114,7 +122,8 @@ export async function personFor(
     person: {
       home,
       homeCountry,
-      homeAirport: typeof row.home_airport === 'string' && /^[A-Z]{3}$/i.test(row.home_airport) ? row.home_airport.toUpperCase() : null,
+      // The airport of wherever the miles are measured from (startingAirport).
+      homeAirport: startingAirport({ at: opts.at ?? null, sent: opts.airport, homeAirport: row.home_airport }),
       me: row,
       group,
       planned: plannedKeys(plans, today()),

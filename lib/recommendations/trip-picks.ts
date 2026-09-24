@@ -75,7 +75,10 @@ export interface PlannedAt {
  * music" without taking out the jazz bar.
  */
 export interface Holdings {
-  /** "interest|kind" → rows. Kind may be empty. */
+  /**
+   * "interest|kind" → rows, or "interest|kind|tags" when the venue's own
+   * name says what the map's kind does not (see nameTags). Kind may be empty.
+   */
   counts: Record<string, number>;
   /** The read stopped at its page limit, so every number is a floor. */
   floor: boolean;
@@ -100,7 +103,11 @@ export interface Person {
    * made a plan in that has other people in it. Its members' answers shade
    * the ranking and every one of their vetoes counts.
    */
-  group: { id: string; name: string; members: Taste[] } | null;
+  group: {
+    id: string; name: string; members: Taste[];
+    /** The other members' names, as users.name holds them, in no set order. */
+    names?: Array<string | null>;
+  } | null;
   /** Towns they already have a plan for, by folded name (see plannedKeys). */
   planned: Planned;
   /** Candidate keys they said "not for me" to. */
@@ -124,7 +131,7 @@ export interface TripPick {
   nights: number;
   miles: number;
   title: string;
-  /** "For you" / "For Beach Crew · 4 of you". */
+  /** "For you" / "For you and Ali" / "For the five of you". */
   who: string;
   /** The facts: counts of what we hold there. */
   held: string;
@@ -317,8 +324,10 @@ export function vetoesOf(person: Pick<Person, 'me' | 'group'>): string[] {
 
 /** Somebody going is not drinking, so nothing is chosen for its bars. */
 function anyoneSober(person: Pick<Person, 'me' | 'group'>): boolean {
-  return [person.me, ...(person.group?.members ?? [])]
-    .some(t => String(t?.drink_style ?? '').trim().toLowerCase() === 'not drinking');
+  return [person.me, ...(person.group?.members ?? [])].some(isSober);
+}
+function isSober(t: Taste | null | undefined): boolean {
+  return String(t?.drink_style ?? '').trim().toLowerCase() === 'not drinking';
 }
 
 /**
@@ -327,20 +336,56 @@ function anyoneSober(person: Pick<Person, 'me' | 'group'>): boolean {
  * it is a drink for a party with somebody sober in it, or a nightclub for
  * somebody who said no to loud rooms.
  */
-export function vetoedRow(interest: string, kind: string, vetoes: string[], sober: boolean): boolean {
+export function vetoedRow(interest: string, kind: string, vetoes: string[], sober: boolean, tags = ''): boolean {
+  return !!whyVetoed(interest, kind, vetoes, sober, tags);
+}
+
+/**
+ * What the map's kinds do not say but a venue's own name does. OSM files a
+ * karaoke bar as amenity=nightclub, so "Novabox Karaoke" is a live-music
+ * nightclub to the table, and a Karaoke no-go (one of the quiz's own chips)
+ * could never find it by interest and kind alone. holdings.ts reads each
+ * row's name through this and keeps the tag on the count's key.
+ */
+const NAME_TAGS: Array<{ re: RegExp; tag: string; noun: string }> = [
+  { re: /\bkaraoke\b/i, tag: 'karaoke', noun: 'karaoke bars' },
+];
+
+export function nameTags(name: string | null | undefined): string[] {
+  const n = String(name ?? '');
+  return NAME_TAGS.filter(t => t.re.test(n)).map(t => t.tag);
+}
+
+/**
+ * Why a row is out, as the card would name what went: "nightclubs",
+ * "karaoke bars", "seafood restaurants" — or "bars" when it is out only
+ * because somebody going is not drinking. Null: it stays.
+ */
+export function whyVetoed(interest: string, kind: string, vetoes: string[], sober: boolean, tags = ''): string | null {
   const low = vetoes.map(v => v.toLowerCase());
-  if (sober && ALCOHOL.has(interest)) return true;
   if ((low.includes('clubs') || low.includes('loud rooms') || low.includes('loud'))
-    && (interest === 'nightclubs' || kind === 'nightclub')) return true;
-  return !!vetoBreach(`${interest} ${kind}`.trim(), vetoes);
+    && (interest === 'nightclubs' || kind === 'nightclub')) return 'nightclubs';
+  const own = vetoBreach(`${interest} ${kind}`.trim(), vetoes);
+  // Named for whichever word broke it: a "seafood" no-go took out seafood
+  // restaurants; a no-go that matched the kind "nightclub" took nightclubs.
+  if (own) return !vetoBreach(interest, vetoes) && kind === 'nightclub' ? 'nightclubs' : noun(interest, 2);
+  if (tags && vetoBreach(tags, vetoes)) {
+    const hit = NAME_TAGS.find(t => tags.split(/\s+/).includes(t.tag) && vetoBreach(t.tag, vetoes));
+    return hit ? hit.noun : noun(interest, 2);
+  }
+  if (sober && ALCOHOL.has(interest)) return 'bars';
+  return null;
 }
 
 // A no-go is one of three things here, and the card has to be honest about
 // which:
 //
 //   about a venue     clubs, loud rooms, camping, karaoke, a typed word.
-//                     Checked against every row (vetoedRow) and said on
-//                     the card when it took something out (leftOut).
+//                     Checked against every row's interest and kind, and
+//                     its name for what the kinds cannot say (nameTags:
+//                     karaoke), and said on the card when it took something
+//                     out (leftOut). A typed word that names neither a kind
+//                     nor a tag finds nothing, and nothing claims it did.
 //   about getting     long flights. Checked from the one thing we do hold,
 //   there             the distance: nothing further than LONG_FLIGHT_MILES
 //                     is offered as a flight, and the card says so.
@@ -386,15 +431,18 @@ export function uncheckedVetoes(vetoes: string[]): Array<{ said: string; lacks: 
  * night out: that is the town they already live in, and the evening's own
  * plan is where a crowd is avoided.
  */
-export function uncheckedLine(vetoes: string[], group: boolean): string | null {
-  const u = uncheckedVetoes(vetoes);
-  if (!u.length) return null;
-  const what = listOf(u.map(x => x.said));
-  const lacks = listOf([...new Set(u.map(x => x.lacks))], 'or');
-  const who = group ? 'Somebody in the group ruled out' : 'You ruled out';
-  // Worded to stand for every drive and flight at once, because Home says
-  // it once above the row rather than on each card (the redundancy rule).
-  return `${who} ${what}. Reach doesn't hold ${lacks} data yet, so trips away aren't checked for ${u.length > 1 ? 'them' : 'it'}.`;
+export function uncheckedLine(mine: string[], others: string[] = []): string | null {
+  const own = uncheckedVetoes(mine);
+  const theirs = uncheckedVetoes(others).filter(u => !own.some(o => o.said === u.said));
+  const say = (u: typeof own, who: string) => {
+    if (!u.length) return null;
+    const what = listOf(u.map(x => x.said));
+    const lacks = listOf([...new Set(u.map(x => x.lacks))], 'or');
+    // Worded to stand for every drive and flight at once, because Home says
+    // it once above the row rather than on each card (the redundancy rule).
+    return `${who} ${what}. Reach doesn't hold ${lacks} data yet, so trips away aren't checked for ${u.length > 1 ? 'them' : 'it'}.`;
+  };
+  return [say(own, 'You ruled out'), say(theirs, 'Somebody in the group ruled out')].filter(Boolean).join(' ') || null;
 }
 
 // ─── Counting what a town holds, for one party ──────────────────────────
@@ -405,6 +453,8 @@ export interface Tally {
   byInterest: Map<string, number>;
   /** Rows a veto took out, by interest — said on the card, never counted. */
   removed: Map<string, number>;
+  /** The same rows, by what the card calls them ("nightclubs", "karaoke bars"). */
+  removedAs: Map<string, number>;
   /** Of those, the rows out only because somebody going is not drinking. */
   sober: number;
   floor: boolean;
@@ -413,21 +463,27 @@ export interface Tally {
 export function tally(h: Holdings, vetoes: string[], sober: boolean): Tally {
   const byInterest = new Map<string, number>();
   const removed = new Map<string, number>();
+  const removedAs = new Map<string, number>();
   let total = 0, food = 0, soberOut = 0;
   for (const [key, n] of Object.entries(h.counts ?? {})) {
     if (!(n > 0)) continue;
-    const [interest, kind = ''] = key.split('|');
+    const [interest, kind = '', tags = ''] = key.split('|');
     if (!interest || interest === 'places to stay') continue;
-    if (vetoedRow(interest, kind, vetoes, sober)) {
-      if (vetoedRow(interest, kind, vetoes, false)) removed.set(interest, (removed.get(interest) ?? 0) + n);
-      else soberOut += n;
+    const why = whyVetoed(interest, kind, vetoes, sober, tags);
+    if (why) {
+      // "bars" is only ever the answer when no no-go took the row first.
+      if (why === 'bars') soberOut += n;
+      else {
+        removed.set(interest, (removed.get(interest) ?? 0) + n);
+        removedAs.set(why, (removedAs.get(why) ?? 0) + n);
+      }
       continue;
     }
     byInterest.set(interest, (byInterest.get(interest) ?? 0) + n);
     total += n;
     if (isFood(interest)) food += n;
   }
-  return { total, food, byInterest, removed, sober: soberOut, floor: !!h.floor };
+  return { total, food, byInterest, removed, removedAs, sober: soberOut, floor: !!h.floor };
 }
 
 /** Held well enough to put forward. */
@@ -531,11 +587,25 @@ function listOf(items: string[], joiner = 'and'): string {
 }
 const NUMBER_WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 
+/**
+ * Who a card is for. Never the group's own name: people name a group for an
+ * occasion ("Ali and Pete, go to St. Augustine", "30th bday", "Dinner"), and
+ * that name over a weekend in Washington contradicts the card it sits on.
+ * The people are what does not change, so up to two are named, and a bigger
+ * group is counted.
+ */
 export function whoFor(group: Person['group']): string {
   if (!group) return 'For you';
   const n = group.members.length + 1;
-  // The group's own name, as they wrote it, and how many are in it.
-  return `${group.name} · ${NUMBER_WORDS[n] ?? n} of you`;
+  const first = (s: string | null | undefined) => {
+    const w = String(s ?? '').trim().split(/\s+/)[0] ?? '';
+    return w && !w.includes('@') ? w : '';
+  };
+  const names = (group.names ?? []).map(first).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  if (group.members.length <= 2 && names.length === group.members.length && names.length) {
+    return `For ${listOf(['you', ...names])}`;
+  }
+  return `For the ${NUMBER_WORDS[n] ?? n} of you`;
 }
 
 function howFarFor(band: Band, miles: number, airport: string | null): string {
@@ -608,18 +678,33 @@ export function matchedLine(matched: string[], group: boolean): string | null {
     : `You said you're into ${words}.`;
 }
 
-export function leftOutLine(t: Tally, group: boolean): string | null {
-  const top = [...t.removed.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+/**
+ * What a veto took out, said once. Only ever about the person reading it
+ * (their own no-go, their own not drinking), or about "somebody in the
+ * group" when there are enough others that it names nobody — see
+ * othersMaySpeak. Somebody else not drinking is never said at all: it is
+ * not a fact about them the group needs a sentence on (mixSentence).
+ */
+export function leftOutLine(t: Tally, whose: 'mine' | 'theirs', except: Map<string, number> = new Map()): string | null {
+  const top = [...t.removedAs.entries()].filter(([w]) => !except.has(w))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
   if (!top) {
-    if (!t.sober) return null;
-    return group
-      ? 'Picked without the bars — somebody going is not drinking.'
-      : "Picked without the bars, since you're not drinking.";
+    if (!t.sober || whose === 'theirs') return null;
+    return "Picked without the bars, since you're not drinking.";
   }
-  const what = /^(live music|nightclubs|dancing)$/.test(top[0]) ? 'nightclubs' : noun(top[0], 2);
-  return group
-    ? `No ${what} — somebody in the group ruled them out.`
-    : `No ${what}, as you asked.`;
+  return whose === 'theirs'
+    ? `No ${top[0]} — somebody in the group ruled them out.`
+    : `No ${top[0]}, as you asked.`;
+}
+
+/**
+ * Whether a line may speak of the others' answers at all. "Somebody in the
+ * group" hides who only when there are two or more somebodies: in a pair it
+ * is the other person by name. Their no-gos are applied either way; they
+ * are just not said back.
+ */
+export function othersMaySpeak(group: Person['group']): boolean {
+  return (group?.members.length ?? 0) >= 2;
 }
 
 // ─── Candidates ─────────────────────────────────────────────────────────
@@ -676,8 +761,26 @@ export function notATown(name: string | null | undefined): boolean {
   return Object.values(US_STATE_NAME).some(s => nameKey(s) === folded && folded !== 'washington');
 }
 
-export function candidateKey(name: string, country: string | null): string {
-  return `${nameKey(name)}|${String(country ?? '').toUpperCase()}`;
+/**
+ * A candidate's key: folded name, country, and the US state when one is
+ * known — "portland|US|oregon", "paris|FR". The holdings cache and a
+ * dismissal both go by it, so two towns sharing one would share their
+ * counts and their "not for me" (Portland, Maine and Portland, Oregon;
+ * Fayetteville NC and AR). candidatesFrom adds the point as a last resort
+ * when even that is not enough.
+ */
+export function candidateKey(name: string, country: string | null, state: string | null = null): string {
+  const base = `${nameKey(name)}|${String(country ?? '').toUpperCase()}`;
+  return state ? `${base}|${nameKey(state)}` : base;
+}
+
+/** A US state's name from a postal code or the name itself; null for anything else. */
+function usStateOf(s: string | null | undefined): string | null {
+  const t = String(s ?? '').trim();
+  if (!t) return null;
+  if (/^[A-Za-z]{2}$/.test(t)) return US_CODE[t.toUpperCase()] ?? null;
+  const k = nameKey(t);
+  return Object.values(US_CODE).find(v => nameKey(v) === k) ?? null;
 }
 
 /**
@@ -705,7 +808,8 @@ export function candidatesFrom(input: {
     const d = milesBetween(a, c);
     return d <= 5 || (d <= 15 && nameKey(c.name) === nameKey(name));
   });
-  const push = (c: Omit<Candidate, 'key'>) => {
+  const keys = new Set<string>();
+  const push = (c: Omit<Candidate, 'key'>, state: string | null = null) => {
     if (!Number.isFinite(c.lat) || !Number.isFinite(c.lng) || (Math.abs(c.lat) < 0.01 && Math.abs(c.lng) < 0.01)) return;
     if (notATown(c.name)) return;
     const dup = near(c, c.name);
@@ -716,7 +820,11 @@ export function candidatesFrom(input: {
       if (into && !known) (into.aliases ??= []).push({ name: c.name, label: c.label, lat: c.lat, lng: c.lng });
       return;
     }
-    const kept: Candidate = { ...c, key: candidateKey(c.name, c.country) };
+    let key = candidateKey(c.name, c.country, c.country === 'US' ? state : null);
+    // Two towns of one name with nothing to tell them apart: the point does.
+    if (keys.has(key)) key = `${key}@${c.lat.toFixed(2)},${c.lng.toFixed(2)}`;
+    keys.add(key);
+    const kept: Candidate = { ...c, key };
     out.push(kept);
     seen.push({ name: c.name, lat: c.lat, lng: c.lng, country: c.country, into: kept });
   };
@@ -734,12 +842,14 @@ export function candidatesFrom(input: {
       name, country: where.country,
       label: where.area && where.area !== name ? `${name}, ${where.area}` : name,
       lat: Number(s.lat), lng: Number(s.lng),
-    });
+    }, where.country === 'US' ? where.area : null);
   }
   for (const a of input.areas ?? []) {
     const [name, ...rest] = String(a.city ?? '').split(',').map(x => x.trim());
     const at = { lat: Number(a.lat), lng: Number(a.lng) };
-    push({ name, country: countryNear(at), label: [name, ...rest].filter(Boolean).join(', '), ...at });
+    // "Fayetteville, AR" says its own country when no placed town is near.
+    const state = usStateOf(rest[0]);
+    push({ name, country: countryNear(at) ?? (state ? 'US' : null), label: [name, ...rest].filter(Boolean).join(', '), ...at }, state);
   }
   return out;
 }
@@ -819,6 +929,46 @@ export function isPlanned(list: Map<string, PlannedAt[]>, place: Place, country:
   });
 }
 
+/**
+ * The town somebody's home_city names, from the towns we already know,
+ * without a lookup. users.home_city is "Pittsburgh, Pennsylvania" or
+ * "Aberdeen, Scotland": everything after the town has to agree with the
+ * candidate too, or "Athens, Georgia" is placed in Greece and "Aberdeen,
+ * South Dakota" in North Carolina. Null when nothing agrees, or more than
+ * one town does — the geocoder is asked instead, with the whole string.
+ */
+export function homeTownOf(homeCity: string, candidates: Candidate[]): Place | null {
+  const [town, ...rest] = String(homeCity || '').split(',').map(x => x.trim()).filter(Boolean);
+  if (!town) return null;
+  const said = rest.map(areaKey);
+  const named = candidates.flatMap(c => placesOf(c).map(p => ({ p, c })))
+    .filter(x => nameKey(x.p.name) === nameKey(town));
+  const fits = !said.length ? named : named.filter(({ p, c }) => {
+    const known = p.label.split(',').slice(1).map(areaKey);
+    if (c.country) {
+      known.push(nameKey(countryName(c.country)), nameKey(c.country));
+      if (c.country === 'US') known.push('usa', 'united states', 'united states of america');
+      if (c.country === 'GB') known.push('uk', 'england', 'scotland', 'wales', 'northern ireland');
+    }
+    return said.every(a => known.includes(a));
+  });
+  // "Aberdeen, United Kingdom" is still two Aberdeens if we held both.
+  const distinct = fits.filter((x, i) => fits.findIndex(y => milesBetween(x.p, y.p) < 5) === i);
+  return distinct.length === 1 ? distinct[0].p : null;
+}
+
+/**
+ * The airport a flight card names. It has to be the airport of the place
+ * the miles were measured from: a Raleigh user in Seattle with location on
+ * is measured from Seattle, and "2,350 miles — a flight from RDU" is two
+ * starting points on one line. So with a position from the device, only
+ * the airport the device's own place gave; without one, their home airport.
+ */
+export function startingAirport(opts: { at: { lat: number; lng: number } | null; sent?: string | null; homeAirport?: unknown }): string | null {
+  const code = (v: unknown) => (typeof v === 'string' && /^[A-Z]{3}$/i.test(v.trim()) ? v.trim().toUpperCase() : null);
+  return opts.at ? code(opts.sent) : code(opts.homeAirport);
+}
+
 // ─── Ranking ────────────────────────────────────────────────────────────
 
 /** What the party is into, in the venue table's words, most telling first. */
@@ -830,7 +980,7 @@ export function interestsOf(person: Pick<Person, 'me' | 'group'>, vetoes: string
 }
 
 interface Scored {
-  c: Candidate; band: Band; miles: number; t: Tally; score: number; matched: string[];
+  c: Candidate; band: Band; miles: number; t: Tally; h: Holdings; score: number; matched: string[];
   /** The town the card names: the candidate, or the folded town they live in. */
   shown: Place; shownMiles: number;
 }
@@ -975,7 +1125,7 @@ export function pickTrips(
     if (placesOf(c).some(pl => isPlanned(list, pl, c.country))) continue;
     const { score, matched } = scoreOf(t, c, band, miles, mine, theirs, lean);
     const shown = shownPlace(c, person.home);
-    scored.push({ c, band, miles, t, score, matched, shown, shownMiles: milesBetween(person.home, shown) });
+    scored.push({ c, band, miles, t, h, score, matched, shown, shownMiles: milesBetween(person.home, shown) });
   }
 
   const order = (a: Scored, b: Scored) => b.score - a.score || a.c.name.localeCompare(b.c.name);
@@ -1018,19 +1168,29 @@ function toPick(s: Scored, person: Person, ctx: { party: number; tier: Tier; gro
   const nights = nightsFor(s.band, abroad, s.miles);
   const { low, high } = estimate({ band: s.band, miles: s.miles, nights, party: ctx.party, tier: ctx.tier, abroad });
   const vetoes = vetoesOf(person);
+  // Whose each no-go is. The reader's own are said as theirs; the others'
+  // only when saying "somebody" names nobody (othersMaySpeak).
+  const mine = vetoesOf({ me: person.me, group: null });
+  const speak = othersMaySpeak(person.group);
+  const theirs = speak ? vetoes.filter(v => !mine.includes(v)) : [];
   const each = ctx.party > 1;
   const basis = s.band === 'night'
     ? !ctx.tier ? 'a typical night out'
       : ctx.group ? 'going by the tightest budget in the group' : 'going by what you said a night out costs you'
     : s.band === 'weekend' ? 'room share, food and fuel' : 'flight, room share and food';
   const matchedLineText = matchedLine(s.matched, ctx.group);
-  const flights = s.band === 'away' && refusesLongFlights(vetoes)
-    ? (ctx.group
-      ? `Kept under ${fmt(LONG_FLIGHT_MILES)} miles — somebody in the group ruled out long flights.`
-      : `Kept under ${fmt(LONG_FLIGHT_MILES)} miles, since you ruled out long flights.`)
-    : null;
-  const leftOut = [leftOutLine(s.t, ctx.group), flights].filter(Boolean).join(' ') || null;
-  const unchecked = s.band === 'night' ? null : uncheckedLine(vetoes, ctx.group);
+  const flights = s.band !== 'away' ? null
+    : refusesLongFlights(mine) ? `Kept under ${fmt(LONG_FLIGHT_MILES)} miles, since you ruled out long flights.`
+      : refusesLongFlights(theirs) ? `Kept under ${fmt(LONG_FLIGHT_MILES)} miles — somebody in the group ruled out long flights.`
+        : null;
+  // Counted again with only the reader's own answers, to tell what they
+  // took out from what somebody else did.
+  const own = tally(s.h, mine, isSober(person.me));
+  const removed = own.removedAs.size || own.sober
+    ? leftOutLine(own, 'mine')
+    : speak ? leftOutLine(s.t, 'theirs', own.removedAs) : null;
+  const leftOut = [removed, flights].filter(Boolean).join(' ') || null;
+  const unchecked = s.band === 'night' ? null : uncheckedLine(mine, theirs);
   const around = (s.c.aliases?.length ? [s.shown, ...placesOf(s.c).filter(p => p !== s.shown && p.name !== s.shown.name)] : []).map(p => p.name);
   const lines = {
     title: titleFor(s.band, { ...s.c, name: s.shown.name }, nights),

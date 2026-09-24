@@ -15,7 +15,7 @@
 // once per visitor.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { WORLD_DESTINATIONS } from '../discovery/world-destinations.ts';
-import { candidatesFrom, type Candidate, type Holdings } from './trip-picks.ts';
+import { candidatesFrom, nameTags, type Candidate, type Holdings } from './trip-picks.ts';
 
 /** The menu's widest box (real-places.ts RINGS_MILES). */
 const MENU_MILES = 25;
@@ -62,15 +62,16 @@ export async function holdingsAt(db: SupabaseClient, at: { lat: number; lng: num
     for (const k of Object.keys(counts)) delete counts[k];
     for (let page = 0; page < MAX_PAGES; page++) {
       let q = db.from('discovery_venues')
-        .select('id, interest, kind')
+        .select('id, name, interest, kind')
         .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
         .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng)
         .neq('interest', 'places to stay');
       if (live) q = q.is('gone_at', null);
       const { data, error } = await q.order('id').range(page * PAGE, page * PAGE + PAGE - 1);
       if (error) return { error, floor: false };
-      for (const r of (data ?? []) as Array<{ interest: string | null; kind: string | null }>) {
-        const key = `${String(r.interest ?? '').trim()}|${String(r.kind ?? '').replace(/_/g, ' ').trim()}`;
+      for (const r of (data ?? []) as Array<{ name: string | null; interest: string | null; kind: string | null }>) {
+        const tags = nameTags(r.name).join(' ');
+        const key = `${String(r.interest ?? '').trim()}|${String(r.kind ?? '').replace(/_/g, ' ').trim()}${tags ? `|${tags}` : ''}`;
         if (key.startsWith('|')) continue;
         counts[key] = (counts[key] ?? 0) + 1;
       }
@@ -95,6 +96,8 @@ export async function snapshot(db: SupabaseClient, now = Date.now()): Promise<Sn
   if (inFlight) return inFlight;
   inFlight = (async () => {
     const candidates = await loadCandidates(db);
+    // Keyed by candidate.key, which candidatesFrom keeps unique (state, then
+    // the point) so two same-name towns never write over each other's counts.
     const holdings = new Map<string, Holdings>();
     for (let i = 0; i < candidates.length; i += BATCH) {
       const batch = candidates.slice(i, i + BATCH);
