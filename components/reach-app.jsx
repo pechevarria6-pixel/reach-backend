@@ -5045,13 +5045,14 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           return null;
         }
         const d=await r.json();
-        return d.itinerary||null;
+        // For an evening, the server names it from the venues it holds.
+        return d.itinerary?{itinerary:d.itinerary,title:d.title||null}:null;
       }catch(e){
         console.error("[groupTrip] itinerary failed for",trip.destination,e);
         return null;
       }
     }));
-    setTrips(prev=>(prev||[]).map((t,i)=>results[i]?{...t,itinerary:results[i]}:t));
+    setTrips(prev=>(prev||[]).map((t,i)=>results[i]?{...t,itinerary:results[i].itinerary,venueTitle:results[i].title||null}:t));
     setEnriching(0);
   };
 
@@ -5065,7 +5066,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     // Save plan immediately with placeholder itinerary
     const np={
       id:"p"+Date.now(),
-      title:trip.destination,
+      // The name the evening's own venues give it, when there is one — never
+      // a title that names places the plan does not go to.
+      title:trip.venueTitle||trip.destination,
       status:"approved",
       dates:nightOut?formatDates(startDate):formatDates(startDate,endDate),
       startDate:startDate||null,
@@ -5176,7 +5179,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       res=await fetch(`/api/plans/${id}`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          title:trip.destination,
+          title:trip.venueTitle||trip.destination,
           destination_city:trip.city||null,
           destination_country:trip.country_code||null,
           budget_cents:Math.round((Number(trip.total_per_person)||0)*100),
@@ -5680,7 +5683,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                       <div style={{flex:1}}>
                         <div style={{fontSize:32,marginBottom:6}}>{trip.emoji}</div>
                         <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:4}}>
-                          {trip.destination}
+                          {trip.venueTitle||trip.destination}
                         </div>
                         <div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginBottom:8}}>
                           {trip.tagline}

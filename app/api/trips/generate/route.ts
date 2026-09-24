@@ -641,7 +641,7 @@ export async function POST(req: NextRequest) {
 
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = (nightPrefs.food || []).join(', ');
-    const prompt = isNightPlan ? `Plan one evening out: ${destination}.
+    const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}. Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
 
 ${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
 ${realEvent ? eventFacts(realEvent) : ''}${act.length >= 2 && !realEvent ? `
@@ -866,8 +866,12 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // The town's own name, and a real ticketed venue from a listing, are
       // real without being on a map-built menu, so they are allowed through
       // by name.
+      // For an evening, the option's title is the model's own earlier words —
+      // "Greek Dinner & Jazz at The Pit" — and letting it vouch for itself is
+      // how a place nobody verified reached a plan's name. The city does the
+      // vouching instead. For a trip the destination IS the town, and stays.
       const vouchers: string[] = [
-        destination, tripCity, fixedPlace, realEvent?.venue, realEvent?.city, realEvent?.title,
+        isNightPlan ? nightCity : destination, tripCity, fixedPlace, realEvent?.venue, realEvent?.city, realEvent?.title,
       ].filter((v): v is string => typeof v === 'string' && v.length > 0);
       // ── The ticket, carried through to something you can press ───────
       // The listing gave us a venue, a date and the page that sells the
@@ -1123,7 +1127,18 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           { status: 502 },
         );
       }
-      return NextResponse.json({ itinerary: days });
+      // An evening's name, from what it actually holds. Plan 4fbd6ac9 was
+      // called "Greek Dinner & Jazz at The Pit" over a brewery and a ramen
+      // bar — no Greek food, no jazz, no Pit. The venues the itinerary cites
+      // are the only names checked against the map, so they are the name.
+      let title: string | null = null;
+      if (isNightPlan) {
+        const venues = [...new Set(days.flatMap(d => [d.morning, d.afternoon, d.evening])
+          .map(sl => (sl && typeof sl === 'object' ? (sl as { venue?: string | null }).venue : null))
+          .filter((v): v is string => !!v && !!v.trim()))];
+        if (venues.length) title = venues.length === 1 ? `An evening at ${venues[0]}` : `${venues[0]} & ${venues[venues.length - 1]}`;
+      }
+      return NextResponse.json({ itinerary: days, ...(title ? { title } : {}) });
     } catch (e: any) {
       report(e, { where: 'trips/generate', extra: { destination, nights, status: e?.status } });
       console.error('[trips itinerary] generation failed', {
@@ -1161,7 +1176,10 @@ DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}
 ${allVetoes.length > 0 ? 'NEVER INCLUDE: ' + allVetoes.join(', ') : ''}
 
 Each option is a real evening in a named neighbourhood — "Dinner and a gig in
-the Mission", not a city. destination is that evening's name. Three genuinely
+the Mission", not a city. destination is that evening's name: the KIND of
+evening and the neighbourhood only. Never name a venue, a bar, a restaurant, a
+band or a DJ in it or in the tagline — the venues are chosen next, from places
+we have verified, and a name here is a promise nothing has checked. Three genuinely
 different nights: vary what the evening is built around, not just the
 restaurant.
 
