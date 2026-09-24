@@ -16,17 +16,22 @@
 //   node scripts/ingest/build-seeds.mjs --only Raleigh
 //
 // Reads the database either way; writes only with --write. Safe to re-run:
-// rows are upserted on (lower(name), region), radius and last_ingested_at
-// are left alone, and nothing is deleted — to stop reading a town, delete
-// its rows by hand.
+// rows are upserted on (name_key, region) — the name with case and accents
+// folded, computed here by nameKey() — radius and last_ingested_at are left
+// alone, and nothing is deleted — to stop reading a town, delete its rows by
+// hand.
+//
+// A town is placed the way the menu places it: the name with whatever state
+// was typed after it ("Fayetteville, NC"), and the plan's country. Cutting
+// the state off put Fayetteville, NC in Arkansas.
 import { credentials, rest, getAll } from './rest.mjs';
 import { locate, whereIs } from '../../lib/discovery/geocode.ts';
-import { regionFor, probePoints, seedCandidates, dedupeSeeds } from '../../lib/discovery/regions.ts';
+import { regionFor, probePoints, seedCandidates, dedupeSeeds, sameTown, SEED_RADIUS_MILES } from '../../lib/discovery/regions.ts';
 
 const write = process.argv.includes('--write');
 const onlyAt = process.argv.indexOf('--only');
 const only = onlyAt > -1 ? String(process.argv[onlyAt + 1] || '').toLowerCase() : null;
-const RADIUS = 100;
+const RADIUS = SEED_RADIUS_MILES;
 
 const db = rest(credentials());
 
@@ -63,7 +68,20 @@ const regionAt = async (lat, lng) => {
 
 const seeds = [];
 const skipped = [];
+// Towns placed so far, so a Discover area can join the plan's town once both
+// have a point — on the name AND the distance, never the name alone.
+const placed = [];
 for (const c of candidates) {
+  if (c.sources.length === 1 && c.sources[0] === 'area') {
+    const town = placed.find(p => sameTown(c, p));
+    if (town) {
+      for (const s of seeds) if (s.name === town.name && s.lat === town.lat && s.lng === town.lng) {
+        s.source = [...new Set([...s.source.split(','), 'area'])].sort().join(',');
+      }
+      console.log(`  ${c.name}: the area joins ${town.name}, already placed nearby`);
+      continue;
+    }
+  }
   let lat = c.lat, lng = c.lng, centre = null;
   if (lat == null || lng == null) {
     const hint = [c.region].filter(Boolean).join(', ');
@@ -79,6 +97,7 @@ for (const c of candidates) {
     if (region) regions.add(region);
   }
   if (!regions.size) { skipped.push(`${c.name} (${lat}, ${lng}) — in no region regions.ts knows`); continue; }
+  placed.push({ name: c.name, lat, lng });
   for (const region of regions) {
     seeds.push({ name: c.name, lat, lng, region, source: [...c.sources].sort().join(',') });
   }

@@ -13,9 +13,14 @@
 
 -- ── Seeds: the towns the job reads around ───────────────────────────────
 -- One row per town per Geofabrik region. A town near a border has a row in
--- each file its circle reaches: Washington's hundred miles are mostly
+-- each file its circle reaches: Washington's thirty miles are mostly
 -- Maryland and Virginia, and reading only the District's file would miss
--- nearly all of it.
+-- most of it.
+--
+-- Thirty miles because nothing reads further: the itinerary menu reads a
+-- twenty-five mile box nearest first, Discover fifteen. It was a hundred,
+-- which fetched whole neighbouring states and nations to keep places
+-- nothing would ever show.
 create table if not exists public.ingest_seeds (
   id               uuid primary key default gen_random_uuid(),
   name             text not null,
@@ -23,16 +28,27 @@ create table if not exists public.ingest_seeds (
   lng              double precision not null,
   -- Geofabrik's path, e.g. "north-america/us/north-carolina".
   region           text not null,
-  radius_miles     integer not null default 100,
+  radius_miles     integer not null default 30,
   -- plan, area, profile — or several, comma-joined, when more than one asked.
   source           text not null,
   last_ingested_at timestamptz,
   created_at       timestamptz not null default now(),
-  -- The unique rule is (lower(name), region). PostgREST can only name
-  -- columns as an upsert's conflict target, not expressions, so the lowered
-  -- name is kept as a generated column and the constraint sits on that.
-  name_key         text generated always as (lower(name)) stored
+  -- The unique rule is on the name folded for case, accents and spacing,
+  -- and the region. PostgREST can only name columns as an upsert's conflict
+  -- target, not expressions, so the folded name is a column of its own.
+  -- Written by scripts/ingest/build-seeds.mjs (nameKey in
+  -- lib/discovery/regions.ts), not generated here: lower(name) keeps the
+  -- accent, so "Rincón" one week and "Rincon" the next were two rows for a
+  -- town the code treats as one. unaccent() is not immutable, so it cannot
+  -- sit in a generated column without a wrapper that claims it is.
+  name_key         text not null
 );
+
+-- For a database that ran an earlier draft of this file: the generated
+-- column becomes a plain one (its values stay, already lowered), and the
+-- default radius comes down to thirty.
+alter table public.ingest_seeds alter column name_key drop expression if exists;
+alter table public.ingest_seeds alter column radius_miles set default 30;
 
 do $$
 begin
