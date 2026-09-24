@@ -6,7 +6,7 @@
 // does the v2 part alone and says so, rather than taking the feature down.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  scoreQuiz, answersFromV2, columnsFromAnswers, publicProfile,
+  scoreQuiz, answersFromV2, columnsFromAnswers, publicProfile, dialsSetBy,
   type QuizAnswers, type TravelerProfile, type V2Columns, type PublicProfile,
 } from './traveler-profile.ts';
 import { QuizAnswers as QuizAnswersSchema, TravelerProfile as TravelerProfileSchema } from './contracts/traveler-profile.ts';
@@ -134,9 +134,13 @@ export async function saveQuiz(db: SupabaseClient, userId: string, req: SaveRequ
   if (stillSays('drinks')) delete fromV2.drinks;
   if (stillSays('seating')) delete fromV2.seating;
   const merged: QuizAnswers = { ...current.answers, ...fromV2, ...req.answers };
-  if (req.answers.dial_overrides) {
-    merged.dial_overrides = { ...(current.answers.dial_overrides ?? {}), ...req.answers.dial_overrides };
-  }
+  // A nudge corrects the answer under it. Answering that question again —
+  // a retake, a drip — is the newer word, so the old nudge on that dial goes
+  // rather than overruling every later answer for good.
+  const overrides: Record<string, number> = { ...(current.answers.dial_overrides ?? {}) };
+  for (const d of dialsSetBy(req.answers)) delete overrides[d];
+  Object.assign(overrides, req.answers.dial_overrides ?? {});
+  merged.dial_overrides = overrides;
   if (req.dismiss) {
     merged.drip_dismissed = { ...(current.answers.drip_dismissed ?? {}), [req.dismiss]: now.toISOString() };
   }
@@ -174,4 +178,18 @@ export async function saveQuiz(db: SupabaseClient, userId: string, req: SaveRequ
     }
   }
   return { ok: true, profile, stored: false };
+}
+
+/**
+ * Rescore a profile that already exists, after something outside the quiz
+ * changed the v2 columns it is built from — Profile's full list writes them
+ * directly. Without this the stored result, and Discover's order, go on
+ * describing interests somebody has just taken off. Nobody without a profile
+ * gets one from this: editing a list is not taking the quiz.
+ */
+export async function refreshProfile(db: SupabaseClient, userId: string, now: Date = new Date()): Promise<boolean> {
+  const current = await readQuiz(db, userId);
+  if (!current || !current.stored || !current.profile) return false;
+  const r = await saveQuiz(db, userId, { answers: {} }, now);
+  return r.ok && r.stored;
 }

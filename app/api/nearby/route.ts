@@ -21,6 +21,7 @@ import { byDistance } from '@/lib/discovery/distance';
 import { whereFrom } from '@/lib/discovery/where';
 import { tasteFrom } from '@/lib/discovery/taste';
 import { readProfile } from '@/lib/quiz-store';
+import { barLed, NOT_DRINKING } from '@/lib/traveler-profile';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
 import { whatsOn } from '@/lib/discovery/whats-on';
 import { parseWhen } from '@/lib/discovery/when';
@@ -132,7 +133,12 @@ export async function GET(req: NextRequest) {
   // The traveller profile, when there is one. Null before the quiz v3
   // migration has run, and then Discover ranks exactly as it did.
   const profile = await readProfile(ctx.db, ctx.user.id);
-  const ranked = rank(merged, seeker.interests, profile);
+  // "Not drinking" rules out bars from every source. tasteFrom only drops
+  // the map's alcohol-flagged interest kinds; a harvested pub quiz, a jazz
+  // bar under "live music" or a ticketed brewery night came through anyway,
+  // under a drip card that had just said nothing would be built around a bar.
+  const sober = String(me?.drink_style || '').trim() === NOT_DRINKING;
+  const ranked = rank(sober ? merged.filter(f => !barLed(f)) : merged, seeker.interests, profile);
   const varied = rotateDaily(ranked, seedOf(dayWhere(lng), ctx.user.id));
   // Then nearest ring first. Banded rather than sorted by exact yards, and
   // last of the three steps so it governs: Discover is a list of what is on

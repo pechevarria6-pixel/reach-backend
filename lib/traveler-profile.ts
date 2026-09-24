@@ -307,6 +307,43 @@ export function scoreQuiz(answers: QuizAnswers | null | undefined, now: Date = n
   };
 }
 
+/**
+ * A reveal nudge applied to a profile already computed — exactly what
+ * scoreQuiz does with `dial_overrides`, and nothing more: the dial moves and
+ * counts as answered, the scores and the result stay as they were.
+ *
+ * Before the migration the server keeps no answers, so it cannot rescore a
+ * nudge from anything but the v2 columns, and that throws away the first
+ * move, the plan, the restaurant and the 11pm answer the reveal is showing.
+ * The reveal applies the nudge to the result it holds instead. After the
+ * migration the server rescores, and this gives the same dials.
+ */
+export function applyDialOverride<P extends Pick<TravelerProfile, 'dials' | 'unanswered'>>(profile: P, dial: DialKey, value: number): P {
+  if (!(DIALS as readonly string[]).includes(dial) || typeof value !== 'number' || !Number.isFinite(value)) return profile;
+  return {
+    ...profile,
+    dials: { ...profile.dials, [dial]: clampDial(value) },
+    unanswered: (profile.unanswered ?? []).filter(d => d !== dial),
+  };
+}
+
+/**
+ * The dials a set of answers speaks to. A nudge on the reveal corrects the
+ * answer it sits on top of; answering that question again is a newer
+ * correction, and the old nudge must give way to it rather than win forever.
+ */
+export function dialsSetBy(answers: QuizAnswers | null | undefined): DialKey[] {
+  const a = answers ?? {};
+  const out = new Set<DialKey>();
+  const add = (e: Effect | undefined) => { for (const k of Object.keys(e?.d ?? {})) out.add(k as DialKey); };
+  if (a.plan) add(PLAN[a.plan]);
+  if (a.restaurant) add(RESTAURANT[a.restaurant]);
+  if (a.late) add(LATE[a.late]);
+  if (a.night_out) add(NIGHT_OUT[a.night_out]);
+  if (a.free_afternoon && typeof (FREE_AFTERNOON[a.free_afternoon] as { pace?: number })?.pace === 'number') out.add('pace');
+  return DIALS.filter(d => out.has(d));
+}
+
 // ─── Plain words for a dial ──────────────────────────────────────────────
 
 export const DIAL_COPY: Record<DialKey, { label: string; stops: [number, string][] }> = {
@@ -390,7 +427,9 @@ export function mixSentence(profiles: PublicProfile[]): string | null {
   const pace = dialSpread(profiles, 'pace');
   if (pace !== null && pace > 50) return 'Planners and wing-it types in one group. An open afternoon keeps both happy.';
   const tasters = profiles.filter(p => p.primary === 'taster').length;
-  if (tasters * 2 >= profiles.length) return 'This group travels by stomach. Food is the common thread.';
+  // More than half, not half: in a pair, one Taster is half the group, and
+  // "the common thread" would be a claim about the other person too.
+  if (tasters * 2 > profiles.length) return 'This group travels by stomach. Food is the common thread.';
   const energy = dialSpread(profiles, 'energy');
   if (energy !== null && energy > 50) return 'Early birds and night owls. Worth splitting the last night.';
   const novelty = dialSpread(profiles, 'novelty');
@@ -414,6 +453,11 @@ export function mixFromRows(rows: unknown[]): GroupMix | null {
   for (const row of rows ?? []) {
     const u = (row as { users?: Record<string, unknown> } | null)?.users;
     if (!u || typeof u.id !== 'string') continue;
+    // Finished means worked through: quiz_version is 3 only once the six
+    // screens (or a v2 account's two taps) were answered. A drip answer or a
+    // ✕ also writes a traveler_profile, scored from v2 interests, and that
+    // person never took the quiz the card says they took.
+    if (u.quiz_version !== 3) continue;
     const profile = publicProfile(u.traveler_profile);
     if (!profile) continue;
     const first = typeof u.name === 'string' ? u.name.trim().split(/\s+/)[0] : '';
@@ -427,19 +471,30 @@ export function mixFromRows(rows: unknown[]): GroupMix | null {
  * The same facts, for trip generation. No names, no restrictions: what the
  * model writes is read by the whole group.
  */
-export function generationHints(profiles: PublicProfile[]): string[] {
+export function generationHints(profiles: PublicProfile[], opts: { evening?: boolean } = {}): string[] {
   const out: string[] = [];
+  // A night out is one evening. Days, afternoons and "the last night" are
+  // words for a trip, and a model told to fill a day will fill one.
+  const evening = !!opts.evening;
   const answered = (d: DialKey) => profiles.filter(p => !p.unanswered.includes(d)).map(p => p.dials[d]);
   const pace = answered('pace');
   if (pace.length) {
     const avg = pace.reduce((s, n) => s + n, 0) / pace.length;
-    if (avg <= 30) out.push('They like to wing it: keep each day light, two or three fixed things, room to wander.');
-    else if (avg >= 70) out.push('They like a full plan: schedule each day from morning to night.');
+    if (avg <= 30) out.push(evening
+      ? 'They like to wing it: one or two fixed stops, room to drift.'
+      : 'They like to wing it: keep each day light, two or three fixed things, room to wander.');
+    else if (avg >= 70) out.push(evening
+      ? 'They like a plan: give the evening a clear order of stops with times.'
+      : 'They like a full plan: schedule each day from morning to night.');
   }
   const paceSpread = dialSpread(profiles, 'pace');
-  if (paceSpread !== null && paceSpread > 50) out.push('Some plan every hour and some wing it: leave one afternoon unscheduled.');
+  if (paceSpread !== null && paceSpread > 50) out.push(evening
+    ? 'Some like a plan and some wing it: fix the first stop and leave the rest loose.'
+    : 'Some plan every hour and some wing it: leave one afternoon unscheduled.');
   const energySpread = dialSpread(profiles, 'energy');
-  if (energySpread !== null && energySpread > 50) out.push('Early sleepers and late nights in one group: end one night early and let the last night run late.');
+  if (energySpread !== null && energySpread > 50) out.push(evening
+    ? 'Early sleepers and night owls in one group: give the evening a natural point to head home before a later last stop.'
+    : 'Early sleepers and late nights in one group: end one night early and let the last night run late.');
   const energy = answered('energy');
   if (energy.length && Math.max(...energy) <= 30) out.push('Nobody wants a late night: nothing after about 10pm.');
   const novelty = answered('novelty');
@@ -449,7 +504,9 @@ export function generationHints(profiles: PublicProfile[]): string[] {
     else if (avg <= 30) out.push('They prefer well-known, well-reviewed places.');
   }
   const tasters = profiles.filter(p => p.primary === 'taster').length;
-  if (profiles.length && tasters * 2 >= profiles.length) out.push('Food matters most to this group: build each day around a meal worth travelling for.');
+  if (profiles.length && tasters * 2 > profiles.length) out.push(evening
+    ? 'Food matters most to them: build the evening around a meal worth going out for.'
+    : 'Food matters most to this group: build each day around a meal worth travelling for.');
   return out;
 }
 
@@ -511,18 +568,18 @@ export function columnsFromAnswers(answers: QuizAnswers, existing: V2Columns | n
     // Trip generation reads this column for the same thing (see the v2 save).
     out.activity_vibe = out.favorite_activities;
   }
+  // "Nothing — I eat everything" is about food. Heights, clubs and big
+  // crowds are hard nos of a different kind, and a tap on the food button
+  // must not quietly rule them back in.
   if (answers.eat_everything) {
     out.dietary_needs = 'none';
-    out.no_way_jose = [];
-  } else {
-    if (Array.isArray(answers.dietary)) {
-      const diet = strings(answers.dietary);
-      out.dietary_needs = diet.length ? diet.join(', ') : 'none';
-    }
-    if (Array.isArray(answers.dislikes) || typeof answers.no_way_text === 'string') {
-      const typed = typeof answers.no_way_text === 'string' ? answers.no_way_text.trim().slice(0, 120) : '';
-      out.no_way_jose = strings([...(answers.dislikes ?? strings(existing?.no_way_jose)), ...(typed ? [typed] : [])]);
-    }
+  } else if (Array.isArray(answers.dietary)) {
+    const diet = strings(answers.dietary);
+    out.dietary_needs = diet.length ? diet.join(', ') : 'none';
+  }
+  if (Array.isArray(answers.dislikes) || typeof answers.no_way_text === 'string') {
+    const typed = typeof answers.no_way_text === 'string' ? answers.no_way_text.trim().slice(0, 120) : '';
+    out.no_way_jose = strings([...(answers.dislikes ?? strings(existing?.no_way_jose)), ...(typed ? [typed] : [])]);
   }
   if (Array.isArray(answers.drinks)) {
     const d = strings(answers.drinks);
@@ -538,6 +595,20 @@ export function columnsFromAnswers(answers: QuizAnswers, existing: V2Columns | n
 export function onlyNotDrinking(answers: QuizAnswers | null | undefined): boolean {
   const d = strings(answers?.drinks);
   return d.length > 0 && d.every(x => x === NOT_DRINKING);
+}
+
+/**
+ * A finding built around a drink: a bar, pub, brewery, taproom, winery or
+ * club, by what it calls itself. Discover drops these for somebody who said
+ * "Not drinking" — from every source, not only the map's interest kinds,
+ * because a harvested pub quiz or a ticketed brewery night is still a night
+ * at a bar. A sushi, salad or juice bar is a place to eat, and stays.
+ */
+const BAR_LED = /\b(bars?|pubs?|brewer(y|ies)|brewpub|taproom|tap room|tavern|saloon|cocktails?|winer(y|ies)|wine tasting|nightclubs?|beer garden|beer hall|speakeasy)\b/i;
+const NOT_A_DRINK_BAR = /\b(sushi|salad|juice|raw|oyster|snack|coffee|espresso|dessert|smoothie|nail|protein|candy|breakfast|salsa|taco|ramen|poke)\s+bars?\b/gi;
+export function barLed(f: { title?: string | null; category?: string | null; venue?: string | null; meta?: string | null }): boolean {
+  const hay = `${f.title ?? ''} ${f.category ?? ''} ${f.venue ?? ''}`.replace(NOT_A_DRINK_BAR, ' ');
+  return BAR_LED.test(hay);
 }
 
 // ─── Ranking by the raw signals ──────────────────────────────────────────

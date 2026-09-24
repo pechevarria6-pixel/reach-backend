@@ -289,8 +289,14 @@ test('saving the twelve tiles never deletes the interests that are not on them',
   assert.equal(cols.no_way_jose, undefined, 'a screen that was not answered writes nothing');
 });
 
-test('"I eat everything" clears restrictions and nos in one tap', () => {
-  assert.deepEqual(columnsFromAnswers({ eat_everything: true }, V2_ROW), { dietary_needs: 'none', no_way_jose: [] });
+test('"I eat everything" clears what they cannot eat, and only that', () => {
+  // The button is about food. Heights and clubs are not food, and a v2
+  // account's hard nos are on the same screen when it is tapped.
+  assert.deepEqual(columnsFromAnswers({ eat_everything: true }, V2_ROW), { dietary_needs: 'none' });
+  assert.deepEqual(
+    columnsFromAnswers({ eat_everything: true, dietary: [], dislikes: ['Clubs', 'Heights'], no_way_text: 'Karaoke duets' }, V2_ROW),
+    { dietary_needs: 'none', no_way_jose: ['Clubs', 'Heights', 'Karaoke duets'] },
+  );
 });
 
 test('not drinking wins the single drink column, whatever sits beside it', () => {
@@ -304,7 +310,7 @@ const PRIVATE_ROWS = [
   {
     user_id: 'a',
     users: {
-      id: 'a', name: 'Ana Ruiz',
+      id: 'a', name: 'Ana Ruiz', quiz_version: 3,
       traveler_profile: { ...scoreQuiz({ first_move: 'eat', plan: 'hourly', late: 'asleep' }, NOW), dietary: ['Coeliac'] },
       // Everything a careless select('*') would drag along.
       quiz_answers: { dietary: ['Coeliac'], dislikes: ['Heights'], free_interests: 'my ex lives there', drinks: ['Not drinking'] },
@@ -315,7 +321,7 @@ const PRIVATE_ROWS = [
   {
     user_id: 'b',
     users: {
-      id: 'b', name: 'Ben',
+      id: 'b', name: 'Ben', quiz_version: 3,
       traveler_profile: scoreQuiz({ first_move: 'eat', plan: 'wing', late: 'sunrise' }, NOW),
       quiz_answers: { no_way_text: 'shellfish allergy' }, dietary_needs: 'Shellfish allergy',
     },

@@ -523,13 +523,23 @@ export async function POST(req: NextRequest) {
   // far apart the group sits on them. Unnamed — the model's words are read
   // by everyone — and never a restriction, which have their own lines above.
   // Empty until sql/quiz-v3-2026-09-24.sql has run.
-  const travelHints = generationHints(await readProfiles(supabase, prefs.map((p: any) => p.id)));
-  // Somebody in a group not drinking is never said out loud, on any screen.
-  // It is said here, once, so every evening has somewhere that is not a bar.
-  if (!solo && prefs.some((p: any) => String(p.drink_style || '').trim().toLowerCase() === 'not drinking')) {
-    travelHints.push('At least one of them is not drinking: every evening needs a stop that is not built around alcohol. Never mention this in anything you write.');
-  }
-  const travelBlock = travelHints.length ? `\nHOW THEY LIKE TO TRAVEL:\n- ${travelHints.join('\n- ')}` : '';
+  // Two versions, because isNightPlan can still change below (a restaurant
+  // plan, a named gig): a night out is one evening, and the trip wording —
+  // "each day from morning to night", "the last night" — would tell the
+  // model to plan a day it was never asked for.
+  const travelProfiles = await readProfiles(supabase, prefs.map((p: any) => p.id));
+  const someoneSober = !solo && prefs.some((p: any) => String(p.drink_style || '').trim().toLowerCase() === 'not drinking');
+  const hintsBlock = (evening: boolean) => {
+    const hints = generationHints(travelProfiles, { evening });
+    // Somebody in a group not drinking is never said out loud, on any screen.
+    // It is said here, once, so every evening has somewhere that is not a bar.
+    if (someoneSober) {
+      hints.push(`At least one of them is not drinking: ${evening ? 'the evening needs' : 'every evening needs'} a stop that is not built around alcohol. Never mention this in anything you write.`);
+    }
+    return hints.length ? `\nHOW THEY LIKE TO TRAVEL:\n- ${hints.join('\n- ')}` : '';
+  };
+  const travelBlock = hintsBlock(false);
+  const eveningTravelBlock = hintsBlock(true);
 
   // The trip the options lead with. For a group trip that is everybody's
   // answers together — every kind of trip anybody asked for, every kind of
@@ -1359,7 +1369,7 @@ MUSIC: ${musicGenres.slice(0, 4).join(', ') || 'mixed'}
 DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 A GOOD NIGHT OUT: ${nightlife.join(', ') || 'no preference'}
 DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
-DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${travelBlock}${groupWanted}
+DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${eveningTravelBlock}${groupWanted}
 ${allVetoes.length > 0 ? 'NEVER INCLUDE: ' + allVetoes.join(', ') : ''}
 
 Each option is a real evening in a named neighbourhood — "Dinner and a gig in

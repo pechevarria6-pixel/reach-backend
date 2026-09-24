@@ -21,9 +21,9 @@ import { createPlanSteps } from "@/lib/create-plan-steps";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
-import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers } from "@/lib/traveler-profile";
+import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
 import { quizFromMe, withinQuietPeriod } from "@/lib/contracts/traveler-profile";
-import { pickDrip } from "@/lib/drip";
+import { pickDrip, localKey } from "@/lib/drip";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { STEPS, stepStates, cannotSign, bookingTracker } from "@/lib/plan-steps";
@@ -1081,8 +1081,8 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
               What kind of traveller are you?
             </div>
             <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55}}>
-              Six taps, about a minute. Then real places near you that fit —
-              and every suggestion after it is aimed at you rather than at everybody.
+              Six taps, about a minute. Then the places we've checked near you that fit,
+              wherever we've mapped so far — and what Discover shows you is aimed at you.
             </div>
             <div style={{fontSize:12,color:C.accentText,marginTop:6,fontWeight:600}}>Start →</div>
           </div>
@@ -1548,9 +1548,13 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
   });
   const upgradeDue=!!quiz&&quiz.stored&&quiz.version!==3&&hasV2Answers(v2FromUser(user))&&!withinQuietPeriod(quiz.skippedAt);
   const barOnScreen=visible.some(e=>/\b(bar|pub|brewer|wine|cocktail)/i.test(`${e.category} ${e.title}`));
+  // Pace and late nights come after the upgrade card, a session at a time:
+  // a v2 account's two taps ask the first move and the restaurant, and
+  // section 7 sends the other two here rather than leaving them at 50.
   const drip=useDripChoice([
-    ...(upgradeDue?["upgrade"]:[]),...(barOnScreen?["drinks"]:[]),...(visits>=3?["camera_roll"]:[]),
-  ],"discover",quiz,loaded);
+    ...(upgradeDue?["upgrade"]:[]),...(barOnScreen?["drinks"]:[]),
+    ...(quiz?.version===3?["late","plan"]:[]),...(visits>=3?["camera_roll"]:[]),
+  ],"discover",user,loaded);
   // An answer changes what is here: Discover reads it on the next look.
   const afterDrip=()=>loadLocalRecs();
 
@@ -1636,8 +1640,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
       </div>
 
       {drip==="upgrade"
-        ?<UpgradeCard toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>
-        :drip?<DripCard id={drip} toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>:null}
+        ?<UpgradeCard userId={user?.id} toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>
+        :drip?<DripCard id={drip} userId={user?.id} toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>:null}
 
       {/* Filter pills */}
       <div style={{display:"flex",gap:8,padding:"0 20px 14px",overflowX:"auto",scrollbarWidth:"none"}}>
@@ -1966,7 +1970,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   const drip=useDripChoice([
     ...(isRestaurant||/restaurant|places to eat|cafe|food/i.test(dripHay)?["seating"]:[]),
     ...(isConcert||exp.source==="ticketmaster"||/concert|music|sport|game|stadium/i.test(dripHay)?["night_out"]:[]),
-  ],"expDetail",user?quizFromMe(user):null);
+  ],"expDetail",user);
 
   const getType=()=>{
     if(isRestaurant)return"restaurant";
@@ -2101,7 +2105,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
           </div>
         </div>
 
-        {drip&&<div style={{margin:"0 -20px"}}><DripCard id={drip} toast={toast} onChange={onQuizChange}/></div>}
+        {drip&&<div style={{margin:"0 -20px"}}><DripCard id={drip} userId={user?.id} toast={toast} onChange={onQuizChange}/></div>}
 
         {/* What to expect */}
         <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>What to expect</div>
@@ -3921,6 +3925,12 @@ const DISCOVER_VISITS="reach_discover_visits";
 const FROM_SHARE="reach_from_quiz_share";
 const readLocal=(key,fallback)=>{try{const v=JSON.parse(localStorage.getItem(key)||"null");return v??fallback;}catch(e){return fallback;}};
 const writeLocal=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch(e){}};
+// The same, for one account. The result this browser holds before the
+// migration and the drips it remembers are somebody's own: on a shared
+// laptop the second person to sign in must not open on the first one's
+// result, or never be asked what the first one dismissed. No id, nothing.
+const readMine=(base,userId,fallback)=>{const k=localKey(base,userId);return k?readLocal(k,fallback):fallback;};
+const writeMine=(base,userId,value)=>{const k=localKey(base,userId);if(k)writeLocal(k,value);};
 
 const Q2_EMOJI=Object.fromEntries((TASTE_QUESTIONS[0]?.options||[]).map(o=>[o.l,o.e]));
 
@@ -3960,7 +3970,7 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
   // Start from everything already known: a v2 account's interests and nos,
   // then anything v3 has. Nobody redoes the quiz from blank.
   const known={...answersFromV2(v2FromUser(user)),...quiz.answers};
-  const localProfile=readLocal(LOCAL_PROFILE,null);
+  const localProfile=readMine(LOCAL_PROFILE,user?.id,null);
   const existing=quiz.profile||(quiz.stored?null:localProfile);
   const [phase,setPhase]=useState(existing&&!required?"reveal":"quiz");
   const [profile,setProfile]=useState(existing);
@@ -3978,7 +3988,12 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
   const started=useRef(Date.now());
   const advanceTimer=useRef(null);
 
-  useEffect(()=>{ if(phase==="quiz")trackEvent("quiz_started"); },[]);
+  // A run of the quiz starts here, and again on "Change my answers": the
+  // reveal and the quiz are one screen, so a retake is not a remount, and a
+  // completion with no start (and a duration that counts the time spent
+  // reading the reveal) is what the pilot's completion rate is built from.
+  const startRun=()=>{started.current=Date.now();trackEvent("quiz_started");};
+  useEffect(()=>{ if(phase==="quiz")startRun(); },[]);
   useEffect(()=>{
     if(phase==="quiz")trackEvent("quiz_screen_viewed",{screen:QUIZ_SCREENS[step].id});
   },[step,phase]);
@@ -3995,7 +4010,12 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
     for(const scr of QUIZ_SCREENS){
       if(skippedNow.has(scr.id))continue;
       if(scr.id==="no_way"){
-        if(final.eat_everything){body.eat_everything=true;body.dietary=[];body.dislikes=[];}
+        // "I eat everything" is about food. The hard nos on the same screen
+        // — heights, clubs, anything typed — are kept as they stand.
+        if(final.eat_everything){
+          body.eat_everything=true;body.dietary=[];body.dislikes=final.dislikes||[];
+          if(noWayText.trim())body.no_way_text=noWayText.trim();
+        }
         else{
           body.dietary=final.dietary||[];body.dislikes=final.dislikes||[];
           body.eat_everything=false;
@@ -4015,7 +4035,7 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
     try{ localStorage.setItem(QUIZ_DONE,"1"); }catch(e){}
     // Before the migration the server cannot keep the result. It is still
     // the server's result, so this browser holds it for the reveal.
-    if(!r.stored)writeLocal(LOCAL_PROFILE,r.profile);
+    if(!r.stored)writeMine(LOCAL_PROFILE,user?.id,r.profile);
     trackEvent("quiz_completed",{duration_ms:Date.now()-started.current,skipped:skippedIds.length});
     setProfile(r.profile);setStored(r.stored);setPhase("reveal");
     if(onSaved)onSaved();
@@ -4044,8 +4064,8 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
     next(answers,sk);
   };
   const eatEverything=()=>{
-    const final={...answers,dietary:[],dislikes:[],eat_everything:true};
-    setAnswers(final);setNoWayText("");
+    const final={...answers,dietary:[],eat_everything:true};
+    setAnswers(final);
     const sk=new Set(skipped);sk.delete("no_way");setSkipped(sk);
     finish(final,sk);
   };
@@ -4053,8 +4073,8 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
   if(phase==="reveal"){
     return <QuizReveal profile={profile} stored={stored} user={user} userLocation={userLocation}
       groups={groups} push={push} toast={toast} required={required}
-      onProfile={(p,st)=>{setProfile(p);setStored(st);if(!st)writeLocal(LOCAL_PROFILE,p);}}
-      onRetake={()=>{setStep(0);setSkipped(new Set());setPhase("quiz");}}
+      onProfile={(p,st)=>{setProfile(p);setStored(st);if(!st)writeMine(LOCAL_PROFILE,user?.id,p);}}
+      onRetake={()=>{setStep(0);setSkipped(new Set());setPhase("quiz");startRun();}}
       onDone={onBack}/>;
   }
 
@@ -4089,7 +4109,10 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
               background:i<=step?C.accent:C.s3,transition:"all .25s"}}/>
           ))}
         </div>
-        {step>0&&<div style={{textAlign:"center",fontSize:11.5,color:C.t3}}>About a minute</div>}
+        {/* Always said once: in the header's left slot on a required first
+            screen, here otherwise — including screen 1 opened from Home or
+            Profile, where that slot is ✕ Close. */}
+        {(step>0||!required)&&<div style={{textAlign:"center",fontSize:11.5,color:C.t3}}>About a minute</div>}
       </div>
 
       <div style={{padding:"6px 16px 10px",textAlign:"center"}}>
@@ -4247,10 +4270,17 @@ function QuizReveal({profile,stored,user,userLocation,groups,push,toast,required
     applyDial(dial,(p?.dials?.[dial]??50)+step);
   };
   const applyDial=(dial,raw)=>{
+    if(!p)return;
     const v=Math.max(0,Math.min(100,raw));
-    setP(cur=>cur?{...cur,dials:{...cur.dials,[dial]:v},unanswered:(cur.unanswered||[]).filter(x=>x!==dial)}:cur);
+    const next=applyDialOverride(p,dial,v);
+    setP(next);
     trackEvent("quiz_dial_adjusted",{dial});
     clearTimeout(nudgeTimer.current);
+    // Before the migration the server keeps no answers, so its rescore of a
+    // nudge would be built from the v2 columns alone and throw away the
+    // result on screen. The nudge is applied to that result instead — the
+    // same step scoreQuiz takes — and held by this browser, like the result.
+    if(!stored){ if(onProfile)onProfile(next,false); return; }
     nudgeTimer.current=setTimeout(async()=>{
       const r=await postQuiz({answers:{dial_overrides:{[dial]:v}}});
       if(!r.ok){toast(r.error);return;}
@@ -4262,6 +4292,11 @@ function QuizReveal({profile,stored,user,userLocation,groups,push,toast,required
   useEffect(()=>()=>clearTimeout(nudgeTimer.current),[]);
 
   const crew=(groups||[]).find(g=>!isSoloGroup(g));
+  // Offered only when there is a mix to see. The card needs two members who
+  // have finished, and before the migration there are no mixes at all — a
+  // button to a Members tab with nothing on it points at something that is
+  // not there.
+  const crewMix=useGroupMix(stored?crew?.id:null);
 
   const share=async()=>{
     const pub=publicProfile(p);
@@ -4338,7 +4373,7 @@ function QuizReveal({profile,stored,user,userLocation,groups,push,toast,required
 
       <div style={{height:14}}/>
       <button className="bp" style={{marginBottom:10}} onClick={share}>Invite your crew to find out theirs</button>
-      {crew&&(
+      {crew&&crewMix&&(
         <button className="bs" style={{marginBottom:10}}
           onClick={()=>push&&push("groupDetail",{groupId:crew.id,initialTab:"members"})}>
           See {crew.name}'s mix →
@@ -4359,9 +4394,12 @@ function QuizReveal({profile,stored,user,userLocation,groups,push,toast,required
 // Who in the group chases what, and one sentence about how they fit. The
 // route returns results and dials only; restrictions, hard nos and anything
 // typed never reach it (see /api/groups/[id]/mix and its fixture test).
-function GroupMixCard({groupId}){
+/** A group's mix, or null while loading, when there is none yet, or with no id. */
+function useGroupMix(groupId){
   const [mix,setMix]=useState(null);
   useEffect(()=>{
+    setMix(null);
+    if(!groupId)return;
     let alive=true;
     (async()=>{
       try{
@@ -4373,6 +4411,11 @@ function GroupMixCard({groupId}){
     })();
     return()=>{alive=false;};
   },[groupId]);
+  return mix;
+}
+
+function GroupMixCard({groupId}){
+  const mix=useGroupMix(groupId);
   if(!mix)return null;
   return(
     <div style={{margin:"0 20px 14px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:18,padding:"14px 14px 12px"}}>
@@ -4415,7 +4458,9 @@ const DRIPS={
   drinks:{title:"What's in your glass?",multi:true,options:DRINKS.map(l=>({v:l,e:DRIP_EMOJI[l]||"🥂",l})),
     toAnswers:v=>({drinks:v}),
     // Discover reads the drink column straight away, so the reload is the payoff.
-    confirm:v=>v.includes(NOT_DRINKING)?"Got it — nothing built around a bar.":"Got it — Discover has that now."},
+    // "Not drinking" is kept to what /api/nearby does with it: bars, pubs,
+    // breweries and clubs are left out of Discover, from every source.
+    confirm:v=>v.includes(NOT_DRINKING)?"Got it — Discover leaves bars out now.":"Got it — Discover has that now."},
   seating:{title:"Where would you rather sit?",multi:true,options:SEATING.map(l=>({v:l,e:"🪑",l})),
     toAnswers:v=>({seating:v}),
     // Read by trip planning, not by this card, so it says that and no more.
@@ -4426,29 +4471,41 @@ const DRIPS={
     toAnswers:v=>({night_out:v[0]}),confirm:()=>"Saved — Discover weighs it from here on."},
   camera_roll:{title:"Your camera roll is mostly…",needsStore:true,options:CAMERA_ROLL,
     toAnswers:v=>({camera_roll:v[0]}),confirm:()=>"Saved — it settles the close calls in your result."},
+  // Q3 and Q5 on their own, for a v2 account (and anyone who has not
+  // answered them). Kept only in quiz_answers, so not asked before the
+  // migration. Pace is read by trip planning; late nights by Discover too.
+  plan:{title:"How much plan do you like?",needsStore:true,options:QUIZ_SCREENS[2].options,
+    toAnswers:v=>({plan:v[0]}),confirm:()=>"Saved — trip plans read it from here on."},
+  late:{title:"It's 11pm on the trip. You're…",needsStore:true,options:QUIZ_SCREENS[4].options,
+    toAnswers:v=>({late:v[0]}),confirm:()=>"Saved — Discover and trip plans weigh it from here on."},
 };
 
 /** Which drip question, if any, this screen may show. Decided once. */
-function useDripChoice(candidates,screen,quiz,ready=true){
+function useDripChoice(candidates,screen,user,ready=true){
   const [id,setId]=useState(null);
   const key=candidates.join(",");
+  const quiz=user?quizFromMe(user):null;
+  const uid=user?.id||null;
   useEffect(()=>{
-    if(id||!ready||!quiz||!candidates.length)return;
+    if(id||!ready||!quiz||!uid||!candidates.length)return;
+    const sessionKey=localKey(DRIP_SESSION,uid);
     let shown=null;
-    try{shown=sessionStorage.getItem(DRIP_SESSION);}catch(e){}
+    try{shown=sessionStorage.getItem(sessionKey);}catch(e){}
     const pickable=candidates.filter(c=>c==="upgrade"||!DRIPS[c]?.needsStore||quiz.stored);
-    const chosen=pickDrip(pickable,{answers:quiz.answers,local:readLocal(DRIP_DISMISSED,{}),
-      answeredLocally:readLocal(DRIP_ANSWERED,[]),shownThisSession:shown,screen});
+    // The v2 columns count as answers: a v2 account told us its drink and
+    // where it likes to sit long before quiz_answers existed.
+    const chosen=pickDrip(pickable,{answers:quiz.answers,v2:v2FromUser(user),local:readMine(DRIP_DISMISSED,uid,{}),
+      answeredLocally:readMine(DRIP_ANSWERED,uid,[]),shownThisSession:shown,screen});
     if(chosen){
       setId(chosen);
-      try{sessionStorage.setItem(DRIP_SESSION,chosen);}catch(e){}
+      try{sessionStorage.setItem(sessionKey,chosen);}catch(e){}
       trackEvent("drip_shown",{question:chosen});
     }
-  },[ready,!!quiz,key]);
+  },[ready,!!quiz,uid,key]);
   return id;
 }
 
-function DripCard({id,onChange,onAnswered,toast}){
+function DripCard({id,userId,onChange,onAnswered,toast}){
   const q=DRIPS[id];
   const [sel,setSel]=useState([]);
   const [done,setDone]=useState(null);
@@ -4462,7 +4519,7 @@ function DripCard({id,onChange,onAnswered,toast}){
     const r=await postQuiz({answers:q.toAnswers(values)});
     setBusy(false);
     if(!r.ok){toast(r.error);return;}
-    writeLocal(DRIP_ANSWERED,[...new Set([...readLocal(DRIP_ANSWERED,[]),id])]);
+    writeMine(DRIP_ANSWERED,userId,[...new Set([...readMine(DRIP_ANSWERED,userId,[]),id])]);
     trackEvent("drip_answered",{question:id});
     setDone(q.confirm(values));
     if(onChange)onChange();
@@ -4470,7 +4527,7 @@ function DripCard({id,onChange,onAnswered,toast}){
   };
   const dismiss=async()=>{
     setGone(true);
-    writeLocal(DRIP_DISMISSED,{...readLocal(DRIP_DISMISSED,{}),[id]:new Date().toISOString()});
+    writeMine(DRIP_DISMISSED,userId,{...readMine(DRIP_DISMISSED,userId,{}),[id]:new Date().toISOString()});
     trackEvent("drip_dismissed",{question:id});
     const r=await postQuiz({answers:{},dismiss:id});
     if(!r.ok)console.error("[drip] dismissal not kept by the server; this browser remembers it",r.error);
@@ -4519,7 +4576,7 @@ function DripCard({id,onChange,onAnswered,toast}){
 // Section 7: nobody redoes the quiz. A v2 account already told us what it is
 // into and what it will not do; this asks only the two things v2 never did
 // that Discover ranks by — the first move and the restaurant.
-function UpgradeCard({onChange,onAnswered,toast}){
+function UpgradeCard({userId,onChange,onAnswered,toast}){
   const [stage,setStage]=useState(0);
   const [first,setFirst]=useState(null);
   const [gone,setGone]=useState(false);
@@ -4543,7 +4600,7 @@ function UpgradeCard({onChange,onAnswered,toast}){
   const dismiss=async()=>{
     setGone(true);
     trackEvent("drip_dismissed",{question:"upgrade"});
-    writeLocal(DRIP_DISMISSED,{...readLocal(DRIP_DISMISSED,{}),upgrade:new Date().toISOString()});
+    writeMine(DRIP_DISMISSED,userId,{...readMine(DRIP_DISMISSED,userId,{}),upgrade:new Date().toISOString()});
     const r=await postQuiz({answers:{},dismiss:"upgrade",skip:true});
     if(!r.ok)console.error("[upgrade] dismissal not kept by the server; this browser remembers it",r.error);
   };
@@ -11568,7 +11625,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
   const [busy,setBusy]=useState(null);
   // Opening Profile is when the camera-roll question makes sense.
   const profileQuiz=user?quizFromMe(user):null;
-  const profileDrip=useDripChoice(["camera_roll"],"profile",profileQuiz);
+  const profileDrip=useDripChoice(["camera_roll"],"profile",user);
 
   const load=async()=>{
     try{
@@ -12159,7 +12216,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       {/* The answers behind every suggestion. Somewhere to revise them, not
           just a one-off at sign-up — what you are into in March is not what
           you were into in November. */}
-      {profileDrip&&<DripCard id={profileDrip} toast={toast} onChange={onIdentityChange}/>}
+      {profileDrip&&<DripCard id={profileDrip} userId={user?.id} toast={toast} onChange={onIdentityChange}/>}
       <Row icon={profileQuiz?.profile?.primary?RESULT_COPY[profileQuiz.profile.primary].emoji:"✨"} title="What kind of traveller you are"
         sub={profileQuiz?.profile
           ?headline(profileQuiz.profile)

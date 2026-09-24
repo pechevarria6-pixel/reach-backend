@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { stripe } from '@/lib/stripe';
 import { sendDeletionConfirmation } from '@/lib/email';
+import { refreshProfile } from '@/lib/quiz-store';
 
 // GET — download all user data (GDPR Article 20)
 export async function GET() {
@@ -142,5 +143,17 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Couldn't save that — try again" }, { status: 500 });
   }
 
+  // The quiz result is scored from these same columns. Profile's full list
+  // writes them here, not through /api/me/quiz, so the stored result has to
+  // be rescored here too, or it goes on describing interests somebody has
+  // just taken off — and Discover goes on ranking by them.
+  if (Object.keys(updates).some(k => QUIZ_INPUTS.includes(k))) {
+    try { await refreshProfile(supabase, ctx.user.id); }
+    catch (e) { console.error('[user/data] could not rescore the quiz result', { error: e instanceof Error ? e.message : 'unknown' }); }
+  }
+
   return NextResponse.json({ message: 'Profile updated', updated_fields: Object.keys(updates) });
 }
+
+/** The v2 columns scoreQuiz reads (through answersFromV2). */
+const QUIZ_INPUTS = ['favorite_activities', 'no_way_jose', 'dietary_needs', 'drink_style', 'dining_vibe', 'trip_summary'];

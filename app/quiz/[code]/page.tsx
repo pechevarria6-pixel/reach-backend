@@ -79,7 +79,7 @@ export default function SharedResult({ params }: { params: { code: string } }) {
         )}
       </div>
       <p style={{ color: BRAND.t2, maxWidth: 320, lineHeight: 1.5, fontSize: 14 }}>
-        Six taps, about a minute. Then real places near you that fit.
+        Six taps, about a minute. Then the places near you that fit, from what we've checked ourselves — wherever we've mapped so far.
       </p>
       <a href="/sign-up?redirect_url=%2Fhome%3Fstart%3Dtaste" style={button} onClick={join}>Find out yours</a>
     </div>

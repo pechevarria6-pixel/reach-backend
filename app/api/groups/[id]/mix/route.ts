@@ -4,7 +4,8 @@
 // The group mix card: who in the group chases what, and one sentence about
 // how they fit. Members see each other's result and dials. They never see
 // what anybody cannot eat, their hard nos, or anything they typed — so this
-// selects traveler_profile and a first name and nothing else, and even that
+// selects traveler_profile, quiz_version (to count only people who finished)
+// and a first name, and nothing else — and even that
 // passes through publicProfile before it leaves (lib/traveler-profile).
 //
 // Same rule as /quiz-status: being in a group is not consent to be read.
@@ -19,7 +20,7 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 
   const { data, error } = await ctx.db
     .from('group_members')
-    .select('user_id, users(id, name, traveler_profile)')
+    .select('user_id, users(id, name, traveler_profile, quiz_version)')
     .eq('group_id', params.id);
 
   if (error) {

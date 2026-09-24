@@ -64,6 +64,10 @@ const BROKEN_PROMISES = [
   'price at the door',
   // An absolute nobody checked about somebody else's policy.
   'never holds',
+  // The quiz's pitch, on Home and on the public share page. The reveal names
+  // nothing where we hold no venues ("We're still mapping …"), and the share
+  // page is read by exactly the people most likely to live somewhere unswept.
+  'then real places near you',
 ];
 
 /**
