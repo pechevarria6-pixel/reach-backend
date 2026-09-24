@@ -11,6 +11,8 @@ import {
 import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
 import { withoutVetoed, tripBreach } from '@/lib/vetoes';
 import { planReadiness } from '@/lib/plan-readiness';
+import { generationHints } from '@/lib/traveler-profile';
+import { readProfiles } from '@/lib/quiz-store';
 import {
   readGroupAnswers, answersBlock, standingWishesBlock, groupFraming, attributes, nightPrefsFrom,
   optionsGate, notYetAnswered, isUndecided, type GroupAnswers,
@@ -517,6 +519,18 @@ export async function POST(req: NextRequest) {
   }));
   const saidBlock = standingWishesBlock(standing, { group: isGroup });
 
+  // How they like to travel, from the onboarding quiz: the dials, and how
+  // far apart the group sits on them. Unnamed — the model's words are read
+  // by everyone — and never a restriction, which have their own lines above.
+  // Empty until sql/quiz-v3-2026-09-24.sql has run.
+  const travelHints = generationHints(await readProfiles(supabase, prefs.map((p: any) => p.id)));
+  // Somebody in a group not drinking is never said out loud, on any screen.
+  // It is said here, once, so every evening has somewhere that is not a bar.
+  if (!solo && prefs.some((p: any) => String(p.drink_style || '').trim().toLowerCase() === 'not drinking')) {
+    travelHints.push('At least one of them is not drinking: every evening needs a stop that is not built around alcohol. Never mention this in anything you write.');
+  }
+  const travelBlock = travelHints.length ? `\nHOW THEY LIKE TO TRAVEL:\n- ${travelHints.join('\n- ')}` : '';
+
   // The trip the options lead with. For a group trip that is everybody's
   // answers together — every kind of trip anybody asked for, every kind of
   // stay, and the group's pace — not the organiser's, which used to fill
@@ -864,7 +878,7 @@ ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
 Music/nightlife: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
 Activities: ${activityVibes.slice(0, 4).join(', ') || 'mixed'}
-Dietary: ${dietaryNeeds.join(', ') || 'no restrictions'}
+Dietary: ${dietaryNeeds.join(', ') || 'no restrictions'}${travelBlock}
 ${tripAccommodation
   ? `Accommodation they asked for: ${tripAccommodation}. This is the kind of
 place they want, not somewhere that has been booked. Do not write them into
@@ -1345,7 +1359,7 @@ MUSIC: ${musicGenres.slice(0, 4).join(', ') || 'mixed'}
 DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 A GOOD NIGHT OUT: ${nightlife.join(', ') || 'no preference'}
 DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
-DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${groupWanted}
+DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${travelBlock}${groupWanted}
 ${allVetoes.length > 0 ? 'NEVER INCLUDE: ' + allVetoes.join(', ') : ''}
 
 Each option is a real evening in a named neighbourhood — "Dinner and a gig in
@@ -1404,7 +1418,7 @@ DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
 DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 NIGHTLIFE: ${nightlife.join(', ') || 'no preference'}
 LIVE MUSIC THEY GO TO: ${concertTypes.slice(0, 4).join(', ') || 'no preference'}
-DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${groupWanted}
+DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${travelBlock}${groupWanted}
 ${allVetoes.length > 0 ? 'VETOES (never include): ' + allVetoes.join(', ') : ''}
 
 Price diversity is required. Return exactly three options, one per tier, and

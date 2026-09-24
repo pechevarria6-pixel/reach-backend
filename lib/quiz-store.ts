@@ -6,8 +6,8 @@
 // does the v2 part alone and says so, rather than taking the feature down.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  scoreQuiz, answersFromV2, columnsFromAnswers,
-  type QuizAnswers, type TravelerProfile, type V2Columns,
+  scoreQuiz, answersFromV2, columnsFromAnswers, publicProfile,
+  type QuizAnswers, type TravelerProfile, type V2Columns, type PublicProfile,
 } from './traveler-profile.ts';
 import { QuizAnswers as QuizAnswersSchema, TravelerProfile as TravelerProfileSchema } from './contracts/traveler-profile.ts';
 
@@ -70,6 +70,23 @@ export async function readProfile(db: SupabaseClient, userId: string): Promise<T
   }
   const parsed = TravelerProfileSchema.nullable().safeParse((data as { traveler_profile?: unknown } | null)?.traveler_profile ?? null);
   return parsed.success ? (parsed.data as TravelerProfile | null) : null;
+}
+
+/**
+ * The public part of several people's profiles, for trip generation. Empty
+ * before the migration, and then generation reads exactly what it did.
+ */
+export async function readProfiles(db: SupabaseClient, userIds: string[]): Promise<PublicProfile[]> {
+  const ids = [...new Set(userIds.filter(Boolean))];
+  if (!ids.length) return [];
+  const { data, error } = await db.from('users').select('id, traveler_profile').in('id', ids);
+  if (error) {
+    if (!quizColumnsMissing(error)) console.error('[quiz] could not read the group profiles', { code: error.code });
+    return [];
+  }
+  return (data ?? [])
+    .map(r => publicProfile((r as { traveler_profile?: unknown }).traveler_profile))
+    .filter((p): p is PublicProfile => !!p);
 }
 
 export interface SaveRequest {
