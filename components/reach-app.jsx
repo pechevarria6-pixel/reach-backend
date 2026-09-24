@@ -23,6 +23,7 @@ import { picksFrom, seedFromPick } from "@/lib/contracts/trip-pick";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
+import { QUIZ_SCREENS, needsDone, onOptionPress, HOLD_MS, BLEND_WINDOW_MS } from "@/lib/quiz-screens";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
 import { quizFromMe, withinQuietPeriod } from "@/lib/contracts/traveler-profile";
 import { pickDrip, localKey } from "@/lib/drip";
@@ -4149,38 +4150,7 @@ const writeMine=(base,userId,value)=>{const k=localKey(base,userId);if(k)writeLo
 
 const Q2_EMOJI=Object.fromEntries((TASTE_QUESTIONS[0]?.options||[]).map(o=>[o.l,o.e]));
 
-const QUIZ_SCREENS=[
-  // Pick every one that fits — the answers blend (lib/traveler-profile.ts
-  // scoreQuiz). Somebody who eats first and then wanders is both.
-  {id:"first_move",field:"first_move",blend:true,title:"You just landed. First move?",sub:"Pick any that sound like you.",options:[
-    {v:"eat",e:"🍜",l:"Find the best local spot to eat"},
-    {v:"wander",e:"🚶",l:"Walk until something looks interesting"},
-    {v:"famous",e:"🗽",l:"Straight to the famous thing"},
-    {v:"slow",e:"🛁",l:"Check in, shower, slow down"},
-    {v:"group",e:"💬",l:"Text the group: “who's out tonight?”"},
-  ]},
-  {id:"interests",field:"interests",multi:true,title:"What are you into?",sub:"Pick as many as you like."},
-  {id:"plan",field:"plan",scale:true,blend:true,title:"How much plan do you like?",sub:"Depends on the trip? Pick more than one.",options:[
-    {v:"wing",e:"🎲",l:"Wing it"},
-    {v:"loose",e:"🗺️",l:"Loose outline"},
-    {v:"daily",e:"📋",l:"Daily plan"},
-    {v:"full",e:"🌅",l:"Morning to night"},
-    {v:"hourly",e:"⏱️",l:"Every hour"},
-  ]},
-  {id:"restaurant",field:"restaurant",blend:true,title:"Pick the restaurant.",sub:"Or restaurants — pick any you'd go to.",options:[
-    {v:"famous",e:"⭐",l:"5,000 reviews, can't miss"},
-    {v:"locals",e:"🏠",l:"Locals' favorite"},
-    {v:"new",e:"✨",l:"Opened last month"},
-    {v:"truck",e:"🚚",l:"Food truck someone mentioned once"},
-  ]},
-  {id:"late",field:"late",blend:true,title:"It's 11pm on the trip. You're…",sub:"Depends on the night? Pick more than one.",options:[
-    {v:"asleep",e:"😴",l:"Asleep"},
-    {v:"one_more",e:"🍷",l:"One more, then bed"},
-    {v:"next_spot",e:"🕺",l:"Where's the next spot?"},
-    {v:"sunrise",e:"🌄",l:"Watching the sunrise somewhere questionable"},
-  ]},
-  {id:"no_way",title:"No way, José.",sub:"Just for us. Your group never sees this."},
-];
+// QUIZ_SCREENS, and what a tap on them does, are in lib/quiz-screens.ts.
 
 function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,groups,push}){
   const quiz=quizFromMe(user);
@@ -4206,6 +4176,11 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
   const [error,setError]=useState(null);
   const started=useRef(Date.now());
   const advanceTimer=useRef(null);
+  // A hold starts a blend; taps within the window add to it; then it goes
+  // on (lib/quiz-screens.ts). A single tap is the answer and goes on.
+  const holdTimer=useRef(null);
+  const held=useRef(false);
+  const [blending,setBlending]=useState(false);
 
   // A run of the quiz starts here, and again on "Change my answers": the
   // reveal and the quiz are one screen, so a retake is not a remount, and a
@@ -4216,7 +4191,7 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
   useEffect(()=>{
     if(phase==="quiz")trackEvent("quiz_screen_viewed",{screen:QUIZ_SCREENS[step].id});
   },[step,phase]);
-  useEffect(()=>()=>clearTimeout(advanceTimer.current),[]);
+  useEffect(()=>()=>{clearTimeout(advanceTimer.current);clearTimeout(holdTimer.current);},[]);
 
   const s=QUIZ_SCREENS[step];
   const total=QUIZ_SCREENS.length;
@@ -4262,18 +4237,29 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
   };
 
   const next=(final=answers,skippedNow=skipped)=>{
+    setBlending(false);
     if(step<total-1)setStep(n=>n+1);
     else finish(final,skippedNow);
   };
 
-  const pick=(field,v)=>{
-    const final={...answers,[field]:v};
+  const press=(v,how)=>{
+    const r=onOptionPress({picked:answers[s.field]||[],blending},v,how);
+    const final={...answers,[s.field]:r.picked};
     setAnswers(final);
     const sk=new Set(skipped);sk.delete(s.id);setSkipped(sk);
-    // A beat to see the tap land, then on. No "Next" on a single choice.
     clearTimeout(advanceTimer.current);
-    advanceTimer.current=setTimeout(()=>next(final,sk),170);
+    // A beat to see the tap land, then on. No "Next" on a single choice.
+    if(r.advance==="now"){setBlending(false);advanceTimer.current=setTimeout(()=>next(final,sk),170);}
+    else{setBlending(true);advanceTimer.current=setTimeout(()=>next(final,sk),BLEND_WINDOW_MS);}
   };
+  const pressProps=v=>({
+    onPointerDown:()=>{held.current=false;clearTimeout(holdTimer.current);
+      holdTimer.current=setTimeout(()=>{held.current=true;press(v,"hold");},HOLD_MS);},
+    onPointerUp:()=>clearTimeout(holdTimer.current),
+    onPointerLeave:()=>clearTimeout(holdTimer.current),
+    onContextMenu:e=>e.preventDefault(),
+    onClick:()=>{if(held.current){held.current=false;return;}clearTimeout(holdTimer.current);press(v,"tap");},
+  });
   const toggle=(field,v)=>setAnswers(a=>{
     const have=a[field]||[];
     return {...a,[field]:have.includes(v)?have.filter(x=>x!==v):[...have,v]};
@@ -4311,7 +4297,7 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
       <div style={{padding:"12px 16px 6px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12.5}}>
           {step>0
-            ?<button onClick={()=>setStep(n=>Math.max(0,n-1))} aria-label="Previous question"
+            ?<button onClick={()=>{clearTimeout(advanceTimer.current);setBlending(false);setStep(n=>Math.max(0,n-1));}} aria-label="Previous question"
                 style={{background:"none",border:"none",color:C.t2,cursor:"pointer",fontSize:13,padding:"4px 0"}}>← Back</button>
             :required
               ?<span style={{color:C.t2,fontWeight:600}}>About a minute</span>
@@ -4344,9 +4330,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
         {s.options&&!s.scale&&(
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {s.options.map(o=>{
-              const selected=s.blend?(answers[s.field]||[]).includes(o.v):answers[s.field]===o.v;
+              const selected=(answers[s.field]||[]).includes(o.v);
               return(
-                <button key={o.v} onClick={()=>s.blend?toggle(s.field,o.v):pick(s.field,o.v)} disabled={saving} aria-pressed={selected}
+                <button key={o.v} {...pressProps(o.v)} disabled={saving} aria-pressed={selected}
                   style={{...tile(selected),display:"flex",alignItems:"center",gap:12,padding:"12px 14px"}}>
                   <span style={{fontSize:24}}>{o.e}</span>
                   <span style={{fontSize:14,fontWeight:600,lineHeight:1.3}}>{o.l}</span>
@@ -4358,9 +4344,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
         {s.scale&&(
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
             {s.options.map(o=>{
-              const selected=s.blend?(answers[s.field]||[]).includes(o.v):answers[s.field]===o.v;
+              const selected=(answers[s.field]||[]).includes(o.v);
               return(
-                <button key={o.v} onClick={()=>s.blend?toggle(s.field,o.v):pick(s.field,o.v)} disabled={saving} aria-pressed={selected}
+                <button key={o.v} {...pressProps(o.v)} disabled={saving} aria-pressed={selected}
                   style={{...tile(selected),textAlign:"center",padding:"12px 4px"}}>
                   <div style={{fontSize:22,marginBottom:6}}>{o.e}</div>
                   <div style={{fontSize:11,fontWeight:600,lineHeight:1.2}}>{o.l}</div>
@@ -4423,8 +4409,12 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
         )}
       </div>
 
-      {/* Screens that take more than one answer end with Done. */}
-      {(s.multi||s.blend||s.id==="no_way")&&(
+      {blending&&(
+        <div style={{textAlign:"center",fontSize:12,color:C.t3,padding:"0 16px 8px"}}>Tap any others — it moves on when you stop.</div>
+      )}
+      {/* Only screens 2 and 6 end with Done; every other screen goes on
+          when tapped (lib/quiz-screens.ts needsDone). */}
+      {needsDone(s)&&(
         <div style={{padding:"8px 16px 28px"}}>
           <button className={s.id==="no_way"?"bs":"bp"} disabled={saving} onClick={()=>{
               const sk=new Set(skipped);sk.delete(s.id);setSkipped(sk);next(answers,sk);
