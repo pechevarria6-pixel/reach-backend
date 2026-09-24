@@ -30,6 +30,8 @@ export interface RealPlace {
   /** What the model cites. Short on purpose — it is typed back to us. */
   ref: string;
   name: string;
+  /** The food somebody asked for that this place serves, when it was pinned for that. */
+  forFood?: string;
   /**
    * What is actually on here, in the venue's own words.
    *
@@ -113,7 +115,7 @@ export async function placesFor(
   // A menu is capped so it can be read; a count must not be, or the number
   // is an artifact of the cap rather than a fact about the town. "10 places
   // to eat verified here" was true of the list and false of the place.
-  opts: { perKind?: number; max?: number; days?: { from: string; to: string } | null } = {},
+  opts: { perKind?: number; max?: number; days?: { from: string; to: string } | null; wantFood?: string[] } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<RealPlace[]> {
   const perKind = opts.perKind ?? PER_KIND;
@@ -158,12 +160,21 @@ export async function placesFor(
   // anybody listed food as an interest.
   const dLat = RADIUS_MILES / 69;
   const dLng = RADIUS_MILES / Math.max(1, 69 * Math.cos((at.lat * Math.PI) / 180));
-  const { data, error } = await db
-    .from('discovery_venues')
-    .select('id, name, kind, interest, website, city, street, lat, lng')
+  type VenueRow = { id: string; name: string; kind: string | null; interest: string | null; website: string | null;
+    city: string | null; street: string | null; lat: number; lng: number; osm_tags?: Record<string, string> | null };
+  // osm_tags carries the map's cuisine; it arrives in a migration.
+  let { data, error } = await db.from('discovery_venues')
+    .select('id, name, kind, interest, website, city, street, lat, lng, osm_tags')
     .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
     .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng)
-    .limit(400);
+    .limit(400) as unknown as { data: VenueRow[] | null; error: { code?: string; message?: string } | null };
+  if (error && (error.code === '42703' || /osm_tags/.test(error.message || ''))) {
+    ({ data, error } = await db.from('discovery_venues')
+      .select('id, name, kind, interest, website, city, street, lat, lng')
+      .gte('lat', at.lat - dLat).lte('lat', at.lat + dLat)
+      .gte('lng', at.lng - dLng).lte('lng', at.lng + dLng)
+      .limit(400) as unknown as { data: VenueRow[] | null; error: { code?: string; message?: string } | null });
+  }
 
   if (error) {
     // A missing table means the migration has not been run, which looks
@@ -189,6 +200,7 @@ export async function placesFor(
         url: (v.website as string | null) || null,
         city: (v.city as string | null) ?? seeker.city ?? null,
         miles: milesBetween(at.lat, at.lng, Number(v.lat), Number(v.lng)),
+        cuisine: String((v.osm_tags ?? {}).cuisine ?? ''),
       }))
       .sort((a, b) => a.miles - b.miles),
   );
@@ -201,7 +213,26 @@ export async function placesFor(
   // rather than sixty restaurants and nothing to do between them.
   const taken = new Map<string, number>();
   const places: RealPlace[] = [];
+  // The food somebody asked for, found among EVERYTHING held nearby and put
+  // first, outside the per-kind cap. Two birthday nights asked for Thai and
+  // for Greek and both ended at a ramen bar: the menu was the eight nearest
+  // restaurants, a Thai place further out was cut before the model saw it,
+  // and cuisine is often only in the name ("Lemongrass Thai", filed as
+  // "places to eat"). Matched on the kind, the name and the map's cuisine.
+  const pinned = new Set<string>();
+  for (const want of (opts.wantFood ?? []).map(w => w.toLowerCase().trim()).filter(Boolean)) {
+    const re = new RegExp(`\\b${want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i');
+    for (const r of rows.filter(r => re.test(`${r.name} ${r.kind} ${r.interest ?? ''} ${r.cuisine}`)).slice(0, 2)) {
+      if (pinned.has(r.name)) continue;
+      pinned.add(r.name);
+      places.push({
+        ref: `p${places.length + 1}`, name: r.name, kind: r.kind, interest: r.interest, url: r.url,
+        city: r.city, source: 'osm', forFood: want,
+      });
+    }
+  }
   for (const r of rows) {
+    if (pinned.has(r.name)) continue;
     const n = taken.get(r.kind) ?? 0;
     if (n >= perKind) continue;
     taken.set(r.kind, n + 1);

@@ -629,11 +629,16 @@ export async function POST(req: NextRequest) {
     // give is the only list a plan may name from. A thin list is not a
     // licence to fall back on memory: it is the honest shape of what we know
     // about a small town, and the prompt says so.
+    // What they said they are hungry for, as words: the quiz stores a typed
+    // answer as "custom:Thai".
+    const wantFood = isNightPlan
+      ? [...new Set((nightPrefs.food || []).map((f: unknown) => String(f).replace(/^custom:/i, '').trim()).filter(Boolean))] as string[]
+      : [];
     const realPlaces: RealPlace[] = await placesFor(
       supabase,
       // For an evening, never the option's title: it is a name, not a place.
       { city: tripCity || fixedPlace || (isNightPlan ? nightCity : destination), country: tripCountry ?? null, interests: [...cuisines, ...activityVibes, ...musicGenres] },
-      { days: startDate ? { from: String(startDate), to: String(endDate || startDate) } : null },
+      { days: startDate ? { from: String(startDate), to: String(endDate || startDate) } : null, wantFood },
     ).catch((err) => {
       console.error('[generate] could not read the real places', err instanceof Error ? err.message : 'failed');
       return [];
@@ -642,7 +647,17 @@ export async function POST(req: NextRequest) {
     const menu = placeMenu(realPlaces);
 
     const nightKind = (nightPrefs.kind || []).join(', ');
-    const nightFood = (nightPrefs.food || []).join(', ');
+    const nightFood = wantFood.join(', ');
+    // Said plainly either way. A menu with no Thai place next to "Food
+    // tonight: Thai" is how a birthday dinner for somebody who loves Thai
+    // ended at a ramen bar with nobody told.
+    const foodFound = wantFood.filter(w => realPlaces.some(p => p.forFood === w.toLowerCase()));
+    const foodGap = wantFood.filter(w => !foodFound.includes(w));
+    const foodLine = [
+      ...foodFound.map(w => `${w.toUpperCase()}: dinner is at the menu place marked for it (${realPlaces.filter(p => p.forFood === w.toLowerCase()).map(p => p.name).join(' or ')}).`),
+      ...foodGap.map(w => `We hold no verified ${w} place here. Do not describe any stop as ${w} food or promise ${w} anywhere.`),
+    ].join('\n');
+    if (foodGap.length) console.error('[trips itinerary] no verified place for the food asked for', { destination, city: tripCity || nightCity, wanted: foodGap });
     const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}. Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
 
 ${solo ? 'One person, on their own.' : `${groupSize} people going out together.`}
@@ -661,6 +676,7 @@ from where they are and what they are after; do not ask them to pick one.
 ${nightKind ? `What they want out of it: ${nightKind}` : ''}
 ${nightPrefs.energy ? `Energy: ${nightPrefs.energy}` : ''}
 Food tonight: ${nightFood || cuisines.slice(0, 4).join(', ') || 'varied'}
+${foodLine}
 Music: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
 Drinks: ${drinkStyles.join(', ') || 'no preference'}
 A good night out, in their words: ${nightlife.join(', ') || 'no preference'}
@@ -1144,7 +1160,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           .filter((v): v is string => !!v && !!v.trim()))];
         if (venues.length) title = venues.length === 1 ? `An evening at ${venues[0]}` : `${venues[0]} & ${venues[venues.length - 1]}`;
       }
-      return NextResponse.json({ itinerary: days, ...(title ? { title } : {}) });
+      return NextResponse.json({ itinerary: days, ...(title ? { title } : {}), ...(isNightPlan && foodGap.length ? { foodGap } : {}) });
     } catch (e: any) {
       report(e, { where: 'trips/generate', extra: { destination, nights, status: e?.status } });
       console.error('[trips itinerary] generation failed', {
