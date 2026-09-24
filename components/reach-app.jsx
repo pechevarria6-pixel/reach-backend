@@ -16,6 +16,7 @@ import { byDay, dearestDay } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { priceLabel } from "@/lib/discovery/price-label";
+import { createPlanSteps } from "@/lib/create-plan-steps";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
@@ -6526,13 +6527,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   const isTrip=planType==="trip";
 
   // Steps adapt based on plan type
-  const STEPS=planType==="restaurant"
-    ? ["Type","When","Cuisine","Budget"]
-    : planType==="concert"
-    ? ["Type","When","Genre","Budget"]
-    : planType==="weekend"
-    ? ["Type","When","Vibe","Stay","Budget"]
-    : ["Type","When","Vibe","Stay","Rules","Budget"]; // trip
+  const STEPS=createPlanSteps(planType);
 
   const nights=()=>{
     if(isEvent)return 0;
@@ -6589,10 +6584,18 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
 
   const DBS=["Cold weather","Extreme heat","Crowds","Long flights","Hiking","Nightlife","Spicy food","Early starts","Camping","Loud venues","Outdoor dining"];
 
-  // Auto-set budget when type is selected
+  // Which screen this is, by name. Screens were picked by position —
+  // step===3 was always "Where to stay?" — while the list of steps differs by
+  // type, so a dinner ended on the hotel picker with "Plan dinner 🍽️" under
+  // it, a weekend ended on dealbreakers, and only a full trip ever reached the
+  // budget. A draft saved under a longer list is brought back inside it.
+  const label=STEPS[Math.min(step,STEPS.length-1)];
+  useEffect(()=>{ if(step>STEPS.length-1)setStep(STEPS.length-1); },[STEPS.length]);
+  // A starting figure, offered on the budget screen itself — never saved
+  // behind somebody's back. Plan bcdc05c4 carries a $500 budget nobody chose.
   useEffect(()=>{
-    if(planType&&!budget)setBudget(getDefaultBudget());
-  },[planType,startDate,endDate]);
+    if(label==="Budget"&&planType&&!budget)setBudget(getDefaultBudget());
+  },[label]);
 
   // Load AI recs when vibe+dest+budget are set (trips only)
   //
@@ -6874,7 +6877,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           </div>
         )}
 
-        {step===2&&(
+        {(label==="Cuisine"||label==="Genre"||label==="Vibe")&&(
           <div>
             {planType==="restaurant"?(
               <>
@@ -6979,7 +6982,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           </div>
         )}
 
-        {step===3&&(
+        {label==="Stay"&&(
           <div>
             <div className="pt" style={{marginBottom:6}}>Where to stay?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Choose your preferred accommodation type.</div>
@@ -6995,7 +6998,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           </div>
         )}
 
-        {step===4&&(
+        {label==="Rules"&&(
           <div>
             <div className="pt" style={{marginBottom:6}}>Any dealbreakers?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Reach won't recommend anything that crosses these lines.</div>
@@ -7006,36 +7009,25 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 </button>
               );})}
             </div>
-            <div style={{background:C.s2,borderRadius:14,padding:14,border:`1px solid ${C.border}`}}>
-              <div style={{fontSize:12,color:C.t2}}><strong style={{color:C.t1}}>AI note:</strong> Reach asks all members for their dealbreakers. Only destinations that work for everyone will be recommended.</div>
-            </div>
           </div>
         )}
 
-        {step===5&&(
+        {label==="Budget"&&(
           <div>
             <div className="pt" style={{marginBottom:6}}>What's the budget?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Per person, everything in. We plan three options around it.</div>
-            <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:16,marginBottom:14}}>
-              <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:8}}>
-                {isEvent?"Typical cost for this":"AI cost estimate"}
-              </div>
-              <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.accentText}}>
-                {planType==="restaurant"?`$${Math.round(parseInt(budget||0)*.6).toLocaleString()} – $${parseInt(budget||0).toLocaleString()} pp`
-                :planType==="concert"?`$${Math.round(parseInt(budget||0)*.5).toLocaleString()} – $${parseInt(budget||0).toLocaleString()} pp`
-                :`$${Math.round(parseInt(budget||0)*.7).toLocaleString()} – $${Math.round(parseInt(budget||0)*1.05).toLocaleString()}`}
-              </div>
-              <div style={{fontSize:12,color:C.t2,marginTop:4}}>
-                {isEvent
-                  ?`${selGroup?.memberIds?.length||2} people · ${planType==="restaurant"?"dinner & drinks":"tickets & transport"}`
-                  :`${plural(selGroup?.memberIds?.length||2,"traveller")} · ${nights()>0?plural(nights(),"night")+" · ":""}${getBudgetLabel()}`
-                }
-              </div>
-            </div>
+            {/* No "AI cost estimate" here: it was this very answer multiplied by
+                0.7 and 1.05, labelled as if something had worked it out. A real
+                estimate comes after the plan is built, from its own lines. */}
             <div style={{background:C.s1,border:`2px solid ${C.accentText}`,borderRadius:16,padding:"14px 20px",display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <span style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t3}}>$</span>
               <input aria-label="Budget per person" style={{background:"none",border:"none",fontFamily:"var(--font-display)",fontSize:36,color:C.t1,width:"100%"}} value={budget} onChange={e=>setBudget(e.target.value.replace(/\D/g,""))} inputMode="numeric" placeholder="2500"/>
               <span style={{fontSize:12,color:C.t3}}>max</span>
+            </div>
+            <div style={{fontSize:12,color:C.t2,margin:"-6px 0 12px"}}>
+              {isEvent
+                ?`${plural(selGroup?.memberIds?.length||1,"person","people")} · ${getBudgetLabel()}`
+                :`${plural(selGroup?.memberIds?.length||1,"traveller")} · ${nights()>0?plural(nights(),"night")+" · ":""}${getBudgetLabel()}`}
             </div>
             <div style={{display:"flex",gap:8,marginBottom:18}}>
               {getBudgetPresets().map(v=>(
