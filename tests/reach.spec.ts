@@ -319,11 +319,15 @@ test.describe('9. Legal pages', () => {
     });
   }
 
-  test('Terms state plainly that Reach never holds funds', async ({ page }) => {
+  test('Terms say where money paid towards a plan is held, and what it is spent on', async ({ page }) => {
     await page.goto(`${BASE_URL}/terms`);
-    // The product principle the whole payment design rests on. If this
-    // sentence ever disappears, the page has drifted from the product.
-    await expect(page.locator('main')).toContainText(/never hold/i);
+    // Payments are made to Reach's own Stripe account and spent from it at
+    // approval, so "Reach never holds your money" was not true. The page
+    // says what does happen, and must never drift back to the old claim.
+    const main = page.locator('main');
+    await expect(main).toContainText(/held on Reach.s Stripe account until it is\s+spent on that plan/i);
+    await expect(main).toContainText(/can be refunded/i);
+    await expect(main).not.toContainText(/never holds/i);
   });
 });
 
