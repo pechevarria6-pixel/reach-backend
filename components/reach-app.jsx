@@ -5903,7 +5903,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         if(itinerary.length){
           updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary}:p)}));
           if(saveItineraryToServer)await saveItineraryToServer(realId,itinerary);
-          toast(`${data.itinerary.length} days planned for ${trip.destination} 🗺️`);
+          toast(`${plural(data.itinerary.length,"day","days")} planned for ${trip.destination} 🗺️`);
         }else{
           console.error("[groupTrip] itinerary came back empty",{planId:realId});
           toast("Couldn't build the day-by-day plan — you can add days yourself");
@@ -7171,12 +7171,21 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
 //   paid" reads as an accusation. Same fact, different verb.
 //   One obvious next action beats four buttons of equal weight, because
 //   choosing between equals is work.
-function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
+function TripProgress({plan,group,soloTrip,votesIn,onAction,busy,nothingToBuy,reserved}){
   const days=plan.itinerary?.length||0;
   const heads=(group.memberIds||[]).length||1;
   const needVote=!soloTrip&&plan.options?.length>0;
 
-  const stages=[
+  // A night out Reach buys nothing for — dinner you reserve, a bar you walk
+  // into — has no money to collect and nothing to book. Asking for "Pay and
+  // book it" there led to checkout, which said "Nothing to pay", and back:
+  // a loop with no way out. Its last step is having reserved what needs
+  // reserving, which the list below already records.
+  const stages=nothingToBuy&&days>0?[
+    {k:"planned", l:"Planned",  done:true},
+    ...(needVote?[{k:"voted", l:"Agreed", done:votesIn>=heads}]:[]),
+    {k:"reserved",l:"Reserved", done:!reserved||reserved.done>=reserved.total},
+  ]:[
     {k:"planned", l:"Planned",  done:days>0},
     ...(needVote?[{k:"voted", l:"Agreed", done:votesIn>=heads}]:[]),
     {k:"funded",  l:soloTrip?"Paid":"Funded", done:plan.status==="approved"||plan.status==="booked"},
@@ -7192,6 +7201,8 @@ function TripProgress({plan,group,soloTrip,votesIn,onAction,busy}){
     funded: {label:soloTrip?"Pay and book it":"Collect everyone's share",
              hint:soloTrip?"Pay when you're ready and we'll book it.":`Nothing books until all ${heads} are in.`},
     booked: {label:"Book everything",   hint:"Funded and agreed — the booking button is just below."},
+    reserved:{label:"Open the list",
+             hint:reserved?`Nothing here is paid through Reach. ${reserved.done} of ${reserved.total} reserved — mark each one once it's sorted.`:""},
   }[next?.k];
 
   return(
@@ -7938,7 +7949,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       if(!rows.length)throw new Error("Nothing came back — try again");
       updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows,dayOffer:offered}:x)}));
       const saved=await saveItineraryToServer(planId,rows);
-      toast(saved===false?"Built, but couldn't save — try again":`${d.itinerary.length} days planned 🗺️`);
+      toast(saved===false?"Built, but couldn't save — try again":`${plural(d.itinerary.length,"day","days")} planned 🗺️`);
     }catch(e){
       console.error("[planDetail] build itinerary failed",e);
       toast(e.message);
@@ -8071,6 +8082,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const mustGet=[...reachItems,...ticketed];
   const gotAlready=mustGet.filter(i=>i.conf||i.filled).length;
   const reachBookable=reachItems.length;
+  // Nothing on this plan is Reach's to buy, and nothing has been bought:
+  // no money to collect and no "Book everything" to press.
+  const nothingToBuy=reachBookable===0&&!planBookings.some(b=>b.status!=="failed"&&b.status!=="cancelled");
 
   /**
    * "I have the tickets."
@@ -8323,9 +8337,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             )}
             {plan.destStyle!=="undecided"&&<TripProgress
               plan={plan} group={group} soloTrip={soloTrip} votesIn={totalV}
-              busy={building||nudging}
+              busy={building||nudging} nothingToBuy={nothingToBuy}
+              reserved={tracker.total>0?{done:tracker.done,total:tracker.total}:null}
               onAction={async(stage)=>{
                 if(stage==="planned"){setAtab("bookings");await buildItinerary();return;}
+                if(stage==="reserved"){setAtab("bookings");return;}
                 if(stage==="voted"){
                   if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
                   setNudging(true);
@@ -8640,11 +8656,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,
                   color:C.t2,lineHeight:1.5}}>
                   {timing==="on_now"
-                    ?"This trip is happening now, so there is nothing left to book ahead. Anything still open is in the list below."
+                    ?"This trip is happening now, so there is nothing left to book ahead. Anything still open is in the list above."
                     :"This trip has finished."}
                 </div>
               )}
-              {plan.status==="approved"&&timing!=="over"&&(
+              {plan.status==="approved"&&timing!=="over"&&!nothingToBuy&&(
                 <>
                   <button className="bp" style={{marginBottom:6,...(steps.budget==="done"?{background:C.green}:{background:C.s2,color:C.t3,border:`1px solid ${C.border}`})}}
                     disabled={steps.budget!=="done"} onClick={()=>push("checkout",{planId,groupId})}>
