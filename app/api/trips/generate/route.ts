@@ -1215,6 +1215,15 @@ you have made up; a day that is simply a good day is allowed to be one.`;
 
       // One sit-down meal an evening. The prompt says so; this is the half
       // that does not depend on it being obeyed (lib/generation-rules.ts).
+      // "Make a day of it" is for an evening somebody might stretch. The prompt
+      // says a person who only wanted a drink is never shown it; this is the
+      // half that does not depend on the prompt being obeyed.
+      if (isNightPlan) {
+        const kinds = ((nightPrefs.kind || []) as unknown[]).map(k => String(k).toLowerCase());
+        const drinksOnly = kinds.length > 0 && kinds.every(k => /drink|bar|pub|cocktail|wine|beer/.test(k));
+        const quiet = /chill|low|quiet|easy|mellow/i.test(String(nightPrefs.energy || ''));
+        if (drinksOnly || quiet) for (const d of days) (d as { daytime?: unknown[] }).daytime = [];
+      }
       if (isNightPlan) {
         for (let i = 0; i < days.length; i++) {
           const { day, dropped } = oneMealPerEvening(days[i]);

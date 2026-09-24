@@ -466,14 +466,38 @@ function isSoloGroup(g){return (g?.memberIds||[]).length<=1;}
 // read day.tips, which the model never returns — the field is insider_tip — so
 // every second-visit tip was silently dropped.
 /** The day around an evening, offered rather than assumed. */
+// ─── One slot, one row ───────────────────────────────────────────────────
+// Every line of a plan is built here. "Make a day of it" had its own
+// hand-written copy, which dropped the venue's link, the ticket and what is
+// on there — so the offer's lines named a verified place with no way to it.
+// A slot is an object: what it is, how you get in, what they take. Older
+// generations sent a bare string, so both are read.
+const asSlot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null,cost:null}:(v||{});
+function slotRow(raw,{time,sub="",fallback,cost}){
+  const sl=asSlot(raw);
+  // A slot carrying a ticket link IS the event, whichever part of the
+  // evening it landed in, and carries the page that sells the ticket. A slot
+  // that is the journey home is transport, and leaving is not reserved.
+  const type=sl.ticket_url?"event":isJourney(sl.plan)?"transport":fallback;
+  return {
+    time,title:sl.plan,sub,type,conf:null,filled:false,
+    cost_cents:sl.cost!=null?Math.round(sl.cost*100):(cost??0),
+    booking_mode:isJourney(sl.plan)?null:(sl.booking||null),
+    payment_note:sl.payment||null,because:sl.because||null,
+    // A ticket page for an event; the place's own site for everything else —
+    // both are where you go to sort this out. And what is on there, from the
+    // venue's own page, always carried.
+    ...(sl.ticket_url
+      ?{venue_website:sl.ticket_url,venue_name:sl.venue||null}
+      :(sl.place_url?{venue_website:sl.place_url,venue_name:sl.venue||null}:{})),
+    ...(sl.whats_on?{venue_note:sl.whats_on}:{}),
+  };
+}
+
 function daytimeRows(days){
-  const slot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null,cost:null}:(v||{});
-  return (days||[]).flatMap(day=>(day.daytime||[]).map((raw,i)=>{
-    const d=slot(raw);
-    return {time:i===0?"Earlier that day":"Then",title:d.plan,sub:"",type:"activity",conf:null,filled:false,
-      cost_cents:d.cost!=null?Math.round(d.cost*100):0,booking_mode:d.booking||null,
-      payment_note:d.payment||null,because:d.because||null};
-  })).filter(r=>r.title);
+  return (days||[]).flatMap(day=>(day.daytime||[]).map((raw,i)=>
+    slotRow(raw,{time:i===0?"Earlier that day":"Then",fallback:"activity"})
+  )).filter(r=>r.title);
 }
 
 function itineraryRows(days,nightOut=false){
@@ -492,53 +516,17 @@ function itineraryRows(days,nightOut=false){
 
   return (days||[]).flatMap(day=>{
     const cost=Math.round((day.cost_today||0)*100);
-    // A slot is an object now: what it is, how you get in, and what they take.
-    // Older generations sent a bare string, so read both.
-    const slot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null,cost:null}:(v||{});
-    const m=slot(day.morning), a=slot(day.afternoon), e=slot(day.evening);
-    // Each event carries its own cost so the budget screen can itemise rather
-    // than split a total by fixed percentages. Falls back to the day's figure
-    // spread across its slots for anything generated before per-event costs.
-    const each=(sl)=>sl.cost!=null?Math.round(sl.cost*100):Math.round(cost/3);
-    // A slot carrying a ticket link IS the event, whichever part of the
-    // evening it landed in. Typed as one so it stops being filed as a
-    // restaurant, and carrying the page that actually sells the ticket —
-    // Reach cannot sell it, and handing somebody straight to who can is a
-    // complete answer rather than a "Reserve ahead" with nothing behind it.
-    //
-    // And a slot that is the journey home is transport, whichever slot it is
-    // in: the last evening of a trip read "Flight home." as a restaurant to
-    // book ahead. Its booking mode goes too — the flight is booked on the
-    // trip's flight line, and leaving is not something anybody reserves.
-    const kind=(sl,fallback)=>sl.ticket_url?"event":isJourney(sl.plan)?"transport":fallback;
-    const mode=(sl)=>isJourney(sl.plan)?null:(sl.booking||null);
-    // A ticket page for an event; the place's own site for everything
-    // else. Both land in venue_website, because from the screen's point
-    // of view they are the same thing: where you go to sort this out.
-    const ticket=(sl)=>({
-      ...(sl.ticket_url
-        ?{venue_website:sl.ticket_url,venue_name:sl.venue||null}
-        :(sl.place_url?{venue_website:sl.place_url,venue_name:sl.venue||null}:{})),
-      // What is on there, from the venue's own page. Always carried, never
-      // left to whether the sentence mentioned it.
-      ...(sl.whats_on?{venue_note:sl.whats_on}:{}),
-    });
+    // Each event carries its own cost so the budget screen can itemise;
+    // anything generated before per-event costs spreads the day's figure.
+    const each=Math.round(cost/3);
     return [
-      // The day's own title sits under its first slot, which reads as a
-      // theme on a trip and as an echo on an evening: "An Evening with The
-      // Milk Carton Kids" appeared beneath the dinner while the same words
-      // were already the plan's name at the top of the screen.
-      {time:label(day,0),title:m.plan,sub:nightOut?"":(day.title||""),type:kind(m,nightOut?"restaurant":"activity"),conf:null,filled:false,
-        cost_cents:each(m),booking_mode:mode(m),payment_note:m.payment||null,because:m.because||null,...ticket(m)},
-      {time:label(day,1),title:a.plan,sub:"",type:kind(a,"activity"),conf:null,filled:false,
-        cost_cents:each(a),booking_mode:mode(a),payment_note:a.payment||null,because:a.because||null,...ticket(a)},
-      // The tip belongs to the day and is printed under the last slot of
-      // it, so it read as a description of that slot: "the gallery is small
-      // enough to see properly in under an hour" sat beneath dinner at a
-      // restaurant. Marked, so it reads as a note about the day wherever
-      // it lands.
-      {time:label(day,2),title:e.plan,sub:day.insider_tip?`💡 ${day.insider_tip}`:"",type:kind(e,"restaurant"),conf:null,filled:false,
-        cost_cents:each(e),booking_mode:mode(e),payment_note:e.payment||null,because:e.because||null,...ticket(e)},
+      // The day's own title sits under its first slot on a trip; on an
+      // evening it would echo the plan's name at the top of the screen.
+      slotRow(day.morning,{time:label(day,0),sub:nightOut?"":(day.title||""),fallback:nightOut?"restaurant":"activity",cost:each}),
+      slotRow(day.afternoon,{time:label(day,1),fallback:"activity",cost:each}),
+      // The tip belongs to the day, printed under its last slot and marked
+      // so it reads as a note about the day, not a description of dinner.
+      slotRow(day.evening,{time:label(day,2),sub:day.insider_tip?`💡 ${day.insider_tip}`:"",fallback:"restaurant",cost:each}),
     ].filter(r=>r.title);
   });
 }
