@@ -44,3 +44,9 @@ tsconfig.tsbuildinfo
 
 # Session written by tests/auth.setup.ts on every run — a live login, never commit it
 playwright/.auth/session.json
+
+# Scratch from the world-data build; never committed
+.p1tmp/
+
+# Geofabrik downloads when the map load is run by hand
+.pbf/

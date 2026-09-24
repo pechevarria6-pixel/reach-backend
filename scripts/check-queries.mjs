@@ -72,7 +72,7 @@ function checkSelect(list, table, file) {
     c = c.replace(/\*/g, '').trim();
     if (!c) continue;
     checked.columns++;
-    if (!cols.has(c)) problems.push(`${file}: ${table}.${c} does not exist`);
+    if (!cols.has(c)) missingColumn(file, table, c, `${table}.${c} does not exist`);
   }
 }
 
@@ -95,6 +95,26 @@ for (const file of readdirSync('sql').filter(f => f.endsWith('.sql'))) {
     if (!migrations.has(m[1])) migrations.set(m[1], file);
   }
 }
+// The same for a column: one a migration in sql/ adds but the live table
+// does not have yet is a pending job, not a typo. Read from every
+// `alter table <t> add column [if not exists] <c>`, including the
+// comma-continued `add column` lines of one statement.
+const pendingColumns = new Map();
+for (const file of readdirSync('sql').filter(f => f.endsWith('.sql'))) {
+  const sql = readFileSync(`sql/${file}`, 'utf8').replace(/--.*$/gm, '');
+  for (const stmt of sql.matchAll(/alter\s+table\s+(?:if\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)([^;]*);/gi)) {
+    for (const c of stmt[2].matchAll(/add\s+column\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)) {
+      const key = `${stmt[1]}.${c[1]}`;
+      if (!pendingColumns.has(key)) pendingColumns.set(key, file);
+    }
+  }
+}
+const missingColumn = (file, table, column, how) => {
+  const from = pendingColumns.get(`${table}.${column}`);
+  if (from) pending.push(`${table}.${column} — run sql/${from}`);
+  else problems.push(`${file}: ${how}`);
+};
+
 const missing = (file, table, how) => {
   const from = migrations.get(table);
   if (from) pending.push(`${table} — run sql/${from}`);
@@ -119,7 +139,7 @@ for (const file of [...walkFiles('app/api'), ...walkFiles('lib')]) {
     // .eq('col', ...) / .in('col', ...)
     for (const f of tail.matchAll(/\.(?:eq|neq|in|gt|gte|lt|lte|like|ilike|is)\(\s*['"]([a-z_]+)['"]/g)) {
       checked.columns++;
-      if (!cols.has(f[1])) problems.push(`${file}: filter on ${table}.${f[1]} — no such column`);
+      if (!cols.has(f[1])) missingColumn(file, table, f[1], `filter on ${table}.${f[1]} — no such column`);
     }
   }
 }

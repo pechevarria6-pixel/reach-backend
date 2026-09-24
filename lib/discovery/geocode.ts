@@ -46,7 +46,13 @@ export interface Located {
   name: string;
   /** The exact string that was geocoded, so a wrong box can be traced. */
   from: string;
+  /** ISO 3166-1 as the geocoder gave it ("us"), when it did. */
+  countryCode?: string | null;
+  /** ISO 3166-2 ("US-NC", "GB-SCT"), when it did. Says which download holds it. */
+  subdivision?: string | null;
 }
+
+type NominatimAddress = { country_code?: string; 'ISO3166-2-lvl4'?: string };
 
 /**
  * Where a town is, or null.
@@ -78,6 +84,7 @@ export async function locate(
 
     const hits = await res.json() as {
       lat?: string; lon?: string; display_name?: string; class?: string; type?: string;
+      address?: NominatimAddress;
     }[];
     const hit = Array.isArray(hits) ? hits[0] : null;
     if (!hit) return null;
@@ -93,7 +100,11 @@ export async function locate(
     // The first part of the display name is the town itself; the rest is the
     // county and country, which Wikivoyage does not title its pages with.
     const name = String(hit.display_name || town).split(',')[0].trim() || town;
-    return { lat, lng, name, from: q };
+    return {
+      lat, lng, name, from: q,
+      countryCode: hit.address?.country_code ?? null,
+      subdivision: hit.address?.['ISO3166-2-lvl4'] ?? null,
+    };
   } catch {
     // Unreachable is not "no such town". The caller checks nothing rather
     // than checking the wrong place.
@@ -129,4 +140,32 @@ export async function locatePlan(
   // A title that is also the city would just repeat the query above.
   if (!title || title.toLowerCase() === city.toLowerCase()) return null;
   return locate(title, null, fetchImpl);
+}
+
+/**
+ * Which country and state a point is in, or null over the sea.
+ *
+ * Asked at state level (zoom 5), because that is the only question the map
+ * job has: which download holds this point. Same courtesy as `locate`: an
+ * identified agent, and the caller spaces requests a second apart.
+ */
+export async function whereIs(
+  lat: number,
+  lng: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ countryCode: string | null; subdivision: string | null } | null> {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
+  const url = `${API.replace(/search$/, 'reverse')}?lat=${lat}&lon=${lng}&format=jsonv2&zoom=5&addressdetails=1`;
+  try {
+    const res = await fetchImpl(url, { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const body = await res.json() as { address?: NominatimAddress; error?: string };
+    if (!body?.address || body.error) return null;
+    return {
+      countryCode: body.address.country_code ?? null,
+      subdivision: body.address['ISO3166-2-lvl4'] ?? null,
+    };
+  } catch {
+    return null;
+  }
 }
