@@ -7,6 +7,8 @@
 // queues, standing, dressing up) are about the place, not the sentence, and
 // stay with the prompt — they are not claimed here.
 
+import { isNegated } from './goal.ts';
+
 const PATTERNS: Record<string, RegExp> = {
   camping: /\b(camp(ing|site|sites|ground|grounds)?|tents?|glamping)\b/i,
   hiking: /\b(hik(e|es|ing)|trek(s|king)?|backpacking)\b/i,
@@ -37,9 +39,12 @@ export function vetoBreach(text: string, vetoes: string[]): string | null {
     const v = String(raw || '').replace(/^custom:/, '').trim();
     if (!v || NOT_FROM_WORDS.has(v)) continue;
     const known = PATTERNS[v] ?? PATTERNS[v.toLowerCase()];
-    if (known) { if (known.test(t)) return v; continue; }
-    if (v.split(/\s+/).length > 3) continue;
-    if (new RegExp(`\\b${escape(v)}\\b`, 'i').test(t)) return v;
+    if (!known && v.split(/\s+/).length > 3) continue;
+    const re = new RegExp((known ?? new RegExp(`\\b${escape(v)}\\b`, 'i')).source, 'gi');
+    // A mention that says no is keeping the veto, not breaking it: "no
+    // hiking needed" is the sentence you want somebody who hates hiking to
+    // read. Same reading as the goal parser's (lib/goal.ts isNegated).
+    for (const m of t.matchAll(re)) if (!isNegated(t, m.index ?? 0)) return v;
   }
   return null;
 }
@@ -73,4 +78,27 @@ export function withoutVetoed<D extends { morning?: Slot; afternoon?: Slot; even
     });
   }
   return { day: out as D, dropped };
+}
+
+/**
+ * Which veto a trip idea breaks, read across everything its card says: the
+ * tagline, the vibe, why it suits them, the food and music, and where they
+ * would stay. An idea built around a campsite for a group with a camper-hater
+ * in it is not one of their three choices.
+ */
+export function tripBreach(trip: {
+  destination?: unknown; tagline?: unknown; vibe?: unknown; why_this_group?: unknown;
+  food_scene?: unknown; music_scene?: unknown;
+  costs?: { accommodation?: { example?: unknown; details?: unknown } | null; activities?: { details?: unknown } | null } | null;
+}, vetoes: string[]): string | null {
+  if (!vetoes.length) return null;
+  const said = [
+    trip.tagline, trip.vibe, trip.why_this_group, trip.food_scene, trip.music_scene,
+    trip.costs?.accommodation?.example, trip.costs?.accommodation?.details, trip.costs?.activities?.details,
+  ].map(x => String(x ?? '')).filter(Boolean);
+  for (const line of said) {
+    const hit = vetoBreach(line, vetoes);
+    if (hit) return hit;
+  }
+  return null;
 }

@@ -39,3 +39,18 @@ test('a vetoed line goes, the rest of the day stays', () => {
   assert.deepEqual(day.daytime?.map(s => (s as { plan: string }).plan), ['Museum of Moab']);
   assert.equal(dropped.length, 2);
 });
+
+test('a mention that says no keeps the veto rather than breaking it', () => {
+  assert.equal(vetoBreach('Easy strolls, no hiking needed', ['hiking']), null);
+  assert.equal(vetoBreach('Skip the clubs — a quiet wine bar instead', ['clubs']), null);
+  assert.equal(vetoBreach('No hiking, but a sunrise hike is optional', ['hiking']), 'hiking');
+});
+
+test('a trip idea built on a vetoed thing is caught, one that avoids it is not', async () => {
+  const { tripBreach } = await import('../../lib/vetoes.ts');
+  const base = { tagline: 'Red rock and big skies', vibe: 'Slow mornings', why_this_group: '', food_scene: '', music_scene: '' };
+  assert.equal(tripBreach({ ...base, costs: { accommodation: { example: 'Riverside campground in Moab' } } }, ['camping']), 'camping');
+  assert.equal(tripBreach({ ...base, vibe: 'Scenic drives, no hiking required' }, ['hiking']), null);
+  assert.equal(tripBreach({ ...base, vibe: 'Three days of hiking in the Arches' }, ['hiking']), 'hiking');
+  assert.equal(tripBreach(base, []), null);
+});

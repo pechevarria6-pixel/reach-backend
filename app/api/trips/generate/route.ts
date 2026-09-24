@@ -9,7 +9,7 @@ import {
   parseModelJSON, textOf, normalizeTrips, dropFillerDays,
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
-import { withoutVetoed } from '@/lib/vetoes';
+import { withoutVetoed, tripBreach } from '@/lib/vetoes';
 import { planReadiness } from '@/lib/plan-readiness';
 import {
   readGroupAnswers, answersBlock, standingWishesBlock, groupFraming, attributes, nightPrefsFrom,
@@ -1555,6 +1555,24 @@ Return JSON only, shaped exactly like this:
           );
         }
       }
+    }
+    // A veto is absolute on the ideas too, not only in the prompt: an idea
+    // whose own card is built on something somebody going will not do is
+    // not one of their choices (lib/vetoes.ts). Mentions that say no —
+    // "no hiking needed" — keep the veto and stay.
+    if (trips?.length && allVetoes.length) {
+      const kept = trips.filter(t => {
+        const hit = tripBreach(t, allVetoes);
+        if (hit) console.error('[trips generate] dropped an idea that broke a veto', { groupId, destination: t.destination, veto: hit });
+        return !hit;
+      });
+      if (!kept.length) {
+        return NextResponse.json(
+          { error: "Every idea we came up with ran into something one of you said no to — try again, or loosen one of the no-ways." },
+          { status: 502 },
+        );
+      }
+      trips = kept;
     }
     // The schema cannot pin the array length, so the count is checked here.
     // Fewer than three is still worth showing — an empty list is not.
