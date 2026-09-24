@@ -116,6 +116,19 @@ export function itemFromRow(row: Record<string, unknown>): ItineraryItem {
  * `conf` or `confirmation_number` — because the generator and the editor
  * disagree about names and both are callers.
  */
+/**
+ * Only flights, stays and activities can be booked by Reach. A restaurant,
+ * an event or a car marked "reach" is a promise with nothing behind it —
+ * every such row in the table came from a saved itinerary that said so and
+ * was believed. Anything else claiming "reach" is the traveller's to book.
+ */
+const REACH_BOOKS = new Set(['flight', 'hotel', 'activity']);
+export function honestMode(type: unknown, mode: unknown): string | null {
+  const m = typeof mode === 'string' && mode ? mode : null;
+  if (m === 'reach' && !REACH_BOOKS.has(String(type ?? ''))) return 'ahead';
+  return m;
+}
+
 export function rowFromItem(item: Record<string, unknown>, sortOrder: number): Record<string, unknown> {
   const pick = (...keys: string[]) => {
     for (const k of keys) {
@@ -135,7 +148,7 @@ export function rowFromItem(item: Record<string, unknown>, sortOrder: number): R
     // bought from the seller is confirmed and has no number we hold.
     is_confirmed: typeof item.filled === 'boolean' ? item.filled : !!conf,
     cost_cents: item.cost_cents ?? 0,
-    booking_mode: item.booking_mode ?? null,
+    booking_mode: honestMode(item.type, item.booking_mode),
     payment_note: item.payment_note ?? null,
     because: item.because ?? null,
     venue_website: item.venue_website ?? null,

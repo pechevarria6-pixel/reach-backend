@@ -85,3 +85,13 @@ test('one bad row does not take the whole trip down with it', () => {
   assert.equal(items.length, 2);
   assert.equal(items[1].title, 'Day two');
 });
+
+import { honestMode } from '../../lib/contracts/itinerary-item.ts';
+test('a restaurant is never saved as something Reach books', () => {
+  assert.equal(honestMode('restaurant', 'reach'), 'ahead');
+  assert.equal(honestMode('event', 'reach'), 'ahead');
+  assert.equal(honestMode('transport', 'reach'), 'ahead');
+  assert.equal(honestMode('hotel', 'reach'), 'reach');
+  assert.equal(honestMode('restaurant', 'walk_in'), 'walk_in');
+  assert.equal(honestMode('activity', null), null);
+});
