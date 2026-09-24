@@ -1,6 +1,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   refundOutcome, netPaidCents, collectedCents, refundColumnPresent, planRefund,
   keptBookings, spentThenCancelled, refusal, refundIdempotencyKey, afterStripeRefund,
@@ -283,15 +284,23 @@ test('a failure before anybody paid is not an alert', () => {
   assert.equal(paidFailureNotice({ planId: 'p1', bookingId: 'b1', collectedCents: 0 }), null);
 });
 
-test('the owner alert describes only a way to refund that exists', () => {
-  // There is no refund button in the app, and the route refunds only the
-  // caller's own payments, so the owner cannot use it for anybody.
+test('the owner alert describes only ways to refund that exist', () => {
+  // The route refunds only the caller's own payments, so the owner cannot
+  // use it for anybody: the payer's way is the checkout button, the owner's
+  // is the Stripe dashboard. The button the email names must be on the
+  // checkout screen, word for word, or the email describes a way out nobody
+  // can find.
   const n = paidFailureNotice({ planId: 'p1', bookingId: 'b1', collectedCents: 100 })!;
   const text = n.lines.join(' ');
   assert.doesNotMatch(text, /funding\/refund|POST /);
-  assert.doesNotMatch(text, /can take back/);
   assert.match(text, /Stripe dashboard/);
   assert.match(text, /webhook records it/);
+  assert.match(text, /only their own payments/);
+  const label = /\("([^"]+)"\)/.exec(text)?.[1];
+  assert.ok(label, 'the alert names the button');
+  const screen = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.ok(screen.includes(`"${label}"`), `"${label}" is not a button on the checkout screen`);
+  assert.match(screen, /\/api\/plans\/\$\{planId\}\/funding\/refund/, 'and the button calls the refund route');
 });
 
 // ── Review fixes (2026-09-23) ───────────────────────────────────────────

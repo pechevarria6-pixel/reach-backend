@@ -550,10 +550,12 @@ export function isMissingTable(e: { code?: string; message?: string } | null | u
  * ordinary case the checkout screen already handles, and alerting on it
  * would bury the one that matters.
  *
- * It says what the owner can actually do today. There is no refund button
- * in the app yet — the checkout screen still says "We'll follow up" — and
- * the refund route only refunds the caller's own payments, so pointing the
- * owner at it described a way out nobody could take.
+ * It says what can actually be done. The checkout screen now has a
+ * "Refund what wasn't spent" button, which calls the refund route — and that
+ * route refunds only the caller's own payments. So the payer can take their
+ * own money back from the app, and the owner, who cannot press it for
+ * anybody else, still refunds from the Stripe dashboard. Naming the route
+ * itself would describe a way out the owner cannot take.
  */
 export function paidFailureNotice(input: {
   planId: string;
@@ -573,7 +575,7 @@ export function paidFailureNotice(input: {
       `Booking: ${input.bookingId}${input.what ? ` · ${input.what}` : ''}`,
       `What the provider said: ${input.reason?.trim() || 'no reason given'}`,
       `Money collected on this plan: ${dollars(collected)}`,
-      'Nothing retries this booking on its own, and there is no refund button in the app yet. Refund what was not spent from the Stripe dashboard; the webhook records it on the plan.',
+      'Nothing retries this booking on its own. Each person who paid can take back what was not spent from the trip\'s checkout screen ("Refund what wasn\'t spent"); it refunds only their own payments. To refund anybody else, use the Stripe dashboard; the webhook records it on the plan.',
     ],
   };
 }

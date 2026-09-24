@@ -64,6 +64,14 @@ export interface BookingFacts {
    */
   payload: unknown;
   itineraryItemId: string | null;
+  /**
+   * What the provider said about changing, refunding or cancelling it, in
+   * its own terms. Null when it said nothing — which the screen has to say
+   * out loud, because a blank reads as "no catch".
+   */
+  conditions: string[] | null;
+  /** When the provider stops holding this price (ISO), where it said. */
+  priceHeldUntil: string | null;
 }
 
 /**
@@ -97,7 +105,45 @@ export function bookingFacts(row: Record<string, unknown>): BookingFacts {
     detail: r.detail ?? null,
     payload: r.response_payload ?? null,
     itineraryItemId: r.itinerary_item_id ?? null,
+    conditions: conditionsOf(r.vertical ?? null, r.response_payload),
+    priceHeldUntil: heldUntilOf(r.response_payload),
   };
+}
+
+/**
+ * The fare or room terms the quote kept in its payload.
+ *
+ * Flights: the Duffel quote stores `conditions`, already in words
+ * (describeConditions in lib/booking/duffel-map.ts). An empty list is Duffel
+ * saying nothing about either, which is null here, not "no conditions".
+ *
+ * Hotels: the LiteAPI rate is stored whole, and its
+ * `cancellationPolicies.refundableTag` is the rate's own flag — RFN or NRFN.
+ * Anything else is not guessed at.
+ */
+export function conditionsOf(vertical: string | null, payload: unknown): string[] | null {
+  const p = (payload && typeof payload === 'object' ? payload : {}) as {
+    conditions?: unknown; cancellationPolicies?: { refundableTag?: unknown } | null;
+  };
+  if (vertical === 'flight') {
+    const said = Array.isArray(p.conditions)
+      ? p.conditions.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+      : [];
+    return said.length ? said : null;
+  }
+  if (vertical === 'hotel') {
+    const tag = p.cancellationPolicies?.refundableTag;
+    if (tag === 'NRFN') return ['Non-refundable'];
+    if (tag === 'RFN') return ['Refundable, on the hotel\'s cancellation terms'];
+    return null;
+  }
+  return null;
+}
+
+/** The offer's own expiry, as the flight quote stored it. */
+function heldUntilOf(payload: unknown): string | null {
+  const at = (payload && typeof payload === 'object' ? payload : {}) as { expiresAt?: unknown };
+  return typeof at.expiresAt === 'string' && !Number.isNaN(Date.parse(at.expiresAt)) ? at.expiresAt : null;
 }
 
 /**

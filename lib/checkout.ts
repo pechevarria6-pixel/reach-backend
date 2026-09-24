@@ -231,8 +231,60 @@ export function doubleBooked(rows: CheckoutRow[] | null | undefined): CheckoutRo
   return [...byJourney.values()].filter(g => g.length > 1);
 }
 
+/**
+ * What GET /api/plans/[planId]/funding says, as far as this screen needs it.
+ * Every figure is the server's: net of refunds, split the way funding splits.
+ */
+export interface FundingView {
+  targetCents?: number | null;
+  collectedCents?: number | null;
+  funded?: boolean | null;
+  memberCount?: number | null;
+  myShareCents?: number | null;
+  myPaidCents?: number | null;
+  myRemainingCents?: number | null;
+}
+
+/**
+ * The one thing the bottom of the checkout screen offers.
+ *
+ * A funded plan had no Book button. Approval only ran straight after a
+ * payment made in the same visit, so somebody who paid, closed the app and
+ * came back — or a second member opening a trip somebody else had paid for
+ * in full — found "Looks good", which started another payment, over a total
+ * already covered. The server then said "Nothing left to pay", and the plan
+ * sat funded and unbooked with no way on from the screen.
+ */
+export type CheckoutStep =
+  /** This person owes a share and it can be paid. */
+  | 'pay'
+  /** They paid before and owe more now: a price rose or a line was added. */
+  | 'top_up'
+  /** Paid for in full with something waiting: "Book it" runs approval. */
+  | 'book'
+  /** Their part is paid; others on the trip still owe theirs. */
+  | 'waiting'
+  /** A booking is with the provider at this moment. */
+  | 'in_progress'
+  /** Nothing waiting, and something is bought. */
+  | 'booked'
+  /** Money was paid in, nothing was bought, and nothing is waiting. */
+  | 'paid_nothing_booked'
+  /** Nothing here for Reach to charge, and nothing coming. */
+  | 'nothing'
+  /** Nothing can happen yet; blockedCopy says why. */
+  | 'blocked';
+
+const cents = (v: unknown) => Math.max(0, Math.round(Number(v) || 0));
+
 export interface CheckoutState {
   rows: CheckoutRow[];
+  /** What the screen offers. Only as good as the funding it was given. */
+  step: CheckoutStep;
+  /** Whether "Book it" may run approval now. */
+  canBook: boolean;
+  /** Rows approval would be asked to book. */
+  waiting: CheckoutRow[];
   /** Rows the provider refused. The pay button stays shut while any exist. */
   broken: CheckoutRow[];
   /** Confirmed bookings that are the same journey. Never empty-checked away. */
@@ -262,7 +314,10 @@ export interface CheckoutState {
  * Everything the screen needs to decide what to show and whether to let
  * anybody pay.
  */
-export function checkoutState(rows: CheckoutRow[], opts: { ignoreBroken?: boolean } = {}): CheckoutState {
+export function checkoutState(
+  rows: CheckoutRow[],
+  opts: { ignoreBroken?: boolean; funding?: FundingView | null } = {},
+): CheckoutState {
   const deduped = dedupe(rows ?? []);
   const chargeable = deduped.filter(charged);
 
@@ -306,8 +361,22 @@ export function checkoutState(rows: CheckoutRow[], opts: { ignoreBroken?: boolea
   // never to the first.
   const nothingToCharge = chargeable.length === 0 && conciergeCount === 0;
 
+  const waiting = deduped.filter(r => r.status === 'awaiting_approval');
+  const blocked = unpricedCharged.length > 0 || (broken.length > 0 && opts.ignoreBroken !== true);
+  const step = stepOf({
+    funding: opts.funding ?? null, waiting, blocked, canPay, nothingToCharge,
+    inProgress: chargeable.filter(r => r.status === 'booking').length,
+    // 'pending' on a row Reach pays for is money handed to a provider that
+    // has not answered yet. It may be bought, so "nothing was booked" would
+    // be a guess.
+    bought: chargeable.filter(r => r.status === 'confirmed' || r.status === 'pending').length,
+  });
+
   return {
     rows: deduped,
+    step,
+    canBook: step === 'book',
+    waiting,
     broken,
     clashes: doubleBooked(deduped),
     totalCents,
@@ -330,55 +399,234 @@ export function checkoutState(rows: CheckoutRow[], opts: { ignoreBroken?: boolea
   };
 }
 
+/**
+ * Which step, from the rows and the money. Order matters: something waiting
+ * to be booked on a plan paid for in full is booked, whoever is looking and
+ * whatever they personally paid — approval checks the plan's money, not the
+ * presser's — and nobody is offered a payment the plan does not need.
+ *
+ * Without funding figures (the read failed) the screen falls back to what it
+ * did before: pay if the rows allow it. The server refuses a payment nobody
+ * owes, so that fallback cannot take money twice.
+ */
+function stepOf(s: {
+  funding: FundingView | null;
+  waiting: CheckoutRow[];
+  blocked: boolean;
+  canPay: boolean;
+  nothingToCharge: boolean;
+  inProgress: number;
+  bought: number;
+}): CheckoutStep {
+  const f = s.funding;
+  if (!f) return s.canPay ? 'pay' : s.nothingToCharge ? 'nothing' : 'blocked';
+
+  const paid = cents(f.myPaidCents);
+  const owe = cents(f.myRemainingCents);
+  const collected = cents(f.collectedCents);
+  const target = cents(f.targetCents);
+  const funded = f.funded === true;
+
+  if (s.waiting.length) {
+    if (funded) return s.blocked ? 'blocked' : 'book';
+    if (owe > 0) return s.canPay ? (paid > 0 ? 'top_up' : 'pay') : 'blocked';
+    // Nothing left for this person to pay and the plan is still short, so
+    // somebody else owes. Never said on a trip for one: there is nobody else.
+    return (f.memberCount ?? 1) > 1 && collected < target ? 'waiting' : 'blocked';
+  }
+  if (s.inProgress > 0) return 'in_progress';
+  if (s.bought > 0) return 'booked';
+  if (collected > 0) return 'paid_nothing_booked';
+  return s.nothingToCharge ? 'nothing' : 'blocked';
+}
+
 // ─── What the success screen may claim ──────────────────────────────────
 // "You're all booked!" once sat above two lines both reading "Quoted",
 // because the screen counted rows rather than reading them. That was fixed
 // by requiring every row to be settled — and the fix still counted
-// `redirected` as booked.
+// `redirected` as booked, and then left failed rows out of the question
+// altogether: a hotel that could not be booked sat under "You're all
+// booked!", on the screen that had just taken the money for it.
 //
-// It is not. Redirected means Reach handed somebody to Resy or OpenTable
-// and they went off to get the table themselves. Whether there was a table
-// is known to exactly one person, and it is not us: there is a "did you get
-// it?" prompt on this very screen for precisely that reason. Saying "you're
-// all booked" over a row we are still asking about is the app claiming to
-// know something it has just admitted it does not.
-//
-// So the claim is narrowed to what a row can prove. Confirmed is a booking.
+// So the claim is read from the same de-duplicated rows the screen lists
+// (a line that failed and was then booked is the booking, not the failure),
+// and a failure is a gap the headline has to own. Confirmed is a booking.
+// Redirected is somebody sent to Resy, which only they know the end of.
 // Everything else is honest about what it is.
 
 export type BookedClaim =
-  /** Every settled row came back confirmed. */
+  /** Every row on the screen came back confirmed. */
   | 'all_booked'
+  /** Some confirmed, and at least one could not be booked. */
+  | 'booked_with_gaps'
   /** Some confirmed, others still waiting on the person or the provider. */
   | 'partly_booked'
-  /** Money is in, nothing is confirmed yet. */
+  /** Nothing confirmed, and at least one could not be booked. */
+  | 'nothing_booked'
+  /** Nothing confirmed yet, and nothing has failed either. */
   | 'paid_only';
 
-const SETTLED = new Set(['confirmed', 'redirected', 'pending']);
+type ClaimRow = { status?: string | null } & Partial<CheckoutRow>;
 
-export function bookedClaim(rows: { status?: string | null }[] | null | undefined): BookedClaim {
-  const live = (rows ?? []).filter(r => SETTLED.has(String(r.status ?? '')));
-  if (!live.length) return 'paid_only';
-
-  const confirmed = live.filter(r => String(r.status) === 'confirmed');
-  if (!confirmed.length) return 'paid_only';
-  return confirmed.length === live.length ? 'all_booked' : 'partly_booked';
+export function bookedClaim(rows: ClaimRow[] | null | undefined): BookedClaim {
+  const live = dedupe((rows ?? []).map(r => ({ vertical: '', ...r }) as CheckoutRow));
+  const confirmed = live.filter(r => r.status === 'confirmed').length;
+  const failed = live.filter(r => r.status === 'failed').length;
+  if (!confirmed) return failed ? 'nothing_booked' : 'paid_only';
+  if (failed) return 'booked_with_gaps';
+  return confirmed === live.length ? 'all_booked' : 'partly_booked';
 }
 
 /** The headline and the line under it, per claim. */
 export function bookedWording(claim: BookedClaim): { title: string; sub: string } {
   switch (claim) {
     case 'all_booked':
-      return { title: "You're all booked!", sub: 'Powered by Stripe · PCI-DSS compliant' };
+      return { title: "You're all booked!", sub: 'Every booking below is confirmed' };
+    case 'booked_with_gaps':
+      return {
+        title: 'Booked, with gaps',
+        sub: "Not everything could be booked. Each one that couldn't says why and what you can do next.",
+      };
     case 'partly_booked':
       return {
         title: "Some of it's booked",
         sub: 'The rest is waiting on you or on the place — see below',
       };
+    case 'nothing_booked':
+      return {
+        title: 'Nothing was booked',
+        sub: 'Each booking below says why it failed and what you can do next.',
+      };
     case 'paid_only':
       return {
-        title: 'Your share is in',
-        sub: "Nothing is booked yet — we'll confirm each one with you",
+        title: 'Nothing is booked yet',
+        sub: 'Each line below says where it stands.',
       };
   }
+}
+
+// ─── Somewhere to write to ──────────────────────────────────────────────
+// Every screen after a payment used to end in "quote reference pi_… and
+// we'll sort it", "we'll follow up" or "we'll confirm each one with you".
+// Nothing in the app follows up: no process reads those screens. What does
+// exist is an inbox, and the one useful thing a screen can do is open it
+// with the references already written in, so whoever reads it can find the
+// payment without asking.
+
+export const SUPPORT_EMAIL = 'hello@alcanzar.io';
+
+export function supportMailto(input: {
+  planId: string;
+  planName?: string | null;
+  what: string;
+  payments?: (string | null | undefined)[];
+  bookings?: (string | null | undefined)[];
+}): string {
+  const payments = [...new Set((input.payments ?? []).filter((p): p is string => !!p))];
+  const bookings = [...new Set((input.bookings ?? []).filter((b): b is string => !!b))];
+  const name = input.planName?.trim();
+  const subject = `${input.what}${name ? ` — ${name}` : ''}`;
+  const body = [
+    `Plan: ${name ? `${name} ` : ''}(${input.planId})`,
+    payments.length ? `Payment reference${payments.length === 1 ? '' : 's'}: ${payments.join(', ')}` : null,
+    bookings.length ? `Booking${bookings.length === 1 ? '' : 's'}: ${bookings.join(', ')}` : null,
+    '',
+    'What happened:',
+    '',
+  ].filter(l => l !== null).join('\n');
+  return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+// ─── What a refund press says ───────────────────────────────────────────
+// POST /api/plans/[planId]/funding/refund words every answer itself, and
+// each one says whether anything went back (lib/refunds.ts). This only
+// fills the gap when a body did not arrive.
+
+export function refundWords(status: number, body: unknown): { ok: boolean; text: string } {
+  const b = (body && typeof body === 'object' ? body : {}) as { message?: unknown; error?: unknown; refundedCents?: unknown };
+  const said = [b.message, b.error].find((v): v is string => typeof v === 'string' && v.trim().length > 0);
+  if (status >= 200 && status < 300) {
+    const back = cents(b.refundedCents);
+    return {
+      ok: true,
+      text: said ?? (back > 0
+        ? `$${(back / 100).toFixed(2)} is on its way back to your card.`
+        : 'Nothing was refunded.'),
+    };
+  }
+  return { ok: false, text: said ?? "The refund didn't go through, and nothing was refunded." };
+}
+
+// ─── What is known about a fare before paying for it ────────────────────
+// Duffel says, for every offer, whether the fare can be changed or refunded
+// and until when its price is held. The quote stored both; the screen
+// showed neither, so somebody paid their share of a non-refundable fare
+// having been told nothing about it.
+
+export interface TermsInput {
+  vertical?: string | null;
+  mode?: string | null;
+  provider?: string | null;
+  status?: string | null;
+  conditions?: string[] | null;
+  priceHeldUntil?: string | null;
+}
+
+/**
+ * The terms line and the hold line for one row, or null when the row is not
+ * something Reach is about to buy. Unknown terms are said as unknown, never
+ * left blank: silence reads as "no catch".
+ */
+export function termsFor(row: TermsInput, now: Date = new Date()): { terms: string; hold: string | null } | null {
+  if (!['flight', 'hotel'].includes(String(row.vertical))) return null;
+  if (row.status !== 'awaiting_approval') return null;
+  if (!reachBuys(row)) return null;
+  const said = (row.conditions ?? []).filter(c => typeof c === 'string' && c.trim());
+  const terms = said.length
+    ? said.join(' · ')
+    : row.vertical === 'flight'
+      ? "The airline hasn't said whether this fare can be changed or refunded."
+      : "The hotel hasn't said whether this room can be cancelled.";
+  return { terms, hold: holdWords(row.priceHeldUntil, now) };
+}
+
+/**
+ * When the provider's price stops being held. Approval prices every fare
+ * again before it books, so after this time the price may move — and a rise
+ * is asked about, or paid in, before anything is bought.
+ */
+export function holdWords(iso: string | null | undefined, now: Date = new Date()): string | null {
+  if (!iso) return null;
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return null;
+  if (at.getTime() <= now.getTime()) {
+    return 'The price hold has ended. The fare is checked again when it is booked.';
+  }
+  // Local time, the traveller's own clock, never UTC.
+  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  const time = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const when = sameDay
+    ? `${time} today`
+    : `${at.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}, ${time}`;
+  return `Price held until ${when}. After that the fare is checked again when it is booked.`;
+}
+
+// ─── Is it me they're waiting on? ───────────────────────────────────────
+// Approval refuses with the names of whoever still has travel details to
+// add. Only the reader's own details can be added from their Profile, so
+// the button to it is offered to somebody the refusal actually names.
+
+type Member = { id?: unknown; name?: unknown; first_name?: unknown; last_name?: unknown };
+
+/** The name approval would give this member — displayName in essentials-server. */
+export function memberName(u: Member): string {
+  return String(u.name || [u.first_name, u.last_name].filter(Boolean).join(' ') || 'A traveller');
+}
+
+export function namesMe(who: string[] | null | undefined, members: Member[] | null | undefined, me: string | null | undefined): boolean {
+  if (!me || !who?.length) return false;
+  const mine = (members ?? []).find(m => m && m.id === me);
+  if (!mine) return false;
+  const name = memberName(mine).trim().toLowerCase();
+  return who.some(w => String(w).trim().toLowerCase() === name);
 }

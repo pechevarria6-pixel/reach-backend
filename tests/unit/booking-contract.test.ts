@@ -102,3 +102,44 @@ test('bookingFactsFrom survives a route that answered with something else', () =
   assert.deepEqual(bookingFactsFrom({ error: 'nope' }), []);
   assert.deepEqual(bookingFactsFrom(null), []);
 });
+
+// ─── Fare terms and the price hold ──────────────────────────────────────
+// The Duffel quote has stored the fare's change and refund terms, and when
+// its price lapses, since it was written. The facts dropped both, so the
+// screen where somebody pays towards a non-refundable fare said nothing.
+
+// The payload as flights.duffel.ts quote() writes it (raw → response_payload).
+const FLIGHT_ROW = {
+  ...ROW,
+  id: '44444444-4444-4444-4444-444444444444',
+  vertical: 'flight', status: 'awaiting_approval', provider: 'duffel', mode: 'native',
+  redirect_url: null, detail: 'American Airlines · RDU → PVR · 2026-11-02',
+  response_payload: {
+    offerId: 'off_123',
+    expiresAt: '2026-11-01T12:30:00Z',
+    priceGuaranteedUntil: '2026-11-03T12:00:00Z',
+    conditions: ['No changes once booked', 'Non-refundable'],
+  },
+};
+
+test('a flight\'s terms and its price hold survive the crossing', () => {
+  const f = bookingFacts(FLIGHT_ROW);
+  assert.deepEqual(f.conditions, ['No changes once booked', 'Non-refundable']);
+  // The offer's own expiry is the clock that stops a booking; the two-day
+  // guarantee is a different thing and is not what is shown.
+  assert.equal(f.priceHeldUntil, '2026-11-01T12:30:00Z');
+});
+
+test('terms nobody gave are null, never an empty "no conditions"', () => {
+  const none = bookingFacts({ ...FLIGHT_ROW, response_payload: { conditions: [] } });
+  assert.equal(none.conditions, null);
+  assert.equal(none.priceHeldUntil, null);
+  assert.equal(bookingFacts({ ...FLIGHT_ROW, response_payload: null }).conditions, null);
+});
+
+test('a hotel rate\'s own refundable flag is read, and nothing else is guessed', () => {
+  const hotel = { ...FLIGHT_ROW, vertical: 'hotel', provider: 'liteapi' };
+  assert.deepEqual(bookingFacts({ ...hotel, response_payload: { cancellationPolicies: { refundableTag: 'NRFN' } } }).conditions, ['Non-refundable']);
+  assert.match(String(bookingFacts({ ...hotel, response_payload: { cancellationPolicies: { refundableTag: 'RFN' } } }).conditions), /Refundable/);
+  assert.equal(bookingFacts({ ...hotel, response_payload: { hotelId: 'lp1' } }).conditions, null);
+});

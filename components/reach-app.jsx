@@ -8,8 +8,8 @@ import { planSections, daysAway, today, countdown, groupSchedule, byName, monthG
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
-import { checkoutState, itemTitle, bookedClaim, bookedWording } from "@/lib/checkout";
-import { approveOutcome } from "@/lib/booking/approve-outcome";
+import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL } from "@/lib/checkout";
+import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild } from "@/lib/itinerary-rebuild";
 import { ticketSources } from "@/lib/tickets";
@@ -9367,11 +9367,20 @@ const FIX_FOR=[
 ];
 function fixFor(why){ return FIX_FOR.find(f=>f.when.test(String(why||"")))||null; }
 
-function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus,saveItineraryToServer,goToProfileSection}){
+function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus,saveItineraryToServer,goToProfileSection,me}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans?.find(p=>p.id===planId);
-  // phases: loading | review | pay | approving | waiting | priceUp | done | error
+  // phases: loading | review | pay | approving | waiting | priceUp | reprice | problems | done | error
   const [phase,setPhase]=useState("loading");
+  // Approval's refusals, each with the booking it is about and its way on.
+  const [problems,setProblems]=useState([]);
+  // The rise approval stopped on: which booking, from what, to what.
+  const [priceRise,setPriceRise]=useState(null);
+  // A sentence from the server to show at the top of the review screen —
+  // "the price went up by $12, so there is $12 more to pay".
+  const [notice,setNotice]=useState("");
+  // The payment reference an error screen is about, for the email link.
+  const [errorRef,setErrorRef]=useState(null);
   // Bookings priced for a different number of people than are going: the
   // "reprice" screen prices exactly these again (options { reprice: true }).
   const [repriceIds,setRepriceIds]=useState([]);
@@ -9451,7 +9460,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     setCapturing(null);
   };
   // message, and whether trying again could cost money.
-  const fail=(message,{retry=false}={})=>{setMsg(message);setRetryable(retry);setPhase("error");};
+  // `payment` is a Stripe reference the message is about: the error screen
+  // then offers to email it, already written in.
+  const fail=(message,{retry=false,payment=null}={})=>{setMsg(message);setRetryable(retry);setErrorRef(payment);setPhase("error");};
   const [payReady,setPayReady]=useState(false);
   const stripeRef=useRef(null); const elementsRef=useRef(null); const payRef=useRef(null);
 
@@ -9525,7 +9536,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       // The payment is real and this id is not, so there is nothing to record
       // it against. Say so with the reference rather than dropping it.
       console.error("[checkout] payment returned against an unsaved plan",{planId,paymentIntentId:returnedIntent});
-      fail(`Your payment went through, but this trip hadn't finished saving, so we couldn't attach it. Nothing is lost — quote reference ${returnedIntent} and we'll sort it. Do not pay again.`);
+      fail(`Your payment went through, but this trip hadn't finished saving, so it isn't attached to the trip. Do not pay again. Email ${SUPPORT_EMAIL} with reference ${returnedIntent} — that is how the payment is found.`,{payment:returnedIntent});
       return;
     }
     (async()=>{
@@ -9539,12 +9550,12 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         // Pay-later providers can take a while to settle. Stripe's webhook marks
         // the contribution paid when they do, so the honest message is to wait.
         fail(cr.status===409&&redirectStatus!=="succeeded"
-          ?`Your payment is still being processed. We'll mark it paid as soon as it clears — do not pay again. Reference ${returnedIntent}.`
-          :`Your payment went through, but we couldn't record it against this trip. Nothing is lost — quote reference ${returnedIntent} and we'll sort it. Do not pay again.`);
+          ?`Your payment is still being processed. It shows as paid here once it clears — do not pay again. Reference ${returnedIntent}.`
+          :`Your payment went through, but we couldn't record it against this trip. Do not pay again. Email ${SUPPORT_EMAIL} with reference ${returnedIntent} — that is how the payment is found.`,{payment:returnedIntent});
       }catch(e){
         console.error("[checkout] could not check returned payment",{planId,paymentIntentId:returnedIntent},e);
         setBusy(false);
-        fail(`We couldn't check that payment just now. Do not pay again — quote reference ${returnedIntent} and we'll sort it.`);
+        fail(`We couldn't check that payment just now. Do not pay again. Reopen this trip in a minute to see it, or email ${SUPPORT_EMAIL} with reference ${returnedIntent}.`,{payment:returnedIntent});
       }
     })();
   },[phase,returnedIntent]);
@@ -9636,7 +9647,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         const err=await cr.json().catch(()=>({}));
         console.error("[checkout] payment taken but not recorded",{planId,paymentIntentId:paymentIntent.id,status:cr.status,err});
         setBusy(false);
-        fail(`Your payment went through, but we couldn't record it against this trip. Nothing is lost — quote reference ${paymentIntent.id} and we'll sort it. Do not pay again.`);
+        fail(`Your payment went through, but we couldn't record it against this trip. Do not pay again. Email ${SUPPORT_EMAIL} with reference ${paymentIntent.id} — that is how the payment is found.`,{payment:paymentIntent.id});
         return;
       }
       setBusy(false);
@@ -9656,66 +9667,153 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     }
   };
 
-  const approveAll=async(acceptNewPrice)=>{
-    setPhase("approving");
-    let fresh=[];
+  // The bookings and the money, read again together. Every screen after an
+  // approval or a refund is drawn from these, never from what this visit
+  // believed before it pressed anything.
+  const refresh=async(fallbackRows)=>{
+    let rows=fallbackRows??bookings, f=funding;
     try{
-      const r=await fetchWithin(`/api/bookings?planId=${planId}`,{},12000,"reading your bookings");
-      const j=await r.json();
-      fresh=(j&&(j.bookings||j))||[];
-    }catch(e){
-      // Falling back to what is already on screen is right; doing it silently
-      // meant an approval run against a stale list left no trace at all.
-      console.error("[checkout] could not refresh bookings, using cached",e);
-      fresh=bookings;
-    }
-    const waiting=(fresh||[]).filter(b=>b.status==="awaiting_approval");
-    // A failed approval used to be swallowed and the screen still said done,
-    // so somebody could believe a hotel was booked when the request had been
-    // refused. Failures are counted and reported.
-    const failed=[];
-    let unsure=0;
-    for(const b of waiting){
-      let o;
-      try{
-        // The one that actually books. A provider that hangs here leaves somebody
-        // staring at "approving" with their money already collected, so it gets
-        // the longest deadline and still gets one — longer than the server's
-        // own 60 seconds, so a booking that went through is never read here
-        // as one that failed.
-        const r=await fetchWithin(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(acceptNewPrice?{acceptNewPrice:true}:{})},70000,"the booking");
-        o=approveOutcome(r.status,await r.json().catch(()=>({})));
-      }catch(e){
-        // No answer is not a refusal: the server may still be booking it.
-        console.error("[checkout] approval did not answer",{bookingId:b.id},e);
-        o={kind:"unknown",message:"We didn't hear back in time, so this may still be going through. Don't book it again — open the trip in a minute to see."};
-      }
-      // Each answer to the screen it belongs on (lib/booking/approve-outcome.ts).
-      if(o.kind==="notFunded"){ setPhase("waiting"); return; }
-      if(o.kind==="priceUp"){ setPhase("priceUp"); return; }
-      if(o.kind==="reprice"){ setRepriceIds([b.id]); setMsg(o.message||""); setPhase("reprice"); return; }
-      // Booked, or another press is booking it: the list read below shows which.
-      if(o.kind==="booked"||o.kind==="busy")continue;
-      if(o.kind==="unknown")unsure++;
-      console.error("[checkout] approval refused",{bookingId:b.id,kind:o.kind,message:o.message});
-      failed.push(o.message);
-    }
-    // The list fetched before approving says "Quoted" for everything, because
-    // that is what it was. Read it again so the screen shows what happened.
-    try{
-      const after=await fetchWithin(`/api/bookings?planId=${planId}`,{},12000,"reading your bookings");
-      const aj=after.ok?await after.json():null;
-      setBookings((aj&&(aj.bookings||aj))||fresh);
-    }catch(e){ console.error("[checkout] could not re-read the bookings after approving",e); setBookings(fresh); }
-    if(failed.length){
-      // What each one said, not a promise that somebody will follow up: a
-      // traveller missing their details has something to do, and a booking
-      // we did not hear back about must not be booked again.
-      fail(`Your payment is recorded, but ${failed.length} of ${waiting.length} booking${waiting.length===1?"":"s"} ${unsure===failed.length?"may not have":"couldn't be"} finished. ${[...new Set(failed.filter(Boolean))].join(" ")}`);
-      return;
-    }
-    setPhase("done");
+      const [b,fr]=await Promise.all([
+        fetchWithin(`/api/bookings?planId=${planId}`,{},12000,"reading your bookings"),
+        fetchWithin(`/api/plans/${planId}/funding`,{},12000,"reading the payments"),
+      ]);
+      const bj=b.ok?await b.json().catch(()=>null):null;
+      if(bj)rows=(bj.bookings||bj)||rows;
+      if(fr.ok){ const fj=await fr.json().catch(()=>null); if(fj)f=fj; }
+      else console.error("[checkout] could not re-read the payments",{planId,status:fr.status});
+    }catch(e){ console.error("[checkout] could not re-read the trip",{planId},e); }
+    setBookings(rows||[]); setFunding(f);
+    return {rows:rows||[],funding:f};
   };
+
+  // One run at a time, for the whole run. `busy` alone was not enough: it
+  // was set false before approval started and approval never set it, so a
+  // second tap on "Yes, book it" — or the pay-later return landing while a
+  // card payment was approving — started a second loop over the same rows.
+  // The server's claim stops a double booking; this stops the screen from
+  // racing itself into "someone else is booking this" about its own press.
+  const approvingRef=useRef(false);
+  const approveAll=async(acceptNewPrice)=>{
+    if(approvingRef.current)return;
+    approvingRef.current=true;
+    setBusy(true); setNotice(""); setPhase("approving");
+    try{
+      let fresh=[];
+      try{
+        const r=await fetchWithin(`/api/bookings?planId=${planId}`,{},12000,"reading your bookings");
+        const j=await r.json();
+        fresh=(j&&(j.bookings||j))||[];
+      }catch(e){
+        // Falling back to what is already on screen is right; doing it silently
+        // meant an approval run against a stale list left no trace at all.
+        console.error("[checkout] could not refresh bookings, using cached",e);
+        fresh=bookings;
+      }
+      const waiting=(fresh||[]).filter(b=>b.status==="awaiting_approval");
+      // Each refusal is kept with the booking it is about and the way on from
+      // it (lib/booking/approve-outcome.ts), so the screen can put "Try
+      // again", "See other hotels" or "Add your travel details" next to the
+      // reason instead of one "Go back" under all of them.
+      const found=[];
+      for(const b of waiting){
+        let o;
+        try{
+          // The one that actually books. A provider that hangs here leaves somebody
+          // staring at "approving" with their money already collected, so it gets
+          // the longest deadline and still gets one — longer than the server's
+          // own 60 seconds, so a booking that went through is never read here
+          // as one that failed.
+          const r=await fetchWithin(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(acceptNewPrice?{acceptNewPrice:true}:{})},70000,"the booking");
+          o=approveOutcome(r.status,await r.json().catch(()=>({})));
+        }catch(e){
+          // No answer is not a refusal: the server may still be booking it.
+          console.error("[checkout] approval did not answer",{bookingId:b.id},e);
+          o={kind:"unknown",code:null,who:[],oldCents:null,newCents:null,
+            message:"We didn't hear back in time, so this may still be going through. Don't book it again — check again in a minute."};
+        }
+        if(o.kind==="priceUp"){
+          setPriceRise({title:itemTitle(b,lineTitle(b)),oldCents:o.oldCents,newCents:o.newCents});
+          await refresh(fresh); setPhase("priceUp"); return;
+        }
+        if(o.kind==="reprice"){ setRepriceIds([b.id]); setMsg(o.message||""); await refresh(fresh); setPhase("reprice"); return; }
+        if(o.kind==="notFunded"){
+          // "Waiting on the others" only when there are others who owe. A
+          // price rise approval wrote onto the row leaves this person with
+          // more to pay, and that is theirs to pay now, not a wait.
+          const now=await refresh(fresh);
+          const next=checkoutState(now.rows,{ignoreBroken:skipBroken,funding:now.funding}).step;
+          if(next==="waiting"){ setPhase("waiting"); return; }
+          setNotice(o.message||"");
+          setPhase("review"); return;
+        }
+        if(o.kind==="booked")continue;
+        console.error("[checkout] approval refused",{bookingId:b.id,kind:o.kind,code:o.code,message:o.message});
+        found.push({bookingId:b.id,row:b,kind:o.kind,code:o.code,who:o.who,
+          message:o.kind==="busy"?`Somebody else is booking ${itemTitle(b,lineTitle(b))} right now. Nothing more was sent — check again in a moment.`:o.message,
+          step:nextStepFor(o,b.vertical)});
+      }
+      // The list fetched before approving says "Quoted" for everything, because
+      // that is what it was. Read it again so the screen shows what happened.
+      const now=await refresh(fresh);
+      const left=stillProblems(found,now.rows);
+      if(left.length){ setProblems(left); setPhase("problems"); return; }
+      setProblems([]); setPhase("done");
+    }finally{
+      approvingRef.current=false;
+      setBusy(false);
+    }
+  };
+
+  // Give back what was not spent. The server works out how much and says
+  // what happened in its own words; this only asks and shows the answer.
+  const refundRef=useRef(false);
+  const [refunding,setRefunding]=useState(false);
+  const [refundNote,setRefundNote]=useState(null);
+  const askRefund=async()=>{
+    if(refundRef.current||isTempId(planId))return;
+    refundRef.current=true; setRefunding(true); setRefundNote(null);
+    try{
+      // Longer than the route's own 60 seconds, so a refund that went
+      // through is never reported here as one that did not.
+      const r=await fetchWithin(`/api/plans/${planId}/funding/refund`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"},70000,"your refund");
+      setRefundNote(refundWords(r.status,await r.json().catch(()=>({}))));
+      await refresh();
+    }catch(e){
+      console.error("[checkout] refund did not answer",{planId},e);
+      setRefundNote({ok:false,text:"We didn't hear back about the refund, so it may still be going through. Don't ask again yet — reopen this in a minute to see whether it did."});
+    }finally{
+      refundRef.current=false; setRefunding(false);
+    }
+  };
+
+  // Reach can email now, so this sends rather than handing the person a
+  // message to forward themselves.
+  const nudge=async()=>{
+    if(nudging)return;
+    if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+    setNudging(true);
+    try{
+      const r=await fetch(`/api/plans/${planId}/notify`,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({kind:"funding"}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
+      toast(d.notified
+        ? `Reminded ${d.notified} ${d.notified===1?"person":"people"} 📬`
+        : (d.message||"Everyone has already paid"));
+    }catch(e){
+      console.error("[checkout] nudge failed",e);
+      toast(e.message);
+    }
+    setNudging(false);
+  };
+
+  // The references somebody writing in would be asked for: this person's
+  // own payments on this plan, and the bookings in question.
+  const myPayments=(funding?.contributions||[]).filter(c=>c.user_id===me&&c.stripe_payment_intent).map(c=>c.stripe_payment_intent);
+  const writeIn=(what,extra={})=>supportMailto({planId,planName:plan?.name||plan?.destination,what,
+    payments:[...myPayments,...(extra.payments||[])],bookings:extra.bookings||[]});
 
   const chip=(label,tone)=>(<span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,letterSpacing:.3,
     background:tone==="green"?"rgba(16,185,129,.15)":tone==="gold"?"rgba(212,175,55,.15)":tone==="red"?C.redDim:"rgba(255,255,255,.08)",
@@ -9743,7 +9841,40 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // what failed. It is not remembered: reopening checkout asks again, because
   // the failure may have been fixed in between and skipping it a second time
   // should be as deliberate as the first.
-  const checkout=checkoutState(bookings||[],{ignoreBroken:skipBroken});
+  // The money goes in too: whether this person owes, whether the plan is
+  // paid for in full, whether anything was paid at all. Without it a funded
+  // plan offered "Looks good" — a second payment — and never "Book it".
+  const checkout=checkoutState(bookings||[],{ignoreBroken:skipBroken,funding});
+  // What this person has paid in, net of refunds, and how much of that is
+  // beyond their share of what is still being bought — the money a refund
+  // could give back. The server works out the real figure; this only decides
+  // whether to offer the button.
+  const myPaid=funding?.myPaidCents||0;
+  const spare=Math.max(0,myPaid-(funding?.myShareCents||0));
+
+  // Money in and not all of it spent: the way to get it back, on the screen
+  // that took it. Only for somebody who paid — the route refunds the
+  // caller's own payments and nobody else's. The amount is the server's to
+  // work out, and its answer is shown as it comes.
+  const refundBox=(lead)=>(
+    <div style={{margin:"0 0 14px",padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,textAlign:"left"}}>
+      {lead&&<div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4,lineHeight:1.4}}>{lead}</div>}
+      <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:10}}>
+        A refund gives back what you paid beyond your share of anything booked or still being booked, the same way you paid.
+      </div>
+      {refundNote&&(
+        <div style={{fontSize:12.5,color:refundNote.ok?C.green:C.t1,lineHeight:1.5,marginBottom:10}}>{refundNote.text}</div>
+      )}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+        <button disabled={refunding} onClick={askRefund}
+          style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:refunding?"progress":"pointer",opacity:refunding?.6:1}}>
+          {refunding?"Asking Stripe…":"Refund what wasn't spent"}
+        </button>
+        <a href={writeIn("Money paid for a trip")}
+          style={{color:C.accentText,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>Email {SUPPORT_EMAIL} →</a>
+      </div>
+    </div>
+  );
   // The itinerary line a booking was made from, so a row the provider never
   // named is still called what it is for. The hotel booking that failed on
   // Puerto Vallarta has no detail and does have a line: it is "7 nights in
@@ -9793,6 +9924,16 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   if(phase==="error")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:34,marginBottom:12}}>🙈</div>
     <div style={{color:C.t1,fontWeight:600,marginBottom:8,lineHeight:1.5}}>{msg}</div>
+    {/* The inbox, opened with the plan and the payment already written in.
+        This replaced "quote reference … and somebody will sort it": nothing in the
+        app follows anything up, and an email with the reference in it is
+        the one thing that actually reaches somebody. */}
+    {errorRef&&(
+      <a href={writeIn("A payment that isn't on my trip",{payments:[errorRef]})}
+        style={{display:"inline-block",marginTop:6,color:C.accentText,fontSize:13,fontWeight:700,textDecoration:"none"}}>
+        Email {SUPPORT_EMAIL} →
+      </a>
+    )}
     {/* Only offered where trying again cannot take money twice: a trip that
         would not load, a payment form that would not appear. Once a card has
         been charged the way back through this screen is the review screen,
@@ -9805,48 +9946,44 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       :(<button onClick={onBack} style={{marginTop:12,padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700}}>Go back</button>)}
   </div></div>);
 
+  // Only reached with the payments just read again (refresh), so the bar is
+  // what has been collected, not what this visit guessed it would be.
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:40,marginBottom:12}}>🤝</div>
     <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>You're in!</div>
-    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in. The moment the last share lands we'll email everyone, and one of you gives the word to book.</div>
-    <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents+myShareCents)/Math.max(funding.targetCents,1))*100));
+    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>Your part is paid. A few people still need to chip in. The moment the last share lands we'll email everyone, and anyone on the trip can open checkout and press Book it.</div>
+    <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents||0)/Math.max(funding.targetCents||0,1))*100));
       return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
-    <button disabled={nudging} onClick={async()=>{
-      // Reach can email now, so this sends rather than handing the person a
-      // message to forward themselves.
-      if(nudging)return;
-      if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
-      setNudging(true);
-      try{
-        const r=await fetch(`/api/plans/${planId}/notify`,{
-          method:"POST",headers:{"Content-Type":"application/json"},
-          body:JSON.stringify({kind:"funding"}),
-        });
-        const d=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
-        toast(d.notified
-          ? `Reminded ${d.notified} ${d.notified===1?"person":"people"} 📬`
-          : (d.message||"Everyone has already paid"));
-      }catch(e){
-        console.error("[checkout] nudge failed",e);
-        toast(e.message);
-      }
-      setNudging(false);
-    }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,cursor:nudging?"progress":"pointer",opacity:nudging?.6:1}}>
+    <button disabled={nudging} onClick={nudge} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,cursor:nudging?"progress":"pointer",opacity:nudging?.6:1}}>
       {nudging?"Sending…":"Give them a nudge"}
     </button>
     <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
   </div></div>);
 
+  // Approval stopped on a price that rose past what it will pass without
+  // asking. Named, with both prices: "one of your bookings costs a bit more"
+  // was the whole message, over a rise that could be anything above 5%.
   if(phase==="priceUp")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:40,marginBottom:12}}>📈</div>
-    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Price went up a little</div>
-    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>One of your bookings costs a bit more than when we quoted it. Still book it?</div>
-    <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>Yes, book it</button>
-    <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Let me think</div>
+    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>The price went up</div>
+    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:8}}>
+      {priceRise?.oldCents&&priceRise?.newCents
+        ?`${priceRise.title} was ${fmt(priceRise.oldCents)} when it was priced and is ${fmt(priceRise.newCents)} now.`
+        :`${priceRise?.title||"One of your bookings"} costs more than when it was priced.`}
+      {" "}It hasn't been booked.
+    </div>
+    <div style={{color:C.t3,fontSize:12.5,lineHeight:1.5,marginBottom:20}}>
+      If you accept, it is booked at the new price when the trip's money covers it. If that means more to pay, checkout shows how much before anything is charged.
+    </div>
+    <button disabled={busy} onClick={()=>approveAll(true)} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>
+      {priceRise?.newCents?`Accept ${fmt(priceRise.newCents)} and book it`:"Accept the new price and book it"}
+    </button>
+    {/* Hotels and flights have other options priced beside them; the
+        Book tab's panel is where those are chosen. */}
+    <div {...pressable} onClick={()=>replace?replace("planDetail",{planId,groupId,initialTab:"bookings"}):onBack()} style={{marginTop:14,color:C.accentText,fontSize:13,fontWeight:600,cursor:"pointer"}}>See other options instead</div>
+    <div {...pressable} onClick={onBack} style={{marginTop:10,color:C.t2,fontSize:13,cursor:"pointer"}}>Let me think</div>
   </div></div>);
-
   // Priced for a different number of people than are going now. Priced
   // again here, as the same hotel and the same flights, and then checkout
   // reloads with the new total — nothing is charged or booked until then.
@@ -9878,14 +10015,84 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     <div style={{color:C.t2,fontSize:13,marginTop:6}}>This takes a few seconds</div>
   </div></div>);
 
+  // Approval refused some of it. Each refusal sits next to its own way on —
+  // this used to be one sentence of joined-up server messages over a single
+  // "Go back", with the money already taken.
+  if(phase==="problems"){
+    const rowOf=id=>(bookings||[]).find(b=>b.id===id);
+    const btn={background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:"pointer"};
+    return(<div className="sc" style={{paddingBottom:40}}>
+      <div style={{padding:"18px 20px 6px"}}>
+        <span style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>Not everything was booked</span>
+      </div>
+      <div style={{padding:"6px 20px 0"}}>
+        <div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginBottom:14}}>
+          {problems.length===1?"One booking didn't go through.":`${problems.length} bookings didn't go through.`}
+          {" "}Each one says why and what you can do about it.
+          {myPaid>0?` Your payment of ${fmt(myPaid)} is recorded.`:""}
+        </div>
+        {problems.map(p=>{
+          const row=rowOf(p.bookingId)||p.row;
+          const mine=namesMe(p.who,group?.members,me);
+          return(
+            <div key={p.bookingId} style={{marginBottom:12,padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14}}>
+              <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>{itemTitle(row,lineTitle(row))}</div>
+              <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:8}}>{p.message}</div>
+              {p.step==="details"&&(
+                <div>
+                  {!mine&&(
+                    <div style={{fontSize:12,color:C.t3,lineHeight:1.5,marginBottom:8}}>
+                      {p.who.length===1?"They add theirs":"They each add theirs"} in their own Profile, under flying details. Then press Try again here.
+                    </div>
+                  )}
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {mine&&goToProfileSection&&(
+                      <button onClick={()=>goToProfileSection("flying")} style={btn}>Add your travel details →</button>
+                    )}
+                    <button disabled={busy} onClick={()=>approveAll(false)} style={btn}>Try again</button>
+                  </div>
+                </div>
+              )}
+              {p.step==="retry"&&(
+                <button disabled={busy} onClick={()=>approveAll(false)} style={btn}>Try again</button>
+              )}
+              {p.step==="other_options"&&row&&(
+                <ChoicePanel booking={row} vertical={row.vertical} toast={toast} onChanged={()=>{setPhase("loading");load();}}/>
+              )}
+              {p.step==="plan"&&(
+                <button onClick={()=>replace?replace("planDetail",{planId,groupId,initialTab:"bookings"}):onBack()} style={btn}>
+                  Change it on the plan →
+                </button>
+              )}
+              {p.step==="recheck"&&(
+                <button onClick={()=>{setPhase("loading");load();}} style={btn}>Check again</button>
+              )}
+            </div>
+          );
+        })}
+        {spare>0&&refundBox(null)}
+        <a href={writeIn("A booking that didn't go through",{bookings:problems.map(p=>p.bookingId)})}
+          style={{display:"block",textAlign:"center",margin:"4px 0 16px",color:C.accentText,fontSize:12.5,fontWeight:600,textDecoration:"none"}}>
+          Email {SUPPORT_EMAIL} with the references →
+        </a>
+        <button onClick={()=>replace?replace("planDetail",{planId,groupId,initialTab:"itinerary"}):onBack()}
+          style={{width:"100%",padding:"15px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:15}}>See my itinerary</button>
+      </div>
+    </div>);
+  }
+
   if(phase==="done"){
-    const confetti=Array.from({length:36},(_,i)=>i);
+    // A party only for something to celebrate. Confetti over "Nothing was
+    // booked" is the screen laughing at somebody who has just paid.
+    const celebrate=claim==="all_booked"||claim==="partly_booked";
+    const confetti=celebrate?Array.from({length:36},(_,i)=>i):[];
+    const failedRows=checkout.rows.filter(r=>r.status==="failed");
     return(<div className="sc" style={{paddingBottom:40,position:"relative",overflow:"hidden"}}>
       <style dangerouslySetInnerHTML={{__html:`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}`}}/>
       {confetti.map(i=>(<span key={i} style={{position:"absolute",left:(i*137)%100+"%",top:-10,width:8,height:12,borderRadius:2,
         background:[C.accent,C.green,C.blue,"#F472B6"][i%4],animation:`rfall ${2.2+(i%5)*.4}s ${(i%7)*.18}s ease-in forwards`,zIndex:5}}/>))}
-      <div style={{background:`linear-gradient(145deg,#064E3B,${C.green})`,padding:"48px 28px 36px",textAlign:"center"}}>
-        <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px"}}>✓</div>
+      <div style={{background:celebrate?`linear-gradient(145deg,#064E3B,${C.green})`:`linear-gradient(145deg,#3B2F0B,#7C5A12)`,padding:"48px 28px 36px",textAlign:"center"}}>
+        <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px",color:"white"}}>{celebrate?"✓":"!"}</div>
         {/* Nothing in the app books an itinerary yet, so when no booking rows
             exist this said "You're all booked!" over a line reading "Nothing is
             priced yet" \u2014 contradicting itself on the screen where a real card
@@ -9899,14 +10106,47 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         </div>
       </div>
       <div style={{padding:"20px 20px 0"}}>
-        <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",marginBottom:16}}>
-          <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between"}}>
-            <span style={{fontSize:13,color:C.t2}}>Amount charged</span>
-            <span style={{fontSize:13,color:C.t1,fontWeight:700}}>{fmt(myShareCents)}</span></div>
-          <div style={{padding:"12px 16px",display:"flex",justifyContent:"space-between"}}>
-            <span style={{fontSize:13,color:C.t2}}>Security</span>
-            <span style={{fontSize:12,color:C.green,fontWeight:600}}>🔒 Secured by Stripe</span></div>
-        </div>
+        {/* What this person has paid in, read after approving. This showed
+            `myShareCents` — the amount they were about to pay when the screen
+            opened — so pressing Book it on a plan somebody else had paid for
+            read "Amount charged $0", and a top-up read as the whole trip. */}
+        {myPaid>0&&(
+          <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",marginBottom:16}}>
+            <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between"}}>
+              <span style={{fontSize:13,color:C.t2}}>Paid by you</span>
+              <span style={{fontSize:13,color:C.t1,fontWeight:700}}>{fmt(myPaid)}</span></div>
+            <div style={{padding:"12px 16px",display:"flex",justifyContent:"space-between"}}>
+              <span style={{fontSize:13,color:C.t2}}>Security</span>
+              <span style={{fontSize:12,color:C.green,fontWeight:600}}>🔒 Secured by Stripe</span></div>
+          </div>
+        )}
+        {/* Every booking that failed, with a way on from it. "Couldn't book"
+            as a chip and nothing else was the old ending: the provider's
+            reason, then pricing the line again (which /bookable does for a
+            failed line even after payment, since its money is already in),
+            the page that takes a missing detail, and the money back. */}
+        {failedRows.length>0&&(
+          <div style={{marginBottom:16,padding:"12px 14px",background:C.amberDim,border:`1px solid ${C.border}`,borderRadius:14}}>
+            {failedRows.map((b,i)=>{
+              const fix=fixFor(b.error);
+              return(
+                <div key={b.id||i} style={{fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:8}}>
+                  <span style={{fontWeight:600}}>{itemTitle(b,lineTitle(b))}</span>
+                  {b.error?<span style={{color:C.t2}}> — {b.error}</span>:null}
+                  {fix&&goToProfileSection&&(
+                    <div><button onClick={()=>goToProfileSection(fix.section)}
+                      style={{marginTop:4,background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12,fontWeight:700,padding:"6px 11px",borderRadius:999,cursor:"pointer"}}>{fix.label}</button></div>
+                  )}
+                </div>
+              );
+            })}
+            <button onClick={()=>{setPhase("loading");load();}}
+              style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+              Price {failedRows.length===1?"it":"them"} again
+            </button>
+          </div>
+        )}
+        {spare>0&&refundBox(null)}
         <div style={{marginBottom:16}}>
           <div className="sl" style={{marginBottom:10}}>Your bookings</div>
           {/* Lines of the itinerary that are not on this list. Said here, on
@@ -9949,7 +10189,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               </div>
             </div>
           )}
-          {lines.filter(it=>!isYours(it)).map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 4px"}}>
+          {/* Failed ones are listed once, above, with what to do about them. */}
+          {lines.filter(it=>!isYours(it)&&it.st!=="failed").map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 4px"}}>
             <span style={{fontSize:20}}>{it.icon}</span>
             <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
               {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}</div>
@@ -10187,51 +10428,146 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         </div>
         );
       })()}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px",marginBottom:16}}>
-        <span style={{fontSize:14,color:C.t2}}>{participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`}</span>
-        {/* A figure here while the button is disabled is the screen saying
-            "you owe $1,474" and "we're still pricing this" at once. The
-            server's funding target was zero and this still read $1,474,
-            because with nothing quoted the share falls back to the trip's
-            budget — an estimate, printed in the place a person reads as a
-            bill. Until there is something real to charge, no number. */}
-        <span style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>
-          {checkout.canPay?fmt(myShareCents):"—"}
-        </span>
-      </div>
+      {/* What the fare or the room allows, and how long its price is held,
+          before anybody pays towards it or books it. The flight quote has
+          stored Duffel's change and refund terms since it was written, and
+          this screen dropped them: somebody paid their share of a
+          non-refundable fare having been told nothing. Unknown terms are
+          said as unknown — a blank reads as "no catch". */}
+      {(checkout.step==="pay"||checkout.step==="top_up"||checkout.step==="book")&&(()=>{
+        const terms=bookingFactsFrom(checkout.rows).map(f=>({f,t:termsFor(f)})).filter(x=>x.t);
+        if(!terms.length)return null;
+        return(
+          <div style={{margin:"0 4px 14px",padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14}}>
+            <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:4}}>
+              {checkout.step==="book"?"Before it's booked":"Before you pay"}
+            </div>
+            {terms.map(({f,t},i)=>(
+              <div key={f.id} style={{padding:"7px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{itemTitle(f,lineTitle({itinerary_item_id:f.itineraryItemId}))}</div>
+                <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginTop:2}}>{t.terms}</div>
+                {t.hold&&<div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:2}}>{t.hold}</div>}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+      {/* The server's own sentence from the last approval, when it sent
+          somebody back here: a price that rose by a small amount is money
+          still to pay in, and this says how much and why. */}
+      {notice?(
+        <div style={{margin:"0 4px 12px",padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>{notice}</div>
+      ):null}
+      {(()=>{
+        const s=checkout.step;
+        const paying=s==="pay"||s==="top_up";
+        const share=participants<=1?"Your trip":`Your share of ${plural(participants,"person","people")}`;
+        // A figure here while the button is disabled is the screen saying
+        // "you owe $1,474" and "we're still pricing this" at once. The
+        // server's funding target was zero and this still read $1,474,
+        // because with nothing quoted the share falls back to the trip's
+        // budget — an estimate, printed in the place a person reads as a
+        // bill. Until there is something real to charge, no number. Once
+        // somebody has paid, the number is what they paid.
+        const label=s==="top_up"?"Still to pay":paying?share:myPaid>0?"Paid by you":share;
+        const value=paying?(checkout.canPay?fmt(myShareCents):"—"):myPaid>0?fmt(myPaid):"—";
+        return(
+          <div style={{padding:"0 4px",marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+              <span style={{fontSize:14,color:C.t2}}>{label}</span>
+              <span style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>{value}</span>
+            </div>
+            {/* Why there is more to pay, from the server's figures. A share
+                rises when a price rose and somebody accepted it, or when a
+                line was priced after the first payment. */}
+            {s==="top_up"&&(
+              <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginTop:4}}>
+                You've paid {fmt(myPaid)}. Your share is now {fmt(funding?.myShareCents)}, so {fmt(myShareCents)} is still to pay.
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {/* Priced separately from the total above, which is this member's
           share: concierge rows are real things being arranged whose cost is
           settled on the phone, so they are named rather than counted as $0. */}
       {checkout.conciergeNote?(
         <div style={{fontSize:12,color:C.t2,marginBottom:10,padding:"0 4px"}}>{checkout.conciergeNote}</div>
       ):null}
-      {/* Nothing for Reach to charge, and nothing coming. A concert whose
-          ticket is bought from the seller, an evening of walk-ins. This
-          button sat disabled for ever under "we're still pricing this", so
-          a plan already as finished as it would ever get looked permanently
-          unfinished. There is nothing to pay, so say so and let them go. */}
-      {checkout.nothingToCharge
-        ?<button onClick={()=>replace?replace("planDetail",{planId,groupId}):onBack()}
-          style={{width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16}}>
-          Nothing to pay — take me to the plan</button>
-        :(()=>{
-          // A button that cannot be pressed should not look like one that
-          // can. This was the full gold with opacity .6, which on a dark
-          // screen still reads as "tap me" — and the line under it said
-          // "we're still pricing this". The screen was showing a live
-          // button and telling you it was not ready in the same breath.
-          const off=busy||!checkout.canPay;
+      {(()=>{
+        const s=checkout.step;
+        const big={width:"100%",padding:"16px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,fontSize:16};
+        // Paid, and nothing bought. This said "Nothing to pay" — true, and
+        // the whole of what somebody who had just paid $1,474 for a trip
+        // with no bookings was told. Now it says what happened and offers
+        // the money back, beside the way to price it all again.
+        if(s==="paid_nothing_booked"){
+          const collected=funding?.collectedCents||0;
           return(
-            <button disabled={off} onClick={startPayment}
-              style={{width:"100%",padding:"16px",borderRadius:14,
-                border:off?`1px solid ${C.border}`:"none",
-                background:off?C.s2:C.accent,
-                color:off?C.t3:C.onAccent,
-                fontWeight:700,fontSize:16,
-                cursor:off?"not-allowed":"pointer"}}>
-              {busy?"One sec\u2026":"Looks good"}</button>
+            <div>
+              {myPaid>0
+                ?refundBox(`You paid ${fmt(myPaid)}, and nothing was booked.`)
+                :(<div style={{margin:"0 4px 14px",fontSize:13,color:C.t1,lineHeight:1.5}}>
+                    {fmt(collected)} was paid towards this trip and nothing was booked. Whoever paid can get it back from this screen.
+                  </div>)}
+              {/* The failed rows below carry their own "Try these again".
+                  Offered here only when there are none, so the same action
+                  is never on the screen twice. */}
+              {checkout.broken.length===0&&(
+                <button onClick={()=>{setPhase("loading");load();}} style={big}>Price the trip again</button>
+              )}
+            </div>
           );
-        })()}
+        }
+        // Nothing for Reach to charge, and nothing coming. A concert whose
+        // ticket is bought from the seller, an evening of walk-ins. This
+        // button sat disabled for ever under "we're still pricing this", so
+        // a plan already as finished as it would ever get looked permanently
+        // unfinished. There is nothing to pay, so say so and let them go.
+        if(s==="nothing")return(
+          <button onClick={()=>replace?replace("planDetail",{planId,groupId}):onBack()} style={big}>
+            Nothing to pay — take me to the plan</button>
+        );
+        // Paid for in full, and something waiting: the button that was
+        // missing. Approval checks the plan's money, not the presser's, so
+        // anyone on the trip may press it.
+        if(s==="book")return(
+          <button disabled={busy} onClick={()=>approveAll(false)} style={{...big,opacity:busy?.6:1}}>
+            {busy?"One sec…":"Book it"}</button>
+        );
+        if(s==="waiting")return(
+          <button disabled={nudging} onClick={nudge} style={{...big,opacity:nudging?.6:1}}>
+            {nudging?"Sending…":"Give them a nudge"}</button>
+        );
+        if(s==="in_progress")return(
+          <button onClick={()=>{setPhase("loading");load();}} style={big}>Check again</button>
+        );
+        // Bought, and some of what was paid not spent — a booking failed
+        // after the money came in. The refund sits beside the way out.
+        if(s==="booked")return(
+          <div>
+            {spare>0&&refundBox(null)}
+            <button onClick={()=>replace?replace("planDetail",{planId,groupId,initialTab:"itinerary"}):onBack()} style={big}>
+              See my itinerary</button>
+          </div>
+        );
+        // A button that cannot be pressed should not look like one that
+        // can. This was the full gold with opacity .6, which on a dark
+        // screen still reads as "tap me" — and the line under it said
+        // "we're still pricing this". The screen was showing a live
+        // button and telling you it was not ready in the same breath.
+        const off=busy||!(s==="pay"||s==="top_up");
+        return(
+          <button disabled={off} onClick={startPayment}
+            style={{width:"100%",padding:"16px",borderRadius:14,
+              border:off?`1px solid ${C.border}`:"none",
+              background:off?C.s2:C.accent,
+              color:off?C.t3:C.onAccent,
+              fontWeight:700,fontSize:16,
+              cursor:off?"not-allowed":"pointer"}}>
+            {busy?"One sec…":s==="top_up"?`Pay ${fmt(myShareCents)} more`:"Looks good"}</button>
+        );
+      })()}
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>
         {/* The button used to be live over a total of $0. Whatever else is
             true, nobody should be invited to pay for a trip we have not
@@ -10273,6 +10609,12 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               <div key={b.id||i} style={{fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:6}}>
                 <span style={{fontWeight:600}}>{itemTitle(b,lineTitle(b))}</span>
                 {b.error?<span style={{color:C.t2}}> — {b.error}</span>:null}
+                {/* The page that takes whatever the reason says is missing. */}
+                {fixFor(b.error)&&goToProfileSection&&(
+                  <div><button onClick={()=>goToProfileSection(fixFor(b.error).section)}
+                    style={{marginTop:4,background:"none",border:`1px solid ${C.border}`,color:C.accentText,
+                      fontSize:12,fontWeight:700,padding:"6px 11px",borderRadius:999,cursor:"pointer"}}>{fixFor(b.error).label}</button></div>
+                )}
               </div>
             ))}
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
@@ -10283,8 +10625,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               </button>
               {/* Never a trap. Moab's flight cannot be booked at any price —
                   the trip started — so without this the hotel could never be
-                  paid for either. */}
-              <button onClick={()=>setSkipBroken(true)}
+                  paid for either. Only while a failure is what holds the
+                  button shut: once everything is bought or paid for there is
+                  nothing to carry on to. */}
+              {checkout.step==="blocked"&&<button onClick={()=>setSkipBroken(true)}
                 style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
                   fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
                 {/* "Book the rest without them" was the first wording and
@@ -10292,12 +10636,27 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
                     nothing. It uncovers the pay button, and the booking
                     happens when that is pressed. */}
                 Carry on without {checkout.broken.length===1?"it":"them"}
-              </button>
+              </button>}
             </div>
           </div>
         )}
-        {checkout.blockedCopy
-          ?checkout.blockedCopy
+        {/* One line under the button, about the step the button is for. */}
+        {checkout.step==="book"
+          ?(participants<=1
+            ?"Your payment covers it. Nothing is booked until you press Book it."
+            :"The trip is paid for in full. Anyone on it can press Book it.")
+          :checkout.step==="waiting"
+            ?(participants>1?"Your part is paid. It can be booked once the others have paid theirs.":null)
+          :checkout.step==="in_progress"
+            ?"A booking is with the provider right now. Check again in a moment rather than booking anything twice."
+          :checkout.step==="booked"
+            ?"Nothing is waiting to be booked. Each line above says where it stands."
+          :checkout.step==="paid_nothing_booked"
+            ?null
+          :checkout.blockedCopy
+            ?checkout.blockedCopy
+          :checkout.step==="blocked"
+            ?"Nothing here is yours to pay yet."
           :participants<=1
             ?"Pay when you're ready and we'll book it \uD83C\uDF0D"
             :"Nothing books until the whole group is in \uD83E\uDD1D"}
