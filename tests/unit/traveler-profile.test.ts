@@ -11,6 +11,7 @@ import { QuizAnswers as QuizAnswersSchema, parseQuizSave, quizFromRow, quizFromM
 import { rank } from '../../lib/discovery/rank.ts';
 import { saveQuiz, quizColumnsMissing } from '../../lib/quiz-store.ts';
 import type { Finding } from '../../lib/discovery/types.ts';
+import { dripAllowed, pickDrip, dripAnswered } from '../../lib/drip.ts';
 
 const NOW = new Date('2026-09-24T12:00:00Z');
 
@@ -436,4 +437,30 @@ test('skipping is not asked again for sixty days', () => {
   assert.equal(withinQuietPeriod('2026-08-01T00:00:00Z', NOW), true);
   assert.equal(withinQuietPeriod('2026-07-01T00:00:00Z', NOW), false);
   assert.equal(withinQuietPeriod(null, NOW), false);
+});
+
+// ─── Drip questions ──────────────────────────────────────────────────────
+
+test('never more than one drip question per session', () => {
+  assert.equal(dripAllowed('drinks', { answers: {}, screen: 'discover', now: NOW }), true);
+  assert.equal(dripAllowed('drinks', { answers: {}, screen: 'discover', shownThisSession: 'drinks', now: NOW }), true, 'the same card re-rendering');
+  assert.equal(dripAllowed('seating', { answers: {}, screen: 'expDetail', shownThisSession: 'drinks', now: NOW }), false);
+});
+
+test('never on checkout, voting or trip creation', () => {
+  for (const screen of ['checkout', 'vote', 'createPlan', 'groupTrip', 'planPrefs']) {
+    assert.equal(dripAllowed('camera_roll', { answers: {}, screen, now: NOW }), false, screen);
+  }
+});
+
+test('dismissing starts the sixty-day clock; answering ends it', () => {
+  const dismissed = { drip_dismissed: { drinks: '2026-09-01T00:00:00Z' } };
+  assert.equal(dripAllowed('drinks', { answers: dismissed, screen: 'discover', now: NOW }), false);
+  assert.equal(dripAllowed('drinks', { answers: dismissed, screen: 'discover', now: new Date('2026-11-15T00:00:00Z') }), true);
+  assert.equal(dripAllowed('drinks', { answers: {}, local: { drinks: '2026-09-20T00:00:00Z' }, screen: 'discover', now: NOW }), false, 'remembered locally before the migration');
+  assert.equal(dripAllowed('drinks', { answers: { drinks: ['Wine'] }, screen: 'discover', now: NOW }), false);
+  assert.equal(dripAllowed('night_out', { answers: {}, answeredLocally: ['night_out'], screen: 'expDetail', now: NOW }), false);
+  assert.equal(pickDrip(['drinks', 'camera_roll'], { answers: { drinks: ['Beer'] }, screen: 'discover', now: NOW }), 'camera_roll');
+  assert.equal(dripAnswered('upgrade', { first_move: 'eat' }), false);
+  assert.equal(dripAnswered('upgrade', { first_move: 'eat', restaurant: 'new' }), true);
 });

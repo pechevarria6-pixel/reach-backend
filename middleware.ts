@@ -9,6 +9,9 @@ const isPublicRoute = createRouteMatcher([
   // An invite link has to be openable by someone with no account yet. The
   // page shows only the group name and who invited them — never the address.
   '/invite/(.*)',
+  // A shared quiz result, for the same reason: it is sent to people who do
+  // not have an account yet. It carries the result and nothing else.
+  '/quiz/(.*)',
   '/privacy',
   '/terms',
 ]);

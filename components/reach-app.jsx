@@ -21,6 +21,9 @@ import { createPlanSteps } from "@/lib/create-plan-steps";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
+import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers } from "@/lib/traveler-profile";
+import { quizFromMe, withinQuietPeriod } from "@/lib/contracts/traveler-profile";
+import { pickDrip } from "@/lib/drip";
 import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { STEPS, stepStates, cannotSign, bookingTracker } from "@/lib/plan-steps";
@@ -1075,11 +1078,11 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
           <span style={{fontSize:28}}>✨</span>
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:600,color:C.t1,marginBottom:3}}>
-              Tell us what you're into
+              What kind of traveller are you?
             </div>
             <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55}}>
-              Pottery, cooking, live music, whatever it is. Two minutes, and every
-              suggestion after it is aimed at you rather than at everybody.
+              Six taps, about a minute. Then real places near you that fit —
+              and every suggestion after it is aimed at you rather than at everybody.
             </div>
             <div style={{fontSize:12,color:C.accentText,marginTop:6,fontWeight:600}}>Start →</div>
           </div>
@@ -1318,7 +1321,7 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
   );
 }
 
-function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
+function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,onQuizChange}){
   // Whether the browser has actually been refused, or has simply never
   // answered. Both leave us without a location and they are not the same
   // thing: only one of them is the person's to fix, and telling somebody to
@@ -1517,36 +1520,10 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
     }catch(e){ console.error("[discover] could not undo",e); toast("Couldn't undo that — it should still be where you left it"); }
   };
 
-  const allItems=localRecs.map(e=>({
-    id:"local_"+e.id,
-    // Which source found it. Dropped here, so every place somebody ruled on
-    // was filed under "unknown:" — the prefix exists to tell two sources'
-    // ids apart and cannot do that if nothing sets it.
-    source:e.source||null,
-    // The venue's own picture, when they publish one. Null keeps the
-    // gradient — better than somebody else's photograph of somewhere else.
-    image:e.image||null,
-    title:e.title,
-    sub:e.meta,
-    emoji:e.emoji,
-    price:e.price||null,
-    dist:e.dist,
-    category:e.category||"Event",
-    // The link that actually sells the ticket.
-    url:e.url||null,
-    // The event's own date and venue. Dropping these is what made the detail
-    // screen ask for a date it had already been given.
-    date:e.date||null,
-    venue:e.venue||null,
-    tags:[e.category||"Event"],
-    // Why this one. A suggestion that says it came from something you told
-    // us reads as the app paying attention; the same card without it reads
-    // as an advert.
-    because:e.because||null,
-    provider:e.source||null,
-    bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
-    isLocal:true,
-  }));
+  // One mapping for a finding, shared with the quiz reveal (expFromFinding):
+  // the source, the booking url, the date and the venue each went missing
+  // once when a copy of this list forgot them.
+  const allItems=localRecs.map(expFromFinding);
 
   // Filters come from what actually came back, so a filter can never be empty.
   // filter(Boolean) kept the string "undefined", because a non-empty string
@@ -1559,6 +1536,23 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   // Hiding at render time only would have left the count, the filters and
   // the "still learning your area" note all describing a different screen.
   const visible=allItems.filter(e=>!hidden.has(`${String(e.source||"unknown").toLowerCase()}:${e.id}`));
+
+  // One drip question at most, and only once the list is in. A v2 account's
+  // two-tap upgrade comes first; then the drink question when a bar is on
+  // screen; then the camera roll on a third visit.
+  const quiz=user?quizFromMe(user):null;
+  const [visits]=useState(()=>{
+    const n=(Number(readLocal(DISCOVER_VISITS,0))||0)+1;
+    writeLocal(DISCOVER_VISITS,n);
+    return n;
+  });
+  const upgradeDue=!!quiz&&quiz.stored&&quiz.version!==3&&hasV2Answers(v2FromUser(user))&&!withinQuietPeriod(quiz.skippedAt);
+  const barOnScreen=visible.some(e=>/\b(bar|pub|brewer|wine|cocktail)/i.test(`${e.category} ${e.title}`));
+  const drip=useDripChoice([
+    ...(upgradeDue?["upgrade"]:[]),...(barOnScreen?["drinks"]:[]),...(visits>=3?["camera_roll"]:[]),
+  ],"discover",quiz,loaded);
+  // An answer changes what is here: Discover reads it on the next look.
+  const afterDrip=()=>loadLocalRecs();
 
   const categories=visibleCategories(visible);
   const filters=["All",...categories];
@@ -1640,6 +1634,10 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
           </div>
         )}
       </div>
+
+      {drip==="upgrade"
+        ?<UpgradeCard toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>
+        :drip?<DripCard id={drip} toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>:null}
 
       {/* Filter pills */}
       <div style={{display:"flex",gap:8,padding:"0 20px 14px",overflowX:"auto",scrollbarWidth:"none"}}>
@@ -1927,7 +1925,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
 }
 
 // ─── EXPERIENCE DETAIL ───────────────────────────────────────────────────────
-function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToServer}){
+function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToServer,user,onQuizChange}){
   const [planPicker,setPlanPicker]=useState(false);
   const [saving,setSaving]=useState(false);
   const [quizDone,setQuizDone]=useState(false);
@@ -1962,6 +1960,13 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   const isRestaurant=exp.category==="Restaurant"||exp.title?.toLowerCase().includes("restaurant")||exp.title?.toLowerCase().includes("dinner")||exp.title?.toLowerCase().includes("brunch");
   const isConcert=exp.category==="Concert"||exp.category==="Music"||exp.tags?.includes("Concerts");
   const isBar=exp.category==="Bar"||exp.title?.toLowerCase().includes("bar")||exp.title?.toLowerCase().includes("rooftop");
+  // A drip question where it plainly matters: seating on somewhere to eat,
+  // how big a night on a show or a game.
+  const dripHay=`${exp.category||""} ${exp.title||""}`;
+  const drip=useDripChoice([
+    ...(isRestaurant||/restaurant|places to eat|cafe|food/i.test(dripHay)?["seating"]:[]),
+    ...(isConcert||exp.source==="ticketmaster"||/concert|music|sport|game|stadium/i.test(dripHay)?["night_out"]:[]),
+  ],"expDetail",user?quizFromMe(user):null);
 
   const getType=()=>{
     if(isRestaurant)return"restaurant";
@@ -2095,6 +2100,8 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             <div style={{fontSize:11,color:C.t2}}>{exp.sub?.split("·")[0]?.trim()}</div>
           </div>
         </div>
+
+        {drip&&<div style={{margin:"0 -20px"}}><DripCard id={drip} toast={toast} onChange={onQuizChange}/></div>}
 
         {/* What to expect */}
         <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>What to expect</div>
@@ -2656,9 +2663,10 @@ function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
 }
 
 // ─── GROUP DETAIL ────────────────────────────────────────────────────────────
-function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setGroups,refreshGroup,removeGroupMember,leaveGroup,me}){
+function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setGroups,refreshGroup,removeGroupMember,leaveGroup,me,initialTab}){
   const group=groups.find(g=>g.id===groupId);
-  const [tab,setTab]=useState("plans");
+  // "See your group's mix" from the quiz reveal opens on Members, where it is.
+  const [tab,setTab]=useState(initialTab==="members"?"members":"plans");
   const [refreshing,setRefreshing]=useState(false);
   const [busyId,setBusyId]=useState(null);
   // Removing somebody, or walking out yourself, is a one-tap change to other
@@ -2804,6 +2812,8 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
       )}
       {tab==="members"&&(
         <div style={{padding:"14px 0"}}>
+          {/* Only on a real group: the card needs two people who have done the quiz. */}
+          {!isAlone&&<GroupMixCard groupId={groupId}/>}
           <div style={{padding:"0 20px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span className="sl">{group.memberIds.length} Members</span>
             {isAdmin&&<button className="bsm bsm-p" onClick={()=>push("editGroup",{groupId})}>Add Member</button>}
@@ -3832,6 +3842,741 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refre
   );
 }
 
+// ─── ONBOARDING QUIZ v3: "What kind of traveller are you?" ────────────────
+// REACH-QUIZ-V3-2026-09-24.md. Six taps, about a minute, then a result and
+// real places near you. Everything else the old quiz asked is now asked
+// later, one question at a time, where it is obviously useful (DripCard), or
+// is still there in Profile's full list (TasteQuizScreen, "tasteAll").
+//
+// This is the onboarding quiz only. The per-trip questions every member of a
+// group answers (PlanPreferencesScreen, lib/group-answers) are a separate
+// thing and are untouched by it.
+//
+// The browser scores nothing it keeps. The answers go to /api/me/quiz, which
+// runs scoreQuiz itself; the result on screen is the one the server sent back.
+
+/** Instrumentation must never delay or fail anything, so nothing awaits it. */
+function trackEvent(name,props){
+  void fetch("/api/track",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({name,props:props||{}})}).catch(()=>{});
+}
+
+/** Save quiz answers. The server computes the profile and sends it back. */
+async function postQuiz(body){
+  try{
+    const r=await fetch("/api/me/quiz",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)return {ok:false,error:d.error||"Couldn't save that — try again"};
+    return {ok:true,profile:d.profile||null,stored:d.stored===true};
+  }catch(e){
+    console.error("[quiz] save failed",e);
+    return {ok:false,error:"Couldn't save that — check your connection"};
+  }
+}
+
+/** The v2 columns as /api/me hands them back, in the shape lib/traveler-profile reads. */
+function v2FromUser(user){
+  const p=user?.preferences||{};
+  return {favorite_activities:p.favoriteActivities||[],no_way_jose:p.noWayJose||[],
+    dietary_needs:p.dietary||null,drink_style:p.drinkStyle||null,dining_vibe:p.diningVibe||null,
+    trip_summary:p.tripSummary||null};
+}
+
+/**
+ * A Discover finding as the detail screen wants it. One mapping, used by
+ * Discover and by the quiz reveal, so a card opened from either carries the
+ * same facts — the url, the date and the venue each went missing once when a
+ * second copy of this list forgot them.
+ */
+function expFromFinding(e){
+  return {
+    id:"local_"+e.id,
+    source:e.source||null,
+    image:e.image||null,
+    title:e.title,
+    sub:e.meta,
+    emoji:e.emoji,
+    price:e.price||null,
+    dist:e.dist,
+    category:e.category||"Event",
+    url:e.url||null,
+    date:e.date||null,
+    venue:e.venue||null,
+    tags:[e.category||"Event"],
+    because:e.because||null,
+    provider:e.source||null,
+    bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
+    isLocal:true,
+  };
+}
+
+// What this browser remembers about drip questions, for the time before the
+// migration when the server cannot keep a dismissal. Read and written in
+// try/catch because a private window refuses storage outright.
+const DRIP_SESSION="reach_drip_session";
+const DRIP_DISMISSED="reach_drip_dismissed";
+const DRIP_ANSWERED="reach_drip_answered";
+const LOCAL_PROFILE="reach_traveler_profile";
+const DISCOVER_VISITS="reach_discover_visits";
+const FROM_SHARE="reach_from_quiz_share";
+const readLocal=(key,fallback)=>{try{const v=JSON.parse(localStorage.getItem(key)||"null");return v??fallback;}catch(e){return fallback;}};
+const writeLocal=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch(e){}};
+
+const Q2_EMOJI=Object.fromEntries((TASTE_QUESTIONS[0]?.options||[]).map(o=>[o.l,o.e]));
+
+const QUIZ_SCREENS=[
+  {id:"first_move",field:"first_move",title:"You just landed. First move?",options:[
+    {v:"eat",e:"🍜",l:"Find the best local spot to eat"},
+    {v:"wander",e:"🚶",l:"Walk until something looks interesting"},
+    {v:"famous",e:"🗽",l:"Straight to the famous thing"},
+    {v:"slow",e:"🛁",l:"Check in, shower, slow down"},
+    {v:"group",e:"💬",l:"Text the group: “who's out tonight?”"},
+  ]},
+  {id:"interests",field:"interests",multi:true,title:"What are you into?",sub:"Pick as many as you like."},
+  {id:"plan",field:"plan",scale:true,title:"How much plan do you like?",options:[
+    {v:"wing",e:"🎲",l:"Wing it"},
+    {v:"loose",e:"🗺️",l:"Loose outline"},
+    {v:"daily",e:"📋",l:"Daily plan"},
+    {v:"full",e:"🌅",l:"Morning to night"},
+    {v:"hourly",e:"⏱️",l:"Every hour"},
+  ]},
+  {id:"restaurant",field:"restaurant",title:"Pick the restaurant.",options:[
+    {v:"famous",e:"⭐",l:"5,000 reviews, can't miss"},
+    {v:"locals",e:"🏠",l:"Locals' favorite"},
+    {v:"new",e:"✨",l:"Opened last month"},
+    {v:"truck",e:"🚚",l:"Food truck someone mentioned once"},
+  ]},
+  {id:"late",field:"late",title:"It's 11pm on the trip. You're…",options:[
+    {v:"asleep",e:"😴",l:"Asleep"},
+    {v:"one_more",e:"🍷",l:"One more, then bed"},
+    {v:"next_spot",e:"🕺",l:"Where's the next spot?"},
+    {v:"sunrise",e:"🌄",l:"Watching the sunrise somewhere questionable"},
+  ]},
+  {id:"no_way",title:"No way, José.",sub:"Just for us. Your group never sees this."},
+];
+
+function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,groups,push}){
+  const quiz=quizFromMe(user);
+  // Start from everything already known: a v2 account's interests and nos,
+  // then anything v3 has. Nobody redoes the quiz from blank.
+  const known={...answersFromV2(v2FromUser(user)),...quiz.answers};
+  const localProfile=readLocal(LOCAL_PROFILE,null);
+  const existing=quiz.profile||(quiz.stored?null:localProfile);
+  const [phase,setPhase]=useState(existing&&!required?"reveal":"quiz");
+  const [profile,setProfile]=useState(existing);
+  const [stored,setStored]=useState(quiz.stored);
+  const [step,setStep]=useState(0);
+  const [answers,setAnswers]=useState(()=>({
+    first_move:known.first_move||null,plan:known.plan||null,restaurant:known.restaurant||null,late:known.late||null,
+    interests:(known.interests||[]).filter(i=>Q2_TILES.includes(i)),
+    dietary:known.dietary||[],dislikes:known.dislikes||[],
+  }));
+  const [noWayText,setNoWayText]=useState("");
+  const [skipped,setSkipped]=useState(()=>new Set());
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState(null);
+  const started=useRef(Date.now());
+  const advanceTimer=useRef(null);
+
+  useEffect(()=>{ if(phase==="quiz")trackEvent("quiz_started"); },[]);
+  useEffect(()=>{
+    if(phase==="quiz")trackEvent("quiz_screen_viewed",{screen:QUIZ_SCREENS[step].id});
+  },[step,phase]);
+  useEffect(()=>()=>clearTimeout(advanceTimer.current),[]);
+
+  const s=QUIZ_SCREENS[step];
+  const total=QUIZ_SCREENS.length;
+
+  const finish=async(final,skippedNow)=>{
+    if(saving)return;
+    setSaving(true);setError(null);
+    const skippedIds=[...skippedNow];
+    const body={};
+    for(const scr of QUIZ_SCREENS){
+      if(skippedNow.has(scr.id))continue;
+      if(scr.id==="no_way"){
+        if(final.eat_everything){body.eat_everything=true;body.dietary=[];body.dislikes=[];}
+        else{
+          body.dietary=final.dietary||[];body.dislikes=final.dislikes||[];
+          body.eat_everything=false;
+          if(noWayText.trim())body.no_way_text=noWayText.trim();
+        }
+        continue;
+      }
+      const v=final[scr.field];
+      if(scr.multi)body[scr.field]=v||[];
+      else if(v)body[scr.field]=v;
+    }
+    body.skipped=skippedIds;
+    const everything=skippedIds.length===total;
+    const r=await postQuiz({answers:body,finish:true,skip:everything});
+    setSaving(false);
+    if(!r.ok){setError(r.error);return;}
+    try{ localStorage.setItem(QUIZ_DONE,"1"); }catch(e){}
+    // Before the migration the server cannot keep the result. It is still
+    // the server's result, so this browser holds it for the reveal.
+    if(!r.stored)writeLocal(LOCAL_PROFILE,r.profile);
+    trackEvent("quiz_completed",{duration_ms:Date.now()-started.current,skipped:skippedIds.length});
+    setProfile(r.profile);setStored(r.stored);setPhase("reveal");
+    if(onSaved)onSaved();
+  };
+
+  const next=(final=answers,skippedNow=skipped)=>{
+    if(step<total-1)setStep(n=>n+1);
+    else finish(final,skippedNow);
+  };
+
+  const pick=(field,v)=>{
+    const final={...answers,[field]:v};
+    setAnswers(final);
+    const sk=new Set(skipped);sk.delete(s.id);setSkipped(sk);
+    // A beat to see the tap land, then on. No "Next" on a single choice.
+    clearTimeout(advanceTimer.current);
+    advanceTimer.current=setTimeout(()=>next(final,sk),170);
+  };
+  const toggle=(field,v)=>setAnswers(a=>{
+    const have=a[field]||[];
+    return {...a,[field]:have.includes(v)?have.filter(x=>x!==v):[...have,v]};
+  });
+  const skip=()=>{
+    trackEvent("quiz_screen_skipped",{screen:s.id});
+    const sk=new Set(skipped);sk.add(s.id);setSkipped(sk);
+    next(answers,sk);
+  };
+  const eatEverything=()=>{
+    const final={...answers,dietary:[],dislikes:[],eat_everything:true};
+    setAnswers(final);setNoWayText("");
+    const sk=new Set(skipped);sk.delete("no_way");setSkipped(sk);
+    finish(final,sk);
+  };
+
+  if(phase==="reveal"){
+    return <QuizReveal profile={profile} stored={stored} user={user} userLocation={userLocation}
+      groups={groups} push={push} toast={toast} required={required}
+      onProfile={(p,st)=>{setProfile(p);setStored(st);if(!st)writeLocal(LOCAL_PROFILE,p);}}
+      onRetake={()=>{setStep(0);setSkipped(new Set());setPhase("quiz");}}
+      onDone={onBack}/>;
+  }
+
+  // Tiles fit a phone without scrolling: a single column of five short rows,
+  // a 3×4 grid of twelve, or five in a row.
+  const tile=(selected)=>({
+    padding:"10px 10px",borderRadius:14,cursor:"pointer",textAlign:"left",
+    border:"2px solid "+(selected?C.accent:C.border),background:selected?C.accentDim:C.s2,
+    color:selected?C.accentText:C.t1,transition:"all .15s",fontFamily:"var(--font-body)",
+  });
+
+  return(
+    <div className="sc" style={{display:"flex",flexDirection:"column",minHeight:"100%"}}>
+      <div style={{padding:"12px 16px 6px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12.5}}>
+          {step>0
+            ?<button onClick={()=>setStep(n=>Math.max(0,n-1))} aria-label="Previous question"
+                style={{background:"none",border:"none",color:C.t2,cursor:"pointer",fontSize:13,padding:"4px 0"}}>← Back</button>
+            :required
+              ?<span style={{color:C.t2,fontWeight:600}}>About a minute</span>
+              :<button onClick={onBack} aria-label="Close the quiz"
+                  style={{background:"none",border:"none",color:C.t2,cursor:"pointer",fontSize:13,padding:"4px 0"}}>✕ Close</button>}
+          <span style={{color:C.t3}}>{step+1} of {total}</span>
+          <button onClick={skip} disabled={saving}
+            style={{background:"none",border:"none",color:C.accentText,cursor:"pointer",fontSize:13,fontWeight:600,padding:"4px 0"}}>
+            Skip
+          </button>
+        </div>
+        <div style={{display:"flex",gap:5,justifyContent:"center",margin:"10px 0 4px"}}>
+          {QUIZ_SCREENS.map((_,i)=>(
+            <div key={i} style={{width:i===step?18:7,height:7,borderRadius:4,
+              background:i<=step?C.accent:C.s3,transition:"all .25s"}}/>
+          ))}
+        </div>
+        {step>0&&<div style={{textAlign:"center",fontSize:11.5,color:C.t3}}>About a minute</div>}
+      </div>
+
+      <div style={{padding:"6px 16px 10px",textAlign:"center"}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:25,color:C.t1,lineHeight:1.2}}>{s.title}</div>
+        {s.sub&&<div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginTop:4}}>{s.sub}</div>}
+      </div>
+
+      <div style={{flex:1,padding:"0 16px 8px"}}>
+        {s.options&&!s.scale&&(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {s.options.map(o=>{
+              const selected=answers[s.field]===o.v;
+              return(
+                <button key={o.v} onClick={()=>pick(s.field,o.v)} disabled={saving}
+                  style={{...tile(selected),display:"flex",alignItems:"center",gap:12,padding:"12px 14px"}}>
+                  <span style={{fontSize:24}}>{o.e}</span>
+                  <span style={{fontSize:14,fontWeight:600,lineHeight:1.3}}>{o.l}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {s.scale&&(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+            {s.options.map(o=>{
+              const selected=answers[s.field]===o.v;
+              return(
+                <button key={o.v} onClick={()=>pick(s.field,o.v)} disabled={saving}
+                  style={{...tile(selected),textAlign:"center",padding:"12px 4px"}}>
+                  <div style={{fontSize:22,marginBottom:6}}>{o.e}</div>
+                  <div style={{fontSize:11,fontWeight:600,lineHeight:1.2}}>{o.l}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {s.id==="interests"&&(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
+            {Q2_TILES.map(label=>{
+              const selected=(answers.interests||[]).includes(label);
+              return(
+                <button key={label} onClick={()=>toggle("interests",label)}
+                  style={{...tile(selected),textAlign:"center",padding:"10px 4px"}}>
+                  <div style={{fontSize:21,marginBottom:3}}>{Q2_EMOJI[label]||"✨"}</div>
+                  <div style={{fontSize:11,fontWeight:600,lineHeight:1.2}}>{label}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {s.id==="no_way"&&(()=>{
+          // Anything they said before that is not one of these chips is still
+          // shown, so it can be kept or taken off rather than silently dropped.
+          const dietChips=[...DIETARY,...(answers.dietary||[]).filter(d=>!DIETARY.includes(d))];
+          const noChips=[...DISLIKES,...(answers.dislikes||[]).filter(d=>!DISLIKES.includes(d))];
+          const chip=(field,v)=>{
+            const on=(answers[field]||[]).includes(v);
+            return(
+              <button key={field+v} onClick={()=>setAnswers(a=>{
+                  const have=a[field]||[];
+                  return {...a,eat_everything:false,[field]:have.includes(v)?have.filter(x=>x!==v):[...have,v]};
+                })}
+                style={{padding:"7px 11px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",
+                  border:"1.5px solid "+(on?C.red:C.border),background:on?C.redDim:C.s2,color:on?C.red:C.t1,
+                  fontFamily:"var(--font-body)"}}>
+                {v}
+              </button>
+            );
+          };
+          return(
+            <div>
+              <button onClick={eatEverything} disabled={saving} className="bp" style={{marginBottom:12}}>
+                {saving?"Saving…":"Nothing — I eat everything"}
+              </button>
+              <div style={{fontSize:11.5,color:C.t3,margin:"2px 0 6px"}}>Can't or won't eat</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{dietChips.map(v=>chip("dietary",v))}</div>
+              <div style={{fontSize:11.5,color:C.t3,margin:"2px 0 6px"}}>Hard nos</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>{noChips.map(v=>chip("dislikes",v))}</div>
+              <input aria-label="Anything else that's a hard no" className="inp" style={{fontSize:13}}
+                value={noWayText} onChange={e=>setNoWayText(e.target.value)} maxLength={120}
+                placeholder="Anything else that's a hard no?"/>
+            </div>
+          );
+        })()}
+        {error&&(
+          <div style={{marginTop:12,padding:"10px 12px",background:C.redDim,border:`1px solid ${C.red}`,
+            borderRadius:12,fontSize:12.5,color:C.t1}}>{error}</div>
+        )}
+      </div>
+
+      {/* Multi-select screens are the only ones with a button: a single
+          choice moves on by itself. */}
+      {(s.multi||s.id==="no_way")&&(
+        <div style={{padding:"8px 16px 28px"}}>
+          <button className={s.id==="no_way"?"bs":"bp"} disabled={saving} onClick={()=>{
+              const sk=new Set(skipped);sk.delete(s.id);setSkipped(sk);next(answers,sk);
+            }}>
+            {saving?"Saving…":"Done"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── The reveal ──────────────────────────────────────────────────────────
+function QuizReveal({profile,stored,user,userLocation,groups,push,toast,required,onProfile,onRetake,onDone}){
+  const [p,setP]=useState(profile);
+  useEffect(()=>{setP(profile);},[profile]);
+  const [cards,setCards]=useState(null);       // null = still looking
+  const [cardsReason,setCardsReason]=useState(null);
+  const [placeName,setPlaceName]=useState(null);
+  const nudgeTimer=useRef(null);
+
+  useEffect(()=>{ trackEvent("quiz_result_viewed",{primary:p?.primary||"none"}); },[]);
+
+  // Three real places near them, from the venues we hold — the same ones
+  // the itinerary generator may name. Never a listing we cannot vouch for,
+  // and never an invented place when the city is empty.
+  useEffect(()=>{
+    let alive=true;
+    (async()=>{
+      const lat=userLocation?.lat,lng=userLocation?.lng;
+      const city=userLocation?.city||userLocation?.formatted||"";
+      if(lat==null||lng==null){ if(alive){setCards([]);setCardsReason("no_location");} return; }
+      try{
+        const r=await fetch(`/api/nearby?lat=${lat}&lng=${lng}&city=${encodeURIComponent(city)}`);
+        if(!r.ok)throw new Error(String(r.status));
+        const d=await r.json();
+        if(!alive)return;
+        setPlaceName(d.city||city||null);
+        setCards(d.events||[]);
+        setCardsReason(d.reason||null);
+      }catch(e){
+        console.error("[quiz] could not load places near you",e);
+        if(alive){setCards([]);setCardsReason("provider_error");}
+      }
+    })();
+    return()=>{alive=false;};
+  },[userLocation?.lat,userLocation?.lng]);
+
+  const near=cards?revealCards(cards,p,3):[];
+  const copy=p?.primary?RESULT_COPY[p.primary]:null;
+  const shownDials=DIALS.filter(d=>d!=="crowd"||!(p?.unanswered||[]).includes("crowd"));
+
+  const nudge=(dial,e)=>{
+    const rect=e.currentTarget.getBoundingClientRect();
+    applyDial(dial,Math.round(((e.clientX-rect.left)/rect.width)*20)*5);
+  };
+  // The same, from a keyboard: arrows move a bar five points.
+  const nudgeKey=(dial,e)=>{
+    const step=e.key==="ArrowRight"||e.key==="ArrowUp"?5:e.key==="ArrowLeft"||e.key==="ArrowDown"?-5:0;
+    if(!step)return;
+    e.preventDefault();
+    applyDial(dial,(p?.dials?.[dial]??50)+step);
+  };
+  const applyDial=(dial,raw)=>{
+    const v=Math.max(0,Math.min(100,raw));
+    setP(cur=>cur?{...cur,dials:{...cur.dials,[dial]:v},unanswered:(cur.unanswered||[]).filter(x=>x!==dial)}:cur);
+    trackEvent("quiz_dial_adjusted",{dial});
+    clearTimeout(nudgeTimer.current);
+    nudgeTimer.current=setTimeout(async()=>{
+      const r=await postQuiz({answers:{dial_overrides:{[dial]:v}}});
+      if(!r.ok){toast(r.error);return;}
+      // The server's answer replaces the preview: it is the one that counts.
+      setP(r.profile);
+      if(onProfile)onProfile(r.profile,r.stored);
+    },600);
+  };
+  useEffect(()=>()=>clearTimeout(nudgeTimer.current),[]);
+
+  const crew=(groups||[]).find(g=>!isSoloGroup(g));
+
+  const share=async()=>{
+    const pub=publicProfile(p);
+    if(!pub)return;
+    const url=`${window.location.origin}/quiz/${shareCode(pub)}`;
+    const text=`${headline(p)}. What kind of traveller are you?`;
+    trackEvent("quiz_shared",{primary:p?.primary||"none"});
+    try{
+      if(navigator.share){await navigator.share({title:"What kind of traveller are you?",text,url});return;}
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      toast("Link copied — send it to your crew");
+    }catch(e){
+      // Closing the share sheet is not an error worth a toast.
+      if(e?.name!=="AbortError")console.error("[quiz] share failed",e);
+    }
+  };
+
+  return(
+    <div className="sc" style={{padding:"18px 16px 36px"}}>
+      <div style={{textAlign:"center",padding:"8px 4px 16px"}}>
+        <div style={{fontSize:54,marginBottom:6}}>{copy?copy.emoji:EVERYTHING_COPY.emoji}</div>
+        <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.accentText,lineHeight:1.15}}>
+          {headline(p)}{p?.primary?".":""}
+        </div>
+        <div style={{fontSize:14,color:C.t1,marginTop:8,lineHeight:1.5}}>{copy?copy.line:EVERYTHING_COPY.line}</div>
+      </div>
+
+      <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:18,padding:"14px 14px 6px",marginBottom:6}}>
+        {shownDials.map(d=>{
+          const unanswered=(p?.unanswered||[]).includes(d);
+          const v=p?.dials?.[d]??50;
+          return(
+            <div key={d} style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:5}}>
+                <span style={{color:C.t2}}>{DIAL_COPY[d].label}</span>
+                <span style={{color:unanswered?C.t3:C.t1,fontWeight:600}}>{unanswered?"Not asked yet":dialLabel(d,v)}</span>
+              </div>
+              <div role="slider" aria-label={`${DIAL_COPY[d].label}: tap to adjust`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={v}
+                tabIndex={0} onClick={e=>nudge(d,e)} onKeyDown={e=>nudgeKey(d,e)}
+                style={{height:12,background:C.s3,borderRadius:6,overflow:"hidden",cursor:"pointer"}}>
+                <div style={{width:`${v}%`,height:"100%",background:unanswered?C.border:C.accent,borderRadius:6,transition:"width .2s"}}/>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{fontSize:12,color:C.t3,textAlign:"center",marginBottom:18}}>Not quite you? Tap a bar to adjust.</div>
+
+      <div className="sl" style={{marginBottom:8}}>Here's what that means near you</div>
+      {cards===null&&(
+        <div style={{padding:"14px 0",fontSize:13,color:C.t3}}>Looking near you…</div>
+      )}
+      {cards!==null&&near.length>0&&near.map(e=>(
+        <div key={e.id} {...pressable} onClick={()=>push&&push("expDetail",{exp:expFromFinding(e)})}
+          style={{display:"flex",gap:12,alignItems:"center",background:C.s2,border:`1px solid ${C.border}`,
+            borderRadius:14,padding:"11px 12px",marginBottom:8,cursor:"pointer"}}>
+          <span style={{fontSize:24}}>{e.emoji||"📍"}</span>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:14,fontWeight:600,color:C.t1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.title}</div>
+            <div style={{fontSize:12,color:C.t2}}>{[e.category,e.dist].filter(Boolean).join(" · ")}</div>
+          </div>
+          <span style={{color:C.accentText}}>→</span>
+        </div>
+      ))}
+      {cards!==null&&near.length===0&&(
+        <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t2,lineHeight:1.55,marginBottom:8}}>
+          {cardsReason==="no_location"
+            ?"Tell Discover where you are and it will show places near you that fit."
+            :cardsReason==="provider_error"
+              ?"Couldn't look near you just now. Discover will try again."
+              :`We're still mapping ${placeName||"your area"} — nothing we've checked ourselves is near you yet. Discover shows everything else that's listed.`}
+        </div>
+      )}
+
+      <div style={{height:14}}/>
+      <button className="bp" style={{marginBottom:10}} onClick={share}>Invite your crew to find out theirs</button>
+      {crew&&(
+        <button className="bs" style={{marginBottom:10}}
+          onClick={()=>push&&push("groupDetail",{groupId:crew.id,initialTab:"members"})}>
+          See {crew.name}'s mix →
+        </button>
+      )}
+      <button className="bs" style={{marginBottom:10}} onClick={onDone}>
+        {required?"Show me what's near me →":"Done"}
+      </button>
+      <button onClick={onRetake}
+        style={{width:"100%",background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",padding:"8px 0"}}>
+        Change my answers
+      </button>
+    </div>
+  );
+}
+
+// ─── The group mix card ──────────────────────────────────────────────────
+// Who in the group chases what, and one sentence about how they fit. The
+// route returns results and dials only; restrictions, hard nos and anything
+// typed never reach it (see /api/groups/[id]/mix and its fixture test).
+function GroupMixCard({groupId}){
+  const [mix,setMix]=useState(null);
+  useEffect(()=>{
+    let alive=true;
+    (async()=>{
+      try{
+        const r=await fetch(`/api/groups/${groupId}/mix`);
+        if(!r.ok){console.error("[group mix] could not load",r.status);return;}
+        const d=await r.json();
+        if(alive)setMix(d.mix||null);
+      }catch(e){console.error("[group mix] could not load",e);}
+    })();
+    return()=>{alive=false;};
+  },[groupId]);
+  if(!mix)return null;
+  return(
+    <div style={{margin:"0 20px 14px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:18,padding:"14px 14px 12px"}}>
+      <div className="sl" style={{marginBottom:10}}>Your group's mix</div>
+      <div style={{display:"flex",gap:10,overflowX:"auto",scrollbarWidth:"none",paddingBottom:4}}>
+        {mix.members.map(m=>{
+          const c=m.profile.primary?RESULT_COPY[m.profile.primary]:null;
+          return(
+            <div key={m.id} style={{minWidth:64,textAlign:"center",flexShrink:0}}>
+              <div style={{width:44,height:44,borderRadius:22,margin:"0 auto 4px",background:C.s2,
+                border:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>
+                {c?c.emoji:EVERYTHING_COPY.emoji}
+              </div>
+              <div style={{fontSize:11.5,color:C.t1,fontWeight:600}}>{m.name}</div>
+              <div style={{fontSize:10.5,color:C.t2}}>{c?c.short:"A bit of everything"}</div>
+            </div>
+          );
+        })}
+      </div>
+      {mix.sentence&&<div style={{fontSize:13,color:C.t1,lineHeight:1.5,marginTop:8}}>{mix.sentence}</div>}
+    </div>
+  );
+}
+
+// ─── Drip questions ──────────────────────────────────────────────────────
+// One card, one tap, on the screen where it plainly matters. The rules for
+// when one may appear are in lib/drip.ts. A question whose answer the
+// database cannot yet keep (before the migration) is not asked at all:
+// asking something we will forget is worse than not asking.
+const CAMERA_ROLL=[
+  {v:"taster",e:"🍝",l:"Plates of food"},
+  {v:"storyteller",e:"🏛️",l:"Old buildings and art"},
+  {v:"thrill",e:"🏔️",l:"Mountains and water"},
+  {v:"recharger",e:"🌅",l:"Sunsets and pools"},
+  {v:"spark",e:"🎉",l:"Friends, at night"},
+  {v:"scout",e:"🔎",l:"Places nobody tags"},
+];
+const DRIP_EMOJI={"Cocktails":"🍸","Wine":"🍷","Beer":"🍺","Coffee, honestly":"☕","Not drinking":"🚫"};
+const DRIPS={
+  drinks:{title:"What's in your glass?",multi:true,options:DRINKS.map(l=>({v:l,e:DRIP_EMOJI[l]||"🥂",l})),
+    toAnswers:v=>({drinks:v}),
+    // Discover reads the drink column straight away, so the reload is the payoff.
+    confirm:v=>v.includes(NOT_DRINKING)?"Got it — nothing built around a bar.":"Got it — Discover has that now."},
+  seating:{title:"Where would you rather sit?",multi:true,options:SEATING.map(l=>({v:l,e:"🪑",l})),
+    toAnswers:v=>({seating:v}),
+    // Read by trip planning, not by this card, so it says that and no more.
+    confirm:()=>"Saved — trip plans read it from here on."},
+  night_out:{title:"Best night out is…",needsStore:true,options:[
+      {v:"six",e:"🍽️",l:"Six friends"},{v:"buzzy",e:"🥂",l:"A buzzy room"},
+      {v:"live",e:"🎸",l:"A live show"},{v:"stadium",e:"🏟️",l:"A packed stadium"}],
+    toAnswers:v=>({night_out:v[0]}),confirm:()=>"Saved — Discover weighs it from here on."},
+  camera_roll:{title:"Your camera roll is mostly…",needsStore:true,options:CAMERA_ROLL,
+    toAnswers:v=>({camera_roll:v[0]}),confirm:()=>"Saved — it settles the close calls in your result."},
+};
+
+/** Which drip question, if any, this screen may show. Decided once. */
+function useDripChoice(candidates,screen,quiz,ready=true){
+  const [id,setId]=useState(null);
+  const key=candidates.join(",");
+  useEffect(()=>{
+    if(id||!ready||!quiz||!candidates.length)return;
+    let shown=null;
+    try{shown=sessionStorage.getItem(DRIP_SESSION);}catch(e){}
+    const pickable=candidates.filter(c=>c==="upgrade"||!DRIPS[c]?.needsStore||quiz.stored);
+    const chosen=pickDrip(pickable,{answers:quiz.answers,local:readLocal(DRIP_DISMISSED,{}),
+      answeredLocally:readLocal(DRIP_ANSWERED,[]),shownThisSession:shown,screen});
+    if(chosen){
+      setId(chosen);
+      try{sessionStorage.setItem(DRIP_SESSION,chosen);}catch(e){}
+      trackEvent("drip_shown",{question:chosen});
+    }
+  },[ready,!!quiz,key]);
+  return id;
+}
+
+function DripCard({id,onChange,onAnswered,toast}){
+  const q=DRIPS[id];
+  const [sel,setSel]=useState([]);
+  const [done,setDone]=useState(null);
+  const [gone,setGone]=useState(false);
+  const [busy,setBusy]=useState(false);
+  if(!q||gone)return null;
+
+  const answer=async(values)=>{
+    if(busy||!values.length)return;
+    setBusy(true);
+    const r=await postQuiz({answers:q.toAnswers(values)});
+    setBusy(false);
+    if(!r.ok){toast(r.error);return;}
+    writeLocal(DRIP_ANSWERED,[...new Set([...readLocal(DRIP_ANSWERED,[]),id])]);
+    trackEvent("drip_answered",{question:id});
+    setDone(q.confirm(values));
+    if(onChange)onChange();
+    if(onAnswered)onAnswered();
+  };
+  const dismiss=async()=>{
+    setGone(true);
+    writeLocal(DRIP_DISMISSED,{...readLocal(DRIP_DISMISSED,{}),[id]:new Date().toISOString()});
+    trackEvent("drip_dismissed",{question:id});
+    const r=await postQuiz({answers:{},dismiss:id});
+    if(!r.ok)console.error("[drip] dismissal not kept by the server; this browser remembers it",r.error);
+  };
+
+  return(
+    <div style={{margin:"0 20px 14px",background:C.s1,border:`1px solid ${C.accentBorder}`,borderRadius:16,padding:"12px 14px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+        <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{done||q.title}</div>
+        {!done&&<button onClick={dismiss} aria-label="Not now"
+          style={{background:"none",border:"none",color:C.t3,cursor:"pointer",fontSize:15,padding:0}}>✕</button>}
+      </div>
+      {!done&&(
+        <>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:10}}>
+            {q.options.map(o=>{
+              const on=sel.includes(o.v);
+              return(
+                <button key={o.v} disabled={busy}
+                  onClick={()=>{
+                    if(!q.multi){answer([o.v]);return;}
+                    // Not drinking is its own answer, never one of several.
+                    setSel(cur=>o.v===NOT_DRINKING?(on?[]:[o.v])
+                      :on?cur.filter(x=>x!==o.v):[...cur.filter(x=>x!==NOT_DRINKING),o.v]);
+                  }}
+                  style={{padding:"7px 11px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",
+                    border:"1.5px solid "+(on?C.accent:C.border),background:on?C.accentDim:C.s2,
+                    color:on?C.accentText:C.t1,fontFamily:"var(--font-body)"}}>
+                  {o.e} {o.l}
+                </button>
+              );
+            })}
+          </div>
+          {q.multi&&sel.length>0&&(
+            <button className="bsm bsm-p" style={{marginTop:10}} disabled={busy} onClick={()=>answer(sel)}>
+              {busy?"Saving…":"Done"}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── For a v2 account: two taps, not a new quiz ──────────────────────────
+// Section 7: nobody redoes the quiz. A v2 account already told us what it is
+// into and what it will not do; this asks only the two things v2 never did
+// that Discover ranks by — the first move and the restaurant.
+function UpgradeCard({onChange,onAnswered,toast}){
+  const [stage,setStage]=useState(0);
+  const [first,setFirst]=useState(null);
+  const [gone,setGone]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [done,setDone]=useState(false);
+  if(gone)return null;
+  const screens=[QUIZ_SCREENS[0],QUIZ_SCREENS[3]];
+  const s=screens[stage];
+  const choose=async(v)=>{
+    if(busy)return;
+    if(stage===0){setFirst(v);setStage(1);return;}
+    setBusy(true);
+    const r=await postQuiz({answers:{first_move:first,restaurant:v},finish:true});
+    setBusy(false);
+    if(!r.ok){toast(r.error);return;}
+    trackEvent("drip_answered",{question:"upgrade"});
+    setDone(true);
+    if(onChange)onChange();
+    if(onAnswered)onAnswered();
+  };
+  const dismiss=async()=>{
+    setGone(true);
+    trackEvent("drip_dismissed",{question:"upgrade"});
+    writeLocal(DRIP_DISMISSED,{...readLocal(DRIP_DISMISSED,{}),upgrade:new Date().toISOString()});
+    const r=await postQuiz({answers:{},dismiss:"upgrade",skip:true});
+    if(!r.ok)console.error("[upgrade] dismissal not kept by the server; this browser remembers it",r.error);
+  };
+  return(
+    <div style={{margin:"0 20px 14px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:16,padding:"12px 14px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{done?"Sharper now.":"2 quick taps to sharpen your picks"}</div>
+          {!done&&<div style={{fontSize:12.5,color:C.t2,marginTop:2}}>{stage+1} of 2 · {s.title}</div>}
+        </div>
+        {!done&&<button onClick={dismiss} aria-label="Not now"
+          style={{background:"none",border:"none",color:C.t3,cursor:"pointer",fontSize:15,padding:0}}>✕</button>}
+      </div>
+      {!done&&(
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:10}}>
+          {s.options.map(o=>(
+            <button key={o.v} disabled={busy} onClick={()=>choose(o.v)}
+              style={{display:"flex",gap:10,alignItems:"center",padding:"9px 11px",borderRadius:12,cursor:"pointer",
+                border:`1px solid ${C.border}`,background:C.s2,color:C.t1,fontSize:13,fontWeight:600,
+                textAlign:"left",fontFamily:"var(--font-body)"}}>
+              <span style={{fontSize:18}}>{o.e}</span>{o.l}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Everything else you've told us ──────────────────────────────────────
+// The v2 quiz, kept whole as Profile's full list: cuisines, music, budget,
+// how a night ends, and the interests that do not fit on the v3 screen. The
+// onboarding quiz is TravelerQuizScreen above; this is where the rest lives.
 function TasteQuizScreen({onBack,toast,onSaved,required}){
   const [step,setStep]=useState(0);
   const [answers,setAnswers]=useState({
@@ -10822,6 +11567,9 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
   const [data,setData]=useState(null);
   const [loadErr,setLoadErr]=useState(false);
   const [busy,setBusy]=useState(null);
+  // Opening Profile is when the camera-roll question makes sense.
+  const profileQuiz=user?quizFromMe(user):null;
+  const profileDrip=useDripChoice(["camera_roll"],"profile",profileQuiz);
 
   const load=async()=>{
     try{
@@ -11412,11 +12160,18 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       {/* The answers behind every suggestion. Somewhere to revise them, not
           just a one-off at sign-up — what you are into in March is not what
           you were into in November. */}
-      <Row icon="✨" title="Your taste"
-        sub={user?.quizComplete
-          ?"What you're into, how you eat, what you'd never do"
-          :"Not answered yet — this is what makes suggestions yours"}
+      {profileDrip&&<DripCard id={profileDrip} toast={toast} onChange={onIdentityChange}/>}
+      <Row icon={profileQuiz?.profile?.primary?RESULT_COPY[profileQuiz.profile.primary].emoji:"✨"} title="What kind of traveller you are"
+        sub={profileQuiz?.profile
+          ?headline(profileQuiz.profile)
+          :user?.quizComplete
+            ?"Six taps to see your result and what it means near you"
+            :"Not answered yet — this is what makes suggestions yours"}
         right={<Ic.ChevR/>} onClick={()=>push&&push("taste")}/>
+      {/* The rest of what the old quiz asked, still editable in one place. */}
+      <Row icon="🍽️" title="Everything else you've told us"
+        sub="Food, music, budget, and the rest of what you're into"
+        right={<Ic.ChevR/>} onClick={()=>push&&push("tasteAll")}/>
 
       <div style={{padding:"16px 20px 6px"}}><span className="sl">Travel</span></div>
       {/* The three things no airline will sell a seat without. Shown before
@@ -11605,6 +12360,14 @@ export default function ReachApp({realUser,onSignOut}={}){
     syncUser();
     loadGroups();
     getLocation();
+    // Somebody who arrived from a shared quiz result and signed up. Counted
+    // once, here, because this is the first screen that knows they joined.
+    try{
+      if(localStorage.getItem(FROM_SHARE)){
+        localStorage.removeItem(FROM_SHARE);
+        trackEvent("quiz_share_joined");
+      }
+    }catch(e){}
     // Signing up hands over here with ?start=taste, so the quiz is part of
     // creating an account rather than something to find later. The parameter
     // is cleared straight away: a refresh should not reopen it, and neither
@@ -12375,7 +13138,8 @@ export default function ReachApp({realUser,onSignOut}={}){
     // Re-reading /api/me is what makes quizComplete true, which is what
     // takes the prompt off the home screen. Without it the card stays up
     // telling somebody to do the thing they have just done.
-    if(screen==="taste")return <TasteQuizScreen {...cp} {...props} onSaved={syncUser} required={quizRequired&&stack.length<=1}/>;
+    if(screen==="taste")return <TravelerQuizScreen {...cp} {...props} user={user} onSaved={syncUser} required={quizRequired&&stack.length<=1}/>;
+    if(screen==="tasteAll")return <TasteQuizScreen {...cp} {...props} onSaved={syncUser}/>;
     if(screen==="planPrefs")return <PlanPreferencesScreen {...cp} {...props} groupsLoading={groupsLoading}/>;
     if(screen==="createGroup")return <CreateGroupScreen {...cp} {...props}/>;
     if(screen==="groupTrip")return <GroupTripScreen {...cp} {...props}/>;
@@ -12383,7 +13147,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     if(screen==="editGroup")return <EditGroupScreen {...cp} {...props} onBack={pop}/>;
     if(screen==="checkout")return <CheckoutScreenV2 {...cp} {...props}/>;
     if(screen==="editItinerary")return <EditItineraryScreen {...cp} {...props}/>;
-    if(screen==="expDetail")return <ExpDetailScreen {...cp} {...props} updateGroup={updateGroup} savePlanToServer={savePlanToServer}/>;
+    if(screen==="expDetail")return <ExpDetailScreen {...cp} {...props} updateGroup={updateGroup} savePlanToServer={savePlanToServer} user={user} onQuizChange={syncUser}/>;
     return null;
   };
 
@@ -12431,16 +13195,19 @@ export default function ReachApp({realUser,onSignOut}={}){
                   answers this screen collects. */}
               {quizRequired&&!cur?(
                 <div className="sc">
-                  <TasteQuizScreen required toast={showToast}
-                    onSaved={()=>{ setQuizDone(true); syncUser(); }}
-                    onBack={()=>{ setQuizDone(true); syncUser(); setTab("home"); }}/>
+                  {/* The gate stays up through the reveal: releasing it on save
+                      would swap the result for the home screen mid-sentence.
+                      Leaving the reveal, by either door, is what releases it. */}
+                  <TravelerQuizScreen required toast={showToast} user={user} groups={groups} userLocation={userLocation}
+                    push={(...a)=>{ setQuizDone(true); syncUser(); push(...a); }}
+                    onBack={()=>{ setQuizDone(true); syncUser(); setTab("discover"); }}/>
                 </div>
               ):cur?(
                 <div className="sc" style={{paddingBottom:20}}>{renderSub()}</div>
               ):(
                 <div className="sc">
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab} userLocation={userLocation}/>}
-                  {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure} setPlaceOverride={setPlaceOverride}/>}
+                  {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure} setPlaceOverride={setPlaceOverride} onQuizChange={syncUser}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading} onDeleteGroup={deleteGroupFromList}/>}
                   {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push} openSection={profileSection}/>}
                 </div>
