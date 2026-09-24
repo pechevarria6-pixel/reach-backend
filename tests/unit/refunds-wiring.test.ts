@@ -48,8 +48,9 @@ test('the funding total, the ledger, the funded announcement and approval all co
   // the same way").
   const approve = read('app/api/bookings/[id]/approve/route.ts');
   assert.match(approve, /from\('contributions'\)\.select\('\*'\)/);
-  assert.match(approve, /fundingAt\(owed, paid\.data/);
-  assert.match(approve, /fundingOf\(owed, paid\.data\)/);
+  assert.match(approve, /const held = withClaims\(\(paid\.data/);
+  assert.match(approve, /fundingAt\(owed, held/);
+  assert.match(approve, /fundingOf\(owed, held\)/);
   assert.match(approve, /const owed = chargedRows\(/);
 });
 
@@ -67,7 +68,9 @@ test('the refund route takes the plan lock, then claims the payment, then asks S
   const src = read('app/api/plans/[planId]/funding/refund/route.ts');
   const lock = src.indexOf("from('refund_locks').insert(");
   const claim = src.indexOf(".from('refunds')\n        .insert(");
-  const stripe = src.indexOf("stripeCall('https://api.stripe.com/v1/refunds', stripeKey, {");
+  // The Stripe call lives in sendClaim; the claim must come before it is called.
+  const stripe = src.indexOf('results.push(await sendClaim(db, planId, stripeKey, claimId, {');
+  assert.match(src, /async function sendClaim[\s\S]{0,1200}stripeCall\('https:\/\/api\.stripe\.com\/v1\/refunds', stripeKey, request\)/);
   assert.ok(lock > 0 && claim > 0 && stripe > 0, 'lock, claim and Stripe call must all be there');
   assert.ok(lock < claim && claim < stripe, 'the lock and the claim must be taken before Stripe is called');
   assert.match(src, /key: refundIdempotencyKey\(piece\.contributionId, piece\.attempt\)/);

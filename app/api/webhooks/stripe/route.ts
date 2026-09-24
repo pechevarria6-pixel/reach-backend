@@ -3,7 +3,7 @@ import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { appUrl } from '@/lib/app-url';
 import { stripe } from '@/lib/stripe';
 import { createServerClient } from '@/lib/supabase';
-import { refundOutcome, refundedCentsOf, collectedCents as sumCollected, liveRefundedCents, isMissingColumn, isMissingTable, REFUNDS_MIGRATION, type StripeRefund } from '@/lib/refunds';
+import { refundOutcome, collectedCents as sumCollected, liveRefundedCents, isMissingColumn, isMissingTable, REFUNDS_MIGRATION, type StripeRefund } from '@/lib/refunds';
 import { report } from '@/lib/report';
 import { sendPaymentReceipt, sendFullyFunded } from '@/lib/email';
 import Stripe from 'stripe';
@@ -142,14 +142,18 @@ export async function POST(req: NextRequest) {
         ? charge.payment_intent
         : charge.payment_intent?.id;
       //
-      // charge.amount_refunded is the authority: it is the running total of
-      // every refund on the charge, whether it came from
-      // /api/plans/[planId]/funding/refund or from somebody pressing Refund
-      // in the Stripe dashboard. It is written as-is into refunded_cents
-      // rather than added to it, so a retried event writes the same number
-      // twice instead of counting a refund twice. Stripe does not promise
-      // order, so an older event (a smaller running total) arriving late
-      // never lowers what is already recorded.
+      // Stripe's own list of refunds on the payment, as it stands now, is the
+      // authority — every refund, from /api/plans/[planId]/funding/refund or
+      // from somebody pressing Refund in the dashboard, less any that failed
+      // or were cancelled. It is written as it is, never added to, so a
+      // retried event writes the same number twice instead of counting a
+      // refund twice.
+      //
+      // Not the event's own charge.amount_refunded. That is a snapshot from
+      // when the event was made, and Stripe retries and does not promise
+      // order: a late charge.refunded, kept from falling by Math.max, put the
+      // figure back up after charge.refund.updated had lowered it for a
+      // refund that failed — and that money was counted as gone for good.
       if (intentId) {
         // select('*') so this read works before refunded_cents exists.
         const { data: contribution, error: readError } = await supabase
@@ -160,10 +164,16 @@ export async function POST(req: NextRequest) {
         if (readError) {
           console.error('[webhooks/stripe] could not read the contribution for a refund', { intent: intentId, error: readError.message });
         } else if (contribution) {
-          const outcome = refundOutcome(
-            contribution.amount_cents,
-            Math.max(refundedCentsOf(contribution), Number(charge.amount_refunded) || 0),
-          );
+          let live: number;
+          try {
+            const list = await stripe.refunds.list({ payment_intent: intentId, limit: 100 });
+            live = liveRefundedCents(list.data as StripeRefund[]);
+          } catch (e) {
+            // Stripe sends it again; guessing from the event is what this replaced.
+            console.error('[webhooks/stripe] could not list refunds for a refunded charge', { intent: intentId, e: e instanceof Error ? e.message : String(e) });
+            return NextResponse.json({ error: 'could not list refunds' }, { status: 500 });
+          }
+          const outcome = refundOutcome(contribution.amount_cents, live);
           const now = new Date().toISOString();
           let { error: writeError } = await supabase.from('contributions')
             .update({ status: outcome.status, refunded_cents: outcome.refundedCents, updated_at: now })
@@ -292,7 +302,12 @@ async function refundChanged(supabase: ReturnType<typeof createServerClient>, re
     // for a claim whose answer the route never recorded.
     let { data: moved, error } = await supabase.from('refunds').update(fields).eq('stripe_refund_id', refund.id).select('id');
     if (!error && !moved?.length && claimId) {
-      ({ data: moved, error } = await supabase.from('refunds').update(fields).eq('id', claimId).select('id'));
+      // Only the attempt this refund was made for. There is one row per
+      // payment, so an event about attempt 1 arriving after attempt 2 was
+      // claimed would otherwise write attempt 1's status and refund id over
+      // a claim that is still at Stripe.
+      const attempt = Math.max(1, Number(refund.metadata?.attempt ?? 1) || 1);
+      ({ data: moved, error } = await supabase.from('refunds').update(fields).eq('id', claimId).eq('attempt', attempt).select('id'));
     }
     if (error && !isMissingTable(error)) {
       console.error('[webhooks/stripe] could not record a refund\'s new status', { refund: refund.id, status, code: error.code });

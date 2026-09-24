@@ -4,7 +4,7 @@
 // the promise underneath was "we'll follow up". Nothing in app/ or lib/ ever
 // created a Stripe refund.
 //
-// Contract, for the checkout screen (no screen calls it yet):
+// Contract, for the checkout screen ("Refund what wasn't spent"):
 //   200 { refundedCents, status, message, paidCents, keptCents }
 //         status: succeeded | pending | partial | requires_action
 //         message: what happened, in words that can be shown as they are
@@ -12,9 +12,11 @@
 //   409 { error }   nothing to give back, a refund still going through, the
 //                   money covering somebody else's share, or another refund
 //                   on this plan running at this moment
-//   500 / 502 / 503 { error }  our database, Stripe refused or did not answer,
-//                   payments not configured or the migration not run. Each
-//                   says whether anything was refunded.
+//   500 / 502 / 503 { error }  our database, Stripe refused or did not answer
+//                   (or its list of refunds could not be read, which is
+//                   checked before anything is decided), payments not
+//                   configured or the migration not run. Each says whether
+//                   anything was refunded.
 //
 // The person asks. The server decides how much. The body is ignored: an
 // amount from a client is an amount somebody can edit. What they get back
@@ -44,7 +46,8 @@ import { planSkips } from '@/lib/participation';
 import { report } from '@/lib/report';
 import {
   planRefund, refusal, refundIdempotencyKey, refundRequestBody, afterStripeRefund, refundColumnPresent,
-  claimAtStripe, refundReply, isMissingTable, REFUNDS_MIGRATION,
+  claimAtStripe, claimRequest, openClaimToCheck, liveRefundedCents, refundOutcome, refundedCentsOf,
+  refundReply, isMissingTable, REFUNDS_MIGRATION,
   type ContributionRow, type RefundClaim, type RefundPiece, type PieceResult, type StripeRefund,
 } from '@/lib/refunds';
 
@@ -165,8 +168,99 @@ async function readMoney(db: SupabaseClient, planId: string) {
   return { bookings, contributions, claims };
 }
 
+/**
+ * Stripe's own list of refunds on each payment that holds or held money, all
+ * at once. Null when any one of them could not be read: the decision below
+ * rests on these, and deciding on a guess is how money goes back twice.
+ */
+async function refundsAtStripe(payments: ContributionRow[], stripeKey: string): Promise<Map<string, StripeRefund[]> | null> {
+  const listed = await Promise.all(payments.map(async c => {
+    const answer = await stripeCall(
+      `https://api.stripe.com/v1/refunds?payment_intent=${encodeURIComponent(String(c.stripe_payment_intent))}&limit=100`, stripeKey);
+    return { id: String(c.id), ok: answer.ok && Array.isArray(answer.body?.data), data: (answer.body?.data ?? []) as StripeRefund[] };
+  }));
+  if (listed.some(l => !l.ok)) return null;
+  return new Map(listed.map(l => [l.id, l.data]));
+}
+
+/**
+ * Sends one claim to Stripe and records the answer. Used for a new piece and
+ * for resending a claim whose answer was lost — the same key and body both
+ * times, so Stripe hands back the refund it made rather than making another.
+ *
+ * Every write to the claim is conditional on it still reading 'claimed'. The
+ * webhook can hear about the refund before this does (charge.refund.updated
+ * arriving while Stripe's answer is on its way back here), and overwriting
+ * its word with ours put a failed refund back to 'pending' and counted the
+ * money as gone for good. Nothing moved means the webhook has it, and the
+ * payment row is left to the webhook as well.
+ */
+async function sendClaim(
+  db: SupabaseClient, planId: string, stripeKey: string,
+  claimId: string, request: { key: string; body: Record<string, string> },
+  piece: Pick<RefundPiece, 'contributionId' | 'cents' | 'refundedBefore' | 'amountCents'>,
+): Promise<PieceResult> {
+  const answer = await stripeCall('https://api.stripe.com/v1/refunds', stripeKey, request);
+
+  if (answer.ok && answer.body?.id) {
+    const stripeStatus = String(answer.body.status ?? 'pending');
+    const { data: moved, error } = await db.from('refunds').update({
+      stripe_refund_id: String(answer.body.id),
+      status: REFUND_STATUSES.has(stripeStatus) ? stripeStatus : 'pending',
+      error: stripeStatus === 'failed' ? String(answer.body.failure_reason ?? 'failed') : null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', claimId).eq('status', 'claimed').select('id');
+    // Left 'claimed', it is settled from Stripe's list on the next request.
+    if (error) console.error('[refund] Stripe answered and the refunds row was not updated', { claim: claimId, refund: answer.body.id, code: error.code });
+    if (!error && moved?.length) {
+      await recordOnPayment(db, planId, piece.contributionId, String(answer.body.id), piece, stripeStatus);
+    }
+    if (stripeStatus === 'succeeded' || stripeStatus === 'pending') return { kind: 'going', cents: piece.cents, stripeStatus };
+    if (stripeStatus === 'requires_action') {
+      report(new Error('a refund needs action at Stripe'), { where: 'funding/refund', extra: { planId, claim: claimId, refund: answer.body.id } });
+      return { kind: 'needs_action', cents: piece.cents };
+    }
+    return { kind: 'refused', cents: piece.cents, reason: String(answer.body.failure_reason ?? stripeStatus) };
+  }
+
+  // Stripe answered with a 4xx error: no refund was created, and asking
+  // again is a new attempt with a new key. A 409 or an idempotency error is
+  // not a refusal — the same key is in use, so a refund may exist or be being
+  // made — and a 5xx or no answer at all is the same: the claim stays
+  // 'claimed' and the next request resends it with the same key.
+  const inUse = answer.httpStatus === 409 || answer.body?.error?.type === 'idempotency_error';
+  const definitive = !inUse && answer.httpStatus >= 400 && answer.httpStatus < 500 && !!answer.body?.error;
+  const reason = String(answer.body?.error?.message ?? answer.thrown ?? `HTTP ${answer.httpStatus}`);
+  report(new Error(`Stripe ${definitive ? 'refused' : 'did not answer'} a refund: ${reason}`), {
+    where: 'funding/refund',
+    extra: { planId, claim: claimId, cents: piece.cents, httpStatus: answer.httpStatus, code: answer.body?.error?.code ?? null },
+  });
+  if (!definitive) return { kind: 'unknown', cents: piece.cents };
+  const { error } = await db.from('refunds')
+    .update({ status: 'failed', error: reason.slice(0, 500), updated_at: new Date().toISOString() })
+    .eq('id', claimId).eq('status', 'claimed');
+  // Left 'claimed', the next request resends it and Stripe refuses it again.
+  if (error) console.error('[refund] could not record a refused refund', { claim: claimId, code: error.code });
+  return { kind: 'refused', cents: piece.cents, reason };
+}
+
+/**
+ * Puts a payment's refunded_cents back to what Stripe's own list says is live
+ * on it — lower, when a refund failed or was cancelled at Stripe and the money
+ * is back in the payment. The webhook does the same on charge.refund.updated;
+ * this is for a deployment where that event is not subscribed yet.
+ */
+async function rewriteFromStripe(db: SupabaseClient, c: ContributionRow, refunds: StripeRefund[]) {
+  const outcome = refundOutcome(c.amount_cents, liveRefundedCents(refunds));
+  const { error } = await db.from('contributions')
+    .update({ status: outcome.status, refunded_cents: outcome.refundedCents, updated_at: new Date().toISOString() })
+    .eq('id', c.id);
+  if (error) console.error('[refund] could not put a failed refund back on the payment', { contribution: c.id, code: error.code });
+}
+
 async function refundUnderLock(db: SupabaseClient, planId: string, userId: string, groupId: string, stripeKey: string) {
   const readFailed = () => reply(500, { error: 'We could not check what you paid just now. Nothing has been refunded — try again in a moment.' });
+  const stripeFailed = () => reply(502, { error: 'We could not check with Stripe just now. Nothing has been refunded — try again in a moment.' });
   let money = await readMoney(db, planId);
   if (money.claims.error && isMissingTable(money.claims.error)) {
     console.error(`[refund] the refunds table does not exist — run ${REFUNDS_MIGRATION}`, { planId });
@@ -183,49 +277,107 @@ async function refundUnderLock(db: SupabaseClient, planId: string, userId: strin
     return reply(503, { error: refusal('needs_migration', { paidCents: 0, keptCents: 0 }).error });
   }
 
+  // ── What Stripe says, for every payment on the plan ────────────────────
+  // The recorded refunded_cents lags Stripe by a webhook, and a refund made
+  // in the Stripe dashboard a moment ago is not on it yet. Deciding on the
+  // recorded figure let Stripe accept that dashboard refund and this one
+  // both, for the same money. The whole plan's payments, not only the
+  // caller's: the cap below is the plan's spare money.
+  const withIntent = ((money.contributions.data ?? []) as ContributionRow[])
+    .filter(c => !!c.stripe_payment_intent && (c.status === 'succeeded' || c.status === 'refunded'));
+  let atStripe = await refundsAtStripe(withIntent, stripeKey);
+  if (!atStripe) return stripeFailed();
+
   // ── Settle claims whose answer was never heard ─────────────────────────
-  // We hold the plan's lock, so any claim still reading 'claimed' belongs
-  // to a request that has finished or died without recording Stripe's
-  // answer. Stripe's list of refunds on the payment says what happened.
-  const stale = ((money.claims.data ?? []) as RefundClaim[]).filter(k => k.status === 'claimed');
-  if (stale.length) {
-    const payments = new Map(((money.contributions.data ?? []) as ContributionRow[]).map(c => [String(c.id), c]));
-    for (const claim of stale) {
-      const payment = payments.get(String(claim.contribution_id));
-      if (!payment?.stripe_payment_intent) continue;
-      const listed = await stripeCall(
-        `https://api.stripe.com/v1/refunds?payment_intent=${encodeURIComponent(payment.stripe_payment_intent)}&limit=100`, stripeKey);
-      // Could not ask: left as it is. It still counts as gone and blocks only
-      // its own payment, which is the safe way to be wrong.
-      if (!listed.ok || !Array.isArray(listed.body?.data)) continue;
-      const found = claimAtStripe(claim, listed.body.data as StripeRefund[]);
-      const { error } = await db.from('refunds').update({
+  // We hold the plan's lock. A claim still reading 'claimed' is one whose
+  // request ended — finished, timed out or died — without recording Stripe's
+  // answer; one reading pending or requires_action for a while is one the
+  // webhook never settled.
+  const payments = new Map(((money.contributions.data ?? []) as ContributionRow[]).map(c => [String(c.id), c]));
+  let resent = false;
+  for (const claim of (money.claims.data ?? []) as RefundClaim[]) {
+    const payment = payments.get(String(claim.contribution_id));
+    const listed = payment ? atStripe.get(String(payment.id)) : undefined;
+    if (!payment || !listed) continue;
+    const piece = {
+      contributionId: String(claim.contribution_id),
+      cents: Number(claim.amount_cents) || 0,
+      refundedBefore: Number(claim.refunded_before_cents) || 0,
+      amountCents: Number(payment.amount_cents) || 0,
+    };
+    if (claim.status === 'claimed') {
+      const found = claimAtStripe(claim, listed);
+      if (found.status === 'not_found') {
+        // Sent again exactly as it was: Stripe returns the refund if it made
+        // one, makes it if it never arrived, and says the key is in use if
+        // the first request is still being worked on.
+        const again = claimRequest(claim, payment, planId);
+        if (!again) continue;
+        await sendClaim(db, planId, stripeKey, String(claim.id), again, piece);
+        resent = true;
+        continue;
+      }
+      const { data: moved, error } = await db.from('refunds').update({
         status: REFUND_STATUSES.has(found.status) ? found.status : 'pending',
-        stripe_refund_id: found.stripeRefundId,
-        error: found.stripeRefundId ? null : 'No refund was found at Stripe for this claim.',
-        updated_at: new Date().toISOString(),
-      }).eq('id', claim.id).eq('status', 'claimed');
+        stripe_refund_id: found.stripeRefundId, error: null, updated_at: new Date().toISOString(),
+      }).eq('id', claim.id).eq('status', 'claimed').select('id');
       if (error) { console.error('[refund] could not settle an earlier claim', { claim: claim.id, code: error.code }); continue; }
-      if (found.stripeRefundId) {
-        await recordOnPayment(db, planId, String(claim.contribution_id), found.stripeRefundId, {
-          cents: Number(claim.amount_cents) || 0,
-          refundedBefore: Number(claim.refunded_before_cents) || 0,
-          amountCents: Number(payment.amount_cents) || 0,
-        }, found.status);
+      if (moved?.length && found.stripeRefundId) {
+        await recordOnPayment(db, planId, piece.contributionId, found.stripeRefundId, piece, found.status);
+      }
+      continue;
+    }
+    if (openClaimToCheck(claim)) {
+      const hit = listed.find(r => r?.id === claim.stripe_refund_id);
+      const now = hit ? String(hit.status ?? '') : '';
+      if (!hit || !REFUND_STATUSES.has(now) || now === claim.status) continue;
+      const { data: moved, error } = await db.from('refunds').update({
+        status: now, updated_at: new Date().toISOString(),
+        ...(now === 'failed' || now === 'canceled' ? { error: String((hit as { failure_reason?: unknown }).failure_reason ?? now) } : {}),
+      }).eq('id', claim.id).eq('status', String(claim.status)).select('id');
+      if (error) { console.error('[refund] could not settle an open claim', { claim: claim.id, code: error.code }); continue; }
+      if (!moved?.length) continue;
+      if (now === 'failed' || now === 'canceled') {
+        // The money never left: the payment holds it again.
+        await rewriteFromStripe(db, payment, listed);
+      } else if (now === 'succeeded') {
+        await recordOnPayment(db, planId, piece.contributionId, String(claim.stripe_refund_id), piece, now);
       }
     }
-    money = await readMoney(db, planId);
-    if (money.bookings.error || money.contributions.error || money.claims.error) return readFailed();
+  }
+  money = await readMoney(db, planId);
+  if (money.bookings.error || money.contributions.error || money.claims.error) return readFailed();
+  if (resent) {
+    atStripe = await refundsAtStripe(withIntent, stripeKey);
+    if (!atStripe) return stripeFailed();
+  }
+
+  // Anything Stripe has taken back that the payment row does not say yet
+  // counts as gone — in this decision, and on the row. Only ever raised here:
+  // lowering after a failed refund is the webhook's, or the settle above.
+  const contributions: ContributionRow[] = [];
+  for (const c of (money.contributions.data ?? []) as ContributionRow[]) {
+    const listed = atStripe.get(String(c.id));
+    const live = listed ? liveRefundedCents(listed) : 0;
+    if (!listed || live <= refundedCentsOf(c)) { contributions.push(c); continue; }
+    const outcome = refundOutcome(c.amount_cents, live);
+    const { error } = await db.from('contributions')
+      .update({ status: outcome.status, refunded_cents: outcome.refundedCents, updated_at: new Date().toISOString() })
+      .eq('id', c.id).lt('refunded_cents', outcome.refundedCents);
+    // Counted as gone in this decision whether or not the write landed; the
+    // charge.refunded webhook writes the same figure.
+    if (error) console.error('[refund] could not record a refund Stripe already has', { contribution: c.id, code: error.code });
+    contributions.push({ ...c, status: outcome.status, refunded_cents: outcome.refundedCents });
   }
 
   const [memberIds, skips] = await Promise.all([groupMemberIds(db, groupId), planSkips(db, planId)]);
   const decision = planRefund({
     userId, memberIds, skips,
     bookings: money.bookings.data ?? [],
-    contributions: (money.contributions.data ?? []) as ContributionRow[],
+    contributions,
     claims: (money.claims.data ?? []) as RefundClaim[],
   });
-  const figures = { paidCents: decision.paidCents, keptCents: decision.keptCents, shortCents: decision.shortCents };
+  const figures = { paidCents: decision.paidCents, keptCents: decision.keptCents, shortCents: decision.shortCents, blocked: decision.blocked };
   if (!decision.ok) {
     const { status, error } = refusal(decision.why, decision);
     return reply(status, { error, paidCents: decision.paidCents, keptCents: decision.keptCents });
@@ -263,50 +415,10 @@ async function refundUnderLock(db: SupabaseClient, planId: string, userId: strin
     }
 
     // ── Ask Stripe ───────────────────────────────────────────────────────
-    const answer = await stripeCall('https://api.stripe.com/v1/refunds', stripeKey, {
+    results.push(await sendClaim(db, planId, stripeKey, claimId, {
       key: refundIdempotencyKey(piece.contributionId, piece.attempt),
       body: refundRequestBody({ planId, userId, claimId, attempt: piece.attempt, piece }),
-    });
-
-    if (answer.ok && answer.body?.id) {
-      const stripeStatus = String(answer.body.status ?? 'pending');
-      const { error } = await db.from('refunds').update({
-        stripe_refund_id: String(answer.body.id),
-        status: REFUND_STATUSES.has(stripeStatus) ? stripeStatus : 'pending',
-        error: stripeStatus === 'failed' ? String(answer.body.failure_reason ?? 'failed') : null,
-        updated_at: new Date().toISOString(),
-      }).eq('id', claimId);
-      // Left 'claimed', it is settled from Stripe's list on the next request.
-      if (error) console.error('[refund] Stripe answered and the refunds row was not updated', { claim: claimId, refund: answer.body.id, code: error.code });
-      await recordOnPayment(db, planId, piece.contributionId, String(answer.body.id), piece, stripeStatus);
-      if (stripeStatus === 'succeeded' || stripeStatus === 'pending') results.push({ kind: 'going', cents: piece.cents, stripeStatus });
-      else if (stripeStatus === 'requires_action') {
-        report(new Error('a refund needs action at Stripe'), { where: 'funding/refund', extra: { planId, claim: claimId, refund: answer.body.id } });
-        results.push({ kind: 'needs_action', cents: piece.cents });
-      } else results.push({ kind: 'refused', cents: piece.cents, reason: String(answer.body.failure_reason ?? stripeStatus) });
-      continue;
-    }
-
-    // Stripe answered with a 4xx error: no refund was created, and asking
-    // again is a new attempt with a new key. A 409 or an idempotency error is
-    // not a refusal — the same key is in use, so a refund may exist — and a
-    // 5xx or no answer at all is the same: the claim stays 'claimed' and the
-    // next request settles it from Stripe's own list.
-    const inUse = answer.httpStatus === 409 || answer.body?.error?.type === 'idempotency_error';
-    const definitive = !inUse && answer.httpStatus >= 400 && answer.httpStatus < 500 && !!answer.body?.error;
-    const reason = String(answer.body?.error?.message ?? answer.thrown ?? `HTTP ${answer.httpStatus}`);
-    report(new Error(`Stripe ${definitive ? 'refused' : 'did not answer'} a refund: ${reason}`), {
-      where: 'funding/refund',
-      extra: { planId, claim: claimId, cents: piece.cents, httpStatus: answer.httpStatus, code: answer.body?.error?.code ?? null },
-    });
-    if (!definitive) { results.push({ kind: 'unknown', cents: piece.cents }); continue; }
-    const { error } = await db.from('refunds')
-      .update({ status: 'failed', error: reason.slice(0, 500), updated_at: new Date().toISOString() })
-      .eq('id', claimId);
-    // Left 'claimed', the next request finds nothing at Stripe and marks it
-    // failed then.
-    if (error) console.error('[refund] could not record a refused refund', { claim: claimId, code: error.code });
-    results.push({ kind: 'refused', cents: piece.cents, reason });
+    }, piece));
   }
 
   const out = refundReply(results, figures);

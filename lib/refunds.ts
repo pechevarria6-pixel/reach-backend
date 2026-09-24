@@ -163,6 +163,7 @@ export type RefundClaim = {
   attempt?: number | null;
   stripe_refund_id?: string | null;
   user_id?: string | null;
+  updated_at?: string | null;
 };
 
 /**
@@ -202,6 +203,27 @@ export function heldCents(c: ContributionRow, claim?: RefundClaim | null): numbe
   return Math.max(0, cents(c.amount_cents) - goneCents(c, claim));
 }
 
+/**
+ * The payments as approval must count them: each one's refunded_cents raised
+ * to what an open or finished claim says has gone or is going.
+ *
+ * Approval counted only refunded_cents, and the refund route counts a claim
+ * as gone the moment it is taken — before Stripe answers, and for as long as
+ * a refund sits in requires_action. In that gap a held booking let go and
+ * approved could be bought with money on its way back to somebody's card.
+ * Counting claims the same way in both places closes it.
+ */
+export function withClaims<C extends ContributionRow>(contribs: C[] | null | undefined, claims: RefundClaim[] | null | undefined): C[] {
+  const byPayment = new Map<string, RefundClaim>();
+  for (const k of claims ?? []) byPayment.set(String(k.contribution_id), k);
+  return (contribs ?? []).map(c => {
+    const claim = byPayment.get(String(c.id));
+    if (!claim) return c;
+    const gone = goneCents(c, claim);
+    return gone > refundedCentsOf(c) ? { ...c, refunded_cents: gone } : c;
+  });
+}
+
 export type RefundPiece = {
   contributionId: string;
   paymentIntent: string;
@@ -234,6 +256,17 @@ export type RefundPlan = {
   pieces: RefundPiece[];
   /** What could not be found on a payment still free to refund. */
   shortCents: number;
+  /**
+   * Part of what is refundable sits on a payment whose last refund is still
+   * going through, and was left alone for now.
+   */
+  blocked: boolean;
+  /**
+   * What the others on the plan will still be asked to pay towards the live
+   * bookings. Zero means nobody's payment is coming that could free up the
+   * extra — it is covering a booking paid for and then cancelled.
+   */
+  awaitingCents: number;
 };
 
 /**
@@ -303,6 +336,19 @@ export function planRefund(input: {
 
   const kept = keptBookings(input.bookings).filter(b => cents(b.price_cents) > 0);
   const spentCents = kept.reduce((s, b) => s + cents(b.price_cents), 0);
+  // What the others will still be asked for: their shares of the live
+  // bookings — the funding target, which leaves out anything paid for and
+  // then cancelled, so nobody is ever asked to pay that — less what each has
+  // paid. Only this money can ever arrive and free up the payer's extra.
+  const live = kept.filter(b => !spentThenCancelled(b));
+  const liveShares = live.length
+    ? sharesWithSkips(live.map(b => ({ ref: String(b.id), priceCents: cents(b.price_cents) })), input.memberIds ?? [], input.skips ?? [])
+    : {};
+  const paidBy = new Map<string, number>();
+  for (const c of all) paidBy.set(c.user_id, (paidBy.get(c.user_id) ?? 0) + heldCents(c, claimOf(c)));
+  const awaitingCents = (input.memberIds ?? [])
+    .filter(m => m !== input.userId)
+    .reduce((s, m) => s + Math.max(0, cents(liveShares[m]) - (paidBy.get(m) ?? 0)), 0);
   const keptCents = kept.length
     ? cents(sharesWithSkips(kept.map(b => ({ ref: String(b.id), priceCents: cents(b.price_cents) })),
         input.memberIds ?? [], input.skips ?? [])[input.userId])
@@ -310,7 +356,10 @@ export function planRefund(input: {
   const surplusCents = Math.max(0, holdsCents - spentCents);
   const ownCents = Math.max(0, paidCents - keptCents);
   const refundableCents = Math.min(ownCents, surplusCents);
-  const base = { refundableCents, keptCents, paidCents, surplusCents, pieces: [] as RefundPiece[], shortCents: 0 };
+  const base = {
+    refundableCents, keptCents, paidCents, surplusCents, pieces: [] as RefundPiece[], shortCents: 0,
+    blocked: false, awaitingCents,
+  };
 
   // Only somebody who paid can take money back. Someone whose payment has
   // already come back in full was a payer, and hears "already refunded".
@@ -346,9 +395,9 @@ export function planRefund(input: {
   }
 
   if (!pieces.length) {
-    return { ok: false, why: blocked ? 'in_progress' : 'nothing_refundable', ...base };
+    return { ok: false, why: blocked ? 'in_progress' : 'nothing_refundable', ...base, blocked };
   }
-  return { ok: true, ...base, pieces, shortCents: left };
+  return { ok: true, ...base, pieces, shortCents: left, blocked: blocked && left > 0 };
 }
 
 /**
@@ -357,7 +406,7 @@ export function planRefund(input: {
  * a refund is still being worked out, 503 when only the migration stands in
  * the way. The words say what is true and what to do next.
  */
-export function refusal(why: RefundRefusal, figures: { paidCents: number; keptCents: number }):
+export function refusal(why: RefundRefusal, figures: { paidCents: number; keptCents: number; awaitingCents?: number }):
   { status: number; error: string } {
   switch (why) {
     case 'not_payer':
@@ -367,7 +416,13 @@ export function refusal(why: RefundRefusal, figures: { paidCents: number; keptCe
     case 'in_progress':
       return { status: 409, error: `A refund of your payment is still going through at Stripe, so nothing more can go back until it has. Nothing new has been refunded. If it has not reached your card in 10 business days, write to ${SUPPORT} with the name of this plan.` };
     case 'covering_others':
-      return { status: 409, error: `Nothing has been refunded. You paid ${dollars(figures.paidCents)} and your share is ${dollars(figures.keptCents)}, but the group has only paid in enough to cover what Reach is booking, so the extra is covering somebody else's share for now. Once they pay theirs, you can take it back here.` };
+      // "Once they pay" only while somebody's share really is unpaid. When
+      // the plan holds everything the live bookings need, the extra is
+      // covering a booking Reach paid for and then cancelled — nobody is
+      // asked to pay that, so waiting for somebody to would be for ever.
+      return (figures.awaitingCents ?? 0) > 0
+        ? { status: 409, error: `Nothing has been refunded. You paid ${dollars(figures.paidCents)} and your share is ${dollars(figures.keptCents)}, but not everybody has paid their share yet, so the extra is covering theirs for now. Once they have paid, you can take it back from this trip's checkout.` }
+        : { status: 409, error: `Nothing has been refunded. You paid ${dollars(figures.paidCents)} and your share is ${dollars(figures.keptCents)}. The extra is covering a booking Reach paid for and then cancelled, and the app can't tell what the provider gave back for it, so it can't be refunded from here. Write to ${SUPPORT} with the name of this plan.` };
     case 'needs_migration':
       return { status: 503, error: `Refunds can't be taken from the app yet, so nothing has been refunded. To ask for one, write to ${SUPPORT} with the name of this plan.` };
     case 'nothing_refundable':
@@ -421,18 +476,65 @@ export type StripeRefund = { id?: string; status?: string; amount?: number; meta
  * A claim left 'claimed' by a request that never heard Stripe's answer (a
  * timeout, a function killed mid-way, a write that failed). Stripe's own list
  * of refunds on the payment is the authority. Found: it is recorded as
- * whatever Stripe says. Not found: nothing was created — the route only
- * looks while it holds the plan's lock, so the request that asked is long
- * finished — and the claim is marked failed so the next attempt can take a
- * new key.
+ * whatever Stripe says.
+ *
+ * Not found is not "nothing was created". Our own 15-second timeout ends the
+ * request while Stripe may still be making the refund, the lock is released
+ * straight after, and the next request can list the payment before Stripe's
+ * refund appears on it. Marking the claim failed there and sending a new
+ * attempt — a new key — refunded the same money twice. So 'not_found' is
+ * sent again exactly as it was (claimRequest): the same key and the same
+ * body, and Stripe either hands back the refund it already made or makes the
+ * one that never arrived. Never both.
  */
 export function claimAtStripe(claim: Pick<RefundClaim, 'id' | 'attempt'>, refunds: StripeRefund[]):
   { status: string; stripeRefundId: string | null; amountCents: number | null } {
   const attempt = String(Math.max(1, cents(claim.attempt)));
   const hit = (refunds ?? []).find(r => r?.metadata?.refund_claim_id === String(claim.id)
     && String(r?.metadata?.attempt ?? '1') === attempt);
-  if (!hit?.id) return { status: 'failed', stripeRefundId: null, amountCents: null };
+  if (!hit?.id) return { status: 'not_found', stripeRefundId: null, amountCents: null };
   return { status: String(hit.status ?? 'pending'), stripeRefundId: String(hit.id), amountCents: cents(hit.amount) };
+}
+
+/**
+ * The request a claim was sent to Stripe with, rebuilt from the claim row: the
+ * same idempotency key and, field for field, the same body. Stripe refuses a
+ * reused key with different parameters, so anything read from somewhere other
+ * than the claim — today's user, today's figures — would turn a safe resend
+ * into an error, or into a second refund once the key has expired.
+ */
+export function claimRequest(
+  claim: Pick<RefundClaim, 'id' | 'attempt' | 'amount_cents' | 'user_id' | 'contribution_id'>,
+  payment: Pick<ContributionRow, 'stripe_payment_intent'>,
+  planId: string,
+): { key: string; body: Record<string, string> } | null {
+  if (!payment?.stripe_payment_intent || !claim?.user_id) return null;
+  const attempt = Math.max(1, cents(claim.attempt));
+  const contributionId = String(claim.contribution_id);
+  return {
+    key: refundIdempotencyKey(contributionId, attempt),
+    body: refundRequestBody({
+      planId, userId: String(claim.user_id), claimId: String(claim.id), attempt,
+      piece: { contributionId, paymentIntent: payment.stripe_payment_intent, cents: cents(claim.amount_cents) },
+    }),
+  };
+}
+
+/** How long a refund may sit at Stripe as pending or requires_action before the route asks after it. */
+export const OPEN_CLAIM_CHECK_MS = 5 * 60 * 1000;
+
+/**
+ * A claim Stripe answered 'pending' or 'requires_action' and nothing has
+ * settled since. Only the webhook moved these, and until the owner subscribes
+ * it to charge.refund.updated nothing did: the payment was blocked from any
+ * further refund for good, and its payer told it was "still going through".
+ * After a few minutes the route asks Stripe for the refund itself.
+ */
+export function openClaimToCheck(claim: Pick<RefundClaim, 'status' | 'stripe_refund_id' | 'updated_at'>, now: Date = new Date()): boolean {
+  if (claim?.status !== 'pending' && claim?.status !== 'requires_action') return false;
+  if (!claim.stripe_refund_id) return false;
+  const at = Date.parse(String(claim.updated_at ?? ''));
+  return !Number.isFinite(at) || now.getTime() - at >= OPEN_CLAIM_CHECK_MS;
 }
 
 /**
@@ -481,7 +583,7 @@ export type PieceResult =
  * going through", which is what a refused one used to be told. One nobody
  * heard back about says exactly that, and that it cannot go twice.
  */
-export function refundReply(results: PieceResult[], figures: { paidCents: number; keptCents: number; shortCents?: number }):
+export function refundReply(results: PieceResult[], figures: { paidCents: number; keptCents: number; shortCents?: number; blocked?: boolean }):
   { status: number; body: Record<string, unknown> } {
   const sum = (k: PieceResult['kind']) => results.filter(r => r.kind === k).reduce((s, r) => s + r.cents, 0);
   const going = sum('going');
@@ -496,6 +598,9 @@ export function refundReply(results: PieceResult[], figures: { paidCents: number
     if (sum('needs_action')) return `Stripe needs something more before ${dollars(sum('needs_action'))} of it can go back, and Reach can't collect that yet. Write to ${SUPPORT} with the name of this plan.`;
     if (sum('not_started')) return `We could not start ${dollars(sum('not_started'))} of it on our side, so Stripe was not asked for that part. Try again in a moment.`;
     if (sum('busy')) return `Another refund of ${dollars(sum('busy'))} of it was already going through, so that part was left alone.`;
+    // Left on a payment whose last refund has not finished at Stripe. That
+    // is not money that cannot be found; it is money that has to wait.
+    if (figures.blocked) return `A refund of another of your payments is still going through at Stripe, so ${dollars(cents(figures.shortCents))} of it was left for now. Ask again once that one has gone through.`;
     return `${dollars(cents(figures.shortCents))} of it could not be found on a payment that can be refunded. Write to ${SUPPORT} with the name of this plan.`;
   };
 
@@ -532,16 +637,27 @@ export function refundReply(results: PieceResult[], figures: { paidCents: number
   return { status: 409, body: { error: refusal('in_progress', figures).error, ...base } };
 }
 
+// Codes first, and failing that only the words that mean "not there". A
+// permission error (42501, row-level security) names the table too, and
+// reading it as "the migration has not run" told somebody refunds did not
+// exist yet when the real fault was ours.
+
 /** PostgREST's words for "that column is not there yet". */
 export function isMissingColumn(e: { code?: string; message?: string } | null | undefined): boolean {
-  return !!e && (e.code === 'PGRST204' || e.code === '42703'
-    || (/refunded_cents/.test(e.message || '') && /column/i.test(e.message || '')));
+  if (!e) return false;
+  if (e.code === 'PGRST204' || e.code === '42703') return true;
+  if (e.code === '42501') return false;
+  const m = e.message || '';
+  return /refunded_cents/.test(m) && /(does not exist|could not find)/i.test(m);
 }
 
 /** PostgREST's words for "that table is not there yet". */
 export function isMissingTable(e: { code?: string; message?: string } | null | undefined): boolean {
-  return !!e && (e.code === 'PGRST205' || e.code === '42P01'
-    || (/refund/.test(e.message || '') && /(table|relation)/i.test(e.message || '')));
+  if (!e) return false;
+  if (e.code === 'PGRST205' || e.code === '42P01') return true;
+  if (e.code === '42501') return false;
+  const m = e.message || '';
+  return /refund/.test(m) && /(does not exist|could not find the table)/i.test(m);
 }
 
 /**

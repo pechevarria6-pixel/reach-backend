@@ -52,6 +52,7 @@ import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 import { sendBookingConfirmation } from '@/lib/email';
 import { track } from '@/lib/track';
 import { reportPaidFailure } from '@/lib/paid-failure';
+import { withClaims, isMissingTable, type ContributionRow, type RefundClaim } from '@/lib/refunds';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const supabase = createServerClient;
@@ -281,19 +282,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // After the price, so a plan funded for the old price is not waved through
   // at the new one. There is no way round it: `skipFundingCheck` let any
   // member spend Reach's money on a trip nobody had paid for.
-  const [charged, paid] = await Promise.all([
+  const [charged, paid, refunding] = await Promise.all([
     db.from('bookings').select('id, price_cents, status, mode, provider').eq('plan_id', booking.plan_id).not('status', 'in', NOT_CHARGED),
     // `*` so refunded_cents is read from the moment its migration runs.
     db.from('contributions').select('*').eq('plan_id', booking.plan_id),
+    // Refunds claimed and not yet recorded on the payment: money on its way
+    // back is not money to book with (withClaims in lib/refunds.ts). Before
+    // the refunds migration there is no table and nothing is being refunded.
+    db.from('refunds').select('*').eq('plan_id', booking.plan_id),
   ]);
-  if (charged.error || paid.error) {
-    console.error('[approve] could not read what the plan owes and holds', { planId: booking.plan_id, code: charged.error?.code ?? paid.error?.code });
+  const refundsError = refunding.error && !isMissingTable(refunding.error) ? refunding.error : null;
+  if (charged.error || paid.error || refundsError) {
+    console.error('[approve] could not read what the plan owes and holds', { planId: booking.plan_id, code: charged.error?.code ?? paid.error?.code ?? refundsError?.code });
     return refuse(500, { error: 'Could not check the payments just now. Nothing was booked.' });
   }
   // Only what Reach buys is owed (chargedRows) — the same total checkout
   // shows and funding charges.
   const owed = chargedRows(charged.data);
-  const funding = purchase ? fundingAt(owed, paid.data, booking.id, checkedCents) : fundingOf(owed, paid.data);
+  const held = withClaims((paid.data ?? []) as ContributionRow[], (refunding.error ? [] : refunding.data ?? []) as RefundClaim[]);
+  const funding = purchase ? fundingAt(owed, held, booking.id, checkedCents) : fundingOf(owed, held);
   if (funding.targetCents > 0 && !funding.funded) {
     const rise = purchase ? checkedCents - priceCents : 0;
     if (rise > 0) {

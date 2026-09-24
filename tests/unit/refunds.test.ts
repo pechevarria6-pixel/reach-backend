@@ -6,7 +6,8 @@ import {
   refundOutcome, netPaidCents, collectedCents, refundColumnPresent, planRefund,
   keptBookings, spentThenCancelled, refusal, refundIdempotencyKey, afterStripeRefund,
   isMissingColumn, isMissingTable, paidFailureNotice, paymentRefundCents, goneCents,
-  claimAtStripe, liveRefundedCents, refundReply, refundRequestBody,
+  claimAtStripe, liveRefundedCents, refundReply, refundRequestBody, claimRequest, openClaimToCheck,
+  withClaims, OPEN_CLAIM_CHECK_MS,
   type ContributionRow, type RefundClaim,
 } from '../../lib/refunds.ts';
 import { fundingOf, netCollectedCents } from '../../lib/booking/approval.ts';
@@ -266,6 +267,12 @@ test('the migration-not-run errors are recognised, and others are not', () => {
   assert.equal(isMissingTable({ code: '42P01', message: 'relation "public.refunds" does not exist' }), true);
   assert.equal(isMissingTable({ code: '23505', message: 'duplicate key' }), false);
   assert.equal(isMissingTable(null), false);
+  // A permission error names the table too. It is our fault, not a missing
+  // migration, and must not be told to the person as "not set up yet".
+  assert.equal(isMissingTable({ code: '42501', message: 'permission denied for table refund_locks' }), false);
+  assert.equal(isMissingTable({ code: 'XX000', message: 'new row violates row-level security policy for table "refund_locks"' }), false);
+  assert.equal(isMissingColumn({ code: '42501', message: 'permission denied for column refunded_cents' }), false);
+  assert.equal(isMissingTable({ message: 'relation "public.refund_locks" does not exist' }), true);
 });
 
 // ── Telling the owner ───────────────────────────────────────────────────
@@ -440,7 +447,7 @@ test('after a part refund settles, more can go back later from the same payment'
   assert.deepEqual(out.pieces.map(p => [p.attempt, p.refundedBefore, p.cents]), [[2, 3000, 5000]]);
 });
 
-test('a claim whose answer was lost is matched to its refund at Stripe, or marked failed', () => {
+test('a claim whose answer was lost is matched to its refund at Stripe, or sent again — never failed on a guess', () => {
   const k = claim('c1', 5000, 'claimed', { id: 'k1', attempt: 2 });
   const stripe = [
     { id: 're_old', status: 'failed', amount: 5000, metadata: { refund_claim_id: 'k1', attempt: '1' } },
@@ -448,7 +455,9 @@ test('a claim whose answer was lost is matched to its refund at Stripe, or marke
     { id: 're_other', status: 'succeeded', amount: 100, metadata: {} },
   ];
   assert.deepEqual(claimAtStripe(k, stripe), { status: 'succeeded', stripeRefundId: 're_new', amountCents: 5000 });
-  assert.deepEqual(claimAtStripe(k, stripe.slice(0, 1)), { status: 'failed', stripeRefundId: null, amountCents: null });
+  // Not on Stripe's list yet is not "never made": our own timeout ends the
+  // request while Stripe may still be making it. It is resent, same key.
+  assert.deepEqual(claimAtStripe(k, stripe.slice(0, 1)), { status: 'not_found', stripeRefundId: null, amountCents: null });
   // The body carries what the match reads.
   const body = refundRequestBody({ planId: 'p', userId: 'u1', claimId: 'k1', attempt: 2, piece: { contributionId: 'c1', paymentIntent: 'pi_1', cents: 5000 } });
   assert.equal(body['metadata[refund_claim_id]'], 'k1');
@@ -522,4 +531,128 @@ test('refunds, funding and approval count collected money the same way', () => {
   const f = fundingOf([{ price_cents: 600 }, { price_cents: 400 }], [paid('p', 'u1', 1000, { refunded_cents: 400 })]);
   assert.equal(f.collectedCents, 600);
   assert.equal(f.funded, false);
+});
+
+// ── Review fixes, 2026-09-24 ────────────────────────────────────────────
+
+test('a lost claim is resent with exactly the key and body it was first sent with', () => {
+  // Stripe returns the refund it already made for a reused key only when the
+  // body matches; anything taken from today (who is asking, today's figures)
+  // would be refused, or make a second refund once the key has lapsed.
+  const k = claim('c1', 4200, 'claimed', { id: 'k9', attempt: 3, user_id: 'payer' });
+  const first = {
+    key: refundIdempotencyKey('c1', 3),
+    body: refundRequestBody({ planId: 'p1', userId: 'payer', claimId: 'k9', attempt: 3, piece: { contributionId: 'c1', paymentIntent: 'pi_c1', cents: 4200 } }),
+  };
+  assert.deepEqual(claimRequest(k, { stripe_payment_intent: 'pi_c1' }, 'p1'), first);
+  // Without who asked, it cannot be rebuilt, and is not guessed.
+  assert.equal(claimRequest({ ...k, user_id: null }, { stripe_payment_intent: 'pi_c1' }, 'p1'), null);
+});
+
+test('the route resends a lost claim with the same key instead of marking it failed', () => {
+  const src = readFileSync('app/api/plans/[planId]/funding/refund/route.ts', 'utf8');
+  assert.match(src, /found\.status === 'not_found'[\s\S]{0,400}claimRequest\(claim, payment, planId\)/);
+  assert.doesNotMatch(src, /No refund was found at Stripe for this claim/);
+});
+
+test("Stripe's answer never overwrites a status the webhook already wrote", () => {
+  const src = readFileSync('app/api/plans/[planId]/funding/refund/route.ts', 'utf8');
+  // Conditional on the claim still being ours, and the payment row only
+  // written when it was.
+  assert.match(src, /\.eq\('id', claimId\)\.eq\('status', 'claimed'\)\.select\('id'\);[\s\S]{0,300}if \(!error && moved\?\.length\) \{\s*await recordOnPayment/);
+  // A refused one too.
+  assert.match(src, /status: 'failed', error: reason\.slice\(0, 500\)[^\n]*\n\s*\.eq\('id', claimId\)\.eq\('status', 'claimed'\)/);
+});
+
+test('a refund left pending or requires_action is asked after, once it has sat a while', () => {
+  const now = new Date('2026-09-24T12:00:00Z');
+  const at = (ms: number) => new Date(now.getTime() - ms).toISOString();
+  const k = (status: string, ago: number, id: string | null = 're_1') =>
+    ({ status, stripe_refund_id: id, updated_at: at(ago) });
+  assert.equal(openClaimToCheck(k('pending', OPEN_CLAIM_CHECK_MS), now), true);
+  assert.equal(openClaimToCheck(k('requires_action', OPEN_CLAIM_CHECK_MS + 1), now), true);
+  assert.equal(openClaimToCheck(k('pending', 60_000), now), false, 'a fresh one is still Stripe working');
+  assert.equal(openClaimToCheck(k('claimed', OPEN_CLAIM_CHECK_MS * 10), now), false, 'claimed is settled from the list, not by id');
+  assert.equal(openClaimToCheck(k('pending', OPEN_CLAIM_CHECK_MS, null), now), false, 'nothing to ask Stripe about');
+  const src = readFileSync('app/api/plans/[planId]/funding/refund/route.ts', 'utf8');
+  assert.match(src, /openClaimToCheck\(claim\)/);
+  assert.match(src, /\.eq\('status', String\(claim\.status\)\)/);
+});
+
+test('charge.refunded writes what Stripe lists now, never the larger of it and an old snapshot', () => {
+  const src = readFileSync('app/api/webhooks/stripe/route.ts', 'utf8');
+  const handler = src.slice(src.indexOf("case 'charge.refunded'"), src.indexOf('async function announceIfFunded'));
+  assert.doesNotMatch(handler, /Math\.max\(/);
+  assert.match(handler, /stripe\.refunds\.list\(\{ payment_intent: intentId/);
+  assert.match(handler, /refundOutcome\(contribution\.amount_cents, live\)/);
+});
+
+test('the webhook falls back to the claim id only for the attempt the refund was made for', () => {
+  const src = readFileSync('app/api/webhooks/stripe/route.ts', 'utf8');
+  assert.match(src, /\.eq\('id', claimId\)\.eq\('attempt', attempt\)/);
+});
+
+test('approval counts money on its way back as gone, as the refund route does', () => {
+  // 10000 paid, 6000 of it claimed for a refund and not yet on the payment row.
+  const contribs = [paid('c1', 'u1', 10000)];
+  const claims = [claim('c1', 6000, 'requires_action')];
+  const rows = [{ id: 'b1', price_cents: 8000 }];
+  assert.equal(fundingOf(rows, contribs).funded, true, 'the old reading: funded');
+  const held = withClaims(contribs, claims);
+  assert.equal(fundingOf(rows, held).funded, false, 'the money going back cannot book the hotel');
+  assert.equal(fundingOf(rows, held).collectedCents, 4000);
+  // A refused claim gives it back to the plan.
+  assert.equal(fundingOf(rows, withClaims(contribs, [claim('c1', 6000, 'failed')])).funded, true);
+  const src = readFileSync('app/api/bookings/[id]/approve/route.ts', 'utf8');
+  assert.match(src, /from\('refunds'\)\.select\('\*'\)/);
+  assert.match(src, /withClaims\(/);
+});
+
+test('"once they pay" is said only while somebody\'s share really is unpaid', () => {
+  // Two people, a 10000 hotel live. A paid 10000; B has not paid. A's share
+  // is 5000, the extra covers B's: waiting for B is right.
+  const waiting = planRefund({
+    userId: 'a', memberIds: ['a', 'b'],
+    bookings: [{ id: 'h', status: 'awaiting_approval', price_cents: 10000 }],
+    contributions: [paid('c1', 'a', 10000)],
+  });
+  assert.equal(waiting.why, 'covering_others');
+  assert.ok(waiting.awaitingCents > 0);
+  assert.match(refusal('covering_others', waiting).error, /Once they have paid/);
+
+  // The extra covers a hotel bought and cancelled: nobody owes it, so
+  // nobody will pay it. Pointing at the inbox, not a wait for ever.
+  const spent = planRefund({
+    userId: 'a', memberIds: ['a', 'b'],
+    bookings: [{ id: 'h', status: 'cancelled', price_cents: 10000, approved_at: '2026-09-20T00:00:00Z', error: null }],
+    contributions: [paid('c1', 'a', 10000)],
+  });
+  assert.equal(spent.why, 'covering_others');
+  assert.equal(spent.awaitingCents, 0);
+  const words = refusal('covering_others', spent).error;
+  assert.doesNotMatch(words, /once they/i);
+  assert.match(words, /hello@alcanzar\.io/);
+});
+
+test('money left on a payment whose refund is going through is said as waiting, not as lost', () => {
+  const out = planRefund({
+    userId: 'u1', memberIds: ['u1'], bookings: [],
+    contributions: [paid('c1', 'u1', 3000, { created_at: '2026-09-21T00:00:00Z' }), paid('c2', 'u1', 5000, { created_at: '2026-09-22T00:00:00Z' })],
+    claims: [claim('c1', 1000, 'pending')],
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.blocked, true);
+  const r = refundReply([{ kind: 'going', cents: 5000, stripeStatus: 'succeeded' }], { ...out });
+  assert.match(String(r.body.message), /still going through/);
+  assert.doesNotMatch(String(r.body.message), /could not be found/);
+});
+
+test('before deciding, the route checks every payment against Stripe and refuses if it cannot', () => {
+  const src = readFileSync('app/api/plans/[planId]/funding/refund/route.ts', 'utf8');
+  const listed = src.indexOf('await refundsAtStripe(withIntent, stripeKey)');
+  const decided = src.indexOf('const decision = planRefund(');
+  assert.ok(listed > 0 && decided > listed, 'Stripe is read before the decision');
+  assert.match(src, /if \(!atStripe\) return stripeFailed\(\);/);
+  // A dashboard refund the webhook has not recorded counts as gone.
+  assert.match(src, /live <= refundedCentsOf\(c\)/);
 });
