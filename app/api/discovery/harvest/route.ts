@@ -12,7 +12,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { harvestVenue } from '@/lib/discovery/harvest';
-import { kindFor } from '@/lib/discovery/taste';
+import { kindFor, mappableKinds } from '@/lib/discovery/taste';
+import { FRESH_DAYS, dueFilter, harvestQueue } from '@/lib/discovery/harvest-queue';
 
 export const maxDuration = 300;
 
@@ -21,14 +22,9 @@ export const maxDuration = 300;
 // Measured: five to fourteen seconds a venue, so twenty fits comfortably in
 // the five minutes this function is allowed. A manual run can ask for fewer.
 const PER_RUN = 20;
-// How long a reading stands before we go back. A class list read in
-// September is not to be trusted in December.
-const FRESH_DAYS = 14;
-// A site that cannot be rendered will not render next week either. Come back
-// eventually in case they move off Wix, but not tomorrow.
-const RETRY_DAYS: Record<string, number> = {
-  ok: FRESH_DAYS, nothing_found: 21, needs_render: 45, blocked: 90, unreachable: 7,
-};
+// How long a reading stands (FRESH_DAYS), how long each outcome is left
+// alone, and how the night is shared between re-reads and venues never read:
+// lib/discovery/harvest-queue.ts.
 
 function authorised(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -43,36 +39,58 @@ export async function GET(req: NextRequest) {
   if (!authorised(req)) return NextResponse.json({ error: 'Not authorised' }, { status: 401 });
 
   const db = createServerClient();
-  const due = new Date(Date.now() - FRESH_DAYS * 86400_000).toISOString();
   // Warming one city by hand is a different job from the nightly pass.
   const asked = Number(req.nextUrl.searchParams.get('limit'));
   const perRun = Number.isFinite(asked) && asked > 0 ? Math.min(asked, PER_RUN) : PER_RUN;
 
-  const { data: venues, error } = await db
-    .from('discovery_venues')
-    .select('id, name, website, interest, last_harvested_at, harvest_status')
-    // Never read, or read long enough ago — and never a venue the sweep
-    // marked as not worth reading. A skipped venue is never stamped as
-    // harvested, so without this it would sit at the front of the queue
+  // The interests worth reading, as the table may spell them. Asked in the
+  // query rather than filtered afterwards, so a window of rows the harvest
+  // would skip anyway cannot fill the night.
+  const worthReading = [...new Set(mappableKinds().filter(k => k.harvest)
+    .flatMap(k => [k.key, k.key.charAt(0).toUpperCase() + k.key.slice(1)]))];
+
+  // Two queues, read separately, because one queue sorted never-read first
+  // put every place the weekly map load added ahead of every venue due a
+  // re-read — and the listings on screens today would have expired behind
+  // them. See lib/discovery/harvest-queue.ts for how the night is shared.
+  const queue = (which: 'due' | 'new', live: boolean) => {
+    let q = db
+      .from('discovery_venues')
+      .select('id, name, website, interest, last_harvested_at, harvest_status')
+      .in('interest', worthReading);
+    // Read long enough ago, by each venue's own back-off — and never a venue
+    // the sweep marked as not worth reading. A skipped venue is never stamped
+    // as harvested, so without this it would sit at the front of the queue
     // every night and starve the studios behind it.
-    .or(`and(last_harvested_at.is.null,harvest_status.is.null),and(last_harvested_at.lt.${due},harvest_status.neq.skip)`)
-    .order('last_harvested_at', { ascending: true, nullsFirst: true })
-    .limit(perRun * 3);
+    q = which === 'due'
+      ? q.or(dueFilter())
+      : q.is('last_harvested_at', null).is('harvest_status', null);
+    // A venue the map loads have retired is not read again: its site staying
+    // up would keep renewing classes at a place that has gone.
+    if (live) q = q.is('gone_at', null);
+    return which === 'due'
+      ? q.order('last_harvested_at', { ascending: true }).limit(perRun * 3)
+      : q.order('id').limit(perRun * 3);
+  };
+  const read = async (which: 'due' | 'new') => {
+    const first = await queue(which, true);
+    // gone_at arrives in sql/world-data-phase1-2026-09-24.sql; until then
+    // nothing is gone, and the queue reads as it did before.
+    if (first.error && (first.error.code === '42703' || /gone_at/.test(first.error.message || ''))) {
+      return queue(which, false);
+    }
+    return first;
+  };
+  const [dueRead, newRead] = await Promise.all([read('due'), read('new')]);
+  const error = dueRead.error ?? newRead.error;
 
   if (error) {
     console.error('[discovery/harvest] could not read venues', error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
-  if (!venues?.length) return NextResponse.json({ read: 0, message: 'Everything is fresh' });
 
-  // A site read last week and found unreadable does not need reading again
-  // this week. Honouring its own back-off is what keeps us welcome.
-  const ready = venues.filter(v => {
-    if (!kindFor(v.interest).harvest) return false;
-    if (!v.last_harvested_at) return true;
-    const wait = RETRY_DAYS[v.harvest_status ?? 'unreachable'] ?? FRESH_DAYS;
-    return Date.now() - new Date(v.last_harvested_at).getTime() > wait * 86400_000;
-  }).slice(0, perRun);
+  const ready = harvestQueue(dueRead.data ?? [], newRead.data ?? [], perRun, i => kindFor(i).harvest);
+  if (!ready.length) return NextResponse.json({ read: 0, message: 'Everything is fresh' });
 
   const tally: Record<string, number> = {};
   let events = 0;
