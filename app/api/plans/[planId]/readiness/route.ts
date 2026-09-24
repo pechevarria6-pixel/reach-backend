@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { groupReadiness } from '@/lib/essentials-server';
 import { planReadiness, waitingSentence, answersSentence } from '@/lib/plan-readiness';
+import { voteTitles } from '@/lib/trip-vote';
 
 export async function GET(_req: Request, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -29,8 +30,7 @@ export async function GET(_req: Request, { params }: { params: { planId: string 
     // A vote is only promised where there is something to vote on. A trip
     // with no options yet is waiting for the answers its options are built
     // from, and says that instead.
-    const options = (ctx.plan as { vote_options?: unknown }).vote_options;
-    const hasOptions = Array.isArray(options) && options.length > 0;
+    const hasOptions = voteTitles(ctx.plan as { trip_options?: unknown; vote_options?: unknown }).length > 0;
     preferences = {
       ...p,
       waiting: hasOptions ? waitingSentence(p.waitingOn) : answersSentence(p.waitingOn),

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { planReadiness, waitingSentence } from '@/lib/plan-readiness';
 import { track } from '@/lib/track';
-import { readIdeas, tallyVotes, mayPick, type SavedIdeas } from '@/lib/trip-vote';
+import { readIdeas, tallyVotes, mayPick, voteTitles, type SavedIdeas } from '@/lib/trip-vote';
 import { readVetoes, membersOf, organiserOf, organisersOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { claimOnce } from '@/lib/everyone-in';
 import { notifyUsers } from '@/lib/notify-user';
@@ -48,8 +48,9 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({ error: 'The vote on this trip has closed.' }, { status: 400 });
   }
 
-  // Verify option is valid
-  if (!(plan.vote_options || []).includes(option)) return NextResponse.json({ error: 'Invalid vote option' }, { status: 400 });
+  // One of the ideas the group was shown: the saved ideas' titles when
+  // there are saved ideas, never vote_options over the top of them.
+  if (!voteTitles(plan).includes(option)) return NextResponse.json({ error: 'Invalid vote option' }, { status: 400 });
 
   // Nobody votes until everybody has had their say. A vote cast before the
   // quiet half of a group answers decides the trip on their behalf, and the
@@ -158,7 +159,7 @@ async function tellOrganiserIfEveryoneVoted(
   ]);
   if (!members || error) return;
   const view = tallyVotes({
-    titles: plan.vote_options || [], votes: (votes ?? []) as Array<{ user_id: string; option: string }>,
+    titles: voteTitles(plan), votes: (votes ?? []) as Array<{ user_id: string; option: string }>,
     vetoes: [], memberIds: members.map(m => m.userId), me: voterId,
   });
   if (!view.everyoneVoted) return;
@@ -207,7 +208,7 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
     return NextResponse.json({ error: "We couldn't read the vote just now — try again in a moment." }, { status: 503 });
   }
 
-  const titles = plan.vote_options || [];
+  const titles = voteTitles(plan);
   const view = tallyVotes({
     titles, votes: (votes ?? []) as Array<{ user_id: string; option: string }>,
     vetoes: vetoRead.rows, memberIds: members.map(m => m.userId), me: ctx.user.id,
@@ -225,6 +226,9 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
     vetoesAvailable: vetoRead.available,
     status: plan.status ?? null,
     decided: plan.destination_style !== 'undecided',
+    // Where it is going, once picked — so a screen still open on the vote
+    // says "<place> it is" rather than "you can change your vote".
+    picked: plan.destination_style !== 'undecided' ? (plan.title ?? null) : null,
     counts: view.counts,
     vetoes: view.vetoes,
     myVote: view.myVote,

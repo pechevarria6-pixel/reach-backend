@@ -20,6 +20,17 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export const NUDGE_ACTION = 'prefs_nudged';
 export const NUDGE_COOLDOWN_MS = 60_000;
 
+/**
+ * Which nudges are held to the minute. Every nudge that reaches somebody —
+ * the bell, their phone, or their inbox — is: answers still to give, and
+ * votes still to cast. Only a nudge that could never reach anyone would be
+ * exempt, and there is none. Funding nudges are outside this change and
+ * are left as they were.
+ */
+export function limitsNudge(kind: string): boolean {
+  return kind === 'prefs' || kind === 'vote';
+}
+
 export interface NudgeClaim {
   allowed: boolean;
   /** Seconds until the next nudge can go, when refused. */

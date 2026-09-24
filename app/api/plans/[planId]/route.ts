@@ -8,7 +8,7 @@ import { track } from '@/lib/track';
 import { destinationPhoto, credit } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { mayPick, readIdeas } from '@/lib/trip-vote';
+import { mayPick, readIdeas, patchDecides } from '@/lib/trip-vote';
 import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
@@ -119,10 +119,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   // whoever set the trip up, or an admin — and nobody else's, whatever
   // their screen offers. It used to be whoever tapped "Pick this" first.
   // Anything that would decide an undecided trip counts: picking, clearing
-  // "undecided", or moving its status (closing the vote).
-  const undecidedNow = plan.destination_style === UNDECIDED;
-  const deciding = onlyIfUndecided === true || pickOption != null
-    || (undecidedNow && ('destination_style' in updates || 'status' in updates));
+  // "undecided", moving its status (closing the vote), or rewriting the list
+  // the vote is checked and counted against — see patchDecides.
+  const deciding = patchDecides({
+    undecided: plan.destination_style === UNDECIDED,
+    fields: updates,
+    onlyIfUndecided: onlyIfUndecided === true,
+    pickOption,
+  });
   let others: string[] = [];
   if (deciding) {
     const members = await membersOf(supabase, String(plan.group_id));

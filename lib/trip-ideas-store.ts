@@ -14,7 +14,7 @@
 // is saved: the ideas are shown to whoever found them and nobody else, and
 // every place that happens says so in the log, naming the file.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { readIdeas, withDays, type SavedIdeas } from './trip-vote.ts';
+import { readIdeas, withDays, daysDecision, WAITING_STATUSES, type SavedIdeas } from './trip-vote.ts';
 
 export const MIGRATION = 'sql/trip-options-2026-09-23.sql';
 
@@ -67,7 +67,10 @@ export async function saveIdeas(
     vote_options: ideas.options.map(o => o.title),
     status: 'voting',
     updated_at: new Date().toISOString(),
-  }).eq('id', planId).eq('destination_style', 'undecided');
+  }).eq('id', planId).eq('destination_style', 'undecided')
+    // Only a trip still waiting on the group. A cancelled one, found from an
+    // old link, is not reopened for a vote and the whole group not told.
+    .in('status', [...WAITING_STATUSES]);
   q = replacing ? q.eq('trip_options->>set', replacing) : q.is('trip_options', null);
   const { data, error } = await q.select('id').maybeSingle();
   if (error) {
@@ -86,14 +89,22 @@ export async function saveIdeas(
 /**
  * Writes one idea's days into the saved set. Three of these run at once, so
  * each names the revision it read; one that lost to another reads again.
+ *
+ * Onto an idea with no days, by anybody; over days already there, only by
+ * the organiser (daysDecision). Checked on every read, so of two members
+ * writing the same idea's days at once the second finds the first's there
+ * and keeps them.
  */
 export async function attachDays(
   db: SupabaseClient, planId: string, optionId: string, days: unknown[],
+  opts: { organiser: boolean } = { organiser: false },
 ): Promise<boolean> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const read = await readSavedIdeas(db, planId);
     // Picked already: the days go on the trip itself, not on an idea.
     if (!read.ideas || !read.undecided) return false;
+    const idea = read.ideas.options.find(o => o.id === optionId) ?? null;
+    if (daysDecision({ idea, organiser: opts.organiser }) === 'keep') return false;
     const next = withDays(read.ideas, optionId, days);
     if (!next) return false;
     const { data, error } = await db.from('plans').update({ trip_options: next })

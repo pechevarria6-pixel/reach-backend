@@ -22,8 +22,8 @@ import { normalise } from '@/lib/discovery/verify';
 import { withoutStayClaim } from '@/lib/stay-claims';
 import { isFiller, fillerClaim, corruptionAt, beforeCorruption } from '@/lib/filler';
 import { randomUUID } from 'node:crypto';
-import { ideasFrom, findDecision, isOrganiser, type SavedIdeas, type TripIdea } from '@/lib/trip-vote';
-import { readSavedIdeas, saveIdeas, attachDays, clearVotes, membersOf, organiserOf, firstName } from '@/lib/trip-ideas-store';
+import { ideasFrom, findDecision, isOrganiser, daysDecision, ideasReadyCopy, type SavedIdeas, type TripIdea } from '@/lib/trip-vote';
+import { readSavedIdeas, saveIdeas, attachDays, clearVotes, membersOf, organiserOf, organisersOf, firstName } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
 import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
@@ -525,9 +525,16 @@ export async function POST(req: NextRequest) {
     // — not from whatever the caller sent, and are saved back onto it so
     // every member sees them.
     let ideaForDays: TripIdea | null = null;
+    const organiser = !!groupPlan && isOrganiser({ role: ctx.role, createdBy: groupPlan.created_by, userId: ctx.user.id });
     if (groupPlan && isGroup && !detailIsPlan) {
       const read = await readSavedIdeas(supabase, groupPlan.id);
       ideaForDays = read.ideas?.options.find(o => o.id === String(detailTripId)) ?? null;
+      // An idea whose days are written is everybody's copy. Anyone but the
+      // organiser asking again is handed those days — no model call, and
+      // nothing the group is voting on changes under them.
+      if (ideaForDays && daysDecision({ idea: ideaForDays, organiser }) === 'keep') {
+        return NextResponse.json({ itinerary: ideaForDays.itinerary, savedToIdeas: true, kept: true });
+      }
     }
     const { destination, vibe, costs, city: tripCity, country_code: tripCountry } = (ideaForDays ?? body.tripData ?? {}) as Record<string, any>;
 
@@ -1215,7 +1222,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // Onto the saved idea, so everybody voting sees the same days. Never
       // fails the request: whoever asked still gets the days.
       const savedToIdeas = ideaForDays && groupPlan
-        ? await attachDays(supabase, groupPlan.id, ideaForDays.id, days)
+        ? await attachDays(supabase, groupPlan.id, ideaForDays.id, days, { organiser })
         : false;
       return NextResponse.json({ itinerary: days, savedToIdeas, ...(title ? { title } : {}), ...(isNightPlan && foodGap.length ? { foodGap } : {}) });
     } catch (e: any) {
@@ -1608,6 +1615,11 @@ function publicIdeas(ideas: SavedIdeas) {
 /**
  * "Your trip ideas are ready — vote", to everybody but whoever found them,
  * who is looking at them already. Opens the trip's Vote tab.
+ *
+ * Two messages, because the organiser is one of "everybody" whenever
+ * somebody else pressed Find, and "Sam makes the pick once you've voted"
+ * sent to Sam is a sentence about himself in the third person. The
+ * wording is ideasReadyCopy's, so it can be tested.
  */
 async function tellTheGroup(
   db: import('@supabase/supabase-js').SupabaseClient,
@@ -1619,14 +1631,19 @@ async function tellTheGroup(
   const others = members.map(m => m.userId).filter(id => id !== finderId);
   if (!others.length) return;
   const organiser = organiserOf(members, createdBy);
-  const kind = night ? 'ideas for the night' : 'trip ideas';
-  const picks = organiser ? `${firstName(organiser.name)} makes the pick once you've voted.` : "The pick is made once you've voted.";
-  const { stored } = await notifyUsers(db, others, {
-    kind: 'ideas_ready',
-    title: fresh ? `New ${kind} are ready — vote again` : `Your ${kind} are ready — vote`,
-    body: `${count === 3 ? 'Three' : count === 2 ? 'Two' : count} ideas, built from everyone's answers. ${picks}`,
-    url: `/home?vote=${encodeURIComponent(planId)}&group=${encodeURIComponent(groupId)}`,
-    planId,
-  }, pushSender());
-  if (!stored) console.error('[generate] the group was not told about the ideas in the app', { planId });
+  const url = `/home?vote=${encodeURIComponent(planId)}&group=${encodeURIComponent(groupId)}`;
+  const organisers = new Set(organisersOf(members, createdBy));
+  const toOrganisers = others.filter(id => organisers.has(id));
+  const toMembers = others.filter(id => !organisers.has(id));
+  const sends: Array<Promise<{ stored: boolean }>> = [];
+  for (const [ids, forOrganiser] of [[toOrganisers, true], [toMembers, false]] as const) {
+    if (!ids.length) continue;
+    const copy = ideasReadyCopy({
+      night, fresh, count, forOrganiser,
+      organiserName: organiser ? firstName(organiser.name) : null,
+    });
+    sends.push(notifyUsers(db, [...ids], { kind: 'ideas_ready', ...copy, url, planId }, pushSender()));
+  }
+  const results = await Promise.all(sends);
+  if (results.some(r => !r.stored)) console.error('[generate] the group was not told about the ideas in the app', { planId });
 }

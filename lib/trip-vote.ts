@@ -113,6 +113,53 @@ export function withDays(saved: SavedIdeas, optionId: string, days: unknown[]): 
   };
 }
 
+/**
+ * What a vote names. When the ideas are saved on the plan, their titles —
+ * and nothing else, whatever vote_options holds. vote_options is a column
+ * any member's PATCH once wrote, so a member could send ["Cancun"] and have
+ * the count, the leader and "Everyone has voted" all run on a list nobody
+ * was shown, or send [] and have every vote refused. It is only the source
+ * on a plan with no saved ideas: an ordinary vote, or a database that has
+ * not had sql/trip-options-2026-09-23.sql yet.
+ */
+export function voteTitles(plan: { trip_options?: unknown; vote_options?: unknown }): string[] {
+  const ideas = readIdeas(plan.trip_options);
+  if (ideas) return ideas.options.map(o => o.title);
+  return Array.isArray(plan.vote_options) ? plan.vote_options.filter((t): t is string => typeof t === 'string') : [];
+}
+
+/**
+ * Whether the fields each idea's days come from may be written by this
+ * caller. Days are written once, onto an idea that has none, by whoever's
+ * phone gets there first. After that they are everybody's copy: replacing
+ * them changes what the whole group is voting on and costs a model call, so
+ * only the organiser may. Anyone else is handed the days already there.
+ */
+export function daysDecision(p: { idea: { itinerary?: unknown[] | null } | null; organiser: boolean }): 'write' | 'keep' {
+  const has = Array.isArray(p.idea?.itinerary) && (p.idea?.itinerary?.length ?? 0) > 0;
+  return has && !p.organiser ? 'keep' : 'write';
+}
+
+/**
+ * "Your trip ideas are ready", as each person should read it. The organiser
+ * is told to vote and then pick; everybody else is told who picks. A count
+ * of one is "One idea", never "1 ideas".
+ */
+export function ideasReadyCopy(p: {
+  night: boolean; fresh: boolean; count: number; forOrganiser: boolean; organiserName: string | null;
+}): { title: string; body: string } {
+  const one = p.count === 1;
+  const kind = p.night ? (one ? 'idea for the night is' : 'ideas for the night are') : (one ? 'trip idea is' : 'trip ideas are');
+  const n = one ? 'One idea' : p.count === 2 ? 'Two ideas' : p.count === 3 ? 'Three ideas' : `${p.count} ideas`;
+  const next = p.forOrganiser
+    ? 'Vote, then make the pick once the group has.'
+    : p.organiserName ? `${p.organiserName} makes the pick once you've voted.` : "The pick is made once you've voted.";
+  return {
+    title: p.fresh ? `New ${kind} ready — vote again` : `Your ${kind} ready — vote`,
+    body: `${n}, built from everyone's answers. ${next}`,
+  };
+}
+
 // ─── Who decides ────────────────────────────────────────────────────────
 
 /**
@@ -132,6 +179,22 @@ export function isOrganiser(p: { role?: string | null; createdBy?: string | null
 export function mayPick(p: { role?: string | null; createdBy?: string | null; userId: string; memberCount: number }): boolean {
   if (p.memberCount <= 1) return true;
   return isOrganiser(p);
+}
+
+/**
+ * Whether a PATCH to a plan decides where an undecided group trip goes, or
+ * rewrites what the group is choosing between — either way the organiser's
+ * act, not any member's. Picking or closing is deciding. So is clearing
+ * "undecided", moving the status, and writing vote_options or trip_options:
+ * the list a vote is checked and counted against is part of the decision.
+ * On a trip that already has its destination none of these is a pick.
+ */
+export function patchDecides(p: {
+  undecided: boolean; fields: Record<string, unknown>; onlyIfUndecided: boolean; pickOption: unknown;
+}): boolean {
+  if (p.onlyIfUndecided || p.pickOption != null) return true;
+  if (!p.undecided) return false;
+  return ['destination_style', 'status', 'vote_options', 'trip_options'].some(k => k in p.fields);
 }
 
 export type FindDecision =

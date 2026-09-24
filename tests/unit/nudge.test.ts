@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { claimNudge, releaseNudge, NUDGE_ACTION } from '../../lib/nudge.ts';
+import { claimNudge, releaseNudge, limitsNudge, NUDGE_ACTION } from '../../lib/nudge.ts';
 
 // A small stand-in for the audit_logs table: enough of the query builder for
 // what claimNudge asks of it, over rows held in memory.
@@ -97,4 +97,9 @@ test('a nudge that sent nothing gives the minute back', async () => {
   await releaseNudge(db as never, c.claimId);
   assert.equal(db.rows.length, 0);
   assert.equal((await claimNudge(db as never, 'plan-1', 'u1', at('2026-09-23T12:00:02.000Z'))).allowed, true);
+});
+
+test('a vote nudge is held to the minute like an answers nudge — each press reaches phones', () => {
+  assert.equal(limitsNudge('vote'), true);
+  assert.equal(limitsNudge('prefs'), true);
 });

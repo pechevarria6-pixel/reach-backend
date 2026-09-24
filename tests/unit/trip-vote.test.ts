@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ideasFrom, readIdeas, withDays, isOrganiser, mayPick, findDecision, tallyVotes, waitingTripIn,
+  voteTitles, patchDecides, daysDecision, ideasReadyCopy,
 } from '../../lib/trip-vote.ts';
 
 const meta = { set: 'S1', foundBy: 'u1', foundAt: '2026-09-23T10:00:00Z', mode: 'trip' as const };
@@ -183,4 +184,68 @@ test('a decided, cancelled or finished trip does not', () => {
     { id: 'p2', destination_style: 'undecided', status: 'cancelled' },
     { id: 'p3', destination_style: 'undecided', status: 'completed' },
   ]), null);
+});
+
+// ─── What a vote is counted against ─────────────────────────────────────
+
+test('with saved ideas, the vote is on their titles whatever vote_options says', () => {
+  const saved = ideasFrom(three, meta);
+  // A member PATCHed vote_options to a list nobody was shown.
+  assert.deepEqual(voteTitles({ trip_options: saved, vote_options: ['Cancun'] }), saved.options.map(o => o.title));
+  // Or emptied it, which used to refuse every vote and hide the Vote tab.
+  assert.equal(voteTitles({ trip_options: saved, vote_options: [] }).length, 3);
+});
+
+test('without saved ideas, vote_options is still what a vote names', () => {
+  assert.deepEqual(voteTitles({ trip_options: null, vote_options: ['A', 'B'] }), ['A', 'B']);
+  // Before the migration select('*') has no trip_options key at all.
+  assert.deepEqual(voteTitles({ vote_options: ['A'] }), ['A']);
+  assert.deepEqual(voteTitles({}), []);
+});
+
+test('rewriting the vote list on an undecided trip is deciding, so it is the organiser\'s', () => {
+  const base = { undecided: true, onlyIfUndecided: false, pickOption: null };
+  assert.equal(patchDecides({ ...base, fields: { vote_options: ['Cancun'] } }), true);
+  assert.equal(patchDecides({ ...base, fields: { vote_options: [] } }), true);
+  assert.equal(patchDecides({ ...base, fields: { trip_options: null } }), true);
+  assert.equal(patchDecides({ ...base, fields: { status: 'planning' } }), true);
+  assert.equal(patchDecides({ ...base, fields: { destination_style: null } }), true);
+  // Anything else on an undecided trip is not a pick.
+  assert.equal(patchDecides({ ...base, fields: { title: 'Summer' } }), false);
+});
+
+test('picking is deciding on any trip; the vote list on a decided trip is not', () => {
+  assert.equal(patchDecides({ undecided: false, fields: {}, onlyIfUndecided: true, pickOption: null }), true);
+  assert.equal(patchDecides({ undecided: false, fields: {}, onlyIfUndecided: false, pickOption: 'S1:1' }), true);
+  assert.equal(patchDecides({ undecided: false, fields: { vote_options: ['A'] }, onlyIfUndecided: false, pickOption: null }), false);
+});
+
+// ─── Whose days stand ───────────────────────────────────────────────────
+
+test('days are written onto an idea with none, by anybody', () => {
+  assert.equal(daysDecision({ idea: { itinerary: null }, organiser: false }), 'write');
+  assert.equal(daysDecision({ idea: { itinerary: [] }, organiser: false }), 'write');
+  assert.equal(daysDecision({ idea: null, organiser: false }), 'write');
+});
+
+test('days already written are kept unless the organiser asks again', () => {
+  assert.equal(daysDecision({ idea: { itinerary: [{ day: 1 }] }, organiser: false }), 'keep');
+  assert.equal(daysDecision({ idea: { itinerary: [{ day: 1 }] }, organiser: true }), 'write');
+});
+
+// ─── "Your trip ideas are ready" ────────────────────────────────────────
+
+test('the organiser is told to pick, not that they make the pick', () => {
+  const org = ideasReadyCopy({ night: false, fresh: false, count: 3, forOrganiser: true, organiserName: 'Sam' });
+  assert.doesNotMatch(org.body, /Sam/);
+  assert.match(org.body, /make the pick/);
+  const member = ideasReadyCopy({ night: false, fresh: false, count: 3, forOrganiser: false, organiserName: 'Sam' });
+  assert.match(member.body, /^Three ideas, .*Sam makes the pick once you've voted\.$/);
+});
+
+test('one idea is "One idea", never "1 ideas"', () => {
+  const c = ideasReadyCopy({ night: true, fresh: false, count: 1, forOrganiser: false, organiserName: null });
+  assert.doesNotMatch(c.body + c.title, /1 ideas|idea for the night are/);
+  assert.match(c.body, /^One idea,/);
+  assert.equal(c.title, 'Your idea for the night is ready — vote');
 });

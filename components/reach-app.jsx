@@ -787,6 +787,20 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
       .then(rows=>{if(live)setHeard(Object.fromEntries(rows.filter(([,v])=>v)));});
     return()=>{live=false;};
   },[decidingKey]);
+  // Where each saved vote stands for me: whether I have voted, and whether it
+  // is mine to pick now. "Vote →" to somebody who has voted, or to the
+  // organiser once everybody has, points at the wrong thing to do.
+  const ballotKey=deciding.filter(p=>p.status==="voting"&&p.hasIdeas).map(p=>p.id).join(",");
+  const [ballot,setBallot]=useState({});
+  useEffect(()=>{
+    if(!ballotKey)return;
+    let live=true;
+    Promise.all(ballotKey.split(",").map(id=>
+      fetch(`/api/plans/${id}/vote`).then(r=>r.ok?r.json():null).catch(()=>null)
+        .then(d=>[id,d])))
+      .then(rows=>{if(live)setBallot(Object.fromEntries(rows.filter(([,v])=>v)));});
+    return()=>{live=false;};
+  },[ballotKey]);
   // "Where next?" is a title, not something to say what you want from.
   const tripCalled=p=>p.title&&p.title!=="Where next?"
     ?p.title
@@ -840,10 +854,21 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
         :solo(p.group)?"You're all set — let's see what we can get booked":"Everyone's in — let's see what we can get booked",
       plan:p,
       cta:tripTiming({startDate:p.startDate,endDate:p.endDate},todayISO)==="on_now"?"Open →":"Book →"})),
-    ...live.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>({
-      type:"vote",rank:1,text:`${p.group.name} is deciding on ${tripCalled(p)}`,
-      sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →",
-      go:()=>push("planDetail",{planId:p.id,groupId:p.group.id,initialTab:"vote"})})),
+    ...live.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>{
+      const b=ballot[p.id];
+      const go=()=>push("planDetail",{planId:p.id,groupId:p.group.id,initialTab:"vote"});
+      // Everyone has voted and it is mine to pick.
+      if(b&&!b.decided&&b.mayPick&&b.everyoneVoted)return{
+        type:"vote",rank:1,text:`Everyone has voted on ${tripCalled(p)}`,
+        sub:b.leader?`Most votes: ${b.leader} — the pick is yours`:"The pick is yours",plan:p,cta:"Pick →",go};
+      // Voted, and waiting on the pick or the others.
+      if(b&&!b.decided&&b.myVote)return{
+        type:"vote",rank:1,text:`${p.group.name} is deciding on ${tripCalled(p)}`,
+        sub:`You voted for ${b.myVote}`,plan:p,cta:"Open →",go};
+      return{
+        type:"vote",rank:1,text:`${p.group.name} is deciding on ${tripCalled(p)}`,
+        sub:p.options.slice(0,3).join(" · "),plan:p,cta:"Vote →",go};
+    }),
     // A group trip waits for everybody's answers before any trip is found.
     // The person it is waiting on is asked here, by name of the trip; once
     // all have answered, anyone can find the trips. Until the report is in,
@@ -5101,6 +5126,10 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
   return true;
 }
 
+// How long after the ideas are found their days count as still being written.
+// Three written in parallel take about a minute; ten is room for a slow one.
+const DAYS_UNDER_WAY_MS=10*60*1000;
+
 // ─── A group trip's ideas, voted on together ─────────────────────────────
 // Every member sees the same saved ideas (plans.trip_options), votes on their
 // own phone, and can change the vote until the pick. Vetoes are counted, and
@@ -5134,6 +5163,15 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
     const t=setInterval(load,15000);
     return()=>clearInterval(t);
   },[planId,rev]);
+  // Picked while this was open — by the poll, or by a bell tapped on a phone
+  // that loaded before the pick. The rest of the app still has the trip as
+  // undecided, so it is brought up to date once, here.
+  const refreshedOnPick=useRef(false);
+  useEffect(()=>{
+    if(!v?.decided||refreshedOnPick.current||!refreshGroup||!groupId)return;
+    refreshedOnPick.current=true;
+    refreshGroup(groupId);
+  },[v?.decided,groupId]);
 
   if(!v){
     return(
@@ -5154,12 +5192,33 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
       </div>
     );
   }
+  // The pick is made: no vote copy and no "you can change your vote" — where
+  // it is going, and the way into the trip.
+  if(v.decided){
+    return(
+      <div style={{padding:"8px 20px 30px"}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:6}}>
+          {v.picked?`${v.picked} it is`:"The pick is made"}
+        </div>
+        <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:14}}>
+          Picked for the group, so the vote is closed.
+        </div>
+        {onPicked&&<button className="bp" onClick={onPicked}>Open the trip</button>}
+      </div>
+    );
+  }
   const options=v.ideas.options||[];
   const organiser=v.organiser;
   const orgName=organiser?.isYou?"you":(organiser?.name||"the organiser");
   const counts=v.counts||{};
   const standings=options.map(o=>`${o.title} ${counts[o.title]||0}`).join(" · ");
   const closed=v.status!=="voting"||v.decided;
+  // Everybody else hears "your ideas are ready" the moment they are saved,
+  // while the finder's phone is still writing each one's days. For the first
+  // few minutes a missing day is one on its way, not one that never comes —
+  // unless this is the finder's phone and it has already said it failed.
+  const foundAt=Date.parse(v.ideas.foundAt||"");
+  const daysUnderWay=Number.isFinite(foundAt)&&Date.now()-foundAt<DAYS_UNDER_WAY_MS;
 
   const cast=async(o)=>{
     if(busy||closed||isTempId(planId))return;
@@ -5220,7 +5279,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
     <div>
       <div style={{padding:"0 20px 14px"}}>
         <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:6}}>
-          {night?"Which night?":"Where should we go?"}
+          {night?"Which plan for the night?":"Where should we go?"}
         </div>
         <div style={{fontSize:13.5,color:C.t1,lineHeight:1.6,marginBottom:4}}>{standing}</div>
         <div style={{fontSize:13,color:C.t2,lineHeight:1.6}}>{next}</div>
@@ -5231,7 +5290,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
           </button>
         )}
         <div style={{fontSize:12,color:C.t3,marginTop:10,lineHeight:1.5}}>
-          The group sees how many votes and vetoes each has — never who cast them.
+          Shown as counts — Reach never lists who voted for or vetoed which.
         </div>
         {enriching>0&&(
           <div style={{display:"flex",alignItems:"center",gap:9,marginTop:10,fontSize:12.5,color:C.t2}}>
@@ -5255,7 +5314,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
           <TripIdeaCard key={o.id} trip={o} highlight={mine} nightOut={night}
             startDate={plan?.startDate} endDate={night?plan?.startDate:plan?.endDate}
             groupSize={(group?.memberIds||[]).length} enriching={enriching}
-            noDaysNote={enriching>0?"Writing these days now…":"The days get written for whichever one is picked."}>
+            noDaysNote={enriching>0||(daysUnderWay&&!enrichFailed)?"Days are being written — check back shortly.":"The days get written for whichever one is picked."}>
             <div style={{padding:"14px 18px"}}>
               <div style={{fontSize:12.5,color:C.t2,marginBottom:10}}>
                 {plural(n,"vote")}{x>0?` · ${plural(x,"veto","vetoes")}`:""}{v.leader===o.title?" · most votes":""}
@@ -5434,6 +5493,24 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     findOurTrips(wp,{regenerate:true});
   },[regenerate,group,waitPlanId]);
 
+  // One group trip waits on everyone at a time, and the server refuses a
+  // second. Found before the quiz, not after it: somebody who filled in every
+  // question only to be told there was already one lost all of it.
+  const checkedWaiting=useRef(false);
+  useEffect(()=>{
+    if(checkedWaiting.current||planId||step!==0||!group)return;
+    if((group.memberIds||[]).length<=1)return;
+    checkedWaiting.current=true;
+    const w=(group.plans||[]).find(p=>p.destStyle==="undecided"&&!isTempId(p.id)
+      &&(p.status==="planning"||p.status==="voting"));
+    if(!w)return;
+    const wNight=w.type==="restaurant";
+    setNightOut(wNight);
+    setWaitPlanId(w.id);
+    setStep("wait");
+    toast(`${group.name} already has a ${wNight?"night out":"trip"} being decided — here it is. Once it's picked you can start another.`);
+  },[group,planId,step]);
+
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
 
   // `extra` carries what a night out needs and a trip does not: which shape of
@@ -5468,8 +5545,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           nightPrefs:extra.nightPrefs||{},
           // A group trip: waits for, and is built from, everybody's answers.
           planId:extra.planId||null,
-          // The organiser swapping the saved ideas for three different ones.
-          regenerate:extra.regenerate===true,
+          regenerate:extra.regenerate===true, // the organiser swapping the saved ideas for three new ones
         }),
       });
       if(res.ok){
@@ -5749,11 +5825,18 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     let alreadyWaiting=null;
     const realId=savePlanToServer?await savePlanToServer(groupId,np,{quiet:true,onAlreadyWaiting:id=>{alreadyWaiting=id;}}):null;
     if(alreadyWaiting){
-      if(refreshGroup)await refreshGroup(groupId);
-      setNightOut(night);
+      // This one was never made: it goes from the screen whatever the
+      // refresh below manages.
+      updateGroup(groupId,g=>({...g,plans:g.plans.filter(p=>p.id!==np.id)}));
+      const plans=refreshGroup?await refreshGroup(groupId):null;
+      // The trip that is waiting says what it is, not this request: a night
+      // out started while a trip is being decided opens the trip, as a trip.
+      const w=(plans||[]).find(p=>p.id===alreadyWaiting)||(group.plans||[]).find(p=>p.id===alreadyWaiting);
+      const wNight=w?w.type==="restaurant":night;
+      setNightOut(wNight);
       setWaitPlanId(alreadyWaiting);
       setStep("wait");
-      toast(`${group.name} already has a ${night?"night out":"trip"} being decided — here it is`);
+      toast(`${group.name} already has a ${wNight?"night out":"trip"} being decided, so what you just filled in wasn't used — here's that one.`);
       return;
     }
     if(!realId||isTempId(realId)){
@@ -6134,7 +6217,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
               {waitPlanId
                 ?(iOrganise
                   ?"These ideas aren't saved for the group yet, so only you can see them. Pick one and everyone sees where it's going."
-                  :`These ideas aren't saved for the group yet, so only you can see them — and only whoever set up this ${nightOut?"night out":"trip"} can pick one. Tell them which you'd go for.`)
+                  :`These ideas aren't saved for the group yet, so only you can see them — and only whoever set up this ${nightOut?"night out":"trip"} can pick one. They can't see these: they'll need to press Find themselves, and will get their own three.`)
                 :`${trips.length===3?"Three":trips.length} ${nightOut?"nights out":"trips"} built around what you said. Pick the one you want.`}
             </div>
             {/* The days are being written while people read. Say so, rather
@@ -11041,7 +11124,11 @@ export default function ReachApp({realUser,onSignOut}={}){
       const plans=(detail.plans||[]).map(p=>convertPlan(p,memberIds));
       rememberUsers((detail.members||[]).map(m=>m.users).filter(Boolean));
       setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans,memberIds,role:detail.myRole||g.role||"member"}:g));
+      // Handed back too, for a caller that has to act on what the server
+      // says now — its own `groups` is the render before this one.
+      return plans;
     }catch(e){console.log("Refresh failed",e);}
+    return null;
   };
 
   // ── Group membership actions ─────────────────────────────

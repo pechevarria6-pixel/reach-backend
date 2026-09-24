@@ -19,7 +19,7 @@ import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { sendVoteNeeded, sendFundingNeeded, sendAnswersNeeded, type SendResult } from '@/lib/email';
 import { planShares } from '@/lib/money';
 import { planSkips } from '@/lib/participation';
-import { claimNudge, releaseNudge } from '@/lib/nudge';
+import { claimNudge, releaseNudge, limitsNudge } from '@/lib/nudge';
 import { z } from 'zod';
 
 const Schema = z.object({ kind: z.enum(['vote', 'funding', 'prefs']) });
@@ -79,8 +79,12 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // Once a minute per trip, whoever presses it: every press is an email in
   // somebody's inbox. Claimed here, after we know there is somebody to email,
   // so a press that would send nothing does not use up the minute.
+  //
+  // A vote nudge too. It used to be unguarded, and since it learned to reach
+  // phones every press of "Nudge whoever hasn't voted" was a push on every
+  // phone still to vote, as often as anybody cared to press it.
   let claimId: string | null = null;
-  if (kind === 'prefs') {
+  if (limitsNudge(kind)) {
     const claim = await claimNudge(db, params.planId, ctx.user.id);
     if (!claim.allowed) {
       console.log('[notify] nudged less than a minute ago', { planId: params.planId, retryAfter: claim.retryAfterSeconds });
