@@ -185,8 +185,17 @@ export interface PlacedSeeds {
   /** New or refreshed answers to remember in ingest_places. */
   remembered: PlaceMemo[];
   skipped: string[];
-  /** Towns left for another day because the geocoder stopped. */
+  /** Towns left for another day: the geocoder stopped, or did not answer. */
   waiting: number;
+  /**
+   * The towns among `waiting` whose own request got no answer (a 5xx, a
+   * timeout, a network error), by name. Nothing is remembered for them, so
+   * without this list a town Nominatim fails on every morning — between
+   * successes, so the run never stops — would get no seeds, run after run,
+   * with nothing in the log to say so. Before failures were told apart from
+   * "not found" such a town was at least listed in `skipped`.
+   */
+  unanswered: string[];
   /** How many towns were placed from memory, costing Nominatim nothing. */
   fromMemory: number;
 }
@@ -222,6 +231,7 @@ export async function placeSeeds(input: {
   // not place, a plan to Machu Picchu), keyed by the world name.
   const joinsWorld = new Map<string, string[]>();
   let waiting = 0;
+  const unanswered: string[] = [];
   let fromMemory = 0;
 
   const keep = async (row: PlaceMemo) => {
@@ -271,7 +281,11 @@ export async function placeSeeds(input: {
         const found = await input.geocode(hint ? `${c.name}, ${hint}` : c.name, c.country ?? null);
         // Stopped, or asked and not answered: either way nothing was learned,
         // so nothing is remembered and the town is asked about next run.
-        if (found === 'stopped' || found === 'failed') { waiting++; continue; }
+        if (found === 'stopped' || found === 'failed') {
+          waiting++;
+          if (found === 'failed') { unanswered.push(c.name); log(`  ${c.name}: the geocoder did not answer; asked again next run`); }
+          continue;
+        }
         if (!found) {
           await keep({ query_key: key, name: c.name, lat: null, lng: null, country_code: null, asked_at: now.toISOString() });
           skipped.push(`${c.name} — the geocoder could not place it`);
@@ -304,5 +318,18 @@ export async function placeSeeds(input: {
     const joined = joinsWorld.get(w.name) ?? [];
     seeds.push({ ...w, source: [...new Set(['world', ...joined])].sort().join(',') });
   }
-  return { seeds: dedupeSeeds(seeds), remembered, skipped, waiting, fromMemory };
+  return { seeds: dedupeSeeds(seeds), remembered, skipped, waiting, unanswered, fromMemory };
+}
+
+/**
+ * The line the seed job prints for towns Nominatim did not answer, or null
+ * when there were none. Printed on every run, not only when the geocoder
+ * stopped: one town that fails every morning between successes never stops
+ * the run, is remembered nowhere, and would otherwise go unseeded in a green
+ * job with nothing said.
+ */
+export function unansweredWarning(placed: Pick<PlacedSeeds, 'unanswered'>): string | null {
+  const n = placed.unanswered.length;
+  if (!n) return null;
+  return `::warning::Nominatim did not answer for ${n} town${n === 1 ? '' : 's'}, asked again next run: ${placed.unanswered.join(', ')}`;
 }

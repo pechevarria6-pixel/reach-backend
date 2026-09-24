@@ -10,14 +10,18 @@ const RALEIGH = { lat: 35.7796, lng: -78.6382 };
 const COLUMBUS = { lat: 39.9612, lng: -82.9988 };
 
 /** Enough of supabase-js for one venue lookup: ILIKE as Postgres reads it, boxes, gone_at. */
-function fakeDb(rows: Row[], opts: { noGoneAt?: boolean; noRegion?: boolean } = {}) {
+function fakeDb(rows: Row[], opts: { noGoneAt?: boolean; noRegion?: boolean; noCountries?: boolean } = {}) {
   const from = () => {
     const filters: Array<(r: Row) => boolean> = [];
     let error: { code: string; message: string } | null = null;
     let limit = Infinity;
+    let picked: string[] = [];
     const b: any = {
       select(cols: string) {
+        picked = cols.split(',').map(c => c.trim());
         if (opts.noRegion && /\bregion\b/.test(cols)) error = { code: '42703', message: 'column discovery_venues.region does not exist' };
+        else if ((opts.noRegion || opts.noCountries) && /\bcountries\b/.test(cols)) error = { code: '42703', message: 'column discovery_venues.countries does not exist' };
+        else error = null;
         return b;
       },
       ilike(c: string, pattern: string) {
@@ -43,7 +47,10 @@ function fakeDb(rows: Row[], opts: { noGoneAt?: boolean; noRegion?: boolean } = 
       limit(n: number) { limit = n; return b; },
       then(resolve: (v: unknown) => void) {
         if (error) return resolve({ data: null, error });
-        return resolve({ data: rows.filter(r => filters.every(f => f(r))).slice(0, limit), error: null });
+        // Only the columns asked for, as PostgREST answers.
+        const shown = rows.filter(r => filters.every(f => f(r))).slice(0, limit)
+          .map(r => Object.fromEntries(Object.entries(r).filter(([k]) => picked.includes(k))));
+        return resolve({ data: shown, error: null });
       },
     };
     return b;
@@ -118,6 +125,19 @@ test('the border check drops only what it is sure of', async () => {
   assert.equal((await heldVenueNear(fakeDb([swept]), 'Starbucks', EL_PASO, { country: 'us' })).venue?.phone, '+19155550199', 'a sweep row has no region and is kept');
   // Before the migration there is no region column: read as before.
   assert.equal((await heldVenueNear(fakeDb([swept], { noRegion: true }), 'Starbucks', EL_PASO, { country: 'us' })).venue?.phone, '+19155550199');
+});
+
+test('a Frankfurt (Oder) restaurant filed under Poland\'s file is still Frankfurt\'s: the row\'s countries decide', async () => {
+  const FRANKFURT = { lat: 52.3417, lng: 14.5540 };
+  // Geofabrik's Lubuskie covers central Frankfurt, so its load may write the row.
+  const ratskeller = row('Ratskeller', { lat: 52.3419, lng: 14.5545 }, { phone: '+493355520', region: 'europe/poland/lubuskie', countries: ['DE'] });
+  const unplaced = row('Ratskeller', { lat: 52.3419, lng: 14.5545 }, { phone: '+493355521', region: 'europe/poland/lubuskie', countries: ['DE', 'PL'] });
+  const slubice = row('Ratskeller', { lat: 52.35, lng: 14.56 }, { phone: '+48957582000', region: 'europe/germany/brandenburg', countries: ['PL'] });
+  assert.equal((await heldVenueNear(fakeDb([ratskeller]), 'Ratskeller', FRANKFURT, { country: 'de' })).venue?.phone, '+493355520');
+  assert.equal((await heldVenueNear(fakeDb([unplaced]), 'Ratskeller', FRANKFURT, { country: 'de' })).venue?.phone, '+493355521', 'either side: kept');
+  assert.equal((await heldVenueNear(fakeDb([slubice]), 'Ratskeller', FRANKFURT, { country: 'de' })).venue, null, 'filed under Brandenburg, but the map says Poland');
+  // Before sql/venue-countries-2026-09-24.sql: the region, as before.
+  assert.equal((await heldVenueNear(fakeDb([slubice], { noCountries: true }), 'Ratskeller', FRANKFURT, { country: 'de' })).venue?.phone, '+48957582000');
 });
 
 test('the booking screen hands the lookup the trip\'s country', () => {

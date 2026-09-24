@@ -43,10 +43,12 @@ import { join } from 'node:path';
 import { credentials, rest, getAll } from './rest.mjs';
 import { ingestRegion, osmiumFilters, looksLikePbf } from '../../lib/discovery/ingest.ts';
 import { knownRegions, geofabrikUrl, regionList, legacyRegions } from '../../lib/discovery/regions.ts';
-import { GeofabrikMap, ownerAbroad } from '../../lib/discovery/geofabrik.ts';
+import { GeofabrikMap, countriesAt } from '../../lib/discovery/geofabrik.ts';
 import { dueRegions, planBatches } from '../../lib/discovery/ingest-schedule.ts';
 
 const MIGRATION = 'sql/world-data-phase1-2026-09-24.sql';
+// discovery_venues.countries, which the border check reads; see countriesAt.
+const COUNTRIES_MIGRATION = 'sql/venue-countries-2026-09-24.sql';
 const AGENT = 'ReachIngest/1.0 (+https://www.alcanzar.io; hello@alcanzar.io)';
 
 const argv = process.argv.slice(2);
@@ -152,6 +154,11 @@ if (db && !dryRun) {
     const { error } = await db.get(probe);
     if (error) die(`the database is not ready (${error.code}) — run ${MIGRATION}`);
   }
+  // Every row carries its countries. Written without them, a venue in the
+  // strip where two countries' files overlap would be judged by its region
+  // again — whichever file was loaded last — so the load waits for the column.
+  const { error } = await db.get('discovery_venues?select=countries&limit=1');
+  if (error) die(`the database is not ready (${error.code}) — run ${COUNTRIES_MIGRATION}`);
 }
 
 // ── Download ───────────────────────────────────────────────────────────
@@ -283,14 +290,15 @@ async function* exported(pbf) {
   await done;
 }
 
-// ── Whose side of the border each point is on ─────────────────────────
+// ── Which side of a border each point is on ───────────────────────────
 // Geofabrik's polygons overlap at borders (Mexico's reaches over San Luis,
-// Arizona), and the table has one row per place, so without this the last
-// file loaded would decide which country a border venue is in. The index is
-// one request; a load that cannot read it does not guess, it goes red.
-// --index <file> uses a copy on disk; a --features fixture run without one
-// skips the check and says so.
-let abroad = null;
+// Arizona; Poland's Lubuskie over central Frankfurt (Oder)), so the file a
+// venue was read from does not say which country it is in. countriesAt asks
+// the polygons where there is a question and the feature's own tags for the
+// answer. The index is one request; a load that cannot read it does not
+// guess, it goes red. --index <file> uses a copy on disk; a --features
+// fixture run without one writes no countries and says so.
+let countriesOfPoint = null;
 const indexFile = value('index');
 if (indexFile || !featuresFile) {
   let index;
@@ -304,9 +312,9 @@ if (indexFile || !featuresFile) {
   const map = new GeofabrikMap(index, legacyRegions());
   if (map.extracts.length < 100) die(`Geofabrik's index holds ${map.extracts.length} extracts — not believing it`);
   if (!map.has(region)) die(`${region} is not in Geofabrik's index`);
-  abroad = ownerAbroad(map, region);
+  countriesOfPoint = countriesAt(map, region);
 } else {
-  console.log('  (fixture run without --index: places another country\'s file owns are not set aside)');
+  console.log('  (fixture run without --index: no countries written; the border check falls back to the region)');
 }
 
 // ── The run ────────────────────────────────────────────────────────────
@@ -332,7 +340,7 @@ try {
     seeds,
     features,
     acceptDrop: flag('accept-drop'),
-    ...(abroad ? { ownerAbroad: abroad } : {}),
+    ...(countriesOfPoint ? { countriesAt: countriesOfPoint } : {}),
   });
 } catch (e) {
   // osmium dying half way through the export lands here.

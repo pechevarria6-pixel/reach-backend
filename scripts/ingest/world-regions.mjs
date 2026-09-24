@@ -64,13 +64,15 @@ for (const { code, paths } of map.sharedCodes()) {
 // regionsForTown in geofabrik.ts for why a circle must not cross a border.
 const out = {};
 for (const d of WORLD_DESTINATIONS) {
-  const centre = map.regionAt(d.lat, d.lng);
+  // The destination's own country picks among the files that hold a point:
+  // near a border the smallest file is often the neighbour's (see regionAt).
+  const centre = map.regionAt(d.lat, d.lng, d.country);
   if (!centre) { problems.push(`${d.name}: no extract holds its centre`); continue; }
   if (!map.countriesOf(centre).includes(d.country)) { problems.push(`${d.name}: its own file ${centre} is not in ${d.country}`); continue; }
   const regions = new Set([centre]);
   const abroad = new Set();
   for (const p of probePoints(d.lat, d.lng, SEED_RADIUS_MILES)) {
-    const r = map.regionAt(p.lat, p.lng);
+    const r = map.regionAt(p.lat, p.lng, d.country);
     if (!r || regions.has(r)) continue;
     if (map.countriesOf(r).includes(d.country)) regions.add(r); else abroad.add(r);
   }

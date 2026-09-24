@@ -14,6 +14,8 @@
 // scripts/ingest/world-regions.mjs (which writes the generated tables) and
 // scripts/ingest/build-seeds.mjs (which places the seeds every day).
 
+import { callingCountries } from './phone.ts';
+
 type Ring = number[][];
 type Polygon = Ring[];
 
@@ -151,7 +153,7 @@ export class GeofabrikMap {
 
   has(path: string): boolean { return this.byPath.has(path); }
 
-  private holds(e: Extract, lat: number, lng: number): boolean {
+  holds(e: Extract, lat: number, lng: number): boolean {
     return lng >= e.box[0] && lng <= e.box[2] && lat >= e.box[1] && lat <= e.box[3]
       && e.polys.some(p => inRing(p[0], lng, lat) && !p.slice(1).some(h => inRing(h, lng, lat)));
   }
@@ -180,6 +182,28 @@ export class GeofabrikMap {
   }
 
   /**
+   * The codes the geocoder may give a place in this file: its countries,
+   * and GEOCODER_ALSO's for it or its nearest ancestor that has any (Hong
+   * Kong is "cn" to Nominatim, San Juan "us").
+   */
+  geocoderCodes(path: string): string[] {
+    const also: string[] = [];
+    for (let p = path; p; p = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '') {
+      if (GEOCODER_ALSO[p]) { also.push(...GEOCODER_ALSO[p]); break; }
+    }
+    return [...new Set([...this.countriesOf(path), ...also])];
+  }
+
+  /**
+   * A file that belongs to a country: not a continent, not an overlay (US
+   * Northeast, DACH), with a country to its name. The files whose polygons
+   * can say "this point may be in country X".
+   */
+  isCountryFile(e: Extract): boolean {
+    return !this.isContinent(e) && !this.isOverlay(e) && this.countriesOf(e.path).length > 0;
+  }
+
+  /**
    * Country codes the index gives to two files that are not one inside the
    * other, where COUNTRY_OF does not settle which is right. Two countries do
    * not share an ISO code, so each of these is a mistake in the index until
@@ -204,8 +228,9 @@ export class GeofabrikMap {
    * The file for one point, or null when the point is in no file worth
    * reading.
    *
-   * The smallest extract whose polygon holds it, with three corrections, all
-   * seen on the first run of the world list:
+   * The smallest extract whose polygon holds it — of the files of
+   * `country`, when that is given — with three corrections, all seen on the
+   * first run of the world list:
    *   - where a point is in a country regions.ts already files a particular
    *     way (US states, the UK's nations, Mexico), that file wins, so a plan
    *     to Los Angeles and the world seed for it read one file, not
@@ -215,13 +240,24 @@ export class GeofabrikMap {
    *   - a point inside a country Geofabrik splits but in none of its pieces
    *     (water, mostly) is not a reason to read the whole country.
    */
-  regionAt(lat: number, lng: number): string | null {
+  regionAt(lat: number, lng: number, country?: string | null): string | null {
     if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) return null;
     const holders = this.extracts.filter(e => this.holds(e, lat, lng));
     const inCountry = holders.some(h => this.isCountry(h));
-    const all = holders
+    let all = holders
       .filter(h => !this.isContinent(h) && !(inCountry && this.isOverlay(h)))
       .sort((a, b) => a.area - b.area);
+    // Geofabrik cuts every polygon wide of the border, so near one the
+    // smallest file is often the neighbour's: central Frankfurt (Oder) is
+    // inside Poland's Lubuskie, Zgorzelec inside Saxony. When the geocoder
+    // has said which country the point is in, only that country's files are
+    // candidates; the polygons alone cannot tell which side of the line a
+    // point in the overlap is on.
+    const cc = String(country || '').trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(cc)) {
+      const own = all.filter(h => this.isCountryFile(h) && this.geocoderCodes(h.path).includes(cc));
+      if (own.length) all = own;
+    }
     if (!all.length) return null;
     const smallest = all[0];
     if (this.isCountry(smallest) && this.hasPieces(smallest)) return null;
@@ -277,7 +313,10 @@ export function regionsForTown(
   probes: Array<{ lat: number; lng: number }>,
   country?: string | null,
 ): { regions: string[]; abroad: string[] } {
-  const home = map.regionAt(centre.lat, centre.lng);
+  // The geocoder's country picks among the files that hold the centre, so a
+  // town in the strip where two countries' polygons overlap is seeded in its
+  // own country's file (Frankfurt (Oder) in Brandenburg, not Lubuskie).
+  const home = map.regionAt(centre.lat, centre.lng, country);
   if (!home) return { regions: [], abroad: [] };
   // The file the town is in says which country it is in; the geocoder's
   // code is only a fallback, because it calls Hong Kong "cn".
@@ -287,7 +326,7 @@ export function regionsForTown(
   const regions = [home];
   const abroad = new Set<string>();
   for (const p of probes) {
-    const r = map.regionAt(p.lat, p.lng);
+    const r = map.regionAt(p.lat, p.lng, country);
     if (!r || regions.includes(r)) continue;
     if (map.countriesOf(r).some(c => mine.has(c))) regions.push(r);
     else abroad.add(r);
@@ -296,39 +335,71 @@ export function regionsForTown(
 }
 
 /**
- * For a feature read from `region`'s file, the file in another country that
- * owns its point, or null when the point is this file's (or nobody's).
+ * For a feature read from `region`'s file, the countries it may be in: one
+ * when anything says which, every candidate when nothing does.
  *
- * Geofabrik cuts each extract a little wide of the border, and not evenly:
- * Mexico's file reaches north over San Luis, Arizona and San Ysidro, while
- * Arizona's and California's stop at the line. The table has one row per
- * place, so whichever file was loaded last used to decide which country a
- * border venue was in — and a San Luis, AZ restaurant filed under Mexico is
- * dropped from a Yuma trip as "across the border".
+ * Geofabrik cuts each extract wide of the border, and not evenly. Mexico's
+ * file reaches north over San Luis, Arizona; Poland's Lubuskie covers the
+ * whole of central Frankfurt (Oder), and Saxony covers Zgorzelec. No rule
+ * over the polygons alone can say which side of the line a point in that
+ * overlap is on — "the smallest file that holds it" put Frankfurt's town hall
+ * in Poland, and "the file read last" put San Luis, AZ in Mexico depending
+ * on the day. So the polygons only say where there is a question:
  *
- * The owner is the file regionAt picks for the point (the smallest file that
- * holds it, the legacy files first), which is the same answer whichever file
- * is being read: the result no longer depends on the order of the loads.
- * Only an owner in a different country counts; two US states sharing a
- * sliver of each other are the same country either way.
+ *   - a point no other country's file holds is this file's countries' (the
+ *     answer for all but a strip a few miles wide along each border);
+ *   - in the overlap, the feature's own addr:country, when it is one of the
+ *     candidates, settles it;
+ *   - failing that, its number written in full (+49…, +48…) settles it, when
+ *     the code belongs to one candidate file's countries only;
+ *   - failing that, every candidate. The row says "one of these", the
+ *     border check keeps it for a trip to any of them, and nothing claims a
+ *     country the map does not state.
+ *
+ * The answer is the same whichever file the feature is read from, so it no
+ * longer matters which file is loaded last, and every file that holds the
+ * point writes it: none depends on another country's load having run.
  */
-export function ownerAbroad(map: GeofabrikMap, region: string): (at: { lat: number; lng: number }) => string | null {
-  const mine = new Set(map.countriesOf(region));
-  if (!mine.size) return () => null;
+export function countriesAt(
+  map: GeofabrikMap,
+  region: string,
+): (at: { lat: number; lng: number }, tags?: Record<string, unknown>) => string[] {
+  const mine = map.countriesOf(region);
   const self = map.extracts.find(e => e.path === region);
-  // Only another country's file whose box meets this one's can own a point
+  // Only another country's file whose box meets this one's can hold a point
   // in it; everything else is ruled out without a polygon test.
+  const meets = (e: Extract) => !self || (e.box[0] <= self.box[2] && e.box[2] >= self.box[0] && e.box[1] <= self.box[3] && e.box[3] >= self.box[1]);
   const others = map.extracts.filter(e => {
-    if (e.path === region) return false;
+    if (e.path === region || !map.isCountryFile(e)) return false;
     const theirs = map.countriesOf(e.path);
-    if (!theirs.length || theirs.some(c => mine.has(c))) return false;
-    return !self || (e.box[0] <= self.box[2] && e.box[2] >= self.box[0] && e.box[1] <= self.box[3] && e.box[3] >= self.box[1]);
+    if (theirs.every(c => mine.includes(c))) return false;
+    return meets(e);
   });
-  return (at) => {
-    if (!others.some(e => at.lng >= e.box[0] && at.lng <= e.box[2] && at.lat >= e.box[1] && at.lat <= e.box[3])) return null;
-    const owner = map.regionAt(at.lat, at.lng);
-    if (!owner || owner === region) return null;
-    const theirs = map.countriesOf(owner);
-    return theirs.length && !theirs.some(c => mine.has(c)) ? owner : null;
+  // This file's own country's other files (the US beside California).
+  const kin = map.extracts.filter(e => e.path !== region && map.isCountryFile(e)
+    && map.countriesOf(e.path).every(c => mine.includes(c)) && meets(e));
+  return (at, tags = {}) => {
+    const near = others.filter(e => map.holds(e, at.lat, at.lng));
+    if (!near.length || !mine.length) return [...mine];
+    // This country is a candidate only where one of its files' polygons
+    // holds the point. An extract carries a few features past its polygon
+    // (a way that crosses it), and without this a Tijuana taqueria read from
+    // California's file would be "MX or US" while Mexico's own file calls it
+    // "MX": the answer would depend on which file wrote the row last. With
+    // it, the candidates are the countries of every country file that holds
+    // the point, whichever file is reading.
+    const mineHolds = !self || map.holds(self, at.lat, at.lng) || kin.some(e => map.holds(e, at.lat, at.lng));
+    // Each file's countries are one candidate: the Senegal-and-Gambia file
+    // is "SN or GM", and a number cannot split what the file does not.
+    const groups = [...(mineHolds ? [mine] : []), ...near.map(e => map.countriesOf(e.path))];
+    const all = [...new Set(groups.flat())].sort();
+    const stated = String(tags['addr:country'] ?? tags['is_in:country_code'] ?? '').trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(stated) && all.includes(stated)) return [stated];
+    const dialled = callingCountries(tags.phone ?? tags['contact:phone'], all);
+    if (dialled.length) {
+      const side = [...new Set(groups.filter(g => g.some(c => dialled.includes(c))).flat())].sort();
+      if (side.length < all.length) return side;
+    }
+    return all;
   };
 }

@@ -12,7 +12,8 @@ import {
 import { mappableKinds, kindFor, QUIZ_CUISINES } from '../../lib/discovery/taste.ts';
 import { matchesSelector, tagsFor } from '../../lib/discovery/osm.ts';
 import type { Seed } from '../../lib/discovery/regions.ts';
-import { GeofabrikMap, ownerAbroad } from '../../lib/discovery/geofabrik.ts';
+import { GeofabrikMap, countriesAt, regionsForTown } from '../../lib/discovery/geofabrik.ts';
+import { callingCountries } from '../../lib/discovery/phone.ts';
 import { acrossTheBorder } from '../../lib/discovery/real-places.ts';
 
 const REGION = 'north-america/us/north-carolina';
@@ -461,58 +462,155 @@ test('the circle a seed is read around is thirty miles unless the row says other
 
 // ── Which country a border venue is in ────────────────────────────────
 
-test('the last file loaded does not decide a border venue\'s country: San Luis, AZ in Mexico\'s extract', async () => {
-  const box = (w: number, s: number, e: number, n: number) => ({ type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] });
-  const pbf = (p: string) => ({ pbf: `https://download.geofabrik.de/${p}-latest.osm.pbf` });
-  // As Geofabrik cuts them: Mexico's polygon reaches north over the line
-  // (San Luis, AZ is inside it), Arizona's and California's stop at it.
-  const map = new GeofabrikMap({ features: [
-    { properties: { id: 'north-america' }, geometry: box(-170, 5, -50, 85) },
-    { properties: { id: 'us', 'iso3166-1:alpha2': ['US'], urls: pbf('north-america/us') }, geometry: box(-125, 31.33, -66, 50) },
-    // Arizona's southern edge runs down from the Colorado at San Luis to Nogales.
-    { properties: { id: 'arizona', urls: pbf('north-america/us/arizona') }, geometry: { type: 'Polygon', coordinates: [[[-114.82, 32.48], [-111.07, 31.33], [-109.04, 31.33], [-109.04, 37], [-114.82, 37], [-114.82, 32.48]]] } },
-    { properties: { id: 'california', urls: pbf('north-america/us/california') }, geometry: box(-124.5, 32.53, -114.13, 42) },
-    { properties: { id: 'mexico', 'iso3166-1:alpha2': ['MX'], urls: pbf('north-america/mexico') }, geometry: box(-118.5, 14, -86, 32.72) },
-  ] }, ['north-america/us/arizona', 'north-america/us/california', 'north-america/mexico']);
-  const AZ = 'north-america/us/arizona', MX = 'north-america/mexico';
-  const site = { website: 'https://example.com' };
-  const sanLuisAZ = feature(501, { name: 'Taqueria San Luis', amenity: 'restaurant', ...site }, [-114.782, 32.487]);
-  const sanLuisRC = feature(502, { name: 'Mariscos del Rio', amenity: 'restaurant', ...site }, [-114.77, 32.456]);
-  const sanYsidro = feature(503, { name: 'Border Diner', amenity: 'restaurant', ...site }, [-117.0296, 32.5427]);
-  const loads = {
-    [AZ]: [sanLuisAZ],
-    [MX]: [sanLuisAZ, sanLuisRC, sanYsidro], // Mexico's file holds all three
-    'north-america/us/california': [sanYsidro],
-  };
+const gbox = (w: number, s: number, e: number, n: number) => ({ type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] });
+const gpbf = (p: string) => ({ pbf: `https://download.geofabrik.de/${p}-latest.osm.pbf` });
 
-  for (const order of [[AZ, MX, 'north-america/us/california'], [MX, 'north-america/us/california', AZ], ['north-america/us/california', AZ, MX]]) {
+// As Geofabrik cuts them: Mexico's polygon reaches north over the line (San
+// Luis, AZ is inside it), Arizona's and California's stop at it.
+const BORDER_US_MX = new GeofabrikMap({ features: [
+  { properties: { id: 'north-america' }, geometry: gbox(-170, 5, -50, 85) },
+  { properties: { id: 'us', 'iso3166-1:alpha2': ['US'], urls: gpbf('north-america/us') }, geometry: gbox(-125, 32.4, -66, 50) },
+  // Arizona's southern edge runs down from the Colorado at San Luis to Nogales.
+  { properties: { id: 'arizona', urls: gpbf('north-america/us/arizona') }, geometry: { type: 'Polygon', coordinates: [[[-114.82, 32.48], [-111.07, 31.33], [-109.04, 31.33], [-109.04, 37], [-114.82, 37], [-114.82, 32.48]]] } },
+  { properties: { id: 'california', urls: gpbf('north-america/us/california') }, geometry: gbox(-124.5, 32.53, -114.13, 42) },
+  { properties: { id: 'mexico', 'iso3166-1:alpha2': ['MX'], urls: gpbf('north-america/mexico') }, geometry: gbox(-118.5, 14, -86, 32.72) },
+] }, ['north-america/us/arizona', 'north-america/us/california', 'north-america/mexico']);
+
+// As Geofabrik cuts them on the Oder, measured against index-v1.json on
+// 2026-09-24: Poland's Lubuskie reaches west over the whole of central
+// Frankfurt (Oder) and is the smaller file; Brandenburg reaches east over
+// Słubice. The Oder runs at about 14.56 here.
+const ODER = new GeofabrikMap({ features: [
+  { properties: { id: 'europe' }, geometry: gbox(-30, 30, 50, 75) },
+  { properties: { id: 'germany', 'iso3166-1:alpha2': ['DE'], urls: gpbf('europe/germany') }, geometry: gbox(5.8, 47.2, 14.62, 55.1) },
+  { properties: { id: 'brandenburg', urls: gpbf('europe/germany/brandenburg') }, geometry: gbox(11.2, 51.3, 14.62, 53.6) },
+  { properties: { id: 'poland', 'iso3166-1:alpha2': ['PL'], urls: gpbf('europe/poland') }, geometry: gbox(14.5, 49, 24.2, 54.9) },
+  { properties: { id: 'lubuskie', urls: gpbf('europe/poland/lubuskie') }, geometry: gbox(14.5, 51.35, 16.45, 53.15) },
+] });
+const BB = 'europe/germany/brandenburg', LB = 'europe/poland/lubuskie';
+
+test('the polygons alone cannot place central Frankfurt (Oder): the smallest file that holds it is Poland\'s', () => {
+  // The fact the rule has to live with, not a rule to follow: the old one did.
+  assert.equal(ODER.regionAt(52.3417, 14.5540), LB);
+  // With the geocoder's country, the town is seeded in its own country's file.
+  assert.equal(ODER.regionAt(52.3417, 14.5540, 'DE'), BB);
+  assert.equal(ODER.regionAt(52.3417, 14.5540, 'de'), BB);
+  assert.equal(ODER.regionAt(52.35, 14.58, 'PL'), LB, 'Słubice, in Poland');
+  const town = regionsForTown(ODER, { lat: 52.3417, lng: 14.5540 }, [{ lat: 52.3, lng: 14.3 }, { lat: 52.35, lng: 14.9 }], 'de');
+  assert.equal(town.regions[0], BB, 'Frankfurt (Oder)\'s own file is Brandenburg');
+  assert.ok(!town.regions.includes(LB) && town.abroad.includes(LB));
+});
+
+test('a venue in the overlap is placed by its own tags, and by nothing else', () => {
+  const fromBB = countriesAt(ODER, BB), fromLB = countriesAt(ODER, LB);
+  const rathaus = { lat: 52.3417, lng: 14.5540 };
+  for (const read of [fromBB, fromLB]) {
+    assert.deepEqual(read(rathaus, { 'addr:country': 'DE' }), ['DE']);
+    assert.deepEqual(read(rathaus, { phone: '+49 335 5520' }), ['DE']);
+    assert.deepEqual(read(rathaus, { 'contact:phone': '0049 335 552 0' }), ['DE']);
+    assert.deepEqual(read({ lat: 52.35, lng: 14.58 }, { phone: '+48 95 758 2000' }), ['PL'], 'Słubice');
+    // Nothing on the feature says which side: both, never a guess.
+    assert.deepEqual(read(rathaus, {}), ['DE', 'PL']);
+    assert.deepEqual(read(rathaus, { phone: '0335 5520' }), ['DE', 'PL'], 'a national number says nothing');
+    assert.deepEqual(read(rathaus, { 'addr:country': 'FR' }), ['DE', 'PL'], 'a country neither file holds is no answer');
+  }
+  // Away from the border there is no question to ask.
+  assert.deepEqual(fromBB({ lat: 52.52, lng: 13.40 }, { 'addr:country': 'PL' }), ['DE'], 'Berlin');
+  assert.deepEqual(fromLB({ lat: 52.73, lng: 15.24 }, {}), ['PL'], 'Gorzów');
+});
+
+test('Frankfurt (Oder) keeps its own venues whichever file is loaded last, and Słubice\'s stay in Poland', async () => {
+  const site = { website: 'https://example.com' };
+  const rathaus = feature(601, { name: 'Ratskeller', amenity: 'restaurant', ...site }, [14.5540, 52.3417]);
+  const hbf = feature(602, { name: 'Bahnhofsgrill', amenity: 'restaurant', 'addr:country': 'DE', ...site }, [14.5462, 52.3364]);
+  const slubice = feature(603, { name: 'Bar Przystań', amenity: 'restaurant', phone: '+48 95 758 2000', ...site }, [14.58, 52.35]);
+  const both = [rathaus, hbf, slubice]; // each file holds all three
+  for (const order of [[BB, LB], [LB, BB]]) {
+    const { db, venues } = fakeDb();
+    for (const region of order) {
+      const report = await ingestRegion({ db, region, seeds: [], features: both, now: new Date(SEEN), log: () => {}, countriesAt: countriesAt(ODER, region) });
+      assert.equal(report.ok, true, report.problems.join('\n'));
+      assert.equal(report.kept, 3, `${region} writes every place it holds; none waits on another country's load`);
+    }
+    const row = (id: number) => venues.find(v => v.osm_id === id)!;
+    assert.deepEqual(row(601).countries, ['DE', 'PL'], `order ${order.join(' → ')}`);
+    assert.deepEqual(row(602).countries, ['DE']);
+    assert.deepEqual(row(603).countries, ['PL']);
+    // A Frankfurt (Oder) trip: the geocoder says "de".
+    assert.equal(acrossTheBorder(row(601).region, 'DE', row(601).countries), false, 'the Ratskeller is kept, whatever file wrote it last');
+    assert.equal(acrossTheBorder(row(602).region, 'DE', row(602).countries), false);
+    assert.equal(acrossTheBorder(row(603).region, 'DE', row(603).countries), true, 'Słubice is across the river');
+    assert.equal(acrossTheBorder(row(601).region, 'PL', row(601).countries), false, 'and a Słubice trip is not told the Ratskeller is not there');
+  }
+});
+
+test('the last file loaded does not decide a border venue\'s country: San Luis, AZ in Mexico\'s extract', async () => {
+  const AZ = 'north-america/us/arizona', MX = 'north-america/mexico', CA = 'north-america/us/california';
+  const site = { website: 'https://example.com' };
+  const sanLuisAZ = feature(501, { name: 'Taqueria San Luis', amenity: 'restaurant', phone: '+1 928 627 0000', ...site }, [-114.782, 32.487]);
+  const sanLuisRC = feature(502, { name: 'Mariscos del Rio', amenity: 'restaurant', phone: '+52 653 534 0000', ...site }, [-114.77, 32.456]);
+  const sanYsidro = feature(503, { name: 'Border Diner', amenity: 'restaurant', 'addr:country': 'US', ...site }, [-117.0296, 32.5427]);
+  const tijuana = feature(504, { name: 'Tacos Tijuana', amenity: 'restaurant', ...site }, [-117.0382, 32.3149]);
+  // California's extract carries Tijuana too, past its own polygon (a way
+  // that crosses the line): a file that does not hold a point is no candidate.
+  const loads = { [AZ]: [sanLuisAZ, sanLuisRC], [MX]: [sanLuisAZ, sanLuisRC, sanYsidro, tijuana], [CA]: [sanYsidro, tijuana] };
+  assert.deepEqual(countriesAt(BORDER_US_MX, CA)({ lat: 32.3149, lng: -117.0382 }), ['MX'], 'Tijuana read from California\'s file');
+  assert.deepEqual(countriesAt(BORDER_US_MX, MX)({ lat: 32.3149, lng: -117.0382 }), ['MX'], 'and from Mexico\'s');
+
+  for (const order of [[AZ, MX, CA], [MX, CA, AZ], [CA, AZ, MX]]) {
     const { db, venues } = fakeDb();
     for (const region of order) {
       const report = await ingestRegion({
         db, region, seeds: [], features: loads[region as keyof typeof loads], now: new Date(SEEN), log: () => {},
-        ownerAbroad: ownerAbroad(map, region),
+        countriesAt: countriesAt(BORDER_US_MX, region),
       });
       assert.equal(report.ok, true, report.problems.join('\n'));
-      if (region === MX) assert.equal(report.skipped.another_country, 2, 'San Luis, AZ and San Ysidro are left to the US files');
     }
-    const regionOf = (id: number) => [...new Set(venues.filter(v => v.osm_id === id).map(v => v.region))];
-    assert.deepEqual(regionOf(501), [AZ], `order ${order.join(' → ')}`);
-    assert.deepEqual(regionOf(502), [MX], 'San Luis Río Colorado is Mexico\'s');
-    assert.deepEqual(regionOf(503), ['north-america/us/california']);
-    assert.equal(acrossTheBorder(regionOf(501)[0], 'US'), false, 'kept on a Yuma trip');
-    assert.equal(acrossTheBorder(regionOf(502)[0], 'US'), true);
+    const row = (id: number) => venues.find(v => v.osm_id === id)!;
+    assert.deepEqual(row(501).countries, ['US'], `order ${order.join(' → ')}`);
+    assert.deepEqual(row(502).countries, ['MX'], 'San Luis Río Colorado is Mexico\'s');
+    assert.deepEqual(row(503).countries, ['US']);
+    assert.deepEqual(row(504).countries, ['MX'], 'Tijuana is in no US file: no question to ask');
+    assert.equal(acrossTheBorder(row(501).region, 'US', row(501).countries), false, 'kept on a Yuma trip');
+    assert.equal(acrossTheBorder(row(502).region, 'US', row(502).countries), true);
+    assert.equal(acrossTheBorder(row(504).region, 'US', row(504).countries), true, 'never on a San Diego trip');
   }
 });
 
-test('a point shared by two files of one country is not set aside', () => {
-  const box = (w: number, s: number, e: number, n: number) => ({ type: 'Polygon', coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] });
-  const pbf = (p: string) => ({ pbf: `https://download.geofabrik.de/${p}-latest.osm.pbf` });
+test('a point shared by two files of one country has no question to ask', () => {
   const map = new GeofabrikMap({ features: [
-    { properties: { id: 'us', 'iso3166-1:alpha2': ['US'], urls: pbf('north-america/us') }, geometry: box(-125, 24, -66, 50) },
-    { properties: { id: 'north-carolina', urls: pbf('north-america/us/north-carolina') }, geometry: box(-84.3, 33.8, -75.4, 36.6) },
-    { properties: { id: 'virginia', urls: pbf('north-america/us/virginia') }, geometry: box(-83.7, 36.5, -75.2, 39.5) },
+    { properties: { id: 'us', 'iso3166-1:alpha2': ['US'], urls: gpbf('north-america/us') }, geometry: gbox(-125, 24, -66, 50) },
+    { properties: { id: 'north-carolina', urls: gpbf('north-america/us/north-carolina') }, geometry: gbox(-84.3, 33.8, -75.4, 36.6) },
+    { properties: { id: 'virginia', urls: gpbf('north-america/us/virginia') }, geometry: gbox(-83.7, 36.5, -75.2, 39.5) },
   ] }, ['north-america/us/north-carolina', 'north-america/us/virginia']);
-  const fromNC = ownerAbroad(map, 'north-america/us/north-carolina');
-  assert.equal(fromNC({ lat: 36.55, lng: -79 }), null, 'Virginia may own it; either way it is in the US');
-  assert.equal(fromNC({ lat: 35.78, lng: -78.64 }), null);
+  const fromNC = countriesAt(map, 'north-america/us/north-carolina');
+  assert.deepEqual(fromNC({ lat: 36.55, lng: -79 }), ['US'], 'Virginia holds it too; either way it is in the US');
+  assert.deepEqual(fromNC({ lat: 35.78, lng: -78.64 }, { 'addr:country': 'CA' }), ['US']);
+});
+
+test('a number says which side only when its code is one side\'s alone', () => {
+  assert.deepEqual(callingCountries('+49 335 5520', ['DE', 'PL']), ['DE']);
+  assert.deepEqual(callingCountries('0048 95 758 2000', ['DE', 'PL']), ['PL']);
+  assert.deepEqual(callingCountries('+1 313 555 0100', ['US', 'CA']).sort(), ['CA', 'US'], 'Detroit and Windsor share +1');
+  assert.deepEqual(callingCountries('+1 809 555 0100', ['US', 'DO', 'HT']), ['DO'], 'an area code of its own beats +1');
+  assert.deepEqual(callingCountries('+509 2222 0000', ['HT', 'DO']), ['HT']);
+  assert.deepEqual(callingCountries('(335) 5520', ['DE', 'PL']), [], 'national format');
+  assert.deepEqual(callingCountries('+49 1', ['DE']), [], 'too short to be a number');
+  assert.deepEqual(callingCountries('+33 1 23 45 67 89', ['DE', 'PL']), []);
+});
+
+test('a row\'s own countries decide the border check, in the geocoder\'s names', () => {
+  // Filed under Poland's file, but the map says Germany.
+  assert.equal(acrossTheBorder(LB, 'DE', ['DE']), false);
+  assert.equal(acrossTheBorder(BB, 'DE', ['PL']), true);
+  assert.equal(acrossTheBorder(LB, 'DE', ['DE', 'PL']), false);
+  assert.equal(acrossTheBorder(LB, 'FR', ['DE', 'PL']), true);
+  // Hong Kong is "cn" to Nominatim, Guam "us", French Guiana "fr".
+  assert.equal(acrossTheBorder('asia/china/guangdong', 'CN', ['HK']), false);
+  assert.equal(acrossTheBorder('australia-oceania/american-oceania', 'US', ['GU']), false);
+  assert.equal(acrossTheBorder('europe/france/guyane', 'FR', ['GF']), false);
+  // Rows the load has not rewritten yet: the region, as before.
+  assert.equal(acrossTheBorder('north-america/mexico', 'US', null), true);
+  assert.equal(acrossTheBorder('north-america/mexico', 'US', []), true);
+  assert.equal(acrossTheBorder(null, 'US', null), false);
 });

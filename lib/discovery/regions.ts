@@ -151,6 +151,21 @@ export function regionCountries(region: string | null | undefined): string[] {
   return [...new Set([...(GEOFABRIK_REGIONS[region] ?? []), ...(GEOCODER_ALSO[region] ?? [])])];
 }
 
+/**
+ * What the geocoder may call a country: the code itself, and GEOCODER_ALSO's
+ * for every file of that country (Hong Kong's HK is "cn" to Nominatim, Guam's
+ * GU "us", French Guiana's GF "fr"). For a row's own `countries`, which are
+ * ISO's codes, compared against a trip's, which are the geocoder's.
+ */
+export function geocoderNames(country: string): string[] {
+  const cc = String(country || '').trim().toUpperCase();
+  const out = new Set([cc]);
+  for (const [region, also] of Object.entries(GEOCODER_ALSO)) {
+    if ((GEOFABRIK_REGIONS[region] ?? []).includes(cc)) for (const a of also) out.add(a);
+  }
+  return [...out];
+}
+
 /** The size of a region's download when last measured, in megabytes, or null. */
 export function regionMb(region: string): number | null {
   return REGION_MB[region] ?? null;

@@ -39,7 +39,7 @@ import { credentials, rest, getAll } from './rest.mjs';
 import { locateOrFail } from '../../lib/discovery/geocode.ts';
 import { GeofabrikMap } from '../../lib/discovery/geofabrik.ts';
 import { seedCandidates, worldSeeds, nameKey, legacyRegions, knownRegions, regionList } from '../../lib/discovery/regions.ts';
-import { placeSeeds, politeGeocoder, memoFromSeeds, DEFAULT_GEOCODE_CAP } from '../../lib/discovery/seed-build.ts';
+import { placeSeeds, politeGeocoder, memoFromSeeds, unansweredWarning, DEFAULT_GEOCODE_CAP } from '../../lib/discovery/seed-build.ts';
 
 const MIGRATION = 'sql/ingest-every-region-2026-09-24.sql';
 const INDEX = 'https://download.geofabrik.de/index-v1.json';
@@ -146,6 +146,11 @@ console.log(`${regions.length} regions on the load's list`);
 if (showNames) for (const [region, n] of [...byRegion.entries()].sort()) console.log(`  ${region}: ${n}`);
 console.log(`skipped ${placed.skipped.length}`);
 if (showNames) for (const s of placed.skipped) console.log(`  ${s}`);
+// Always, not only when the run stopped: one town Nominatim fails on every
+// morning, with successes either side, never stops the run, is remembered
+// nowhere, and would otherwise go unseeded in a green job with nothing said.
+const unanswered = unansweredWarning(placed);
+if (unanswered) console.log(unanswered);
 if (geocoder.stopped()) {
   // Not a failure: everything placed so far is written below, and the rest
   // are asked about tomorrow. A red run here would lose nothing but would

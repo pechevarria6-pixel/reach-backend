@@ -141,6 +141,13 @@ export interface VenueRow {
   kind: string | null;
   street?: string;
   region: string;
+  /**
+   * The countries the place may be in (ISO 3166-1): one almost always, every
+   * candidate in the strip where two countries' files overlap and nothing on
+   * the feature says which side it is (geofabrik.ts countriesAt). The border
+   * check reads this before the region. Left out when the load has no index.
+   */
+  countries?: string[];
   last_seen_at: string;
   gone_at: null;
   phone?: string;
@@ -149,7 +156,7 @@ export interface VenueRow {
   harvest_status?: 'skip';
 }
 
-export type Skip = 'no_name' | 'no_website' | 'no_point' | 'not_a_kind' | 'cannot_turn_up' | 'no_id' | 'another_country';
+export type Skip = 'no_name' | 'no_website' | 'no_point' | 'not_a_kind' | 'cannot_turn_up' | 'no_id';
 
 /**
  * The rows one mapped feature becomes, or why it becomes none.
@@ -490,13 +497,13 @@ export async function ingestRegion(input: {
    */
   acceptDrop?: boolean;
   /**
-   * The file in another country that owns a point, or null when it is this
-   * region's: geofabrik.ts's ownerAbroad. A feature another country's file
-   * owns is left for that file to write, so a venue's region — and with it
-   * the country the menu's border check reads — never depends on which
-   * file happened to be loaded last.
+   * The countries a point may be in: geofabrik.ts's countriesAt. Written on
+   * every row as `countries`, which the border check reads, so a venue's
+   * country is what the map says of it — never the file that happened to be
+   * loaded last, and never "the smallest file", which put central
+   * Frankfurt (Oder) in Poland.
    */
-  ownerAbroad?: (at: { lat: number; lng: number }) => string | null;
+  countriesAt?: (at: { lat: number; lng: number }, tags?: Record<string, unknown>) => string[];
 }): Promise<IngestReport> {
   const { db, region, seeds } = input;
   const log = input.log ?? (line => console.log(line));
@@ -568,9 +575,9 @@ export async function ingestRegion(input: {
       continue;
     }
     const first = out.rows[0];
-    if (input.ownerAbroad?.({ lat: first.lat, lng: first.lng })) {
-      report.skipped.another_country = (report.skipped.another_country ?? 0) + 1;
-      continue;
+    if (input.countriesAt) {
+      const countries = input.countriesAt({ lat: first.lat, lng: first.lng }, feature.properties ?? {});
+      for (const row of out.rows) row.countries = countries;
     }
     const key = `${first.osm_type}/${first.osm_id}`;
     if (!places.has(key)) {

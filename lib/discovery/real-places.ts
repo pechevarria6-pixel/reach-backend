@@ -27,7 +27,7 @@ import { canTurnUp } from './rules.ts';
 import { normalise } from './verify.ts';
 import { dialable } from './phone.ts';
 import { closedThroughout, neverOpen, windowFor } from './hours.ts';
-import { regionCountries } from './regions.ts';
+import { regionCountries, geocoderNames } from './regions.ts';
 import { siteTown } from './world-destinations.ts';
 
 /** What the map calls somewhere to sleep, once underscores are spaces. */
@@ -164,6 +164,8 @@ type VenueRow = {
   phone?: string | null; reservation_url?: string | null;
   /** The Geofabrik file the map load read it from; null for the sweep's rows. */
   region?: string | null;
+  /** The countries the map load could tell it is in (see ingest.ts); null before it has said. */
+  countries?: string[] | null;
 };
 type ReadError = { code?: string; message?: string } | null;
 /** A held row as the menu uses it. */
@@ -175,23 +177,36 @@ type Shaped = {
 };
 
 /**
- * Whether a held row is in another country from the trip, going by the
- * Geofabrik file the map load read it from.
+ * Whether a held row is in another country from the trip.
  *
  * The load reads whole regions now, so Mexico's file puts Tijuana's
  * restaurants in the table beside San Diego's, and Ciudad Juárez's a mile
  * from downtown El Paso. The menu reads by distance, and a place across a
  * border is not "nearby" to somebody without a passport in their pocket.
  *
+ * The row's own `countries` decide, when the load has written them: the
+ * file a row was read from does not say which country it is in, because
+ * Geofabrik cuts every file wide of the border — Poland's Lubuskie covers
+ * central Frankfurt (Oder). A row in that overlap that nothing on the map
+ * places carries every candidate ("DE", "PL"), and is kept for a trip to
+ * either. Rows the load has not rewritten yet fall back to the region's
+ * countries, as the check read before.
+ *
  * Only a certain answer drops a row: the trip's country known, the row's
- * region known, and none of the region's countries (as the geocoder names
- * them — Hong Kong is "cn" to Nominatim) the trip's. A sweep row (no
- * region) or a region nothing knows is kept, which is how the menu read
- * before any of this.
+ * countries (or region) known, and none of them (as the geocoder names them
+ * — Hong Kong is "cn" to Nominatim) the trip's. A sweep row (no region) or
+ * a region nothing knows is kept, which is how the menu read before any of
+ * this.
  */
-export function acrossTheBorder(region: string | null | undefined, tripCountry: string | null | undefined): boolean {
+export function acrossTheBorder(
+  region: string | null | undefined,
+  tripCountry: string | null | undefined,
+  rowCountries?: readonly string[] | null,
+): boolean {
   const cc = String(tripCountry || '').trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(cc) || !region) return false;
+  if (!/^[A-Z]{2}$/.test(cc)) return false;
+  if (rowCountries?.length) return !rowCountries.some(c => geocoderNames(c).includes(cc));
+  if (!region) return false;
   const countries = regionCountries(region);
   return countries.length > 0 && !countries.includes(cc);
 }
@@ -243,7 +258,7 @@ async function venuesInBox(
       // A null kind is filed by its interest and cannot be named here, so
       // it is always let through.
       if (except.length) q = q.or(`kind.is.null,kind.not.in.(${except.map(k => `"${k}"`).join(',')})`);
-      q = also(q, columns === FULL);
+      q = also(q, columns !== BASIC);
       const { data, error } = await (opts.all
         ? q.order('id').range(page * PAGE, page * PAGE + PAGE - 1)
         : q.limit(PER_BOX)) as unknown as { data: VenueRow[] | null; error: ReadError };
@@ -254,7 +269,12 @@ async function venuesInBox(
     console.error('[real-places] counted to the page limit — the number is a floor', { miles, rows: out.length });
     return { data: out, error: null, floor: true };
   };
-  const pending = (e: ReadError) => !!e && (e.code === '42703' || /gone_at|osm_tags|opening_hours/.test(e.message || ''));
+  const pending = (e: ReadError) => !!e && (e.code === '42703' || /gone_at|osm_tags|opening_hours|countries/.test(e.message || ''));
+  // countries is the newest column of all (sql/venue-countries-2026-09-24.sql).
+  // Without it the border check reads the region, as it did before.
+  const newest = await read(`${FULL}, countries`, true);
+  if (!pending(newest.error)) return newest;
+  console.error('[real-places] reading venues without countries — run sql/venue-countries-2026-09-24.sql', { code: newest.error?.code, message: newest.error?.message });
   const first = await read(FULL, true);
   if (!pending(first.error)) return first;
   // gone_at is the newest column, so it is the likeliest to be missing: keep
@@ -357,7 +377,7 @@ export async function placesFor(
       // Belt and braces for rows filed before lodging had an interest of its
       // own: whatever the interest says, a hotel is not dinner.
       && v.interest !== STAY_INTEREST && !LODGING_KIND.test(String(v.kind || ''))
-      && !acrossTheBorder(v.region, countryCode);
+      && !acrossTheBorder(v.region, countryCode, v.countries);
     // Shut on the plan's own days, going by hours the map records and we
     // could parse. No date, no hours, or hours we cannot read: kept. See
     // lib/discovery/hours.ts for why the rule leans that way.

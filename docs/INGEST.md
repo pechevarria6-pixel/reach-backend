@@ -65,6 +65,11 @@ In the Supabase SQL editor, in this order; both are safe to run twice:
    harvester's two queues) and a tighter autovacuum setting for the weekly
    rewrite. Nothing waits for it: before it runs, the seed job remembers
    towns from `ingest_seeds` instead and says so in its log.
+3. `sql/venue-countries-2026-09-24.sql` — adds `discovery_venues.countries`,
+   which the border check reads (see "Across a border is not nearby"). **The
+   map load refuses to start until it has run**: without the column a border
+   venue would be judged by its region again. The menu and the booking
+   lookup read the region as before until it runs.
 
 ### 2. The two secrets
 
@@ -201,7 +206,10 @@ was typed after it ("Fayetteville, NC"), and the plan's country.
   kept: a request that failed (a 5xx, the 8-second timeout, the network, a
   body that is not JSON) is not "not found" and is asked again next run
   (`locateOrFail()`). Three failures in a row stop the asking for the run,
-  the same way a 429 does.
+  the same way a 429 does. Every town whose request failed is named in a
+  `::warning::` on every run, whether or not the run stopped: one town
+  Nominatim fails on each morning, between successes, is remembered nowhere
+  and would otherwise go unseeded in a green job with nothing said.
 - **At most one request a second, at most 100 a run.** A 429 (or a 403, how
   Nominatim answers a blocked agent) stops the asking at once and cleanly:
   everything already placed is written, and the rest wait for tomorrow. The
@@ -279,15 +287,41 @@ that is what Nominatim calls Hong Kong. The booking screen's venue lookup
 offered the Juárez branch's +52 number. Discover does not have the trip's
 country and does not filter yet (see "Still open").
 
-A row's region has to be right for this to mean anything, and Geofabrik's
-polygons overlap unevenly at borders: Mexico's reaches north over San Luis,
-Arizona and San Ysidro, while Arizona's and California's stop at the line.
-So a load sets aside a feature whose point another country's file owns
-(`ownerAbroad()`: the file `regionAt` picks, the same answer whichever file
-is being read) and counts it as `another_country`; that file writes it.
-Without this the last file loaded decided a border venue's country. The load
-reads Geofabrik's index for it (one request; `--index <file>` for a copy on
-disk) and goes red if it cannot.
+The file a row was read from does not say which country it is in, because
+Geofabrik cuts every polygon wide of the border, and not evenly. Mexico's
+reaches north over San Luis, Arizona; Poland's Lubuskie covers the whole of
+central Frankfurt (Oder) and is the smaller file there; Saxony covers
+Zgorzelec; Languedoc-Roussillon covers Llívia. No rule over the polygons
+alone can settle a point in that overlap: "the file loaded last" put San
+Luis, AZ in Mexico on some days, and "the smallest file that holds it" put
+Frankfurt's town hall in Poland on all of them, which dropped the city's own
+venues from a Frankfurt trip.
+
+So every row carries `countries` (`countriesAt()` in
+`lib/discovery/geofabrik.ts`), and the border check reads it before the
+region:
+
+- a point no other country's file holds is this file's countries' — every
+  row but a strip a few miles wide along each border;
+- in the overlap, the feature's `addr:country` settles it, when it is one of
+  the candidates; failing that, its number written in full (`+49…`,
+  `0048…`), when the code belongs to one candidate file only (`+1` is the US
+  and Canada both, so it settles San Luis against Mexico but not Detroit
+  against Windsor);
+- failing both, every candidate: `{DE,PL}`. The row is kept for a trip to
+  either, because nothing on the map says which, and a venue a mile away
+  across the Oder is a smaller wrong than a city's own town hall missing.
+
+A file counts as a candidate only where its own country's polygons hold the
+point: an extract carries a few features past its edge, and a Tijuana
+taqueria read from California's file is Mexico's, as Mexico's file says.
+The answer is the same whichever file reads the feature, so load order no
+longer matters, and every file that holds a point writes it: none waits on
+another country's load having run. Seeds follow the same rule the other way
+round: the geocoder's country picks among the files that hold a town
+(`regionAt(lat, lng, country)`), so Frankfurt (Oder) is seeded in
+Brandenburg, not Lubuskie. The load reads Geofabrik's index for this (one
+request; `--index <file>` for a copy on disk) and goes red if it cannot.
 
 The index's own country codes are not trusted blind either. On 2026-09-24 it
 gave French Polynesia, Wallis and Futuna, Clipperton, Tokelau and American

@@ -35,7 +35,7 @@ export function likeExactly(name: string): string {
 const same = (a: string, b: string) =>
   a.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim() === b.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
 
-type Row = HeldVenue & { name: string; lat: number | null; lng: number | null; region?: string | null };
+type Row = HeldVenue & { name: string; lat: number | null; lng: number | null; region?: string | null; countries?: string[] | null };
 type ReadError = { code?: string; message?: string } | null;
 
 /**
@@ -64,11 +64,12 @@ export async function heldVenueNear(
   const dLat = miles / 69;
   const dLng = miles / Math.max(1, 69 * Math.cos((at.lat * Math.PI) / 180));
 
-  // `migrated`: gone_at and region, both from sql/world-data-phase1-2026-09-24.sql.
-  const read = (migrated: boolean) => {
+  // `migrated`: gone_at and region, both from sql/world-data-phase1-2026-09-24.sql;
+  // `withCountries`: countries, from sql/venue-countries-2026-09-24.sql.
+  const read = (migrated: boolean, withCountries = false) => {
     let q = db
       .from('discovery_venues')
-      .select(`name, lat, lng, reservation_platform, reservation_url, phone${migrated ? ', region' : ''}`)
+      .select(`name, lat, lng, reservation_platform, reservation_url, phone${migrated ? ', region' : ''}${withCountries ? ', countries' : ''}`)
       .ilike('name', likeExactly(wanted))
       // The weekly map load holds hotels too. A table line is never a
       // hotel's front desk, even when the two share a name.
@@ -79,7 +80,10 @@ export async function heldVenueNear(
     if (migrated) q = q.is('gone_at', null);
     return q.limit(20) as unknown as Promise<{ data: Row[] | null; error: ReadError }>;
   };
-  let { data, error } = await read(true);
+  let { data, error } = await read(true, true);
+  // countries arrives in sql/venue-countries-2026-09-24.sql; before it the
+  // border check reads the region.
+  if (error && (error.code === '42703' || /countries/.test(error.message || ''))) ({ data, error } = await read(true));
   // gone_at and region arrive in sql/world-data-phase1-2026-09-24.sql; before
   // it nothing is gone, and no row has a region (so none is across a border).
   if (error && (error.code === '42703' || /gone_at|region/.test(error.message || ''))) ({ data, error } = await read(false));
@@ -90,7 +94,7 @@ export async function heldVenueNear(
 
   const best = (data ?? [])
     .filter(r => same(String(r.name || ''), wanted) && Number.isFinite(Number(r.lat)) && Number.isFinite(Number(r.lng)))
-    .filter(r => !acrossTheBorder(r.region, opts.country))
+    .filter(r => !acrossTheBorder(r.region, opts.country, r.countries))
     .map(r => ({ r, miles: milesBetween(at.lat, at.lng, Number(r.lat), Number(r.lng)) }))
     .sort((a, b) => a.miles - b.miles)[0]?.r;
   if (!best) return { venue: null, error: null };

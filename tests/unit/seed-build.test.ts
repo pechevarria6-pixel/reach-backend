@@ -3,8 +3,9 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
-  placeSeeds, politeGeocoder, memoFromSeeds, queryKey, NOT_FOUND_DAYS, NOMINATIM_SPACING_MS,
+  placeSeeds, politeGeocoder, memoFromSeeds, unansweredWarning, queryKey, NOT_FOUND_DAYS, NOMINATIM_SPACING_MS,
   type PlaceMemo, type Geocode,
 } from '../../lib/discovery/seed-build.ts';
 import { GeofabrikMap, type GeofabrikIndex } from '../../lib/discovery/geofabrik.ts';
@@ -206,6 +207,7 @@ for (const kind of ['503', 'timeout', 'network', 'garbage'] as const) {
       assert.equal(memo.size, 0);
       assert.equal(out.skipped.length, 0, 'not skipped as unplaceable');
       assert.equal(out.waiting, 1, 'it waits for the next run');
+      assert.deepEqual(out.unanswered, ['Lyon'], 'and is named, so the log can say so');
     }
   });
 }
@@ -233,4 +235,27 @@ test('Nominatim failing three times in a row stops the run, and a success in bet
   for (const town of ['A', 'B', 'C', 'D', 'E', 'F']) { const r = await h.geocode(town, null); got.push(typeof r === 'string' ? r : 'found'); }
   assert.deepEqual(got, ['failed', 'failed', 'found', 'failed', 'failed', 'found']);
   assert.equal(h.stopped(), null);
+});
+
+test('a town Nominatim fails on between successes is named every run, not only when the run stops', async () => {
+  // Durham fails, Raleigh and Richmond answer: three in a row never happens,
+  // so the run never stops, and Durham is remembered nowhere.
+  const g: Geocode = async (q) => (/Durham/.test(q) ? 'failed' : /Raleigh/.test(q) ? at(35.78, -78.64) : at(37.54, -77.44));
+  const out = await placeSeeds({
+    candidates: [plan('Raleigh', 'NC'), plan('Durham', 'NC'), plan('Richmond', 'VA')],
+    memo: new Map(), map, geocode: g, world: [], now: NOW,
+  });
+  assert.deepEqual(out.unanswered, ['Durham']);
+  assert.equal(out.waiting, 1);
+  assert.equal(out.skipped.length, 0);
+  assert.ok(out.seeds.some(s => s.name === 'Raleigh') && out.seeds.some(s => s.name === 'Richmond'));
+
+  // And the job prints them whatever else happened: the warning is not
+  // inside the "stopped asking Nominatim" branch, which this run never reaches.
+  assert.equal(unansweredWarning(out), '::warning::Nominatim did not answer for 1 town, asked again next run: Durham');
+  assert.equal(unansweredWarning({ unanswered: [] }), null);
+  const src = readFileSync(new URL('../../scripts/ingest/build-seeds.mjs', import.meta.url), 'utf8');
+  const warn = src.search(/^const unanswered = unansweredWarning\(placed\);\nif \(unanswered\) console\.log\(unanswered\);$/m);
+  const stoppedBranch = src.indexOf('if (geocoder.stopped()) {');
+  assert.ok(warn > -1 && stoppedBranch > -1 && warn < stoppedBranch, 'printed at the top level, before and outside the stopped branch');
 });
