@@ -20,7 +20,7 @@ import { within } from '@/lib/deadline';
 import { locate } from '@/lib/discovery/geocode';
 import { normalise } from '@/lib/discovery/verify';
 import { withoutStayClaim } from '@/lib/stay-claims';
-import { isFiller, fillerClaim } from '@/lib/filler';
+import { isFiller, fillerClaim, corruptionAt, beforeCorruption } from '@/lib/filler';
 import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
 
 // ─── Models ──────────────────────────────────────────────────────────────
@@ -1025,9 +1025,32 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           if (clean.removed.length) {
             softened++;
             clean.removed.forEach(n => stripped.add(n));
-            slot.plan = clean.text;
+            // Softening works when the name is the object of the sentence,
+            // not its subject: "Dusk session at Wine & Design…" became "a
+            // local spot at Dusk session at Wine & Design…" on a real row.
+            // The tip already had this check; the line itself did not. A
+            // line that would read as nonsense goes, like a filler slot.
+            if (wouldMangle(slot.plan, clean.removed)) {
+              console.error('[trips itinerary] dropped a line softening would have mangled', {
+                destination, removed: clean.removed.slice(0, 3), slot: String(slot.plan).slice(0, 80),
+              });
+              slot.plan = '';
+            } else {
+              slot.plan = clean.text;
+            }
             // A reference to a place we just removed is not a reference.
             slot.place_ref = null;
+          }
+          // Text that came back broken — "…near the pub.morplinsert1" —
+          // is cut back to its last whole sentence, or dropped.
+          if (slot.plan) {
+            const whole = beforeCorruption(String(slot.plan));
+            if (whole !== slot.plan) {
+              console.error('[trips itinerary] cut a line that came back broken', {
+                destination, at: corruptionAt(slot.plan), slot: String(slot.plan).slice(0, 80),
+              });
+              slot.plan = whole ?? '';
+            }
           }
           // A live run returned "http://null" here. It resolves to nothing,
           // so it was harmless, and it is still not a citation — it must not
@@ -1047,6 +1070,13 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           // than mangled — and a tip naming a business was already against
           // the rule that a tip describes a place, not what a business does.
           day.insider_tip = wouldMangle(day.insider_tip, tip.removed) ? '' : tip.text;
+        }
+        // A tip is flavour: broken, it goes.
+        if (day.insider_tip && corruptionAt(day.insider_tip) >= 0) {
+          console.error('[trips itinerary] dropped a tip that came back broken', {
+            destination, tip: String(day.insider_tip).slice(0, 80),
+          });
+          day.insider_tip = '';
         }
       }
       if (softened || stripped.size) {

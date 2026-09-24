@@ -53,3 +53,42 @@ export function fillerClaim(text: unknown): string | null {
 export function isFiller(text: unknown): boolean {
   return fillerClaim(text) !== null;
 }
+
+// ─── Text that came back broken ──────────────────────────────────────────
+// Rows in the table, shown to people as written:
+//   "…before dinner.a the CCAroundRaleigh at your own pace.\n p22"
+//   "…once you've parked near the pub.morplinsert1"
+// Model output that frayed at the edges. Nothing checked for it, because
+// every other check here is about what a sentence claims, not whether it is
+// one. Where it starts, so a line can be cut there or dropped; -1 when clean.
+const ALLOWED_DOTS = /\b(?:e\.g\.|i\.e\.|a\.m\.|p\.m\.|u\.s\.|etc\.|vs\.|approx\.|st\.|dr\.|mt\.|ft\.|no\.)|\b[a-z0-9-]+\.(?:com|org|net|io|co|us|uk|ca|mx|es|fr|de|it|travel|info|biz)\b/gi;
+const BREAKS: RegExp[] = [
+  /[a-z][.!?][a-z]/,                      // "dinner.a", "pub.morplinsert"
+  /\n\s*\S{1,6}\s*$/,                     // a stray "\n p22" at the end
+  /[A-Z]{2,}[A-Z][a-z]+[A-Z]/,            // "CCAroundRaleigh"
+  /\b[a-z]{2,}\d+\b/,                     // "morplinsert1", "p22" glued to letters
+];
+
+export function corruptionAt(text: unknown): number {
+  const raw = String(text ?? '');
+  if (!raw.trim()) return -1;
+  // Blank out what looks like a break but is ordinary: abbreviations, web
+  // addresses. Same length, so positions still line up with the original.
+  const t = raw.replace(ALLOWED_DOTS, m => ' '.repeat(m.length));
+  let at = -1;
+  for (const re of BREAKS) {
+    const m = re.exec(t);
+    if (m && (at < 0 || m.index < at)) at = m.index;
+  }
+  return at;
+}
+
+/** The text up to the last full sentence before the break, or null if there isn't one worth keeping. */
+export function beforeCorruption(text: string): string | null {
+  const at = corruptionAt(text);
+  if (at < 0) return text;
+  const head = text.slice(0, at + 1);
+  const end = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '));
+  const kept = end > 0 ? head.slice(0, end + 1).trim() : '';
+  return kept.length >= 20 ? kept : null;
+}

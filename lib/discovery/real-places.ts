@@ -528,9 +528,12 @@ export function withoutUnverified(
  */
 export function wouldMangle(text: string, removed: string[]): boolean {
   const t = String(text || '').trimStart();
+  // "The Pour House is lively" does not start with "Pour House", and the
+  // article is swallowed with the name — so both are compared bare.
+  const bare = (s: string) => s.replace(/^(?:the|a|an)\s+/i, '');
   return removed.some(name => {
     // The subject of the sentence.
-    if (t.startsWith(name)) return true;
+    if (t.startsWith(name) || bare(t).startsWith(bare(name))) return true;
     // Or a phrase that only makes sense about a place with extent — a
     // street, a trail, a district. "Walk the length of Main Street" became
     // "walk the length of a local spot", which is not a sentence about
