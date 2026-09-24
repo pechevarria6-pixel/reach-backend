@@ -887,13 +887,17 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
       return [];
     }),
     ...live.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)>0&&!solo(p.group)).map(p=>({
+      // No figure here. This showed the plan's budget — an estimate, often
+      // the option's total_per_person — as "$2,268 each" under "Pay →", to
+      // people who might have paid already, before anything was priced.
+      // Checkout says what is owed; this says where to look.
       type:"pay",rank:2,text:`${p.title} is waiting on everyone's share`,
-      sub:`$${p.budget?.toLocaleString?.()||p.budget} each`,plan:p,cta:"Pay →"})),
+      sub:"See what's priced and what's left to pay",plan:p,cta:"Open →"})),
     // Not a trip with no destination: there are no days to write for
     // nowhere, and the server says so if asked.
     ...live.filter(p=>p.status==="planning"&&p.destStyle!=="undecided"&&(p.itinerary?.length||0)===0).map(p=>({
       type:"plan",rank:3,text:`${p.title} has no days yet`,
-      sub:"We can write the whole thing in about 20 seconds",plan:p,cta:"Plan →"})),
+      sub:"Reach writes the days from what was said about it",plan:p,cta:"Plan →"})),
   ].sort((a,b)=>a.rank-b.rank).slice(0,4);
 
   // A trip is named once on this screen.

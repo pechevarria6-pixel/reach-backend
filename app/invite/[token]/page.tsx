@@ -73,7 +73,9 @@ export default function InvitePage({ params }: { params: { token: string } }) {
       const r = await fetch(`/api/invites/${params.token}`, { method: 'POST' });
       const body = await r.json().catch(() => null);
       if (!r.ok) throw new Error(body?.error || 'Could not join that group.');
-      router.push('/home');
+      // Straight to the group they just joined. Plain /home dropped them on
+      // a generic screen whose first thing was somebody else's "Pay".
+      router.push(body?.groupId ? `/home?group=${encodeURIComponent(body.groupId)}` : '/home');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not join that group.');
       setBusy(false);
