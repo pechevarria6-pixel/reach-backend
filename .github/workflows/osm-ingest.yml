@@ -59,8 +59,10 @@ jobs:
             echo "::error::accept_drop needs a region: name the one whose seeds were removed"
             exit 1
           fi
-          if [ -n "$ONLY_REGION" ]; then
-            regions=$(node -e 'process.stdout.write(JSON.stringify([process.env.ONLY_REGION]))')
+          if [ -n "${ONLY_REGION// /}" ]; then
+            # Trimmed: the box is typed by a person, and a trailing space made
+            # "puerto-rico " a region nothing knows.
+            regions=$(node -e 'process.stdout.write(JSON.stringify([process.env.ONLY_REGION.trim()]))')
           else
             regions=$(node scripts/ingest/osm-ingest.mjs --list-regions)
           fi

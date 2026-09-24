@@ -64,7 +64,7 @@ if (flag('list-regions')) {
 }
 
 // ── One region ─────────────────────────────────────────────────────────
-const region = value('region');
+const region = value('region')?.trim() || null;
 if (!region) die('--region is required, e.g. --region north-america/us/north-carolina');
 // Checked against the table, not just for shape: the name reaches a file
 // path and a URL, and a workflow_dispatch input is typed by a person.
