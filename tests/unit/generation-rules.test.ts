@@ -127,3 +127,13 @@ test('a blank country code is no answer, not a wrong one', () => {
   assert.equal(out?.length, 1);
   assert.equal(out?.[0].country_code, null);
 });
+
+test('"before dinner" is not a meal — the real dinner stays', () => {
+  const { day, dropped } = oneMealPerEvening({
+    morning: { plan: 'Start with a pint at Trophy Brewing, a proper pub to ease in before dinner.' },
+    afternoon: { plan: 'Sit-down dinner at Centro, the main event of the evening.' },
+    evening: { plan: 'A show at Meymandi Concert Hall.' },
+  });
+  assert.equal(dropped.length, 0);
+  assert.match((day.afternoon as { plan: string }).plan, /Centro/);
+});

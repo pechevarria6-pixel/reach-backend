@@ -18,7 +18,7 @@
 // "Dinner somewhere near the venue" is a true sentence. "Dinner at El Charro
 // Loco" is not, and we know it is not, because we looked.
 import { today } from '../calendar.ts';
-import { stillToCome } from './when.ts';
+import { stillToCome, onTheDays } from './when.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Seeker } from './types.ts';
 import { locate } from './geocode.ts';
@@ -113,7 +113,7 @@ export async function placesFor(
   // A menu is capped so it can be read; a count must not be, or the number
   // is an artifact of the cap rather than a fact about the town. "10 places
   // to eat verified here" was true of the list and false of the place.
-  opts: { perKind?: number; max?: number } = {},
+  opts: { perKind?: number; max?: number; days?: { from: string; to: string } | null } = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<RealPlace[]> {
   const perKind = opts.perKind ?? PER_KIND;
@@ -237,6 +237,8 @@ export async function placesFor(
           // 2020 offered as what is on this week is the model being handed a
           // false fact, and it will repeat it faithfully.
           if (!stillToCome(e, today())) continue;
+          // And on the plan's own days, when it has them.
+          if (opts.days && !onTheDays(e, opts.days.from, opts.days.to)) continue;
           (p.whatsOn ??= []).push(`${e.title} — ${when}`);
         }
       }

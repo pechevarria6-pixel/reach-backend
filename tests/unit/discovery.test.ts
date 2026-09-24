@@ -362,3 +362,13 @@ test('something coming up, or undated, stays', () => {
   assert.equal(stillToCome({ starts_on: '2026-10-01', when_text: 'Oct 1' }, '2026-09-23'), true);
   assert.equal(stillToCome({ starts_on: null, when_text: 'Ask at the bar' }, '2026-09-23'), true);
 });
+
+import { onTheDays } from '../../lib/discovery/when.ts';
+test('an evening on Oct 2 is not offered a concert on Sep 25', () => {
+  assert.equal(onTheDays({ starts_on: '2026-09-25', when_text: 'Fri. Sep 25, 2026, 8:00 PM' }, '2026-10-02', '2026-10-02'), false);
+  assert.equal(onTheDays({ starts_on: '2026-10-02', when_text: 'Oct 2' }, '2026-10-02', '2026-10-02'), true);
+});
+test('a weekly night counts on its weekday only', () => {
+  assert.equal(onTheDays({ when_text: 'Every Friday' }, '2026-10-02', '2026-10-02'), true);   // a Friday
+  assert.equal(onTheDays({ when_text: 'Every Monday' }, '2026-10-02', '2026-10-02'), false);
+});

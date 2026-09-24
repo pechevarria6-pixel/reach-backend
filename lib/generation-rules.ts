@@ -148,7 +148,11 @@ export function oneMealPerEvening<D extends { morning?: unknown; afternoon?: unk
   const out = { ...day } as Record<string, unknown>;
   for (const k of order) {
     const text = slotText(out[k]);
-    if (!text || !MEAL.test(text)) continue;
+    // A mention is not a meal: "a pint to ease into things before dinner"
+    // is a pub, and counting it made the real dinner look like a second one
+    // and dropped it — seen live the day this rule shipped.
+    const said = text.replace(/\b(?:before|after|pre-?|post-?|ahead of|until|till)\s*(?:the\s+|your\s+)?(?:dinner|supper|lunch|brunch)\b/gi, '');
+    if (!text || !MEAL.test(said)) continue;
     if (!seen) { seen = true; continue; }
     dropped.push(text);
     out[k] = typeof out[k] === 'string' ? '' : { ...(out[k] as object), plan: '' };

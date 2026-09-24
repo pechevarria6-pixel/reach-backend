@@ -118,3 +118,25 @@ export function stillToCome(e: { starts_on?: string | null; when_text?: string |
   if (!e.starts_on) return true;   // undated: nothing says it has gone
   return e.starts_on >= today;
 }
+
+
+/**
+ * Whether an event is on during these days: a dated one inside them, a weekly
+ * one on one of their weekdays. An evening on October 2nd was planned around
+ * a concert on September 25th because the menu offered every upcoming event
+ * at a venue, whatever the plan's date. Undated one-offs say nothing about
+ * these days, so they are not offered as happening on them.
+ */
+export function onTheDays(e: { starts_on?: string | null; when_text?: string | null }, from: string, to: string): boolean {
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  if (!iso.test(from) || !iso.test(to) || to < from) return stillToCome(e, from);
+  const weekly = parseWhen(e.when_text, from).everyWeekdayIndex;
+  if (weekly !== null) {
+    for (let t = Date.parse(`${from}T00:00:00Z`), end = Date.parse(`${to}T00:00:00Z`); t <= end; t += 86400000) {
+      if (new Date(t).getUTCDay() === weekly) return true;
+    }
+    return false;
+  }
+  if (!e.starts_on) return false;
+  return e.starts_on >= from && e.starts_on <= to;
+}

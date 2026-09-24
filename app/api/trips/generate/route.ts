@@ -631,7 +631,9 @@ export async function POST(req: NextRequest) {
     // about a small town, and the prompt says so.
     const realPlaces: RealPlace[] = await placesFor(
       supabase,
-      { city: tripCity || fixedPlace || destination, country: tripCountry ?? null, interests: [...cuisines, ...activityVibes, ...musicGenres] },
+      // For an evening, never the option's title: it is a name, not a place.
+      { city: tripCity || fixedPlace || (isNightPlan ? nightCity : destination), country: tripCountry ?? null, interests: [...cuisines, ...activityVibes, ...musicGenres] },
+      { days: startDate ? { from: String(startDate), to: String(endDate || startDate) } : null },
     ).catch((err) => {
       console.error('[generate] could not read the real places', err instanceof Error ? err.message : 'failed');
       return [];
@@ -872,6 +874,10 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // vouching instead. For a trip the destination IS the town, and stays.
       const vouchers: string[] = [
         isNightPlan ? nightCity : destination, tripCity, fixedPlace, realEvent?.venue, realEvent?.city, realEvent?.title,
+        // What is on at a verified venue, read off its own page, is as
+        // verified as the venue: "R&B Rewind Millennial Edition" was being
+        // softened into "a local spot" though it came from the menu itself.
+        ...realPlaces.flatMap(p => (p.whatsOn ?? []).map(w => w.split(' — ')[0])),
       ].filter((v): v is string => typeof v === 'string' && v.length > 0);
       // ── The ticket, carried through to something you can press ───────
       // The listing gave us a venue, a date and the page that sells the
