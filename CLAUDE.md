@@ -213,11 +213,6 @@ honest itinerary names none — fix it by sweeping, not by loosening the rule.
 
 ## Still open
 
-- `sql/finish-idempotency-2026-09-21.sql` — section 2 only (both `if not
-  exists`, so re-running is harmless). Nothing blocks it: the owner checked
-  MHW2Y3 in Duffel on 2026-09-24 and it is cancelled and refunded, SFYVFK was
-  Duffel's test carrier, and the duplicate check that day found 0 live
-  booking duplicates and 0 contribution duplicates.
 - Harvest coverage is thin: ~8 pages in 20 give anything up, and sites that
   build themselves with scripts are recorded `needs_render` rather than
   guessed at.
