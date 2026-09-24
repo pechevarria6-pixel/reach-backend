@@ -68,6 +68,12 @@ const BROKEN_PROMISES = [
   // nothing where we hold no venues ("We're still mapping …"), and the share
   // page is read by exactly the people most likely to live somewhere unswept.
   'then real places near you',
+  // The Scout's quiz answers and dial. A place is only named here when it has
+  // its own website, so food trucks never appear, and nothing we hold says
+  // when a place opened. Both were promised on screen 4 and on the reveal.
+  'food truck',
+  'opened last month',
+  'new openings',
 ];
 
 /**

@@ -12,6 +12,12 @@
 // or several (lib/traveler-profile.ts scoreQuiz), so a blend already saved
 // still scores.
 //
+// Screen 4's Scout answers say what Discover can show. A place is named only
+// when it has its own website, so a food truck never appears, and nothing we
+// hold says when a place opened — "Food truck someone mentioned once" and
+// "Opened last month" promised both. The stored values ("truck", "new") and
+// their scores are unchanged, so answers already given still score.
+//
 // The screen shape and the tap rules live here rather than in the component
 // so a scripted run can be tested without a browser.
 
@@ -49,8 +55,8 @@ export const QUIZ_SCREENS: QuizScreen[] = [
   {id:"restaurant",field:"restaurant",blend:true,title:"Pick the restaurant.",sub:"Tap one. Hold to pick more.",options:[
     {v:"famous",e:"⭐",l:"5,000 reviews, can't miss"},
     {v:"locals",e:"🏠",l:"Locals' favorite"},
-    {v:"new",e:"✨",l:"Opened last month"},
-    {v:"truck",e:"🚚",l:"Food truck someone mentioned once"},
+    {v:"new",e:"✨",l:"Somewhere I've never heard of"},
+    {v:"truck",e:"🚚",l:"The spot only locals know"},
   ]},
   {id:"late",field:"late",blend:true,title:"It's 11pm on the trip. You're…",sub:"Tap one. Hold to pick more.",options:[
     {v:"asleep",e:"😴",l:"Asleep"},

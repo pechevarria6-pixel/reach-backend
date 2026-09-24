@@ -384,7 +384,7 @@ export function dialsSetBy(answers: QuizAnswers | null | undefined): DialKey[] {
 
 export const DIAL_COPY: Record<DialKey, { label: string; stops: [number, string][] }> = {
   pace: { label: 'Pace', stops: [[0, 'Wing it'], [25, 'Loose outline'], [50, 'Daily plan'], [75, 'Morning to night'], [100, 'Every hour']] },
-  novelty: { label: 'Finds', stops: [[15, 'Tried-and-true'], [50, "Locals' spots"], [80, 'New openings'], [95, "Nobody's heard of it"]] },
+  novelty: { label: 'Finds', stops: [[15, 'Tried-and-true'], [50, "Locals' spots"], [80, 'Off the beaten path'], [95, "Nobody's heard of it"]] },
   energy: { label: 'Nights', stops: [[15, 'Early night'], [45, 'One more drink'], [75, 'Next spot'], [95, 'Sunrise']] },
   crowd: { label: 'Crowd', stops: [[20, 'Small table'], [50, 'Buzzy room'], [80, 'Live show'], [95, 'Packed stadium']] },
 };
