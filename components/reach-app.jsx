@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
 import { namesList } from "@/lib/group-answers";
-import { shownTitle } from "@/lib/trip-vote";
+import { shownTitle, isOrganiser, waitingTripIn } from "@/lib/trip-vote";
 import { itemsFromRows } from "@/lib/contracts/itinerary-item";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
@@ -858,6 +858,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
     ...live.filter(p=>p.status==="voting"&&p.options?.length>0).map(p=>{
       const b=ballot[p.id];
       const go=()=>push("planDetail",{planId:p.id,groupId:p.group.id,initialTab:"vote"});
+      // Picked since the groups were loaded: the vote is over, so the row
+      // says where it went and opens the trip, not a vote that has closed.
+      if(b&&b.decided)return{
+        type:"vote",rank:1,text:`${b.picked||p.title} it is`,
+        sub:`Picked for ${p.group.name} — open it to see the plan`,plan:p,cta:"Open →",
+        go:()=>push("planDetail",{planId:p.id,groupId:p.group.id})};
       // Everyone has voted and it is mine to pick.
       if(b&&!b.decided&&b.mayPick&&b.everyoneVoted)return{
         type:"vote",rank:1,text:`Everyone has voted on ${tripCalled(p)}`,
@@ -4122,7 +4128,7 @@ function DepartureLine({departure,saveDeparture}){
 // the same order — so everybody's answers are about the same thing.
 // `initial` is what this person already said for this trip, to edit rather
 // than redo. `finishLabel` replaces the generate button's words.
-function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known,fixed,initial,finishLabel,finishNote,busy,goalNote}){
+function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,toast,error,onGenerate,allComplete,completedCount,totalCount,isSolo,known,fixed,initial,finishLabel,finishNote,busy,goalNote,taken=null,onOpenTaken,takenNote}){
   const [qStep,setQStep]=useState(0);
   const [startDate,setStartDate]=useState(fixed?.startDate||known?.startDate||"");
   const [endDate,setEndDate]=useState(fixed?.endDate||known?.endDate||"");
@@ -4454,8 +4460,12 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   const quizQ=steps[qStep]?.question;
   const totalSteps=steps.length;
   const isLast=qStep===totalSteps-1;
+  // A group plans one of each kind at a time. The kind already being
+  // decided is said here, where the kind is chosen, with the way to it —
+  // not after every question has been answered for a plan that cannot start.
+  const takenNow=mode?taken?.[isNight?"night":"trip"]||null:null;
   const canNext=isDateStep
-    ?(isNight?!!startDate:(startDate&&endDate&&nights>0))
+    ?(takenNow?false:isNight?!!startDate:(startDate&&endDate&&nights>0))
     // `free` as well as `optional`, matching the taste quiz: a question with
     // nothing to pick from cannot be answered by picking, and a free one
     // that was ever made required would otherwise trap somebody on it.
@@ -4593,7 +4603,24 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
             ))}
           </div>
 
-          {isNight&&(
+          {takenNow&&(
+            <div style={{background:C.amberDim,border:`1px solid ${C.amber}`,borderRadius:14,
+              padding:"12px 14px",marginBottom:16}}>
+              <div style={{fontSize:13,color:C.t1,lineHeight:1.6,marginBottom:10}}>
+                {takenNote?takenNote(takenNow):`${group.name} already has ${isNight?"a night out":"a trip"} being decided.`}
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <button className="bs" style={{flex:1}} onClick={()=>onOpenTaken?.(takenNow)}>Open it</button>
+                {!taken?.[isNight?"trip":"night"]&&(
+                  <button className="bs" style={{flex:1}} onClick={()=>setMode(isNight?"trip":"night")}>
+                    {isNight?"Plan a trip instead":"Plan a night out instead"}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isNight&&!takenNow&&(
             <>
               <div style={{display:"flex",gap:10,marginBottom:12}}>
                 <div style={{flex:1}}>
@@ -4617,7 +4644,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
             </>
           )}
 
-          {mode==="trip"&&(
+          {mode==="trip"&&!takenNow&&(
           <div style={{display:"flex",gap:10,marginBottom:16}}>
             <div style={{flex:1}}>
               <div style={{fontSize:12,color:C.t3,marginBottom:6}}>Departure</div>
@@ -4632,7 +4659,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
             </div>
           </div>
           )}
-          {!isNight&&nights>0&&(
+          {!isNight&&!takenNow&&nights>0&&(
             <div style={{textAlign:"center",padding:"14px",background:C.accentDim,
               border:"1px solid "+C.accentBorder,borderRadius:14,marginBottom:16}}>
               <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.accentText}}>
@@ -5376,6 +5403,65 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
   );
 }
 
+// Calling a plan off: the way out of a plan that is not going to happen.
+//
+// A group plans one trip and one night out at a time, so a plan stuck
+// waiting — one member who never answers, a vote nobody closes — used to
+// hold the whole group, with nothing anybody could press. It is done for
+// everybody, so it is the organiser's (lib/trip-vote.ts, isOrganiser — the
+// server holds the same line). Everyone else is told who can, rather than
+// shown a button that would be refused.
+function CallOffPlan({plan,group,me,um,updatePlanOnServer,updateGroup,toast,onDone}){
+  const [confirming,setConfirming]=useState(false);
+  const [busy,setBusy]=useState(false);
+  if(!plan||!group||isTempId(plan.id))return null;
+  if(plan.status!=="planning"&&plan.status!=="voting")return null;
+  const solo=(group.memberIds||[]).length<=1;
+  const kind=plan.type==="restaurant"?"night out":"trip";
+  const named=plan.title&&plan.title!=="Where next?"?plan.title:`this ${kind}`;
+  if(!solo&&!isOrganiser({role:group.role,createdBy:plan.createdBy,userId:me})){
+    // Said only where a plan can be stuck: still deciding where it goes.
+    if(plan.destStyle!=="undecided")return null;
+    const who=String(um?.[plan.createdBy]?.name||"").trim().split(/\s+/)[0]||"whoever set it up";
+    return(
+      <div style={{fontSize:12,color:C.t3,lineHeight:1.5,marginTop:14,textAlign:"center"}}>
+        If this {kind} isn't going to happen, {who} can call it off.
+      </div>
+    );
+  }
+  const callOff=async()=>{
+    if(busy)return;
+    setBusy(true);
+    try{
+      const ok=await updatePlanOnServer(plan.id,{status:"cancelled"});
+      if(ok!==true)return;
+      updateGroup(group.id,g=>({...g,plans:g.plans.map(p=>p.id===plan.id?{...p,status:"cancelled"}:p)}));
+      toast(`Called off ${named}`);
+      onDone?.();
+    }finally{setBusy(false);setConfirming(false);}
+  };
+  if(!confirming)return(
+    <button className="bs" style={{marginTop:14,color:C.red,borderColor:C.redDim}} onClick={()=>setConfirming(true)}>
+      Call this one off
+    </button>
+  );
+  return(
+    <div style={{marginTop:14,padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14}}>
+      <div style={{fontSize:13,color:C.t1,lineHeight:1.55,marginBottom:10}}>
+        {solo
+          ?`Call off ${named}? It won't go ahead, and you can start another.`
+          :`Call off ${named} for everyone in ${group.name}? We'll tell the others it's off, nobody will need to answer or vote on it, and the group can start another.`}
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button className="bs" style={{flex:1}} disabled={busy} onClick={()=>setConfirming(false)}>Keep it</button>
+        <button className="bs" style={{flex:1,color:C.red,borderColor:C.redDim}} disabled={busy} onClick={callOff}>
+          {busy?"Calling it off…":"Call it off"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // A group trip waits on everybody. The owner's rule: group trip quizzes
 // wait on each other, so that every option is built from everybody's input.
 // So for a group, the organiser's answers do not go straight to the model —
@@ -5383,7 +5469,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
 // same questions, and "Find our trips" opens once they all have. `planId`
 // is that trip, when this screen is opened to wait on it or to find its
 // options. A solo trip has nobody to wait for and works as it always has.
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,refreshGroup,regenerate=false}){
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,um,updatePlanOnServer,refreshGroup,regenerate=false}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
   // it is what the person filled in a moment ago on the way here.
@@ -5501,22 +5587,49 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     findOurTrips(wp,{regenerate:true});
   },[regenerate,group,waitPlanId]);
 
-  // One group trip waits on everyone at a time, and the server refuses a
-  // second. Found before the quiz, not after it: somebody who filled in every
-  // question only to be told there was already one lost all of it.
+  // One trip and one night out wait on everyone at a time, and the server
+  // refuses a second of either — while the one waiting is still on by its
+  // dates (lib/trip-vote.ts, waitingTripIn: the same rule the server reads).
+  // A night out left in "voting" past its date blocks nothing.
+  const waitingOf=kind=>{
+    if(!group)return null;
+    const id=waitingTripIn((group.plans||[]).filter(p=>!isTempId(p.id)).map(p=>({
+      id:p.id,type:p.type||"trip",destination_style:p.destStyle,status:p.status,
+      start_date:p.startDate||null,end_date:p.endDate||null,created_at:p.createdAt||null,
+    })),{type:kind,today:today()});
+    return id?(group.plans||[]).find(p=>p.id===id)||null:null;
+  };
+  // What somebody is told about a plan already being decided: that it is,
+  // and the way out of it — never only "wait", when the wait may be one
+  // member who is never going to answer.
+  // `here`: said on the plan itself, where "call it off" is a button below.
+  const wayOut=(w,here=false)=>{
+    if(isOrganiser({role:group.role,createdBy:w?.createdBy,userId:me}))
+      return here
+        ?"You make the pick once the ideas are in — or call it off below and start another."
+        :"You can open it and pick once the ideas are in — or call it off there and start another.";
+    const who=String(um?.[w?.createdBy]?.name||"").trim().split(/\s+/)[0]||"whoever set it up";
+    return `Once it's picked, or ${who} calls it off, you can start another.`;
+  };
+  const waitingNote=w=>`${group.name} already has a ${w?.type==="restaurant"?"night out":"trip"} being decided. ${wayOut(w)}`;
+  const openWaiting=w=>{
+    setNightOut(w.type==="restaurant");
+    setWaitPlanId(w.id);
+    setStep("wait");
+  };
+
+  // Found before the quiz when nothing can be started: a trip and a night
+  // out both being decided. With only one, the other kind is still open —
+  // the quiz says which is taken where the kind is chosen.
   const checkedWaiting=useRef(false);
   useEffect(()=>{
     if(checkedWaiting.current||planId||step!==0||!group)return;
     if((group.memberIds||[]).length<=1)return;
     checkedWaiting.current=true;
-    const w=(group.plans||[]).find(p=>p.destStyle==="undecided"&&!isTempId(p.id)
-      &&(p.status==="planning"||p.status==="voting"));
-    if(!w)return;
-    const wNight=w.type==="restaurant";
-    setNightOut(wNight);
-    setWaitPlanId(w.id);
-    setStep("wait");
-    toast(`${group.name} already has a ${wNight?"night out":"trip"} being decided — here it is. Once it's picked you can start another.`);
+    const wTrip=waitingOf("trip"), wNight=waitingOf("restaurant");
+    if(!wTrip||!wNight)return;
+    openWaiting(wTrip);
+    toast(`${group.name} already has a trip and a night out being decided — here's the trip. ${wayOut(wTrip,true)}`);
   },[group,planId,step]);
 
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
@@ -5844,7 +5957,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       setNightOut(wNight);
       setWaitPlanId(alreadyWaiting);
       setStep("wait");
-      toast(`${group.name} already has a ${wNight?"night out":"trip"} being decided, so what you just filled in wasn't used — here's that one.`);
+      toast(w
+        ?`${group.name} already has a ${wNight?"night out":"trip"} being decided, so what you just filled in wasn't used — here it is. ${wayOut(w,true)}`
+        :`${group.name} already has a ${wNight?"night out":"trip"} being decided, so what you just filled in wasn't used — here's that one.`);
       return;
     }
     if(!realId||isTempId(realId)){
@@ -6034,6 +6149,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             finishNote={isSolo?undefined:`No trips are found until everyone in ${group.name} has answered these same questions.`}
             goalNote={isSolo?undefined:`What you write here becomes the trip's name, which everyone in ${group.name} sees — and it's in the email asking them to answer. Everything else you answer stays private.`}
             busy={starting}
+            taken={isSolo?null:{trip:waitingOf("trip"),night:waitingOf("restaurant")}}
+            takenNote={waitingNote}
+            onOpenTaken={openWaiting}
             onGenerate={(dates,tripBudget,prefs,extra)=>{
               if(!isSolo){startGroupTrip(dates,tripBudget,prefs,extra);return;}
               setStartDate(dates.start);
@@ -6081,6 +6199,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                 departure={departure} rev={ideasRev} enriching={enriching} enrichFailed={enrichFailed}
                 onRegenerate={()=>findOurTrips(wp,{regenerate:true})}
                 onPicked={()=>push("planDetail",{planId:wp.id,groupId})}/>
+              <div style={{padding:"0 20px"}}>
+                <CallOffPlan plan={wp} group={group} me={me} um={um} updatePlanOnServer={updatePlanOnServer}
+                  updateGroup={updateGroup} toast={toast} onDone={onBack}/>
+              </div>
             </div>
           );
         }
@@ -6187,6 +6309,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                 ?"Anyone in the group can press this."
                 :"Unlocks when everyone's in"}
             </div>
+            <CallOffPlan plan={wp} group={group} me={me} um={um} updatePlanOnServer={updatePlanOnServer}
+              updateGroup={updateGroup} toast={toast} onDone={onBack}/>
           </div>
         );
       })()}
@@ -8214,6 +8338,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
               {plan.status==="voting"&&plan.destStyle!=="undecided"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
+              <CallOffPlan plan={plan} group={group} me={me} um={um} updatePlanOnServer={updatePlanOnServer}
+                updateGroup={updateGroup} toast={toast} onDone={onBack}/>
             </div>
             {(plan.status==="approved"||plan.status==="booked")&&plan.itinerary.length>0
               ?<SignOff step="overview" cta="Overview looks right →" hint="Where, when, who and the days on Book. Next: the budget."/>
@@ -10768,6 +10894,15 @@ export default function ReachApp({realUser,onSignOut}={}){
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         push("checkout",{planId,groupId,returnedIntent,redirectStatus});
+      }
+      // From "<organiser> called off <plan>": the group, where the next one
+      // is started. Only when nothing above has already used the group.
+      if(params.get("group")){
+        const groupId=params.get("group");
+        params.delete("group");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        if(/^[0-9a-f-]{36}$/i.test(groupId))push("groupDetail",{groupId});
       }
     }
   },[]);
