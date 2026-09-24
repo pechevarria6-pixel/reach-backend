@@ -4687,16 +4687,15 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
               </button>
             </div>
           )}
-          <div style={{background:C.s2,border:"1px solid "+C.border,borderRadius:14,padding:14}}>
-            <div style={{fontSize:12,fontWeight:600,color:C.t1,marginBottom:4}}>
-              ✨ AI reads everyone's preferences
+          {/* One line, and it knows who it is talking to. This was a box
+              headed "AI reads everyone's preferences" that read "all 1
+              members'" on a solo trip — and on a night out it sat under the
+              sentence above saying the same thing. */}
+          {!isNight&&(
+            <div style={{background:C.s2,border:"1px solid "+C.border,borderRadius:14,padding:"12px 14px",fontSize:12.5,color:C.t2,lineHeight:1.6}}>
+              We'll use what {isSolo?"you":"everyone"} said about food, music and activities in the taste quiz.
             </div>
-            <div style={{fontSize:12,color:C.t2,lineHeight:1.6}}>
-              {(group.memberIds?.length||0)>1
-                ?`Combines your quiz answers with all ${group.memberIds.length} members' food, music, and activity preferences.`
-                :"Combines these answers with your food, music, and activity preferences."}
-            </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -6323,18 +6322,22 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,textAlign:"center"}}>
           <div style={{fontSize:60,marginBottom:20}}>✨</div>
           <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,marginBottom:12}}>
-            Building trips for {group.name}
+            {/* A solo group is named "Just me"; a night out has no flights. */}
+            {isSolo?(nightOut?"Planning your night":"Planning your trip"):`Planning for ${group.name}`}
           </div>
           <div style={{fontSize:14,color:C.t2,lineHeight:1.8,marginBottom:30,maxWidth:280}}>
-            Reading everyone's food preferences,<br/>
-            music taste, and activity vibes...<br/>
-            Finding flights from {departure?.airport||departure?.city||"your city"},<br/>
-            hotels, restaurants, and experiences...
+            {nightOut
+              ?<>Reading what {isSolo?"you":"everyone"} said,<br/>and finding places for the night…</>
+              :<>Reading what {isSolo?"you":"everyone"} said,<br/>
+                finding flights from {departure?.airport||departure?.city||"your city"},<br/>
+                places to stay, and things to do…</>}
           </div>
           <div style={{width:240,height:4,background:C.s3,borderRadius:2,overflow:"hidden",marginBottom:20}}>
             <div style={{height:"100%",background:"linear-gradient(90deg,"+C.accent+",#C084FC)",borderRadius:2,animation:"loading 1.5s ease-in-out infinite"}}/>
           </div>
-          <div style={{fontSize:12,color:C.t3}}>Usually takes 5-8 seconds</div>
+          {/* "Usually takes 5-8 seconds" was never measured; a real run is
+              closer to half a minute. Nothing is promised. */}
+          <div style={{fontSize:12,color:C.t3}}>This can take a little while.</div>
           <style dangerouslySetInnerHTML={{__html:`@keyframes loading{0%{width:0%}50%{width:100%}100%{width:0%;margin-left:100%}}`}}/>
         </div>
       )}

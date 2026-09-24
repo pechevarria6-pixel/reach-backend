@@ -65,6 +65,9 @@ const CLAIMS_ABOUT_OTHERS = [
   /\beveryone can make it\b/i,
   /\bcollect everyone's\b/i,
   /\beveryone has already\b/i,
+  // "AI reads everyone's preferences" / "Reading everyone's food preferences"
+  // on a solo trip (audit, 2026-09-22).
+  /\beveryone's\s+(?:food |music |activity )?(?:preferences|answers|taste)\b/i,
 ];
 
 /** Anything that means the code knows how many people are involved. */
@@ -75,6 +78,10 @@ const KNOWS_HOW_MANY = /isSolo|isSoloGroup|isAlone|soloMode|solo_mode|\bsolo\b|m
 // A new claim gets reviewed the same way or made solo-aware — it does not get
 // added here to make the check quiet.
 const REVIEWED = [
+  {
+    match: /it waits for everyone's answers before it finds/,
+    why: 'shareAnswerLink, the text a group trip\'s organiser passes on to the others. It is only offered on the wait screen of a group trip (more than one member, destination undecided); a solo trip never waits and never shares this.',
+  },
   {
     match: /Everyone has voted|have voted\. The trip is waiting on the rest|Collect everyone's share/,
     why: 'voting screens. A group of one gets the same flow with the voting UI absent and enable_voting false (reach-app.jsx, "Solo mode is first-class"), so no solo plan ever reaches a vote.',
