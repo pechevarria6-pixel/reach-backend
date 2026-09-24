@@ -11,7 +11,7 @@ into `discovery_venues`, the table the itinerary menu is read from.
 plans / discovery_areas / destination_profiles
         │  scripts/ingest/build-seeds.mjs   (Nominatim, 1 request a second)
         ▼
-ingest_seeds  ── one row per town per Geofabrik region its 100-mile circle touches
+ingest_seeds  ── one row per town per Geofabrik region its 30-mile circle touches
         │  .github/workflows/osm-ingest.yml (Mondays 06:17 UTC, one job per region)
         ▼
 Geofabrik .osm.pbf ─osmium tags-filter─▶ travel kinds with a name and a website
@@ -29,8 +29,12 @@ discovery_venues (upsert on osm_type, osm_id, interest) ──▶ placesFor() me
 Run `sql/world-data-phase1-2026-09-24.sql` in the Supabase SQL editor. It is
 safe to run twice. It adds:
 
-- `ingest_seeds`: the towns, unique on `(lower(name), region)` (kept as a
-  generated `name_key` column so PostgREST can upsert on it);
+- `ingest_seeds`: the towns, unique on `(name_key, region)`. `name_key` is the
+  name with case, accents and spacing folded (`nameKey()` in
+  `lib/discovery/regions.ts`), written by the seed script rather than
+  generated, because `lower(name)` keeps the accent and "Rincón" and "Rincon"
+  would be two rows for one town. `radius_miles` defaults to 30: the menu
+  reads 25 miles nearest first and Discover 15, so nothing reads further;
 - `ingest_runs`: one row per region per run, which is how the job knows when
   the last *good* run started;
 - `discovery_venues.region` and `discovery_venues.gone_at`, plus two partial
@@ -50,6 +54,13 @@ node scripts/ingest/build-seeds.mjs            # dry run: prints every town and 
 node scripts/ingest/build-seeds.mjs --write    # stores them in ingest_seeds
 node scripts/ingest/build-seeds.mjs --only Raleigh --write
 ```
+
+A town is placed the way the menu places it: its name with whatever state was
+typed after it ("Fayetteville, NC"), and the plan's country. Cutting the state
+off put Fayetteville, NC in Arkansas while the menu looked in North Carolina.
+A Discover area (which has a point and no state) joins a town of the same name
+only when it is within fifteen miles of it; otherwise it is a town of its own,
+read around the point where somebody looked.
 
 Each town costs about thirteen Nominatim requests (its centre, eight points on
 its rim and four halfway out, so a town near a state line gets a row in every
@@ -94,8 +105,10 @@ For each region, in its own job (at most two at once, to be polite to
 Geofabrik):
 
 1. Downloads `https://download.geofabrik.de/<region>-latest.osm.pbf`, unless
-   this ISO week's copy is in the Actions cache and its MD5 matches the one
-   Geofabrik publishes. The first bytes must be a PBF header (`OSMHeader`)
+   the copy Geofabrik is serving now is already in the Actions cache. The
+   cache is keyed on Geofabrik's published MD5 (on the ISO week only when it
+   publishes none), so a re-run on a later day, after the nightly rebuild,
+   fetches and keeps the new build rather than restoring a stale one. The first bytes must be a PBF header (`OSMHeader`)
    and the checksum must match, or the job fails.
 2. `osmium tags-filter`, three passes: the travel kinds (built from the same
    selectors the sweep sends to Overpass — `tagsFor()` in
@@ -123,7 +136,13 @@ Geofabrik):
 The job exits non-zero if **any** row failed to store, if the download was not
 a PBF, if osmium failed, or if the run kept too little. Read the log, not the
 green tick: every run prints `kept N places as M rows; F failed; R marked
-gone`, the skip reasons, and a count per seed.
+gone`, the skip reasons, and how many seeds kept nothing.
+
+Seed **names** are not printed. The Actions log is public, and a seed is a
+town somebody put in a private plan or opened Discover in — a small town's
+name beside a count points at a person's trip. The count per seed is in
+`ingest_runs.per_seed`, which only the service role can read; on your own
+machine, `--names` prints it.
 
 To try the script without a download or a database:
 
@@ -136,7 +155,11 @@ node scripts/ingest/osm-ingest.mjs --region north-america/us/north-carolina \
 ## When a place has gone
 
 A venue is marked `gone_at` when it was last seen before the start of the
-previous good run — that is, neither last week's run nor this week's saw it —
+previous good run from an earlier download — the latest good run that started
+at least six days before this one. That is, neither last week's run nor this
+week's saw it. A second run in the same week ("Re-run all jobs", or a
+dispatch with the region left empty) reads the same extract, so it is not a
+second miss and measures from last week, not from this morning —
 and only inside a circle this run actually read. Rows are never deleted:
 events and bookings point at them. A place that comes back has `gone_at`
 cleared by the next upsert. Rows the sweep wrote and the load never has
@@ -147,9 +170,21 @@ of what the last good run kept — a truncated download looks exactly like most
 of a state closing. Such a run is recorded as `failed` and does not count as
 "the last good run" next week.
 
+**A region that honestly holds nothing.** A seed's circle that only grazes a
+neighbouring state gets that state's file read, and keeping nothing from it
+is the right answer. A run that keeps nothing is recorded as good when the
+last good run also kept nothing (or there was none), and retires nothing.
+Nothing kept after a run that kept something is a broken download and fails,
+with or without *accept_drop*: a region whose seeds were all removed is not
+run at all. Nothing is retired on the word of a run whose previous good run
+kept nothing, because that run is no evidence of what was there.
+
 **A run that keeps too little on purpose.** After deliberately removing or
 shrinking seeds, the next run will keep less and fail that check. Run it once
-from *Run workflow* with *accept_drop* ticked.
+from *Run workflow* with *accept_drop* ticked **and that one region named**.
+The workflow refuses *accept_drop* with the region left empty: it would switch
+the check off for every region, and one that lost most of its extract upstream
+that week would be recorded as good.
 
 ## How the menu uses it
 
@@ -164,9 +199,20 @@ Each place carries `street` and `hours` (the map's `opening_hours`). The menu
 prints them as `hours per OpenStreetMap: …` and tells the model they are
 volunteers' notes, never to be stated as certain. A place is dropped only when
 the plan has dates **and** the hours parse **and** they say closed for the
-whole evening (a single-date night out) or the whole day (anything else) on
+whole evening (food, drink and shows on a night out) or the whole day
+(anything else, including a day trip on a single date, which needs lunch) on
 every day of the plan. No hours, hours that do not parse, `unknown`, or a
 holiday rule we cannot place all keep it.
+
+## What it does to the harvester
+
+The load adds places the harvester (`/api/discovery/harvest`, twenty venues a
+night) has never read — thousands, the first week. The harvester used to take
+never-read venues first, so they would all have gone ahead of the venues due a
+re-read, and the listings people see today would have gone stale (four weeks)
+behind them. Each night is now shared: up to half re-reads, the rest
+never-read, and a share one side cannot use goes to the other
+(`lib/discovery/harvest-queue.ts`). Venues marked `gone_at` are not read.
 
 ## Licences and obligations
 
@@ -188,8 +234,9 @@ contributors under the Open Database Licence.
   should stay distinguishable, which the `source` column already does.
 
 **Geofabrik** extracts are free and carry the same ODbL terms. Their only ask
-is not to hammer the server: the job downloads each region at most once a week
-(cached, checksum-verified) and never more than two at once.
+is not to hammer the server: the job downloads each region at most once per
+Geofabrik build (cached under the build's checksum, and verified against it)
+and never more than two at once.
 
 **Nominatim** (seed building only): at most one request a second, with an
 identifying User-Agent, and no bulk geocoding. The seed list is a few dozen

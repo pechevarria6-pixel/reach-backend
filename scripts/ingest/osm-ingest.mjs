@@ -19,7 +19,9 @@
 //       no download, no osmium, no database: a fixture run
 //
 // Other flags: --pbf-dir <dir> (where downloads are kept; default .pbf),
-// --pbf <file> (a download already on disk), --accept-drop (see docs/INGEST.md).
+// --pbf <file> (a download already on disk), --accept-drop (see docs/INGEST.md),
+// --names (print seed names and per-seed counts; never in the public Actions log),
+// --published-md5 (print Geofabrik's current checksum for --region and exit).
 //
 // Exits non-zero on anything that did not work: a download that is not a
 // PBF, an osmium failure, a single venue that did not store. A summary that
@@ -68,6 +70,17 @@ if (!region) die('--region is required, e.g. --region north-america/us/north-car
 // path and a URL, and a workflow_dispatch input is typed by a person.
 if (!knownRegions().includes(region)) die(`"${region}" is not a region lib/discovery/regions.ts knows`);
 
+// ── --published-md5 ────────────────────────────────────────────────────
+// The checksum of the extract Geofabrik serves right now, or "none". The
+// workflow keys its download cache on it: Geofabrik rebuilds every night, so
+// a cache keyed on the week restored Monday's file on Tuesday, failed the
+// checksum, downloaded it again and never kept the new copy. Keyed on the
+// file itself, a restored copy is always the one being served.
+if (flag('published-md5')) {
+  process.stdout.write((await publishedMd5(geofabrikUrl(region))) ?? 'none');
+  process.exit(0);
+}
+
 const dryRun = flag('dry-run');
 const featuresFile = value('features');
 const seedsFile = value('seeds');
@@ -83,7 +96,13 @@ if (seedsFile) {
   seeds = data ?? [];
 }
 if (!seeds.length) die(`no seeds in ${region} — run scripts/ingest/build-seeds.mjs --write first`);
-console.log(`${region}: ${seeds.length} seeds (${seeds.map(s => s.name).join(', ')})`);
+// Counts, not names. The Actions log is public, and a seed is a town
+// somebody put in a private plan or opened Discover in: a small town's name
+// beside a count points at a person's trip. The names and counts per seed
+// are in ingest_runs.per_seed, which only the service role can read.
+// --names prints them, for a run on your own machine.
+const showNames = flag('names');
+console.log(`${region}: ${seeds.length} seeds${showNames ? ` (${seeds.map(s => s.name).join(', ')})` : ''}`);
 
 // Before a download that can take minutes: can this run be recorded at all?
 if (db && !dryRun) {
@@ -114,6 +133,7 @@ function headOf(path, n = 32) {
 }
 
 /** Geofabrik's published checksum for the file, or null when it would not say. */
+// A function declaration, so --published-md5 above can call it before this line.
 async function publishedMd5(url) {
   try {
     const res = await fetch(`${url}.md5`, { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(30_000) });
@@ -254,8 +274,12 @@ const skipped = Object.entries(report.skipped).map(([k, n]) => `${k} ${n}`).join
 console.log(`\n${region}${dryRun ? ' (dry run — nothing written)' : ''}`);
 console.log(`  kept ${report.kept} places as ${report.written} rows; ${report.failed} failed; ${report.retired} marked gone`);
 console.log(`  skipped: ${skipped}`);
-console.log('  per seed:');
-for (const s of seeds) console.log(`    ${s.name}: ${report.perSeed[s.name] ?? 0}`);
+const perSeed = seeds.map(s => report.perSeed[s.name] ?? 0);
+console.log(`  seeds that kept nothing: ${perSeed.filter(n => n === 0).length} of ${seeds.length}`);
+if (showNames) {
+  console.log('  per seed:');
+  for (const s of seeds) console.log(`    ${s.name}: ${report.perSeed[s.name] ?? 0}`);
+}
 if (report.problems.length) {
   console.log('  problems:');
   for (const p of report.problems.slice(0, 50)) console.log(`    ${p}`);

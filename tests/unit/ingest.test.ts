@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   interestsFor, osmiumFilters, rowsFor, dedupeRows, shapeBatches, goneVenues,
-  trustworthyRun, looksLikePbf, countPerSeed, ingestRegion,
+  trustworthyRun, looksLikePbf, countPerSeed, ingestRegion, earlierDownloadBefore, runVerdict, seedsCovering,
   type MapFeature, type IngestDb, type DbResult,
 } from '../../lib/discovery/ingest.ts';
 import { mappableKinds, kindFor, QUIZ_CUISINES } from '../../lib/discovery/taste.ts';
@@ -14,7 +14,7 @@ import { matchesSelector, tagsFor } from '../../lib/discovery/osm.ts';
 import type { Seed } from '../../lib/discovery/regions.ts';
 
 const REGION = 'north-america/us/north-carolina';
-const RALEIGH: Seed = { name: 'Raleigh', lat: 35.7796, lng: -78.6382, region: REGION, radius_miles: 100, source: 'plan' };
+const RALEIGH: Seed = { name: 'Raleigh', lat: 35.7796, lng: -78.6382, region: REGION, radius_miles: 30, source: 'plan' };
 const SEEN = '2026-09-28T06:17:00.000Z';
 
 const feature = (id: number, tags: Record<string, string>, at: [number, number] = [-78.639, 35.779], type = 'node'): MapFeature => ({
@@ -221,7 +221,9 @@ function fakeDb(opts: { venues?: Venue[]; runs?: Venue[]; failName?: string } = 
   const db: IngestDb = {
     async get(path) {
       if (path.startsWith('ingest_runs')) {
-        const good = runs.filter(r => r.status === 'ok').sort((a, b) => b.started_at.localeCompare(a.started_at));
+        const cut = /started_at=lt\.([^&]+)/.exec(path);
+        const before = cut ? decodeURIComponent(cut[1]) : null;
+        const good = runs.filter(r => r.status === 'ok' && (!before || r.started_at < before)).sort((a, b) => b.started_at.localeCompare(a.started_at));
         return ok(good.slice(0, 1));
       }
       if (path.startsWith('discovery_venues')) {
@@ -333,4 +335,67 @@ test('a download that lost most of the state retires nothing and is not counted 
   assert.equal(report.retired, 0);
   assert.equal(venues[0].gone_at, null);
   assert.equal(runs.find(r => r.id !== 'r0')!.status, 'failed');
+});
+
+test('a re-run on the same week\'s download does not count as a second miss', async () => {
+  // Monday's run at 06:17 kept everything but Corner Pub, which a mapper had
+  // mid-edit. Its last sighting is last Monday's run. "Re-run all jobs" at
+  // noon reads the same cached extract: measuring from this morning would
+  // retire it on one download.
+  const lastWeek = '2026-09-21T06:17:00.000Z';
+  const thisMorning = SEEN;
+  const noon = '2026-09-28T12:00:00.000Z';
+  const venues = [
+    { id: 'pub', osm_type: 'node', osm_id: 900, interest: 'pubs', region: REGION, lat: 35.78, lng: -78.64, last_seen_at: lastWeek, gone_at: null },
+  ];
+  const { db } = fakeDb({ venues, runs: [
+    { id: 'r0', region: REGION, started_at: lastWeek, status: 'ok', kept: 4 },
+    { id: 'r1', region: REGION, started_at: thisMorning, status: 'ok', kept: 4 },
+  ] });
+  const report = await ingestRegion({ db, region: REGION, seeds: seedsFixture(), features: fixture(), now: new Date(noon), log: () => {} });
+  assert.equal(report.ok, true, report.problems.join('\n'));
+  assert.equal(report.retired, 0);
+  assert.equal(venues[0].gone_at, null);
+
+  // Next Monday it is still missing: two downloads, and it goes.
+  const nextWeek = '2026-10-05T06:17:00.000Z';
+  const again = await ingestRegion({ db, region: REGION, seeds: seedsFixture(), features: fixture(), now: new Date(nextWeek), log: () => {} });
+  assert.equal(again.retired, 1);
+  assert.equal(venues[0].gone_at, nextWeek);
+});
+
+test('the earlier download is the good run at least six days back', () => {
+  assert.equal(earlierDownloadBefore('2026-09-28T06:17:00.000Z'), '2026-09-22T06:17:00.000Z');
+});
+
+test('a region whose circles only graze it keeps nothing, and that is a good run', async () => {
+  // Read because a seed's circle crosses the border; nothing in it is inside.
+  const { db, runs } = fakeDb();
+  const far: Seed = { ...RALEIGH, name: 'Border Town', lat: 30, lng: -90 };
+  const first = await ingestRegion({ db, region: REGION, seeds: [far], features: fixture(), now: new Date('2026-09-21T06:17:00.000Z'), log: () => {} });
+  assert.equal(first.ok, true, first.problems.join('\n'));
+  assert.equal(first.kept, 0);
+  assert.equal(runs[0].status, 'ok');
+  const second = await ingestRegion({ db, region: REGION, seeds: [far], features: fixture(), now: new Date(SEEN), log: () => {} });
+  assert.equal(second.ok, true, 'and again the next week, rather than red every Monday');
+  assert.equal(second.retired, 0);
+});
+
+test('nothing kept after a run that kept something is a broken download, whatever --accept-drop says', () => {
+  assert.deepEqual(runVerdict(0, null), { good: true, mayRetire: false });
+  assert.deepEqual(runVerdict(0, 0), { good: true, mayRetire: false });
+  assert.deepEqual(runVerdict(0, 400), { good: false, mayRetire: false });
+  assert.deepEqual(runVerdict(0, 400, true), { good: false, mayRetire: false });
+  assert.deepEqual(runVerdict(300, 400), { good: true, mayRetire: true });
+  assert.deepEqual(runVerdict(100, 400), { good: false, mayRetire: false });
+  assert.deepEqual(runVerdict(100, 400, true), { good: true, mayRetire: true });
+  // A good run that saw nothing is no evidence of what was there.
+  assert.deepEqual(runVerdict(50, 0), { good: true, mayRetire: false });
+});
+
+test('the circle a seed is read around is thirty miles unless the row says otherwise', () => {
+  const noRadius: Seed = { name: 'Raleigh', lat: 35.7796, lng: -78.6382, region: REGION, source: 'plan' };
+  const north = (miles: number) => ({ lat: 35.7796 + miles / 69, lng: -78.6382 });
+  assert.equal(seedsCovering(north(29), [noRadius]).length, 1);
+  assert.equal(seedsCovering(north(31), [noRadius]).length, 0);
 });

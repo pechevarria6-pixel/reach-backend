@@ -18,7 +18,7 @@ import { mappableKinds, kindFor, QUIZ_CUISINES } from './taste.ts';
 import { canTurnUp } from './rules.ts';
 import { dialable } from './phone.ts';
 import { milesBetween } from './cache.ts';
-import type { Seed } from './regions.ts';
+import { SEED_RADIUS_MILES, type Seed } from './regions.ts';
 
 type Tags = Record<string, string>;
 
@@ -116,7 +116,7 @@ export function featureCentre(geometry: MapFeature['geometry']): { lat: number; 
 
 /** The seeds whose circle this point is inside. */
 export function seedsCovering(at: { lat: number; lng: number }, seeds: Seed[]): Seed[] {
-  return seeds.filter(s => milesBetween(s.lat, s.lng, at.lat, at.lng) <= (s.radius_miles ?? 100));
+  return seeds.filter(s => milesBetween(s.lat, s.lng, at.lat, at.lng) <= (s.radius_miles ?? SEED_RADIUS_MILES));
 }
 
 export interface VenueRow {
@@ -275,7 +275,8 @@ export interface HeldVenue {
  * The venues to mark gone after a good run.
  *
  * Gone means: not in this week's download and not in last week's either —
- * its last sighting is older than the start of the previous good run. One
+ * its last sighting is older than the start of the previous good run from
+ * an earlier download (see earlierDownloadBefore). One
  * missed week is a mapper mid-edit or a flaky extract, and the place stays.
  *
  * And only inside a circle this run actually read. A seed that was removed
@@ -297,6 +298,24 @@ export function goneVenues(held: HeldVenue[], previousRunStartedAt: string | nul
 }
 
 /**
+ * How old a good run must be to count as a different download.
+ *
+ * Retiring needs two downloads that missed a place, not two runs. A re-run
+ * of a region that already succeeded this week — "Re-run all jobs" after
+ * another region failed, or a dispatch with the region left empty — reads
+ * the same cached extract, and measuring from this morning's run would count
+ * one missed download as two. The load is weekly, so the previous download
+ * is the good run that started at least six days before this one; a day's
+ * slack covers a late cron.
+ */
+export const PREVIOUS_DOWNLOAD_MIN_DAYS = 6;
+
+/** The instant a good run must have started before to be an earlier download than this one. */
+export function earlierDownloadBefore(startedAt: string): string {
+  return new Date(Date.parse(startedAt) - PREVIOUS_DOWNLOAD_MIN_DAYS * 86400_000).toISOString();
+}
+
+/**
  * Whether this run is healthy enough to retire anything on its word.
  *
  * A truncated download, a Geofabrik hiccup or an osmium flag gone wrong all
@@ -308,6 +327,34 @@ export function trustworthyRun(keptNow: number, keptLastTime: number | null): bo
   if (keptNow <= 0) return false;
   if (!keptLastTime) return true;
   return keptNow >= keptLastTime * 0.5;
+}
+
+/**
+ * What a run's count means: whether it is recorded as good, and whether
+ * anything may be retired on its word.
+ *
+ * A region can honestly hold nothing. A seed's circle that only grazes a
+ * neighbouring state gets that state's file read, and keeping nothing from
+ * it is the right answer — which used to fail the run every week: a red
+ * workflow each Monday, the download repeated, the seeds never stamped. So
+ * nothing kept, where the last good run also kept nothing (or there was
+ * none), is good. Nothing kept after a run that kept something is still a
+ * broken download, --accept-drop or not: a region whose seeds were all
+ * removed is not run at all, so a region that is run and keeps nothing has
+ * lost its extract, not its towns.
+ *
+ * Retiring needs the run before to have seen something. A good run that
+ * kept nothing is no evidence of what was there, and counting it as the
+ * first of two misses would retire places on one download.
+ */
+export function runVerdict(
+  keptNow: number,
+  keptLastTime: number | null,
+  acceptDrop = false,
+): { good: boolean; mayRetire: boolean } {
+  if (keptNow <= 0) return { good: !keptLastTime, mayRetire: false };
+  const good = acceptDrop || trustworthyRun(keptNow, keptLastTime);
+  return { good, mayRetire: good && !!keptLastTime };
 }
 
 /**
@@ -428,11 +475,13 @@ export async function ingestRegion(input: {
   };
   const fail = (why: string) => { report.problems.push(why); log(`  ✗ ${why}`); return report; };
 
-  // 1. The last good run, and this one's row.
+  // 1. The last good run from an earlier download, and this one's row. Not
+  // simply the newest good run: a same-week re-run read the same extract,
+  // and it would make one missed download look like two.
   let previous: { started_at: string; kept: number | null } | null = null;
   let runId: string | null = null;
   if (db) {
-    const prev = await db.get(`ingest_runs?select=started_at,kept&region=eq.${enc(region)}&status=eq.ok&order=started_at.desc&limit=1`);
+    const prev = await db.get(`ingest_runs?select=started_at,kept&region=eq.${enc(region)}&status=eq.ok&started_at=lt.${enc(earlierDownloadBefore(startedAt))}&order=started_at.desc&limit=1`);
     if (prev.error) return fail(`could not read the last run: ${describe(prev.error)}`);
     previous = prev.data?.[0] ?? null;
     const run = await db.insert('ingest_runs', { region, started_at: startedAt, status: 'running' });
@@ -487,8 +536,12 @@ export async function ingestRegion(input: {
   // so it is never "the last good run" whose start next week's run measures
   // from. A broken download recorded as good would make one real miss look
   // like two.
-  const believable = input.acceptDrop ? report.kept > 0 : trustworthyRun(report.kept, previous?.kept ?? null);
-  report.trusted = report.failed === 0 && believable;
+  const verdict = runVerdict(report.kept, previous?.kept ?? null, !!input.acceptDrop);
+  const believable = verdict.good;
+  report.trusted = report.failed === 0 && verdict.mayRetire;
+  if (believable && report.kept === 0) {
+    log('  kept nothing inside the seed circles, as last time — recorded as good, nothing retired');
+  }
   if (!believable) {
     fail(`kept ${report.kept} places against ${previous?.kept ?? 0} last time — a broken download looks like this, so nothing is retired and the run is not counted as good`);
   }
