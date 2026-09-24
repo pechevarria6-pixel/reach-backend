@@ -9,6 +9,7 @@ import {
   parseModelJSON, textOf, normalizeTrips, dropFillerDays,
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
+import { withoutVetoed } from '@/lib/vetoes';
 import { planReadiness } from '@/lib/plan-readiness';
 import {
   readGroupAnswers, answersBlock, standingWishesBlock, groupFraming, attributes, nightPrefsFrom,
@@ -1260,6 +1261,20 @@ you have made up; a day that is simply a good day is allowed to be one.`;
               destination, plan: detailTripId ?? null, dropped: dropped.map(d => d.slice(0, 60)),
             });
             days[i] = day;
+          }
+        }
+      }
+      // A veto is absolute, and the prompt saying so is only half of it
+      // (lib/vetoes.ts): whatever came back is read against what anybody
+      // going said they will not do, and a line that breaks it goes.
+      if (allVetoesHere.length) {
+        for (let i = 0; i < days.length; i++) {
+          const { day, dropped } = withoutVetoed(days[i] as Parameters<typeof withoutVetoed>[0], allVetoesHere);
+          if (dropped.length) {
+            console.error('[trips itinerary] dropped lines that broke a veto', {
+              destination, plan: detailTripId ?? null, dropped: dropped.map(d => `${d.veto}: ${d.text.slice(0, 60)}`),
+            });
+            days[i] = day as typeof days[number];
           }
         }
       }
