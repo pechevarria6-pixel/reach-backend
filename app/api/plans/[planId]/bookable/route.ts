@@ -362,8 +362,13 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
           planId: params.planId, code: paidErr?.code ?? 'members or skips',
         });
       } else if (!paid?.length) {
+        // Named by the line each belongs to: the stored request carries no
+        // title, and checkout printed "an item — This was priced for 1
+        // person…" under "Not ready to pay yet".
+        const lineTitle = (id: unknown) => (items as Item[]).find(i => i.id === id)?.title;
         requests.push(...repricing<BookingItemRequest & { itineraryItemId: string; title: string }>(
-          proposals, { ...going, paid: false }));
+          proposals, { ...going, paid: false })
+          .map(r => ({ ...r, title: r.title || lineTitle(r.itineraryItemId) || (r.vertical === 'hotel' ? 'The hotel' : 'The flight') })));
       }
     }
   }
@@ -560,7 +565,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   // Stamp each new row with the line it came from, so the next open of
   // checkout knows it is already there.
-  const results: { status?: string; error?: string; itineraryItemId?: string }[] = body.results ?? [];
+  const results: { status?: string; error?: string; itineraryItemId?: string; repriced?: boolean }[] = body.results ?? [];
   const failed = results.filter(r => r.status === 'failed');
 
   const { data: fresh } = await ctx.db
@@ -577,8 +582,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     if (error) console.error('[bookable] could not link a booking to its itinerary line', { booking: row.id, error: error.message });
   }
 
+  // A booking priced again in place for a new headcount is not a new one.
+  const repriced = results.filter(r => r.status !== 'failed' && (r as { repriced?: boolean }).repriced).length;
   return NextResponse.json({
-    created: results.length - failed.length,
+    created: results.length - failed.length - repriced,
+    repriced,
     failed: failed.length,
     // Named, because a line that could not be quoted is a line somebody is
     // about to pay for and will not receive.

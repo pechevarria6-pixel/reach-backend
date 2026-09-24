@@ -7,6 +7,13 @@
 // POST { reprice: true } → the same choice, priced again for who is going
 //        now: how a quote refused as `stale_quotes` or `party_changed`, or
 //        priced by a provider Reach no longer books through, is put right.
+//        Never once anybody has paid (409 code 'paid'): a trip is not priced
+//        again for a different headcount under money paid against it —
+//        the same rule /bookable and /api/bookings keep (lib/booking/reprice.ts).
+//
+// Choosing a different hotel or flight ({ key }) is allowed after a payment.
+// It is somebody deciding to change it, not the total moving on its own, and
+// checkout then shows what that means: more to pay, or money to take back.
 //
 // Reach picks a hotel and a flight so nobody has to; nobody has to keep
 // them either. A change is only offered while it is a quote — nothing has
@@ -26,6 +33,7 @@ import { atVersion, changeRefusal } from '@/lib/booking/claim';
 import { travellersFor } from '@/lib/essentials-server';
 import { airlineOnly } from '@/lib/booking/approval';
 import { airlineHandoff } from '@/lib/booking/duffel-map';
+import { pinQuoted } from '@/lib/booking/pin';
 
 /**
  * The request sized for who is on this booking now, not who was when it was
@@ -98,6 +106,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const refused = changeRefusal(booking);
   if (refused) return NextResponse.json({ error: refused }, { status: 409 });
 
+  if (!parsed.data.key) {
+    // Priced again for a new headcount: never once anybody has paid, and a
+    // payment that cannot be checked counts as one.
+    const { data: paid, error: paidErr } = await ctx.db.from('contributions')
+      .select('id').eq('plan_id', booking.plan_id).eq('status', 'succeeded').limit(1);
+    if (paidErr) console.error('[options] could not check payments before re-pricing', { id: params.id, code: paidErr.code });
+    if (paidErr || paid?.length) {
+      return NextResponse.json({
+        code: 'paid',
+        error: `Somebody has already paid towards this trip, so it isn't priced again for a different number of people — what they paid against stays as it is. To change it, pick a different ${booking.vertical === 'hotel' ? 'hotel' : 'flight'} from the options. Nothing was changed.`,
+      }, { status: 409 });
+    }
+  }
+
   const request = await sizedNow(ctx.db, ctx.plan, booking);
   if (!request) {
     console.error('[options] could not read who is going', { id: params.id });
@@ -105,14 +127,23 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
   // `reprice` keeps the choice as it is — the same hotel, the same flights
   // — and only prices it again. A hotel or flight priced before either was
-  // pinned has nothing to keep, and is priced afresh.
+  // pinned has nothing to keep: pricing it "again" took whichever came first,
+  // a different hotel or flight under the same line. Somebody picks one.
   const key = parsed.data.key
     ?? (booking.vertical === 'hotel' ? request.hotel?.hotelId : request.flight?.offerKey)
     ?? undefined;
+  if (!key) {
+    return NextResponse.json({
+      code: 'pick',
+      error: `We didn't keep which ${booking.vertical === 'hotel' ? 'hotel' : 'flights'} this was when it was priced, so it can't be priced again as the same one. Pick one from the options. Nothing was changed.`,
+    }, { status: 409 });
+  }
   if (booking.vertical === 'hotel' && request.hotel) {
     request.hotel = { ...request.hotel, hotelId: key, rateId: undefined };
   } else if (booking.vertical === 'flight' && request.flight) {
-    request.flight = { ...request.flight, offerKey: key };
+    // Terms from the fare that was there before are not this quote's: the
+    // new ones are pinned from what comes back.
+    request.flight = { ...request.flight, offerKey: key, fareTerms: undefined };
   } else {
     return NextResponse.json({ error: 'This booking has nothing to change.' }, { status: 400 });
   }
@@ -143,7 +174,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // Taken only on the row as it was read: an approval that claimed it in the
   // meantime, or another change, wins, and this one is refused.
   const { data: updated, error } = await atVersion(ctx.db.from('bookings').update({
-    request_payload: request,
+    // Pinned to the fare just priced (lib/booking/pin.ts): approval buys
+    // these flights on these terms, or refuses them as unavailable.
+    request_payload: pinQuoted(request as unknown as Record<string, unknown>, booking.vertical, result.raw),
     response_payload: result.raw ?? null,
     // Whoever priced it now is who books it: a flight priced by Kiwi and
     // picked again here is Duffel's from now on, which is what lets

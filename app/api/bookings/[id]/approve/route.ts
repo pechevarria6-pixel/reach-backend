@@ -52,6 +52,7 @@ import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 import { sendBookingConfirmation } from '@/lib/email';
 import { track } from '@/lib/track';
 import { reportPaidFailure } from '@/lib/paid-failure';
+import { shownTerms } from '@/lib/booking/pin';
 import { withClaims, isMissingTable, type ContributionRow, type RefundClaim } from '@/lib/refunds';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
@@ -256,6 +257,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
     if (fresh.status === 'failed' || !fresh.priceCents) {
       return unavailable(fresh.error || 'This is no longer on sale at any price we can read.');
+    }
+    // The terms shown before anybody paid are the terms bought. A flight's
+    // fare is pinned already (lib/booking/pin.ts) and its quote refuses any
+    // other; a hotel books the first rate the hotel offers now, and a room
+    // shown as refundable must not quietly become one that is not. Rows
+    // priced before pinning are held to what they showed the same way.
+    const shown = shownTerms(vertical, booking.response_payload);
+    if (shown && shownTerms(vertical, fresh.raw) !== shown) {
+      return unavailable(vertical === 'hotel'
+        ? "That room is no longer offered on the cancellation terms you were shown, so nothing was booked. Pick it again or another hotel from the options."
+        : 'That fare is no longer on sale on the terms you were shown, so nothing was booked. Pick another from the options.');
     }
     if (vertical === 'hotel') {
       const hotelId = (fresh.raw as { hotelId?: string } | undefined)?.hotelId;

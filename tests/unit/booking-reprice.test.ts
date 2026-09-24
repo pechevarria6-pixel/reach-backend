@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readParty, settle, restated, writeRepriced, staleRows, expectedFor } from '../../lib/booking/reprice.ts';
+import { readParty, settle, restated, writeRepriced, staleRows, expectedFor, unpinnedHotel } from '../../lib/booking/reprice.ts';
 import { partyChange } from '../../lib/booking/party.ts';
 import { beforeJoining, afterJoining } from '../../lib/joining.ts';
 import { partySize } from '../../lib/participation.ts';
@@ -239,14 +239,69 @@ test('an approval that claimed the row meanwhile wins: nothing is written over i
   assert.equal(second.writes.length, 0);
 });
 
-test('a hotel priced before hotels were pinned is pinned to the one this price is for', async () => {
+test('a hotel that never kept which hotel it was is not priced again as whichever comes first', async () => {
   const req = hotelReq(1, { hotel: { city: 'Puerto Vallarta', checkin: '2026-11-02', checkout: '2026-11-09', rooms: 1 } });
   const tables = joined([booking('h', 'awaiting_approval', req)]);
-  const { db } = makeDb(tables);
-  await writeRepriced(db, tables.bookings[0], restated(tables.bookings[0], 3),
+  const { db, writes } = makeDb(tables);
+  const out = await writeRepriced(db, tables.bookings[0], restated(tables.bookings[0], 3),
     quote(90000, { vertical: 'hotel', provider: 'liteapi', raw: { hotelId: 'lpNEW', hotel: { name: 'Hotel Rio' } } }), unpaid);
-  assert.equal(tables.bookings[0].request_payload.hotel.hotelId, 'lpNEW');
-  assert.equal(tables.bookings[0].request_payload.hotel.rooms, 2, 'three people, two rooms');
+  assert.equal(out.why, 'unpinned');
+  assert.match(out.error!, /See the hotel · change it/);
+  assert.equal(writes.length, 0, 'the group is not shown a different hotel with no word about why');
+  assert.equal(unpinnedHotel(restated(tables.bookings[0], 3)), true);
+  assert.equal(unpinnedHotel(hotelReq(2)), false);
+  const bookings = readFileSync('app/api/bookings/route.ts', 'utf8');
+  assert.match(bookings, /stale && unpinnedHotel\(ask/);
+});
+
+test('a line id missing from the request never erases the row’s own', () => {
+  const row = booking('f', 'awaiting_approval', flightReq(1));
+  assert.equal((restated(row, 2, { itineraryItemId: undefined }) as Row).itineraryItemId, 'line-f');
+  assert.equal((restated(row, 2, { itineraryItemId: '' }) as Row).itineraryItemId, 'line-f');
+  assert.equal((restated(row, 2, { itineraryItemId: 'line-g' }) as Row).itineraryItemId, 'line-g');
+  const bookings = readFileSync('app/api/bookings/route.ts', 'utf8');
+  assert.match(bookings, /typeof line === 'string' && line \? \{ itineraryItemId: line \} : \{\}/);
+});
+
+test('a payment that lands just after the new price is written puts the old price back', async () => {
+  const tables = joined([booking('f', 'awaiting_approval', flightReq(1), { detail: 'AA100 · 1 seat', response_payload: { offerKey: 'AA100/AA101' } })]);
+  const { db, writes } = makeDb(tables);
+  let asked = 0;
+  // Unpaid when asked before the write, paid when asked after it.
+  const out = await writeRepriced(db, { ...tables.bookings[0] }, restated(tables.bookings[0], 2), quote(60000), async () => asked++ > 0);
+  assert.equal(out.why, 'paid');
+  assert.equal(writes.length, 2, 'written, then put back');
+  const now = tables.bookings[0];
+  assert.equal(now.price_cents, 30000, 'the price they paid against');
+  assert.equal(now.request_payload.party, 1);
+  assert.equal(now.detail, 'AA100 · 1 seat');
+  assert.equal(now.status, 'awaiting_approval');
+});
+
+test('a re-price pins the flights and the fare it priced', async () => {
+  const tables = joined([booking('f', 'awaiting_approval', flightReq(1))]);
+  const { db } = makeDb(tables);
+  await writeRepriced(db, tables.bookings[0], restated(tables.bookings[0], 2),
+    quote(60000, { raw: { offerKey: 'AA100/AA101', conditions: ['No changes once booked', 'Non-refundable'] } }), unpaid);
+  assert.deepEqual(tables.bookings[0].request_payload.flight.fareTerms, ['No changes once booked', 'Non-refundable']);
+  assert.equal(tables.bookings[0].request_payload.flight.offerKey, 'AA100/AA101');
+});
+
+test('checkout names a line priced again by its title, and counts it apart from new ones', () => {
+  const bookable = readFileSync('app/api/plans/[planId]/bookable/route.ts', 'utf8');
+  assert.match(bookable, /title: r\.title \|\| lineTitle\(r\.itineraryItemId\)/);
+  assert.match(bookable, /created: results\.length - failed\.length - repriced/);
+  assert.match(readFileSync('app/api/bookings/route.ts', 'utf8'), /result\.repriced = true;/);
+});
+
+test('the options route never prices a paid trip again for a new headcount, and never guesses a choice', () => {
+  const options = readFileSync('app/api/bookings/[id]/options/route.ts', 'utf8');
+  const lock = options.indexOf("if (!parsed.data.key) {");
+  const quoteAt = options.indexOf('.quote(request)');
+  assert.ok(lock > 0 && lock < quoteAt, 'the payment check comes before any pricing');
+  assert.match(options, /from\('contributions'\)[\s\S]{0,120}eq\('status', 'succeeded'\)/);
+  assert.match(options, /if \(paidErr \|\| paid\?\.length\)/, 'unknown counts as paid');
+  assert.match(options, /code: 'pick'/);
 });
 
 // ── The solo trip, end to end ────────────────────────────────────────────

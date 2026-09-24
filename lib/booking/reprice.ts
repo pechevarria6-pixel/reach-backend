@@ -29,12 +29,17 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { readSkips } from '../participation.ts';
 import { atVersion } from './claim.ts';
+import { isSoloPlan } from './approval.ts';
+import { pinQuoted } from './pin.ts';
 import { matchFor, partyFor, pricedFor, resized, staleOnPlan, type Match } from './resize.ts';
 
 type Skip = { ref: string; userId: string };
 type Row = {
   id?: unknown; vertical?: unknown; status?: unknown; mode?: unknown;
   request_payload?: unknown; approved_at?: unknown; updated_at?: unknown;
+  // What a re-price writes, as it was — put back if a payment lands meanwhile.
+  response_payload?: unknown; provider?: unknown; provider_ref?: unknown; redirect_url?: unknown;
+  price_cents?: unknown; currency?: unknown; detail?: unknown; error?: unknown;
 };
 
 /** Who is going on a plan, as every size decision reads it. */
@@ -64,7 +69,7 @@ export async function readParty(
     return null;
   }
   const memberIds = (data ?? []).map(m => String((m as { user_id: unknown }).user_id));
-  return { party: plan.solo_mode === true ? 1 : Math.max(1, memberIds.length), memberIds, skips };
+  return { party: isSoloPlan(plan, memberIds.length) ? 1 : Math.max(1, memberIds.length), memberIds, skips };
 }
 
 /** How many people one booking is for: the group, less anybody kept off it. */
@@ -104,8 +109,26 @@ export async function settle<T extends Row>(
 export function restated<R extends Record<string, unknown>>(row: Row, party: number, extra: Partial<R> = {}): R {
   const own = (row.request_payload && typeof row.request_payload === 'object'
     ? row.request_payload : {}) as Record<string, unknown>;
-  return { ...resized(own, party), ...extra } as R;
+  // Only what `extra` actually says. A key present with nothing in it — the
+  // line id of a request that did not carry one — overwrote the row's own and
+  // dropped it from what was stored.
+  const said = Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined && v !== null && v !== ''));
+  return { ...resized(own, party), ...said } as R;
 }
+
+/**
+ * A hotel row that never kept which hotel it was (priced before hotels were
+ * pinned). Priced again, it took whichever hotel the city search put first,
+ * and the group saw a different hotel's name with no word about why. It is
+ * not priced again in place: somebody picks the hotel.
+ */
+export function unpinnedHotel(request: Record<string, unknown> | null | undefined): boolean {
+  if (!request || request.vertical !== 'hotel') return false;
+  const hotel = request.hotel as Record<string, unknown> | undefined;
+  return !(typeof hotel?.hotelId === 'string' && hotel.hotelId);
+}
+
+export const PICK_THE_HOTEL = 'We didn\'t keep which hotel this was when it was priced, so it can\'t be priced again as the same hotel. Open the trip\'s itinerary and use "See the hotel · change it" to pick it. Nobody can pay towards the trip until it is.';
 
 type Quote = {
   status?: string; error?: string; provider?: string; mode?: string; providerRef?: string;
@@ -114,8 +137,12 @@ type Quote = {
 
 export type Rewrite =
   | { ok: true; why?: undefined; error?: undefined }
-  /** Nothing was written; `error` says why, in words for the person. */
-  | { ok: false; why: 'unpriced' | 'paid' | 'changed' | 'write'; error: string };
+  /** Nothing was written (or it was put back); `error` says why, in words for the person. */
+  | { ok: false; why: 'unpinned' | 'unpriced' | 'paid' | 'changed' | 'write'; error: string };
+
+/** The columns a re-price writes. */
+const WRITTEN = ['request_payload', 'response_payload', 'provider', 'mode', 'provider_ref', 'redirect_url',
+  'price_cents', 'currency', 'detail', 'error'] as const;
 
 const people = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`;
 
@@ -123,8 +150,11 @@ const people = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`;
  * Write a new price onto the stale row it was made for — or, when anything
  * says not to, leave the row exactly as it was and say why.
  *
- * `paidNow` is asked afresh, just before writing: a payment that landed
- * while the provider was answering is a total somebody paid against.
+ * `paidNow` is asked afresh, just before writing — and again just after. A
+ * payment that lands between the question and the write is a total somebody
+ * paid against, and checking only before left that window open: the price
+ * moved under a payment already made. Found after, the old values are put
+ * back, on the version this write left, so nothing written since is undone.
  */
 export async function writeRepriced(
   db: SupabaseClient, row: Row, request: Record<string, unknown>, result: Quote,
@@ -133,6 +163,7 @@ export async function writeRepriced(
   const was = pricedFor(row);
   const now = Number(request.party) || 1;
   const priced = was ? `This was priced for ${people(was)} and ${now} ${now === 1 ? 'is' : 'are'} going now` : 'This was priced for a different number of people';
+  if (unpinnedHotel(request)) return { ok: false, why: 'unpinned', error: PICK_THE_HOTEL };
   // Only a price is a price: a quote that came back failed, or as anything
   // but a quote, leaves the row as it was.
   if (!result || !(result.status === 'quoted' || result.status === 'awaiting_approval')) {
@@ -141,15 +172,10 @@ export async function writeRepriced(
       error: `${priced}, and it couldn't be priced again${result?.error ? ` — ${result.error}` : ''}. Nobody can pay towards the trip until it is; reopen checkout to try again.`,
     };
   }
-  if (await paidNow()) {
-    return { ok: false, why: 'paid', error: 'Somebody paid towards this trip while it was being priced again, so it stays at the price they paid against.' };
-  }
-  // The hotel that was priced is the hotel approval books: a row priced
-  // before hotels were pinned is pinned now, to the one this price is for.
-  const hotelId = (result.raw as { hotelId?: unknown } | null | undefined)?.hotelId;
-  const hotel = request.hotel as Record<string, unknown> | undefined;
-  const stored = request.vertical === 'hotel' && hotel && typeof hotelId === 'string' && hotelId && !hotel.hotelId
-    ? { ...request, hotel: { ...hotel, hotelId } } : request;
+  const paidMeanwhile = 'Somebody paid towards this trip while it was being priced again, so it stays at the price they paid against.';
+  if (await paidNow()) return { ok: false, why: 'paid', error: paidMeanwhile };
+  // The flights and fare this price is for are the ones approval buys.
+  const stored = pinQuoted(request, request.vertical, result.raw);
   const { data, error } = await atVersion(db.from('bookings').update({
     request_payload: stored,
     response_payload: result.raw ?? null,
@@ -162,13 +188,23 @@ export async function writeRepriced(
     detail: result.detail ?? null,
     error: null,
     updated_at: new Date().toISOString(),
-  }).eq('id', String(row.id)).eq('status', 'awaiting_approval'), row.updated_at).select('id');
+  }).eq('id', String(row.id)).eq('status', 'awaiting_approval'), row.updated_at).select('id, updated_at');
   if (error) {
     console.error('[reprice] could not write the new price', { id: row.id, code: error.code });
     return { ok: false, why: 'write', error: "We priced this again but couldn't save it — reopen checkout to try again." };
   }
   if (!data?.length) {
     return { ok: false, why: 'changed', error: 'This changed while it was being priced again — reopen checkout to see where it stands.' };
+  }
+  if (await paidNow()) {
+    const before: Record<string, unknown> = {};
+    for (const k of WRITTEN) if (k in row) before[k] = row[k as keyof Row] ?? null;
+    const { error: undo } = await atVersion(db.from('bookings')
+      .update({ ...before, updated_at: new Date().toISOString() })
+      .eq('id', String(row.id)).eq('status', 'awaiting_approval'), (data[0] as { updated_at?: unknown }).updated_at)
+      .select('id');
+    if (undo) console.error('[reprice] a payment landed during a re-price and the old price could not be put back', { id: row.id, code: undo.code });
+    return { ok: false, why: 'paid', error: paidMeanwhile };
   }
   // A price rise approval was holding for the old size is not a price for
   // this one. Before sql/wave1-bookings-2026-09-22.sql there is no column,

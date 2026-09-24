@@ -1,6 +1,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   latecomerOptOuts, isSoloCount, bringAlongNote, tripHolds, notOnBooked, beforeJoining, afterJoining,
   notOnSentence, ownBookingLink, flightNumbers,
@@ -167,7 +168,8 @@ test('what the newcomer reads says booked and paid-for apart, and hands them som
   assert.match(one, /^The flight \(AA100 out, AA101 back\) was already booked before you joined/);
   assert.match(one, /with the airline\.$/);
   const two = notOnSentence([booked, paidFor])!;
-  assert.match(two, /the hotel \(Hotel Rio\) was already paid for before you joined/);
+  assert.match(two, /the hotel \(Hotel Rio\) was already paid towards before you joined/);
+  assert.doesNotMatch(two, /paid for before/, 'one share of four in is paid towards, not paid for');
   assert.doesNotMatch(two, /hotel \(Hotel Rio\) was already booked/, 'paid for is not booked');
   assert.match(two, /with the airline and hotel\.$/);
   assert.equal(notOnSentence([]), null);
@@ -371,7 +373,7 @@ test('an invite that cannot be claimed cleanly stays pending for next time', asy
 
 // ── What the screens do with it ──────────────────────────────────────────
 test('the screens say only what they know, and take "Bring someone along" to the add field', async () => {
-  const { readFileSync } = await import('node:fs');
+
   const src = readFileSync('components/reach-app.jsx', 'utf8');
   // Before funding and the bookings have both loaded, an empty list and no
   // money read as "Nothing's bought yet" on a trip that was paid for.
@@ -388,4 +390,68 @@ test('the screens say only what they know, and take "Bring someone along" to the
   // A bridge that did not answer is said on the pay screen, not swallowed.
   assert.match(src, /bridgeFailed\?\[\{title:"Pricing"/);
   assert.match(src, /filter\(f=>f\.stillPriced\)/, "a line still in the total is not said to be missing from it");
+});
+
+test('a held quote is not said to be paid for: it is out of every money sum', () => {
+  const rows = [{ id: 'h2', vertical: 'hotel', status: 'quoted', response_payload: { hotel: { name: 'Casa Azul' } } }];
+  const out = notOnBooked(rows, [{ ref: 'h2', userId: 'u' }], ['u']);
+  assert.deepEqual(out['u'].map(i => [i.booked, i.held]), [[false, true]]);
+  const words = notOnSentence(out['u'])!;
+  assert.match(words, /Casa Azul\) was on hold before you joined — not booked or paid for/);
+  assert.doesNotMatch(words, /paid (for|towards) before/);
+});
+
+test('joining cancels payments started and not finished, so none can take the old share', async () => {
+  const tables: Record<string, Row[]> = {
+    ...soloTrip(),
+    contributions: [
+      { id: 'k1', plan_id: 'p2', status: 'pending', stripe_payment_intent: 'pi_open' },
+      { id: 'k2', plan_id: 'p1', status: 'pending', stripe_payment_intent: 'pi_moving' },
+    ],
+  };
+  tables.bookings.push({ id: 'flight', plan_id: 'p2', status: 'awaiting_approval' });
+  const asked: string[] = [];
+  const out = await beforeJoining(makeDb(tables), 'g1', 'u-new', async id => {
+    asked.push(id);
+    return id === 'pi_open' ? 'canceled' : 'moving';
+  });
+  assert.equal(out.ok, true);
+  assert.deepEqual(asked.sort(), ['pi_moving', 'pi_open']);
+  assert.equal(tables.contributions.find(c => c.id === 'k1')!.status, 'failed', 'cancelled at Stripe, written off');
+  assert.equal(tables.contributions.find(c => c.id === 'k2')!.status, 'pending', 'money moving is never written off');
+  // The cancelled one frees its plan for the newcomer to be priced onto; the
+  // one that may still land keeps its plan's bookings as they were paid for.
+  assert.deepEqual(tables.item_optouts.map(r => r.item_ref).sort(), ['hotel']);
+  assert.ok(!tables.item_optouts.some(r => r.item_ref === 'flight'));
+});
+
+test('a payment that cannot be stopped keeps the newcomer off what it pays for', async () => {
+  const tables: Record<string, Row[]> = {
+    ...soloTrip(),
+    contributions: [{ id: 'k1', plan_id: 'p2', status: 'pending', stripe_payment_intent: 'pi_x' }],
+  };
+  tables.bookings.push({ id: 'flight', plan_id: 'p2', status: 'awaiting_approval' });
+  await beforeJoining(makeDb(tables), 'g1', 'u-new', async () => 'unknown');
+  assert.deepEqual(tables.item_optouts.map(r => r.item_ref).sort(), ['flight', 'hotel']);
+});
+
+test('a payment started before somebody joined is never handed back at the old share', () => {
+  const src = readFileSync('app/api/plans/[planId]/funding/route.ts', 'utf8');
+  const staleAt = src.indexOf('const stale = staleRows(waiting, going);');
+  const resumeAt = src.indexOf('resumed: true');
+  assert.ok(staleAt > 0 && resumeAt > staleAt, 'staleness is decided before a payment is resumed');
+  // Resumed only while it is still right: nothing stale, and for what they owe now.
+  assert.match(src, /const stillRight = !stale\.length && amount === status\.myRemainingCents;/);
+  assert.match(src, /UNPAID_STATES\.has\(existing\.status\) && !stillRight[\s\S]{0,200}cancelUnpaidIntent\(/);
+  // Written off only once Stripe has cancelled it.
+  assert.match(src, /if \(cancelled !== 'canceled'\) \{[\s\S]{0,900}status: 409/);
+});
+
+test('every way into a group cancels unfinished payments first', () => {
+  const joining = readFileSync('lib/joining.ts', 'utf8');
+  assert.match(joining, /in\('status', \['succeeded', 'pending'\]\)/);
+  assert.match(joining, /await cancelIntent\(c\.stripe_payment_intent\)/);
+  for (const f of ['app/api/groups/[id]/members/route.ts', 'app/api/invites/[token]/route.ts', 'lib/invites.ts']) {
+    assert.match(readFileSync(f, 'utf8'), /beforeJoining\(/, f);
+  }
 });

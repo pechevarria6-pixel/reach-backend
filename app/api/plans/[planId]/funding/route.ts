@@ -19,6 +19,7 @@ import { midClaim } from '@/lib/booking/claim';
 import { notOnBooked } from '@/lib/joining';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { track } from '@/lib/track';
+import { cancelUnpaidIntent, UNPAID_STATES } from '@/lib/stripe-intents';
 
 async function fundingStatus(
   db: SupabaseClient, planId: string, groupId: string, userId: string, budgetCents: number
@@ -159,6 +160,32 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     Number(ctx.plan.budget_cents) || 0
   );
 
+  // Priced for a different number of people than are going. A share of a
+  // two-seat fare is not a share of the three-seat fare that will actually
+  // be charged, so no money is taken against it until it is priced again.
+  //
+  // Decided before anything else, including handing back a payment already
+  // started: that payment was made for the share as it was, and resuming it
+  // took the old amount after somebody had joined.
+  const { data: waiting, error: waitingError } = await ctx.db.from('bookings')
+    .select('id, vertical, status, mode, request_payload')
+    .eq('plan_id', params.planId).eq('status', 'awaiting_approval');
+  if (waitingError) {
+    console.error('[funding] could not read the bookings waiting', { planId: params.planId, code: waitingError.code });
+    return NextResponse.json({ error: 'Could not check this trip just now. Nothing has been charged.' }, { status: 500 });
+  }
+  // Judged per booking, against who is on that booking — the group less
+  // anybody kept off it — which is who approval names, and the same rule
+  // /bookable and /api/bookings price again by (lib/booking/reprice.ts). One
+  // number for the whole plan refused, for good, a trip somebody joined after
+  // paying: they are kept off what was paid for, so it is rightly still
+  // priced for one, and approval books it for one.
+  const going = await readParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null }, params.planId);
+  if (!going) {
+    return NextResponse.json({ error: 'Could not check who is going just now. Nothing has been charged.' }, { status: 500 });
+  }
+  const stale = staleRows(waiting, going);
+
   // ── Never a second payment for the same share ─────────────────────────
   // Only succeeded contributions count against what somebody owes, so a
   // payment still settling left the full share outstanding — and every one of
@@ -167,10 +194,15 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // worst thing this app can do, and pay-later methods take minutes to clear.
   //
   // A contribution in flight is therefore answered with the payment that
-  // already exists, never a new one. Stripe is asked what became of it, so an
-  // abandoned attempt cannot lock somebody out of paying for ever: one that
-  // was never paid is handed back to be finished, and a cancelled one is
-  // written off so the next attempt can start cleanly.
+  // already exists, never a new one — while it is still the right payment.
+  // Stripe is asked what became of it, so an abandoned attempt cannot lock
+  // somebody out of paying for ever: one that was never paid is handed back
+  // to be finished, and a cancelled one is written off so the next attempt
+  // can start cleanly.
+  //
+  // Right means for what this person owes now, on a trip priced for who is
+  // going. Anything else — somebody joined, a quote is stale, a price moved —
+  // is cancelled at Stripe before it can take the old amount, and written off.
   const inFlight = (status.contributions || []).find(
     (c: { user_id?: string; status?: string }) => c.user_id === ctx.user.id && c.status === 'pending',
   ) as { id: string; stripe_payment_intent?: string; amount_cents?: number } | undefined;
@@ -194,26 +226,46 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       );
     }
 
-    if (existing.status === 'canceled') {
-      const { error: writeOff } = await ctx.db.from('contributions')
+    const amount = Number(inFlight.amount_cents ?? existing.amount) || 0;
+    const stillRight = !stale.length && amount === status.myRemainingCents;
+    let writeOff = existing.status === 'canceled';
+    if (!writeOff && UNPAID_STATES.has(existing.status) && !stillRight) {
+      const cancelled = await cancelUnpaidIntent(inFlight.stripe_payment_intent, stripeKey);
+      if (cancelled !== 'canceled') {
+        console.error('[funding] a payment for an old share could not be cancelled', {
+          planId: params.planId, paymentIntent: inFlight.stripe_payment_intent, outcome: cancelled,
+        });
+        return NextResponse.json({
+          error: cancelled === 'moving'
+            ? 'Your earlier payment is going through. Give it a moment — please do not pay again.'
+            : 'You have a payment on this plan for an amount that has since changed, and we could not stop it just now. Nothing new has been charged — try again in a moment.',
+          funding: status,
+        }, { status: 409 });
+      }
+      writeOff = true;
+    }
+
+    if (writeOff) {
+      const { error: writeOffError } = await ctx.db.from('contributions')
         .update({ status: 'failed', updated_at: new Date().toISOString() })
-        .eq('id', inFlight.id);
-      if (writeOff) {
+        .eq('id', inFlight.id).eq('status', 'pending');
+      if (writeOffError) {
         console.error('[funding] could not write off a cancelled contribution', {
-          planId: params.planId, contribution: inFlight.id, error: writeOff.message,
+          planId: params.planId, contribution: inFlight.id, error: writeOffError.message,
         });
         return NextResponse.json(
           { error: 'Could not start that payment. Nothing has been charged — try again.' },
           { status: 500 },
         );
       }
-      // Falls through and starts a fresh payment below.
+      // Falls through: priced again if it must be, then a fresh payment.
     } else if (existing.status === 'requires_payment_method') {
-      // Started and never paid: the same intent is handed back to finish.
+      // Started and never paid, and still for what they owe: the same intent
+      // is handed back to finish.
       return NextResponse.json({
         contribution: inFlight,
         clientSecret: existing.client_secret,
-        amountCents: inFlight.amount_cents ?? existing.amount,
+        amountCents: amount,
         resumed: true,
       });
     } else {
@@ -236,27 +288,6 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     ? Math.min(Math.round(requested), status.myRemainingCents)
     : status.myRemainingCents;
 
-  // Priced for a different number of people than are going. A share of a
-  // two-seat fare is not a share of the three-seat fare that will actually
-  // be charged, so no money is taken against it until it is priced again.
-  const { data: waiting, error: waitingError } = await ctx.db.from('bookings')
-    .select('id, vertical, status, mode, request_payload')
-    .eq('plan_id', params.planId).eq('status', 'awaiting_approval');
-  if (waitingError) {
-    console.error('[funding] could not read the bookings waiting', { planId: params.planId, code: waitingError.code });
-    return NextResponse.json({ error: 'Could not check this trip just now. Nothing has been charged.' }, { status: 500 });
-  }
-  // Judged per booking, against who is on that booking — the group less
-  // anybody kept off it — which is who approval names, and the same rule
-  // /bookable and /api/bookings price again by (lib/booking/reprice.ts). One
-  // number for the whole plan refused, for good, a trip somebody joined after
-  // paying: they are kept off what was paid for, so it is rightly still
-  // priced for one, and approval books it for one.
-  const going = await readParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null }, params.planId);
-  if (!going) {
-    return NextResponse.json({ error: 'Could not check who is going just now. Nothing has been charged.' }, { status: 500 });
-  }
-  const stale = staleRows(waiting, going);
   if (stale.length) {
     return NextResponse.json({
       code: 'stale_quotes',

@@ -8396,7 +8396,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       said apart: a flight only paid towards is not booked. When
                       the server could not read it (null), neither is said. */}
                   {(funding?.notOnBooked?.[uid]||[]).length
-                    ?<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}>Not on the {funding.notOnBooked[uid].map(i=>`${i.booked?"booked":"paid-for"} ${i.vertical}`).join(" or ")}</span>
+                    ?<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}>Not on the {funding.notOnBooked[uid].map(i=>`${i.vertical} ${i.booked?"already booked":i.held?"on hold":"already paid towards"}`).join(" or the ")}</span>
                     :funding?.notOnBooked===null?null:<span className="pill pill-g" style={{fontSize:10}}>✓ In</span>}
                 </div>
               ):null;})}
@@ -9384,6 +9384,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // Bookings priced for a different number of people than are going: the
   // "reprice" screen prices exactly these again (options { reprice: true }).
   const [repriceIds,setRepriceIds]=useState([]);
+  // Pricing again was refused in a way pressing it again cannot fix.
+  const [repriceStuck,setRepriceStuck]=useState(false);
   const [nudging,setNudging]=useState(false);
   const [funding,setFunding]=useState(null);
   const [bookings,setBookings]=useState([]);
@@ -9572,7 +9574,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       // Priced for a different number of people than are going. Nothing was
       // charged; this used to be a toast with nothing on screen to fix it.
       if(r.status===409&&d.code==="stale_quotes"&&Array.isArray(d.stale)){
-        setRepriceIds(d.stale.map(x=>x.id)); setMsg(d.error||""); setPhase("reprice"); setBusy(false); return;
+        setRepriceIds(d.stale.map(x=>x.id)); setMsg(d.error||""); setRepriceStuck(false); setPhase("reprice"); setBusy(false); return;
       }
       if(!r.ok||!d.clientSecret)throw new Error(d.error||"Couldn't start the payment \u2014 try again.");
       setClientSecret(d.clientSecret); setPhase("pay");
@@ -9735,7 +9737,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
           setPriceRise({title:itemTitle(b,lineTitle(b)),oldCents:o.oldCents,newCents:o.newCents});
           await refresh(fresh); setPhase("priceUp"); return;
         }
-        if(o.kind==="reprice"){ setRepriceIds([b.id]); setMsg(o.message||""); await refresh(fresh); setPhase("reprice"); return; }
+        if(o.kind==="reprice"){ setRepriceIds([b.id]); setMsg(o.message||""); setRepriceStuck(false); await refresh(fresh); setPhase("reprice"); return; }
         if(o.kind==="notFunded"){
           // "Waiting on the others" only when there are others who owe. A
           // price rise approval wrote onto the row leaves this person with
@@ -9999,13 +10001,21 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         try{
           const r=await fetchWithin(`/api/bookings/${id}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reprice:true})},30000,"pricing it again");
           const d=await r.json().catch(()=>({}));
-          if(!r.ok)problems.push(d.error||"Couldn't price that again.");
-        }catch(e){ console.error("[checkout] reprice failed",{id},e); problems.push(e.message||"Couldn't price that again."); }
+          if(!r.ok)problems.push({text:d.error||"Couldn't price that again.",code:d.code||null});
+        }catch(e){ console.error("[checkout] reprice failed",{id},e); problems.push({text:e.message||"Couldn't price that again.",code:null}); }
       }
       setBusy(false);
-      if(problems.length){ toast(problems[0]); return; }
+      // Paid towards already, or nothing kept to price again as the same
+      // one: pressing this again cannot help, so the way on is the options.
+      const stuck=problems.find(p=>p.code==="paid"||p.code==="pick");
+      if(stuck){ setMsg(stuck.text); setRepriceStuck(true); return; }
+      if(problems.length){ toast(problems[0].text); return; }
       setRepriceIds([]); setPhase("loading"); load();
-    }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1}}>{busy?"Pricing…":"Price it again"}</button>
+    }} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,opacity:busy?.6:1,display:repriceStuck?"none":undefined}}>{busy?"Pricing…":"Price it again"}</button>
+    {repriceStuck&&(
+      <button onClick={()=>replace?replace("planDetail",{planId,groupId,initialTab:"bookings"}):onBack()}
+        style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700}}>See the options</button>
+    )}
     <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
   </div></div>);
 

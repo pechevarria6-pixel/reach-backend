@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { reachBuys, chargedRows } from '../../lib/booking/charged.ts';
 import { checkoutState } from '../../lib/checkout.ts';
-import { fundingAt, onTheTrip, repriceAdvice } from '../../lib/booking/approval.ts';
+import { fundingAt, onTheTrip, isSoloPlan, repriceAdvice } from '../../lib/booking/approval.ts';
 import { claimBooking, finishClaim, midClaim, holdsSomething, changeRefusal } from '../../lib/booking/claim.ts';
 import { staleForParty } from '../../lib/booking/party.ts';
 import { lockedByPayment } from '../../lib/booking/failures.ts';
@@ -161,7 +161,7 @@ test('approval sets the ceiling and funds at it', () => {
   const src = read('app/api/bookings/[id]/approve/route.ts');
   assert.match(src, /checkedCents = Math\.max\(priceCents, fresh\.priceCents\)/);
   assert.match(src, /request\.maxPriceCents = checkedCents/);
-  assert.match(src, /fundingAt\(owed, paid\.data, booking\.id, checkedCents\)/);
+  assert.match(src, /fundingAt\(owed, held, booking\.id, checkedCents\)/);
   // A small rise that leaves the plan short is written onto the row, so
   // funding's shares include it and it can be paid in — not a 402 for ever.
   const short = src.indexOf('if (rise > 0)');
@@ -209,17 +209,30 @@ test('/bookable no longer says a failed line is "yours to book directly"', () =>
 
 // ─── 6. A solo trip is its traveller's ──────────────────────────────────
 
-test('a solo plan books its creator, whoever has joined the group since', () => {
+test('a trip for one books its creator; a solo flag over a group of two books both', () => {
+  const me = [{ userId: 'me' }];
   const people = [{ userId: 'me' }, { userId: 'friend' }];
-  assert.deepEqual(onTheTrip({ solo_mode: true, created_by: 'me' }, people), [{ userId: 'me' }]);
-  assert.deepEqual(onTheTrip({ solo_mode: true, created_by: null }, people), [], 'nobody guessed at');
-  assert.deepEqual(onTheTrip({ solo_mode: false, created_by: 'me' }, people), people);
+  assert.deepEqual(onTheTrip({ solo_mode: true, created_by: 'me' }, me, 1), [{ userId: 'me' }]);
+  assert.deepEqual(onTheTrip({ solo_mode: true, created_by: null }, me, 1), [], 'nobody guessed at');
+  assert.deepEqual(onTheTrip({ solo_mode: false, created_by: 'me' }, people, 2), people);
+  // Somebody joined and the flag was not cleared (afterJoining's write
+  // failed). Funding splits between two, so booking for one would have the
+  // newcomer pay half of a seat that is not theirs.
+  assert.deepEqual(onTheTrip({ solo_mode: true, created_by: 'me' }, people, 2), people);
+  // The count is the group's, before anybody sitting this one out is taken off.
+  assert.deepEqual(onTheTrip({ solo_mode: true, created_by: 'me' }, [{ userId: 'friend' }], 2), [{ userId: 'friend' }]);
+  assert.equal(isSoloPlan({ solo_mode: true }, 1), true);
+  assert.equal(isSoloPlan({ solo_mode: true }, 2), false);
+  assert.equal(isSoloPlan({ solo_mode: false }, 1), false);
 });
 
 test('quote, stale check and approval read the same people', () => {
-  // partySize is 1 for a solo plan; approval must name one person, not the group.
+  // partySize is 1 for a trip for one; approval must name one person, not the group.
   const participation = read('lib/participation.ts');
-  assert.match(participation, /if \(plan\.solo_mode === true\) return 1;/);
+  assert.match(participation, /if \(isSoloPlan\(plan, count \?\? 1\)\) return 1;/);
+  assert.match(read('lib/booking/reprice.ts'), /party: isSoloPlan\(plan, memberIds\.length\)/);
+  assert.match(read('lib/essentials-server.ts'), /onTheTrip\(plan, everyone\.filter\(p => !out\.has\(p\.userId\)\), everyone\.length\)/);
+  assert.match(read('lib/essentials-server.ts'), /const solo = !!only && !\(\(data \?\? \[\]\)\.length > 1\);/);
   const approve = read('app/api/bookings/[id]/approve/route.ts');
   assert.match(approve, /travellersFor\(db, ctx\.plan, out\)/);
   assert.doesNotMatch(approve, /bookingTravellers\(/);

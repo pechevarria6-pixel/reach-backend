@@ -61,11 +61,6 @@ export async function groupReadiness(
   /** Only these people — a solo plan's traveller (see tripTravellerIds). */
   only?: string[] | null,
 ): Promise<GroupReadiness> {
-  // A solo plan whose traveller is gone from the record: nobody can be put on
-  // a flight, and an empty list is not "everyone is ready".
-  if (only && only.length === 0) {
-    return { travelers: [], ready: false, blocking: 'Nobody on this trip can be named on a booking.' };
-  }
   const full = await db
     .from('group_members')
     .select('user_id, users(id, name, first_name, last_name, date_of_birth, gender, phone)')
@@ -92,7 +87,15 @@ export async function groupReadiness(
     return { travelers: [], ready: false, blocking: 'We could not check who is ready to fly just now.' };
   }
 
-  const keep = only ? new Set(only) : null;
+  // `only` is a solo plan's traveller, and a group of more than one is not a
+  // solo trip whatever its flag says (isSoloPlan): everyone is checked.
+  const solo = !!only && !((data ?? []).length > 1);
+  // A solo plan whose traveller is gone from the record: nobody can be put on
+  // a flight, and an empty list is not "everyone is ready".
+  if (solo && only && only.length === 0) {
+    return { travelers: [], ready: false, blocking: 'Nobody on this trip can be named on a booking.' };
+  }
+  const keep = solo && only ? new Set(only) : null;
   const travelers = (data ?? [])
     .filter(m => !keep || keep.has(String((m as Record<string, unknown>).user_id)))
     .map(m => {
@@ -167,10 +170,18 @@ type TripPlan = { group_id?: unknown; solo_mode?: unknown; created_by?: unknown 
 export async function travellersFor(
   db: SupabaseClient, plan: TripPlan, sittingOut: string[] = [],
 ): Promise<Person[]> {
-  return onTheTrip(plan, await bookingTravellers(db, String(plan.group_id), sittingOut));
+  // The whole group first: whether this is still a trip for one is decided
+  // by how many are in it, before anybody sitting this one out is taken off.
+  const everyone = await bookingTravellers(db, String(plan.group_id));
+  const out = new Set(sittingOut);
+  return onTheTrip(plan, everyone.filter(p => !out.has(p.userId)), everyone.length);
 }
 
-/** For groupReadiness: only the solo traveller on a solo plan, else everyone. */
+/**
+ * For groupReadiness: only the solo traveller on a solo plan, else everyone.
+ * groupReadiness ignores it once the group has more than one member — a solo
+ * flag nobody cleared is not a trip for one (isSoloPlan).
+ */
 export function tripTravellerIds(plan: TripPlan): string[] | null {
   if (plan.solo_mode !== true) return null;
   return typeof plan.created_by === 'string' && plan.created_by ? [plan.created_by] : [];

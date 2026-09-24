@@ -70,6 +70,12 @@ export interface BookingItemRequest {
     seats?: number;
     /** The exact flights chosen (offerKey), so approval books those and not the cheapest. */
     offerKey?: string;
+    /**
+     * The fare terms shown for those flights when they were priced
+     * (lib/booking/pin.ts). Duffel's quote takes only an offer on exactly
+     * these terms, so the fare bought is the fare the group was shown.
+     */
+    fareTerms?: string[];
   };
   hotel?: {
     hotelId?: string;      // LiteAPI hotel id if already selected
@@ -126,6 +132,8 @@ export interface BookingItemResult {
    * the line out of the total altogether. Checkout says the two differently.
    */
   stillPriced?: boolean;
+  /** A booking already on the plan priced again in place for a new headcount — not a new one. */
+  repriced?: boolean;
 }
 
 export interface BookingProvider {

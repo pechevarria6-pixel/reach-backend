@@ -82,7 +82,7 @@ export function resized<T extends Record<string, unknown>>(req: T, party: number
 
 type Row = {
   id?: unknown; vertical?: unknown; status?: unknown; mode?: unknown;
-  request_payload?: unknown; approved_at?: unknown; updated_at?: unknown;
+  request_payload?: unknown; approved_at?: unknown; updated_at?: unknown; itinerary_item_id?: unknown;
 };
 
 /**
@@ -109,8 +109,15 @@ export function repricing<T = Record<string, unknown>>(
   if (opts.paid) return [];
   return staleOnPlan(rows, opts)
     .filter(r => !midClaim(r) && r.request_payload && typeof r.request_payload === 'object')
-    .map(r => resized(r.request_payload as Record<string, unknown>,
-      partyFor(opts.party, opts.memberIds, opts.skips, String(r.id))) as T);
+    .map(r => {
+      const req = resized(r.request_payload as Record<string, unknown>,
+        partyFor(opts.party, opts.memberIds, opts.skips, String(r.id)));
+      // The line it belongs to, so a failure is named by that line's title
+      // rather than "an item". A stored request may not carry it; the row does.
+      const line = typeof req.itineraryItemId === 'string' && req.itineraryItemId ? req.itineraryItemId
+        : typeof r.itinerary_item_id === 'string' && r.itinerary_item_id ? r.itinerary_item_id : null;
+      return (line ? { ...req, itineraryItemId: line } : req) as T;
+    });
 }
 
 /**

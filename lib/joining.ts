@@ -42,6 +42,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { midClaim } from './booking/claim.ts';
 import { reachBuys } from './booking/charged.ts';
 import { flightSearchUrl } from './booking/duffel-map.ts';
+import { cancelUnpaidIntent, type CancelOutcome } from './stripe-intents.ts';
 
 /** PostgREST's code for a table that does not exist: the migration has not run. */
 const NO_TABLE = 'PGRST205';
@@ -197,6 +198,11 @@ export interface NotOn {
    * joined after it was booked" about a flight nobody has bought is untrue.
    */
   booked: boolean;
+  /**
+   * A quote somebody is holding ('quoted'): not bought, and not in any money
+   * sum either, so "paid for" about it would be untrue as well.
+   */
+  held?: boolean;
   /** The flights by number or the hotel by name, when the row says. */
   what: string | null;
   /** A search that sells it, prefilled from the row; null when the row gives nothing to search by. */
@@ -288,8 +294,10 @@ export function notOnBooked(
   for (const b of bookings ?? []) {
     if (b?.id == null || !RESIZED.has(String(b.vertical))) continue;
     if (b.status === 'failed' || b.status === 'cancelled' || !reachBuys(b)) continue;
+    const booked = isBought(b);
     byId.set(String(b.id), {
-      vertical: b.vertical as 'flight' | 'hotel', booked: isBought(b), what: whatItIs(b), link: ownBookingLink(b),
+      vertical: b.vertical as 'flight' | 'hotel', booked, held: !booked && b.status === 'quoted',
+      what: whatItIs(b), link: ownBookingLink(b),
     });
   }
   const members = new Set(memberIds);
@@ -310,10 +318,12 @@ const listed = (words: string[]) =>
 
 /**
  * What the newcomer reads about the flights and hotels they are not on.
- * Booked and paid-for are said apart: a flight bought with the airline has a
- * seat in somebody's name; one only paid towards has not been bought yet,
- * and saying it was booked is the kind of sentence that sends somebody to
- * the airport with nothing.
+ * Booked, paid towards and held are said apart: a flight bought with the
+ * airline has a seat in somebody's name; one only paid towards has not been
+ * bought yet, and saying it was booked is the kind of sentence that sends
+ * somebody to the airport with nothing. A held quote is neither bought nor
+ * in anybody's total. "Paid for" went too: on a group where one share of
+ * four is in, it is paid towards, not paid for.
  */
 export function notOnSentence(items: NotOn[] | null | undefined): string | null {
   const list = items ?? [];
@@ -323,13 +333,18 @@ export function notOnSentence(items: NotOn[] | null | undefined): string | null 
     return `the ${kind}${i.what ? ` (${i.what})` : ''}`;
   };
   const booked = list.filter(i => i.booked);
-  const paid = list.filter(i => !i.booked);
+  const held = list.filter(i => !i.booked && i.held);
+  const paid = list.filter(i => !i.booked && !i.held);
   const parts: string[] = [];
+  const them = (n: number) => (n > 1 ? 'them' : 'it');
   if (booked.length) {
     parts.push(`${listed(booked.map(name))} ${booked.length > 1 ? 'were' : 'was'} already booked before you joined, and Reach can't add someone to a booking it has already made.`);
   }
   if (paid.length) {
-    parts.push(`${listed(paid.map(name))} ${paid.length > 1 ? 'were' : 'was'} already paid for before you joined, so ${paid.length > 1 ? 'they stay' : 'it stays'} priced without you and Reach won't add you to ${paid.length > 1 ? 'them' : 'it'}.`);
+    parts.push(`${listed(paid.map(name))} ${paid.length > 1 ? 'were' : 'was'} already paid towards before you joined, so ${paid.length > 1 ? 'they stay' : 'it stays'} priced without you and Reach won't add you to ${them(paid.length)}.`);
+  }
+  if (held.length) {
+    parts.push(`${listed(held.map(name))} ${held.length > 1 ? 'were' : 'was'} on hold before you joined — not booked or paid for — on a trip somebody has paid towards, so ${held.length > 1 ? 'they stay' : 'it stays'} priced without you and Reach won't add you to ${them(held.length)}.`);
   }
   const first = parts.join(' ');
   const where = listed([...new Set(list.map(i => (i.vertical === 'flight' ? 'airline' : 'hotel')))]);
@@ -350,7 +365,10 @@ export type JoinOutcome = { ok: boolean; satOut?: number; error?: string };
  * kept off anything, shares split evenly as they always did, and refusing
  * every join would be worse than that.
  */
-export async function beforeJoining(db: SupabaseClient, groupId: string, userId: string): Promise<JoinOutcome> {
+export async function beforeJoining(
+  db: SupabaseClient, groupId: string, userId: string,
+  cancelIntent: (intentId: string) => Promise<CancelOutcome> = id => cancelUnpaidIntent(id),
+): Promise<JoinOutcome> {
   const { data: plans, error: plansErr } = await db.from('plans').select('id').eq('group_id', groupId);
   if (plansErr) {
     console.error('[joining] could not read the group’s plans', { groupId, code: plansErr.code });
@@ -367,13 +385,38 @@ export async function beforeJoining(db: SupabaseClient, groupId: string, userId:
   }
 
   // Plans somebody has paid into: everything on them stays as it was paid for.
+  //
+  // And payments started and not finished. Each was made for somebody's share
+  // as it stands before this person joins, and a form left open on it would
+  // take that old amount afterwards — the whole one-person total on a trip
+  // that is now two. So each is cancelled at Stripe first. One that cannot be
+  // cancelled may still land, and its plan is treated as paid: the newcomer
+  // is kept off it, which is what would have been right had it landed first.
   const { data: paid, error: paidErr } = await db
-    .from('contributions').select('plan_id').in('plan_id', planIds).eq('status', 'succeeded');
+    .from('contributions').select('id, plan_id, status, stripe_payment_intent')
+    .in('plan_id', planIds).in('status', ['succeeded', 'pending']);
   if (paidErr) {
     console.error('[joining] could not read what has been paid', { groupId, code: paidErr.code });
     return { ok: false, error: "We couldn't check what's already been paid — try again in a moment." };
   }
-  const paidPlans = new Set((paid ?? []).map(c => String((c as { plan_id: unknown }).plan_id)));
+  type Payment = { id?: unknown; plan_id: unknown; status?: unknown; stripe_payment_intent?: unknown };
+  const payments = (paid ?? []) as Payment[];
+  const paidPlans = new Set(payments.filter(c => c.status === 'succeeded').map(c => String(c.plan_id)));
+  for (const c of payments) {
+    if (c.status !== 'pending' || typeof c.stripe_payment_intent !== 'string' || !c.stripe_payment_intent) continue;
+    const outcome = await cancelIntent(c.stripe_payment_intent);
+    if (outcome !== 'canceled') {
+      console.error('[joining] an unfinished payment could not be cancelled — treating its plan as paid', { groupId, outcome });
+      paidPlans.add(String(c.plan_id));
+      continue;
+    }
+    const { error } = await db.from('contributions')
+      .update({ status: 'failed', updated_at: new Date().toISOString() })
+      .eq('id', String(c.id)).eq('status', 'pending');
+    // Cancelled at Stripe either way, so it can never take money; the row
+    // reading pending only means the next payment attempt asks Stripe again.
+    if (error) console.error('[joining] could not write off a cancelled payment', { groupId, code: error.code });
+  }
 
   const rows = latecomerOptOuts((bookings ?? []) as PriorBooking[], userId, paidPlans);
   if (!rows.length) return { ok: true, satOut: 0 };

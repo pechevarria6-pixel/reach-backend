@@ -16,7 +16,8 @@ import { airlineOnly } from '@/lib/booking/approval';
 import { airlineHandoff } from '@/lib/booking/duffel-map';
 import { BookingItemRequest, BookingItemResult, BookingProvider, Vertical } from '@/lib/booking/types';
 import { identityOf as findKey } from '@/lib/booking/duplicate';
-import { readParty, restated, settle, writeRepriced, type Party } from '@/lib/booking/reprice';
+import { readParty, restated, settle, writeRepriced, unpinnedHotel, PICK_THE_HOTEL, type Party } from '@/lib/booking/reprice';
+import { pinQuoted } from '@/lib/booking/pin';
 import { bookingFacts } from '@/lib/contracts/booking';
 import { track } from '@/lib/track';
 
@@ -209,10 +210,28 @@ export async function POST(req: NextRequest) {
     // flight numbers — sized for who is on it. Nothing else the request says
     // is trusted.
     const stale = match.kind === 'stale' ? match : null;
+    // The line id only when the request has one: restated never writes an
+    // empty value over the row's own.
+    const line = (item as { itineraryItemId?: unknown }).itineraryItemId;
     const ask: BookingItemRequest = stale
       ? restated<BookingItemRequest & Record<string, unknown>>(stale.row, stale.party,
-        { itineraryItemId: (item as { itineraryItemId?: string }).itineraryItemId } as Partial<BookingItemRequest & Record<string, unknown>>)
+        (typeof line === 'string' && line ? { itineraryItemId: line } : {}) as Partial<BookingItemRequest & Record<string, unknown>>)
       : item;
+    if (stale && ask.flight) {
+      // A new headcount is a new quote, shown before anybody pays, and its
+      // fare is pinned from what comes back (lib/booking/pin.ts). Holding it
+      // to the old fare's terms would refuse the same flights for good.
+      ask.flight = { ...ask.flight, fareTerms: undefined };
+    }
+    if (stale && unpinnedHotel(ask as unknown as Record<string, unknown>)) {
+      // Priced again it would become whichever hotel the city search puts
+      // first. Left as it is, and somebody picks the hotel.
+      keep(item, {
+        vertical: 'hotel', mode: 'native', status: 'failed', provider: 'none',
+        error: PICK_THE_HOTEL, stillPriced: true,
+      });
+      continue;
+    }
 
     if (item.vertical === 'flight' && flightsBlocked) {
       // A stale flight keeps its row as it is, and funding goes on refusing
@@ -278,6 +297,7 @@ export async function POST(req: NextRequest) {
         // The same thing asked for twice in one payload is handed back the
         // second time, as it now stands.
         Object.assign(stale.row, { request_payload: ask, price_cents: result.priceCents ?? null });
+        result.repriced = true;
         continue;
       }
 
@@ -312,10 +332,13 @@ export async function POST(req: NextRequest) {
         // whatever came back first — possibly not the one on the screen at
         // the price on the screen. Pinned after the key is taken, so a
         // double-tap still matches the first request.
-        const pinnedHotel = result.vertical === 'hotel' ? (result.raw as { hotelId?: string } | undefined)?.hotelId : undefined;
-        if (pinnedHotel && item.hotel) {
-          row.request_payload = { ...(row.request_payload as Record<string, unknown>), hotel: { ...item.hotel, hotelId: pinnedHotel } };
-        }
+        //
+        // The flight the same way: the exact flights and the fare terms shown
+        // for them, so approval and book() buy the fare that was quoted — and
+        // whose terms checkout shows — never the cheapest at that moment. A
+        // pinned flight no longer on sale on those terms is refused as
+        // unavailable, and the options panel is the way on.
+        row.request_payload = pinQuoted(row.request_payload as Record<string, unknown>, result.vertical, result.raw);
 
         let { error: wrote } = await ctx.db.from('bookings').insert(row);
 

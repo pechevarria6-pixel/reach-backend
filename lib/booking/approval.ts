@@ -173,14 +173,32 @@ export function fundingAt(
 }
 
 /**
+ * Whether a plan is a trip for one: flagged solo AND a group of one.
+ *
+ * The flag is set once, at creation, and cleared when somebody joins
+ * (afterJoining in lib/joining.ts) — but that clearing is a write that can
+ * fail, and the person is let in either way. Trusting the flag alone then
+ * priced and booked for one while funding split the total across two: the
+ * newcomer paid half of a one-seat booking they were never on. The member
+ * count is read wherever the flag is, and a group of two is never solo.
+ * planReadiness already counted this way; now quote, the stale check,
+ * readiness and approval do too.
+ */
+export function isSoloPlan(plan: { solo_mode?: unknown }, memberCount: number): boolean {
+  return plan.solo_mode === true && !(memberCount > 1);
+}
+
+/**
  * Who a plan's bookings are for.
  *
- * A solo plan is its creator's trip, whoever else is in the group it sits in.
- * The quote was sized for one (partySize) and approval named every member —
- * so the day somebody joined, every flight and hotel on a solo trip was
- * refused as "priced for 1, now 2" for good, other members' missing details
- * blocked it, and another member's passport marker sent the traveller's own
- * flight to the airline. Quote, stale check and approval all read this.
+ * A trip for one is its creator's. The quote was sized for one (partySize)
+ * and approval named every member — so on a solo trip another member's
+ * missing details blocked it, and their passport marker sent the traveller's
+ * own flight to the airline. Quote, stale check and approval all read this.
+ *
+ * `memberCount` is the whole group, before anybody sitting this booking out
+ * is taken off: a group of more than one is not a solo trip, whatever the
+ * flag still says (isSoloPlan).
  *
  * A solo plan whose creator is gone from the record names nobody, rather
  * than guessing which member it was for.
@@ -188,8 +206,9 @@ export function fundingAt(
 export function onTheTrip<T extends { userId: string }>(
   plan: { solo_mode?: unknown; created_by?: unknown },
   people: T[],
+  memberCount: number,
 ): T[] {
-  if (plan.solo_mode !== true) return people;
+  if (!isSoloPlan(plan, memberCount)) return people;
   const me = typeof plan.created_by === 'string' && plan.created_by ? plan.created_by : null;
   return me ? people.filter(p => p.userId === me) : [];
 }

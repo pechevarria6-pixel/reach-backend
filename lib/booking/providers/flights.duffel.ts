@@ -13,7 +13,8 @@
 //   * total_amount is a decimal STRING ("240.84"), not a number
 //   * an offer expires, often within the hour, and a group takes longer than
 //     that to agree on anything — so book() re-requests rather than trusting
-//     a stored price
+//     a stored price. What it re-requests is pinned: the same flights on the
+//     same fare terms (lib/booking/pin.ts), or nothing
 import type { BookingProvider, BookingItemRequest, BookingItemResult, CancelResult } from '../types.ts';
 import { commitFetch, overMax, OutcomeUnknown } from '../types.ts';
 import {
@@ -222,16 +223,33 @@ async function searchOffers(f: NonNullable<BookingItemRequest['flight']>, seats:
  * The offer a quote is for: the flights somebody chose, if they chose, and
  * otherwise the cheapest. A chosen flight that is no longer on sale is said
  * plainly rather than swapped for a different one behind their back.
+ *
+ * The same flights are often sold on several fares — a basic one that cannot
+ * be changed, a standard one that can. When the fare terms shown are pinned
+ * (lib/booking/pin.ts), only an offer on exactly those terms will do: the
+ * cheapest of those flights could be the basic fare the group never agreed
+ * to. Pure, so a test can hold it to that.
  */
+export function pickOffer<O extends { conditions?: Offer['conditions']; slices?: unknown[] }>(
+  offers: O[], f: Pick<NonNullable<BookingItemRequest['flight']>, 'offerKey' | 'fareTerms'>,
+): { error: string | null; offer: O | null } {
+  if (!offers.length) return { error: 'No flights found.', offer: null };
+  if (!f.offerKey) return { error: null, offer: offers[0] };
+  const same = offers.filter(o => offerKey(o as Parameters<typeof offerKey>[0]) === f.offerKey);
+  if (!same.length) return { error: 'The flights you chose are no longer on sale — pick another from the options.', offer: null };
+  const shown = (f.fareTerms ?? []).filter(t => typeof t === 'string' && t.trim());
+  if (!shown.length) return { error: null, offer: same[0] };
+  const onTerms = same.find(o => describeConditions(o.conditions).join(' | ') === shown.join(' | '));
+  if (!onTerms) {
+    return { error: 'Those flights are no longer on sale on the fare you were shown — pick another from the options.', offer: null };
+  }
+  return { error: null, offer: onTerms };
+}
+
 async function cheapestOffer(f: NonNullable<BookingItemRequest['flight']>, seats: number) {
   const { error, offers } = await searchOffers(f, seats);
   if (error || !offers.length) return { error: error ?? 'No flights found.', offer: null as Offer | null };
-  if (f.offerKey) {
-    const chosen = offers.find(o => offerKey(o as Parameters<typeof offerKey>[0]) === f.offerKey);
-    if (!chosen) return { error: 'The flights you chose are no longer on sale — pick another from the options.', offer: null };
-    return { error: null, offer: chosen };
-  }
-  return { error: null, offer: offers[0] };
+  return pickOffer(offers, f);
 }
 
 /** Distinct flights for these dates, cheapest first — for choosing a different one. */
@@ -239,7 +257,7 @@ export async function flightOptions(req: BookingItemRequest, limit = 6) {
   const f = req.flight;
   if (!process.env.DUFFEL_API_KEY || !f) return { error: 'Flights are switched off.', options: [] };
   if (departed(f.departDate)) return { error: "This trip's dates have already passed.", options: [] };
-  const { error, offers } = await searchOffers({ ...f, offerKey: undefined }, seatsFor(req));
+  const { error, offers } = await searchOffers({ ...f, offerKey: undefined, fareTerms: undefined }, seatsFor(req));
   const seen = new Set<string>();
   const options = [];
   for (const o of offers) {

@@ -3,6 +3,7 @@
 // the reminder email and the ledger — so none of them can quietly forget it.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Skip } from './money.ts';
+import { isSoloPlan } from './booking/approval.ts';
 
 /** PostgREST's code for a table that does not exist: the migration has not run. */
 const NO_TABLE = 'PGRST205';
@@ -36,16 +37,19 @@ export async function planSkips(db: SupabaseClient, planId: string): Promise<Ski
  * a group of four quoted two. One for a solo plan, otherwise the group.
  *
  * It must agree with who approval names — onTheTrip in
- * lib/booking/approval.ts, a solo plan's creator alone — or every flight and
+ * lib/booking/approval.ts, a solo plan's creator alone while the group is
+ * one person — or every flight and
  * hotel on the plan is refused as priced for a different party, for good.
  * Change one, change both; tests/unit/booking-path.test.ts holds them together.
  */
 export async function partySize(
   db: SupabaseClient, plan: { group_id?: unknown; solo_mode?: boolean | null },
 ): Promise<number> {
-  if (plan.solo_mode === true) return 1;
   const { count, error } = await db.from('group_members')
     .select('user_id', { count: 'exact', head: true }).eq('group_id', String(plan.group_id));
   if (error) console.error('[participation] could not count the group', { code: error.code });
+  // Solo only while the group is one person (isSoloPlan): a flag nobody
+  // cleared after a join priced for one while funding split between two.
+  if (isSoloPlan(plan, count ?? 1)) return 1;
   return Math.max(1, count ?? 1);
 }
