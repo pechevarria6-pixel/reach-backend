@@ -271,7 +271,7 @@ async function announceIfFunded(
       if (!person.email) continue;
       await sendFullyFunded(person.email, {
         planTitle: plan.title, groupName: group?.name || 'Your group',
-        totalCents: collectedCents, url: `${base}/home`,
+        totalCents: collectedCents, url: `${base}/home`, memberCount: ids.length,
       });
     }
   } catch (e) {

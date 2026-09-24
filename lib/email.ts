@@ -22,7 +22,7 @@ const SUPPORT = 'hello@alcanzar.io';
 export type SendResult = {
   sent: boolean;
   id?: string;
-  reason?: 'no_key' | 'rejected' | 'error';
+  reason?: 'no_key' | 'rejected' | 'error' | 'solo';
   detail?: string;
 };
 
@@ -100,7 +100,11 @@ export function sendFundingNeeded(to: string, opts: { planTitle: string; groupNa
  * nothing watched for that moment, so the trip sat fully funded and silent
  * until somebody happened to open the app. This is that moment arriving.
  */
-export function sendFullyFunded(to: string, opts: { planTitle: string; groupName: string; totalCents: number; url: string }) {
+export function sendFullyFunded(to: string, opts: { planTitle: string; groupName: string; totalCents: number; url: string; memberCount: number }) {
+  // Never to a trip of one: they have just paid, the screen in front of them
+  // says what is next, and "that's everyone… one of you gives the word" is
+  // addressed to a group that is not there. Required, so no caller forgets.
+  if (opts.memberCount <= 1) return Promise.resolve<SendResult>({ sent: false, reason: 'solo' });
   const total = `$${(opts.totalCents / 100).toFixed(2)}`;
   return send(to, `${opts.planTitle} is fully funded`, shell("That's everyone", `
     <p style="font-size:15px;line-height:1.6;margin:0 0 16px;">
@@ -169,9 +173,13 @@ export function sendBookingConfirmation(to: string, opts: {
       </td>
     </tr>`).join('');
 
-  return send(to, `Confirmed — ${opts.planTitle}`, shell("You're booked", `
+  // One booking at a time: this is sent as each one is confirmed, so it says
+  // what was booked — never "everything is confirmed" over a hotel while the
+  // flight is still to go.
+  const what = opts.items.length === 1 ? opts.items[0].label : `${opts.items.length} bookings`;
+  return send(to, `Booked — ${what} for ${opts.planTitle}`, shell('Booked', `
     <p style="font-size:15px;line-height:1.6;margin:0 0 18px;">
-      Everything for <strong>${escape(opts.planTitle)}</strong> is confirmed. Here is what was booked.
+      This is booked for <strong>${escape(opts.planTitle)}</strong>. Anything else on the trip is on its own list in the app.
     </p>
     <table style="width:100%;border-collapse:collapse;">${rows}</table>
     <p style="margin-top:22px;"><a href="${escape(opts.url)}" style="${emailButtonStyle}">Open your itinerary</a></p>`),
