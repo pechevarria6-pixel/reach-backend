@@ -8705,6 +8705,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   useEffect(()=>{
     if(buildWhenPlaced&&plan?.destinationCity){setBuildWhenPlaced(false);buildItinerary();}
   },[buildWhenPlaced,plan?.destinationCity]);
+  // Whether these days were built before we knew the town. Asked once per
+  // plan and again after a rebuild; a failed check just shows nothing.
+  const [fresh,setFresh]=useState(null);
+  useEffect(()=>{
+    if(!planId||isTempId(planId)||building)return;
+    let gone=false;
+    fetch(`/api/plans/${planId}/freshness`).then(r=>r.ok?r.json():null)
+      .then(d=>{if(!gone)setFresh(d);}).catch(()=>{});
+    return()=>{gone=true;};
+  },[planId,building]);
   const buildItinerary=async()=>{
     if(building)return;
     if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
@@ -9137,6 +9147,20 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       <div style={{flex:1,overflowY:"auto",paddingBottom:20}}>
         {atab==="overview"&&(
           <div style={{padding:"16px 0"}}>
+            {/* Built before we held places for this town, and we hold them
+                now: the rebuild is worth doing, and says by how much. */}
+            {fresh?.stale&&!building&&(
+              <div style={{margin:"0 20px 14px",padding:"14px",background:C.accentDim,
+                border:`1px solid ${C.accentText}`,borderRadius:14}}>
+                <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>
+                  We know {fresh.city||"this town"} better now
+                </div>
+                <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
+                  {`These days name ${fresh.named} real ${fresh.named===1?"place":"places"} in ${fresh.lines} ${fresh.lines===1?"line":"lines"}. We've since checked ${fresh.held} places there — rebuild the days to use them.`}
+                </div>
+                <button className="bsm bsm-p" onClick={buildItinerary}>Rebuild the days</button>
+              </div>
+            )}
             {/* A group trip with no destination yet is waiting for everyone's
                 answers. Whoever has not answered is asked; everyone else is
                 taken to the wait, where the trips are found once all are in. */}
