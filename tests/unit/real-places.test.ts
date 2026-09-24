@@ -253,3 +253,49 @@ test('places with something on are listed first', () => {
   assert.ok(venues.indexOf('Red Bear Brewing') < venues.indexOf('Quiet Bar'),
     'the one with a night on should come first');
 });
+
+test('what the map says about reservations beats the guess', () => {
+  const required = { ...place('p9', 'Reina Mora'), reservation: 'required' as const };
+  const recommended = { ...place('p9', 'Alma'), reservation: 'recommended' as const };
+  const walkIn = { ...place('p9', 'Jimmy\'s Pizza'), reservation: 'no' as const };
+  // A table the map says must be booked is never sent as a walk-in.
+  assert.equal(bookingFor('walk_in', required), 'ahead');
+  assert.equal(bookingFor('walk_in', recommended), 'ahead');
+  // A place that takes no bookings is never "book ahead", nor Reach's.
+  assert.equal(bookingFor('ahead', walkIn), 'walk_in');
+  assert.equal(bookingFor('reach', walkIn), 'walk_in');
+  // A ticketed event is arranged with its seller whatever the tag says.
+  assert.equal(bookingFor('walk_in', { ...walkIn }, true), 'walk_in');
+  assert.equal(bookingFor('ahead', walkIn, true), 'ahead');
+  // No tag: the old rules.
+  assert.equal(bookingFor('walk_in', place('p9', 'Somewhere')), 'walk_in');
+});
+
+test('only the reservation values the map documents are read', async () => {
+  const { takesBookings } = await import('../../lib/discovery/real-places.ts');
+  assert.equal(takesBookings('Required'), 'required');
+  assert.equal(takesBookings('no'), 'no');
+  assert.equal(takesBookings('members_only'), null);
+  assert.equal(takesBookings(undefined), null);
+});
+
+test('what the map says about reservations beats the guess', () => {
+  const required = { ...place('p9', 'Reina Mora'), reservation: 'required' as const };
+  const recommended = { ...place('p9', 'Alma'), reservation: 'recommended' as const };
+  const walkIn = { ...place('p9', 'Jimmy\'s Pizza'), reservation: 'no' as const };
+  assert.equal(bookingFor('walk_in', required), 'ahead');
+  assert.equal(bookingFor('walk_in', recommended), 'ahead');
+  assert.equal(bookingFor('ahead', walkIn), 'walk_in');
+  assert.equal(bookingFor('reach', walkIn), 'walk_in');
+  // A ticketed event is arranged with its seller whatever the tag says.
+  assert.equal(bookingFor('ahead', walkIn, true), 'ahead');
+  assert.equal(bookingFor('walk_in', place('p9', 'Somewhere')), 'walk_in');
+});
+
+test('only the reservation values the map documents are read', async () => {
+  const { takesBookings } = await import('../../lib/discovery/real-places.ts');
+  assert.equal(takesBookings('Required'), 'required');
+  assert.equal(takesBookings('no'), 'no');
+  assert.equal(takesBookings('members_only'), null);
+  assert.equal(takesBookings(undefined), null);
+});

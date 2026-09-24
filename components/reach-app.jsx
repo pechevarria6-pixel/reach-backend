@@ -493,6 +493,7 @@ function slotRow(raw,{time,sub="",fallback,cost}){
       ?{venue_website:sl.ticket_url,venue_name:sl.venue||null}
       :(sl.place_url?{venue_website:sl.place_url,venue_name:sl.venue||null}:{})),
     ...(sl.whats_on?{venue_note:sl.whats_on}:{}),
+    ...(sl.place_phone&&!sl.ticket_url?{venue_phone:sl.place_phone}:{}),
   };
 }
 

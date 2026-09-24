@@ -1126,6 +1126,13 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           if (cited?.whatsOn?.length) slot.whats_on = cited.whatsOn.slice(0, 2).join(' · ');
 
           const honest = bookingFor(slot.booking, cited, !!slot.ticket_url);
+          // A table to book gets the way to book it: the venue's own booking
+          // page when it names one, and its number either way. Both were
+          // held and neither reached the line (audit #50).
+          if (cited && honest === 'ahead' && !slot.ticket_url) {
+            if (cited.reserveUrl) { slot.place_url = cited.reserveUrl; slot.venue = slot.venue ?? cited.name; }
+            if (cited.phone) slot.place_phone = cited.phone;
+          }
           if (honest !== slot.booking) {
             console.error('[trips itinerary] downgraded a booking claim we cannot keep', {
               destination, claimed: slot.booking, kept: honest, place: cited?.name ?? null,

@@ -25,6 +25,7 @@ import { locate } from './geocode.ts';
 import { noteArea, milesBetween } from './cache.ts';
 import { canTurnUp } from './rules.ts';
 import { normalise } from './verify.ts';
+import { dialable } from './phone.ts';
 import { closedThroughout, neverOpen, windowFor } from './hours.ts';
 
 /** What the map calls somewhere to sleep, once underscores are spaces. */
@@ -66,6 +67,24 @@ export interface RealPlace {
    * volunteer's note from last spring is not a promise about Friday.
    */
   hours?: string | null;
+  /**
+   * Whether it takes reservations, as mapped: OpenStreetMap's own
+   * `reservation` tag. The model guessed this per line; a restaurant whose
+   * map entry says "required" was sent as a walk-in. See takesBookings().
+   */
+  reservation?: Reservation;
+  /** A number to ring, dialable, from the venue's row or its map entry. */
+  phone?: string | null;
+  /** Where to reserve, when the venue's own page names a booking page. */
+  reserveUrl?: string | null;
+}
+
+export type Reservation = 'required' | 'recommended' | 'yes' | 'no' | null;
+
+/** OpenStreetMap's reservation tag, as one of the values it documents, else null. */
+export function takesBookings(tag: unknown): Reservation {
+  const v = String(tag ?? '').trim().toLowerCase();
+  return v === 'required' || v === 'recommended' || v === 'yes' || v === 'no' ? v : null;
 }
 
 /**
@@ -140,6 +159,7 @@ type VenueRow = {
   id: string; name: string; kind: string | null; interest: string | null; website: string | null;
   city: string | null; street: string | null; lat: number; lng: number;
   osm_tags?: Record<string, string> | null; opening_hours?: string | null;
+  phone?: string | null; reservation_url?: string | null;
 };
 type ReadError = { code?: string; message?: string } | null;
 /** A held row as the menu uses it. */
@@ -147,6 +167,7 @@ type Shaped = {
   id: string; rawKind: string | null; name: string; kind: string; interest: string | null;
   url: string | null; city: string | null; street: string | null; hours: string | null;
   miles: number; cuisine: string;
+  reservation: Reservation; phone: string | null; reserveUrl: string | null;
 };
 
 /** The half-width of a box `miles` across, in degrees, at this latitude. */
@@ -182,7 +203,7 @@ async function venuesInBox(
   const { dLat, dLng } = boxAround(at.lat, miles);
   const except = (opts.except ?? []).filter(listable);
   const also = opts.also ?? ((q: any) => q);
-  const FULL = 'id, name, kind, interest, website, city, street, lat, lng, osm_tags, opening_hours';
+  const FULL = 'id, name, kind, interest, website, city, street, lat, lng, osm_tags, opening_hours, phone, reservation_url';
   const BASIC = 'id, name, kind, interest, website, city, street, lat, lng';
   const read = async (columns: string, live: boolean): Promise<{ data: VenueRow[]; error: ReadError; floor?: boolean }> => {
     const out: VenueRow[] = [];
@@ -325,6 +346,9 @@ export async function placesFor(
         hours: (v.opening_hours as string | null) || null,
         miles: milesBetween(at.lat, at.lng, Number(v.lat), Number(v.lng)),
         cuisine: String((v.osm_tags ?? {}).cuisine ?? ''),
+        reservation: takesBookings((v.osm_tags ?? {}).reservation),
+        phone: dialable(v.phone || (v.osm_tags ?? {}).phone || (v.osm_tags ?? {})['contact:phone'], countryCode),
+        reserveUrl: /^https?:\/\//i.test(String(v.reservation_url || '')) ? String(v.reservation_url) : null,
       };
     }
     shaped.set(key, out);
@@ -402,6 +426,7 @@ export async function placesFor(
   const asPlace = (r: typeof rows[number], ref: string, forFood?: string): RealPlace => ({
     ref, name: r.name, kind: r.kind, interest: r.interest, url: r.url, city: r.city, source: 'osm',
     street: r.street, hours: r.hours,
+    reservation: r.reservation, phone: r.phone, reserveUrl: r.reserveUrl,
     ...(forFood ? { forFood } : {}),
   });
 
@@ -520,6 +545,9 @@ export function placeMenu(places: RealPlace[]): string {
       // The map's hours, labelled as the map's. They let the plan put the
       // Sunday-closed restaurant on Saturday; they are not ours to promise.
       if (p.hours) lines.push(`        hours per OpenStreetMap: ${p.hours}`);
+      // Whether it takes bookings, as mapped — the one fact that decides
+      // "book ahead" or "walk in", so the model need not guess it.
+      if (p.reservation) lines.push(`        reservations per OpenStreetMap: ${p.reservation}`);
       // What is actually on there, read off the venue's own page. Their
       // words, not ours — "every Wednesday Night at 7 PM" is the pub's own
       // phrasing and is worth repeating exactly, because it is checkable.
@@ -856,7 +884,16 @@ export function bookingFor(
   place: RealPlace | null,
   hasTicket = false,
 ): 'reach' | 'ahead' | 'walk_in' {
-  if (claimed !== 'reach') return claimed === 'ahead' ? 'ahead' : 'walk_in';
+  // What the map says about reservations beats what the model guessed:
+  // "required" or "recommended" is a table to book, "no" is walk in. A
+  // ticketed event is arranged with its seller whatever the tag says.
+  const mapped = place?.reservation ?? null;
+  if (claimed !== 'reach') {
+    if (!hasTicket && (mapped === 'required' || mapped === 'recommended')) return 'ahead';
+    if (!hasTicket && mapped === 'no') return 'walk_in';
+    return claimed === 'ahead' ? 'ahead' : 'walk_in';
+  }
+  if (!hasTicket && mapped === 'no') return 'walk_in';
   // A ticketed event is the one thing we are most certain about and still
   // not something Reach books. The ticket is bought from whoever sells it —
   // that is the whole point of the handoff — so counting it as a Reach
