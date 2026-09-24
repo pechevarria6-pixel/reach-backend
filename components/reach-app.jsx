@@ -608,6 +608,18 @@ function isTempId(id){
 // the one place to let Reach notify their phone — asked only when they tap,
 // and on an iPhone in Safari, told plainly that Apple only allows it once
 // Reach is on the Home Screen, rather than a button that does nothing.
+// OpenStreetMap's licence (ODbL) asks for a credit wherever its data is
+// shown, and every venue Reach names comes from it. The duty applied from the
+// first sweep; the credit was never there.
+function OsmCredit({style}){
+  return(
+    <div style={{fontSize:10.5,color:C.t3,textAlign:"center",padding:"8px 20px 0",...style}}>
+      Venue data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer"
+        style={{color:C.t3,textDecoration:"underline"}}>OpenStreetMap contributors</a>
+    </div>
+  );
+}
+
 function NotificationsBell(){
   const [open,setOpen]=useState(false);
   const [data,setData]=useState({available:false,unread:0,items:[]});
@@ -1118,6 +1130,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation}){
           More near you on Discover →
         </button>
       )}
+      {nearbyState==="ready"&&<OsmCredit/>}
       <div style={{height:20}}/>
     </div>
   );
@@ -1825,6 +1838,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
           </div>
         </div>
       ))}
+      {shown.length>0&&<OsmCredit style={{padding:"0 20px 12px"}}/>}
 
       {!loading&&sources.some(s=>s.status==="error")&&shown.length>0&&(
         <div style={{margin:"0 20px 14px",padding:"10px 14px",background:C.s2,
@@ -8157,6 +8171,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     setEmailing(false);
                   }}>{emailing?"Sending…":(group.memberIds||[]).length>1?"📬 Email this to everyone":"📬 Email this to me"}</button>
                   <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>+ Add or edit items</button>
+                  <OsmCredit style={{padding:"4px 0 0"}}/>
                 </div>
               </>
             )}
