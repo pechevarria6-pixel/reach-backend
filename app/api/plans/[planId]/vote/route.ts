@@ -45,7 +45,9 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // After the pick the plan goes back to planning, so a vote on a decided
   // trip is refused here — the vote is changeable until the pick, not after.
   if (plan.status !== 'voting') {
-    return NextResponse.json({ error: 'The vote on this trip has closed.' }, { status: 400 });
+    return NextResponse.json({
+      error: plan.status === 'cancelled' ? 'This trip was called off, so there is nothing to vote on.' : 'The vote on this trip has closed.',
+    }, { status: 400 });
   }
 
   // One of the ideas the group was shown: the saved ideas' titles when

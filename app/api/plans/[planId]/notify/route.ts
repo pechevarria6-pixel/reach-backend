@@ -39,10 +39,14 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const { data: plan } = await db
     .from('plans')
-    .select('id, title, group_id, budget_cents, vote_options, type')
+    .select('id, title, group_id, budget_cents, vote_options, type, status')
     .eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
 
+  // Nobody is nudged about a trip that was called off or is over.
+  if (plan && (plan.status === 'cancelled' || plan.status === 'completed')) {
+    return NextResponse.json({ notified: 0, message: plan.status === 'cancelled' ? 'This trip was called off.' : 'This trip is over.' }, { status: 409 });
+  }
   const { data: group } = await db.from('groups').select('name').eq('id', plan.group_id).single();
   const memberIds = await groupMemberIds(db, plan.group_id);
   if (!memberIds.length) return NextResponse.json({ error: 'That group has no members' }, { status: 409 });

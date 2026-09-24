@@ -121,7 +121,7 @@ export async function POST(req: NextRequest) {
   // otherwise refuse this plan over one nobody can go on any more.
   if (undecided) {
     const waiting = await waitingTrip(supabase, body.group_id, body.type);
-    if (waiting.live && !soloGroup) return alreadyWaiting(waiting.live);
+    if (waiting.live && !soloGroup) return alreadyWaiting(waiting.live, body.type);
     if (waiting.stale.length) await closeStale(supabase, body.group_id, waiting.stale);
   }
 
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
   // unique index refused this one. Theirs is the trip.
   if (error?.code === '23505' && undecided) {
     const existing = await waitingTrip(supabase, body.group_id, body.type);
-    if (existing.live) return alreadyWaiting(existing.live);
+    if (existing.live) return alreadyWaiting(existing.live, body.type);
   }
 
   if (error || !plan) {
@@ -284,9 +284,10 @@ async function closeStale(db: import('@supabase/supabase-js').SupabaseClient, gr
   else console.log('[plans POST] closed waiting plans whose dates have passed', { groupId, ids });
 }
 
-function alreadyWaiting(planId: string) {
+function alreadyWaiting(planId: string, type?: string | null) {
+  const kind = type === 'restaurant' ? 'night out' : 'trip';
   return NextResponse.json({
-    error: 'This group already has a trip waiting on everyone — here it is.',
+    error: `This group already has a ${kind} waiting on everyone — here it is.`,
     code: 'already_waiting',
     planId,
   }, { status: 409 });

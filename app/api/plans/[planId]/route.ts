@@ -172,16 +172,35 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   // deleted with one: cancelling the plan does not cancel the booking, and
   // a cancelled plan leaves Home, taking the only way to see it along.
   if (callingOff) {
+    // Redirected is a hand-off to somebody else's checkout, not something
+    // held — calling the plan off does not touch it either way.
     const { data: held, error: heldErr } = await supabase.from('bookings')
-      .select('id, status').eq('plan_id', params.planId)
-      .in('status', ['confirmed', 'redirected', 'pending']);
+      .select('id, status, vertical, detail').eq('plan_id', params.planId)
+      .in('status', ['confirmed', 'pending']);
     if (heldErr) {
       console.error('[plans PATCH] could not read what this plan holds', { planId: params.planId, code: heldErr.code });
       return NextResponse.json({ error: "We couldn't check this plan's bookings — nothing was changed." }, { status: 503 });
     }
     if ((held ?? []).length) {
+      // Named, so it is something somebody can act on: there is no cancel
+      // screen in the app for them to go and find.
+      const what = (held ?? []).map(b => String(b.detail || b.vertical || 'a booking').split(' · ')[0]).slice(0, 3);
       return NextResponse.json({
-        error: 'This plan still has something booked. Cancel that first, then call the plan off.',
+        error: `This trip still holds ${what.join(', ')}. Calling it off here would not cancel ${what.length === 1 ? 'that' : 'those'} — to ask about cancelling, email hello@alcanzar.io with the trip's name.`,
+        holding: what,
+      }, { status: 409 });
+    }
+    // Money paid in is the same: calling the trip off does not give it back.
+    const { data: paid, error: paidErr } = await supabase.from('contributions')
+      .select('id').eq('plan_id', params.planId).eq('status', 'succeeded').limit(1);
+    if (paidErr) {
+      console.error('[plans PATCH] could not check payments before calling off', { planId: params.planId, code: paidErr.code });
+      return NextResponse.json({ error: "We couldn't check this trip's payments — nothing was changed." }, { status: 503 });
+    }
+    if (paid?.length) {
+      return NextResponse.json({
+        error: "Somebody has already paid towards this trip, so it can't be called off from here — calling it off wouldn't give their money back. Email hello@alcanzar.io with the trip's name.",
+        paidIn: true,
       }, { status: 409 });
     }
   }
@@ -310,7 +329,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   // silently not save.
   const write = () => {
     let q = supabase.from('plans').update(updates).eq('id', params.planId);
-    if (onlyIfUndecided === true) q = q.eq('destination_style', UNDECIDED);
+    // And only on a trip still waiting: a pick from a stale vote screen must
+    // not bring a called-off or closed plan back to planning.
+    if (onlyIfUndecided === true) q = q.eq('destination_style', UNDECIDED).in('status', ['planning', 'voting']);
     // Called off once: a double-tap is two requests, and the second must
     // not tell everybody again.
     if (callingOff) q = q.neq('status', 'cancelled');
@@ -356,8 +377,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     if (now?.status === 'cancelled') return NextResponse.json({ plan: now, alreadyCalledOff: true });
   }
   if (onlyIfUndecided === true && !writeError && !updated) {
-    // Nothing matched: somebody else picked first. Theirs stands, and this
-    // person is told so rather than silently overwriting it.
+    // Nothing matched: somebody else picked first, or the trip was called off
+    // meanwhile. Said as whichever it was.
+    const { data: now } = await supabase.from('plans').select('status').eq('id', params.planId).maybeSingle();
+    if (now?.status === 'cancelled') {
+      return NextResponse.json({ error: 'This trip was called off, so nothing can be picked for it.', calledOff: true }, { status: 409 });
+    }
     return NextResponse.json(
       { error: 'Somebody has already picked where this trip goes.', alreadyDecided: true },
       { status: 409 },

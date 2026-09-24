@@ -50,13 +50,16 @@ export async function claimOnce(
 
 export async function announceIfEveryoneIn(
   db: SupabaseClient,
-  plan: { id: string; group_id: string; title?: string | null; type?: string | null; destination_style?: string | null },
+  plan: { id: string; group_id: string; title?: string | null; type?: string | null; destination_style?: string | null; status?: string | null },
   byUserId: string,
   send: Sender | null,
 ): Promise<boolean> {
   // Only a trip still waiting on answers. Once a destination is picked the
   // answers are for the days, and nobody needs telling.
   if (plan.destination_style !== 'undecided') return false;
+  // A called-off or finished trip announces nothing — "Everyone's in, find
+  // your ideas" about a plan the organiser called off is a false start.
+  if (plan.status && plan.status !== 'planning' && plan.status !== 'voting') return false;
   const [{ data: members, error: mErr }, { data: said, error: sErr }] = await Promise.all([
     db.from('group_members').select('user_id').eq('group_id', plan.group_id),
     db.from('plan_preferences').select('user_id, submitted_at').eq('plan_id', plan.id),

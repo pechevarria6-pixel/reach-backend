@@ -222,7 +222,7 @@ export async function POST(req: NextRequest) {
   let groupAnswers: GroupAnswers | null = null;
   if (groupPlanId) {
     const { data: row } = await supabase
-      .from('plans').select('id, group_id, created_by, type, solo_mode, destination_style, title')
+      .from('plans').select('id, group_id, created_by, type, solo_mode, destination_style, title, status')
       .eq('id', String(groupPlanId)).maybeSingle();
     // Membership was checked against groupId; the plan has to be in that same
     // group, or a member of one group could read another group's answers
@@ -236,6 +236,15 @@ export async function POST(req: NextRequest) {
       title: row.title ? String(row.title) : null,
     };
     if (groupPlan.type === 'restaurant') isNightPlan = true;
+
+    // Nothing is built for a trip that was called off or is over — before
+    // any paid model call, and said as what it is.
+    if (row.status === 'cancelled' || row.status === 'completed') {
+      return NextResponse.json(
+        { error: row.status === 'cancelled' ? 'This trip was called off.' : 'This trip is over.', calledOff: row.status === 'cancelled' },
+        { status: 409 },
+      );
+    }
 
     // Options are for a trip still deciding where it goes. Once somebody has
     // picked, a fresh three would be three nobody can choose — picking only

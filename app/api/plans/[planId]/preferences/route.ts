@@ -54,6 +54,17 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
+  // An old answer link tapped after the trip was called off must not bring
+  // it back to life.
+  const status = String((ctx.plan as { status?: string }).status ?? '');
+  if (status === 'cancelled' || status === 'completed') {
+    return NextResponse.json({
+      error: status === 'cancelled'
+        ? 'This trip was called off, so nothing more is needed for it — start another from the group.'
+        : 'This trip is over.',
+      calledOff: status === 'cancelled',
+    }, { status: 409 });
+  }
 
   const parsed = Schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
@@ -86,7 +97,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // the answers are what matters and they are stored.
   let everyone = false;
   try {
-    const plan = ctx.plan as { id?: string; group_id: string; title?: string; type?: string; destination_style?: string };
+    const plan = ctx.plan as { id?: string; group_id: string; title?: string; type?: string; destination_style?: string; status?: string };
     everyone = await announceIfEveryoneIn(ctx.db, { ...plan, id: params.planId }, ctx.user.id, pushSender());
   } catch (e) {
     console.error('[plan preferences POST] could not announce everyone in', { planId: params.planId, error: e instanceof Error ? e.message : String(e) });

@@ -4,7 +4,7 @@ import { itineraryDays } from "@/lib/itinerary";
 import { namesList } from "@/lib/group-answers";
 import { shownTitle, isOrganiser, waitingTripIn } from "@/lib/trip-vote";
 import { itemsFromRows } from "@/lib/contracts/itinerary-item";
-import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive } from "@/lib/calendar";
+import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive, dayWhere } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE } from "@/lib/brand";
@@ -5425,7 +5425,7 @@ function CallOffPlan({plan,group,me,um,updatePlanOnServer,updateGroup,toast,onDo
     const who=String(um?.[plan.createdBy]?.name||"").trim().split(/\s+/)[0]||"whoever set it up";
     return(
       <div style={{fontSize:12,color:C.t3,lineHeight:1.5,marginTop:14,textAlign:"center"}}>
-        If this {kind} isn't going to happen, {who} can call it off.
+        If this {kind} isn't going to happen, {who} or a group admin can call it off.
       </div>
     );
   }
@@ -5596,7 +5596,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     const id=waitingTripIn((group.plans||[]).filter(p=>!isTempId(p.id)).map(p=>({
       id:p.id,type:p.type||"trip",destination_style:p.destStyle,status:p.status,
       start_date:p.startDate||null,end_date:p.endDate||null,created_at:p.createdAt||null,
-    })),{type:kind,today:today()});
+    // The server's "today" — the earliest calendar day anywhere — so the two
+    // agree: local today called yesterday's plan over at midnight while the
+    // server still treated it as waiting.
+    })),{type:kind,today:dayWhere(-180)});
     return id?(group.plans||[]).find(p=>p.id===id)||null:null;
   };
   // What somebody is told about a plan already being decided: that it is,
@@ -8338,8 +8341,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {plan.status==="planning"&&soloTrip&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Locked in — let's book it"))}>{loading?"Locking in…":"Lock this in"}</button>}
               {plan.status==="voting"&&plan.destStyle!=="undecided"&&<button className="bp" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("approved",()=>toast("Approved — let's book it"))}>{loading?"Approving…":"Approve and proceed to booking"}</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
-              <CallOffPlan plan={plan} group={group} me={me} um={um} updatePlanOnServer={updatePlanOnServer}
-                updateGroup={updateGroup} toast={toast} onDone={onBack}/>
+              {/* Only where a plan can be stuck — still deciding where it goes.
+                  A decided plan may have money in it, and calling it off
+                  from here says nothing about that. */}
+              {plan.destStyle==="undecided"&&<CallOffPlan plan={plan} group={group} me={me} um={um} updatePlanOnServer={updatePlanOnServer}
+                updateGroup={updateGroup} toast={toast} onDone={onBack}/>}
             </div>
             {(plan.status==="approved"||plan.status==="booked")&&plan.itinerary.length>0
               ?<SignOff step="overview" cta="Overview looks right →" hint="Where, when, who and the days on Book. Next: the budget."/>
@@ -11425,7 +11431,10 @@ export default function ReachApp({realUser,onSignOut}={}){
       if(res.ok){
         const {plan:saved}=await res.json();
         // Update local plan with real server ID
-        setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans:g.plans.map(p=>p.id===plan.id?{...p,id:saved.id}:p)}:g));
+        // The server's id, and who it says made the plan: the organiser's own
+        // wait screen told them "whoever set it up can call it off", with no
+        // button, because the new plan never knew who that was.
+        setGroups(gs=>gs.map(g=>g.id===groupId?{...g,plans:g.plans.map(p=>p.id===plan.id?{...p,id:saved.id,createdBy:saved.created_by||p.createdBy||null}:p)}:g));
         return saved.id;
       }
       const err=await res.json().catch(()=>null);
