@@ -1,10 +1,18 @@
 // ─── (Re)building the towns the weekly map load reads around ─────────────
 // A seed is a town somebody plans trips to, placed on the map and matched to
-// the Geofabrik download that holds it. They come from three places:
+// the Geofabrik download that holds it. They come from four places:
 //
 //   - every plan's destination_city / destination_country;
 //   - every discovery_areas row (where somebody opened Discover);
-//   - the destination profiles still queued.
+//   - the destination profiles still queued;
+//   - the world list (lib/discovery/world-destinations.ts): the most
+//     visited cities and the Seven Wonders' towns. These are placed from
+//     the list's own coordinates and already matched to their files, so
+//     they cost the geocoder nothing.
+//
+// A plan the geocoder places in a country regions.ts does not file, but
+// which is a world destination (a plan to Paris), joins that destination's
+// seeds instead of being skipped.
 //
 // Each is placed with Nominatim, one request a second as its policy asks,
 // then probed at the centre, on the rim of its circle and halfway out, so a
@@ -26,7 +34,7 @@
 // the state off put Fayetteville, NC in Arkansas.
 import { credentials, rest, getAll } from './rest.mjs';
 import { locate, whereIs } from '../../lib/discovery/geocode.ts';
-import { regionFor, probePoints, seedCandidates, dedupeSeeds, sameTown, SEED_RADIUS_MILES } from '../../lib/discovery/regions.ts';
+import { regionFor, probePoints, seedCandidates, dedupeSeeds, sameTown, worldSeeds, worldTownFor, nameKey, SEED_RADIUS_MILES } from '../../lib/discovery/regions.ts';
 
 const write = process.argv.includes('--write');
 const onlyAt = process.argv.indexOf('--only');
@@ -46,7 +54,12 @@ const areas = await read('discovery_areas?select=city,lat,lng&order=id');
 
 let candidates = seedCandidates({ plans, profiles, areas });
 if (only) candidates = candidates.filter(c => c.name.toLowerCase() === only);
-console.log(`${plans.length} plans, ${profiles.length} queued profiles, ${areas.length} areas → ${candidates.length} towns`);
+let world = worldSeeds();
+if (only) world = world.filter(s => nameKey(s.name) === nameKey(only));
+console.log(`${plans.length} plans, ${profiles.length} queued profiles, ${areas.length} areas → ${candidates.length} towns, and ${new Set(world.map(s => s.name)).size} from the world list`);
+// Sources that join a world destination: a plan to Paris adds "plan" to the
+// world list's Paris rather than being skipped. Keyed by the world name.
+const joinsWorld = new Map();
 
 // Nominatim's policy: at most one request a second, from an identified agent.
 let last = 0;
@@ -96,13 +109,31 @@ for (const c of candidates) {
     const region = await regionAt(p.lat, p.lng);
     if (region) regions.add(region);
   }
-  if (!regions.size) { skipped.push(`${c.name} (${lat}, ${lng}) — in no region regions.ts knows`); continue; }
+  if (!regions.size) {
+    const town = worldTownFor({ name: c.name, lat, lng });
+    if (town) {
+      joinsWorld.set(town.name, [...(joinsWorld.get(town.name) ?? []), ...c.sources]);
+      console.log(`  ${c.name}: joins the world list's ${town.name}`);
+      continue;
+    }
+    skipped.push(`${c.name} (${lat}, ${lng}) — in no region regions.ts knows`);
+    continue;
+  }
   placed.push({ name: c.name, lat, lng });
   for (const region of regions) {
     seeds.push({ name: c.name, lat, lng, region, source: [...c.sources].sort().join(',') });
   }
   console.log(`  ${c.name} (${Number(lat).toFixed(3)}, ${Number(lng).toFixed(3)}) → ${[...regions].join(', ')}`);
 }
+
+// The world list last, so where a plan already names the same town in the
+// same file, the plan's spelling and point are the ones kept and the
+// sources are joined (dedupeSeeds, on seedKey).
+for (const w of world) {
+  const joined = joinsWorld.get(w.name) ?? [];
+  seeds.push({ ...w, source: [...new Set(['world', ...joined])].sort().join(',') });
+}
+console.log(`  world list: ${world.length} seeds for ${new Set(world.map(s => s.name)).size} towns`);
 
 const rows = dedupeSeeds(seeds);
 for (const s of skipped) console.log(`  skipped: ${s}`);

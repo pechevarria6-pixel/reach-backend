@@ -74,6 +74,35 @@ skipped. That is deliberate: a wrong Geofabrik path does not 404, it redirects
 to the home page with a 200. To add a country, add its path to the table there
 after checking it resolves to a real `.osm.pbf`.
 
+**The world list.** `lib/discovery/world-destinations.ts` holds the fifty most
+visited cities (Euromonitor, *Top 100 City Destinations: 2019 Edition*, the
+latest edition with a public full ranking) and the towns the Seven Wonders and
+the Great Pyramid are visited from (Aguas Calientes and Cusco for Machu Picchu,
+Wadi Musa for Petra, Valladolid and Pisté for Chichén Itzá, Beijing and Huairou
+for the Great Wall, Agra, Rome, Rio, Giza). These are seeded on every run from
+their own coordinates, with no Nominatim request. Which files they are read
+from is not typed by hand:
+
+```
+node scripts/ingest/world-regions.mjs          # re-derive from Geofabrik's index, write the file
+node scripts/ingest/world-regions.mjs --check  # print, write nothing
+```
+
+reads `https://download.geofabrik.de/index-v1.json`, picks the smallest
+extract whose polygon holds each town's centre and probe points (so Paris is
+Île-de-France's 339 MB, not France's four gigabytes; Tokyo is Kanto, Delhi is
+India's northern zone), keeps the files `regions.ts` already uses for the US,
+the UK and Mexico, skips cross-country overlays such as US Northeast, checks
+every file's `.md5` and `.pbf` on the server, and writes
+`lib/discovery/world-regions.generated.ts` with each file's size. Run it
+after changing the list; the unit tests fail until you do.
+
+About sixty regions come from the list, so a full run is sixty-odd jobs at two
+at a time. Only England (1.7 GB) and California (1.3 GB) are over a gigabyte,
+and both were already on the table. The Actions cache holds 10 GB per
+repository, so the older downloads are evicted and fetched again the next week;
+that is expected, not a failure.
+
 ### 3. Add the two secrets to GitHub
 
 The repository is public. The workflow reads exactly two secrets, only through

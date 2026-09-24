@@ -100,30 +100,44 @@ type Offer = {
  *                        destination this ambiguous is why we never silently
  *                        pick the second.
  */
-const airportCache = new Map<string, string | null>();
+const airportCache = new Map<string, AirportHit | null>();
+
+/** The code a place resolved to, and where Duffel says it is, when it says. */
+export interface AirportHit { iata: string; lat: number | null; lng: number | null }
 
 export async function resolveAirport(place: string): Promise<string | null> {
+  return (await resolveAirportAt(place))?.iata ?? null;
+}
+
+/**
+ * resolveAirport with the airport's own coordinates, so a caller that knows
+ * where the town is can check the answer is anywhere near it. A name search
+ * matches names: "Valladolid" is a city in Yucatán and an airport in Spain,
+ * and "Aguas Calientes" is one space away from Aguascalientes, Mexico.
+ */
+export async function resolveAirportAt(place: string, fetchImpl: typeof fetch = fetch): Promise<AirportHit | null> {
   const query = (place || '').trim();
   if (!query) return null;
   if (airportCache.has(query)) return airportCache.get(query) ?? null;
   if (!process.env.DUFFEL_API_KEY) return null;
 
-  let code: string | null = null;
+  let found: AirportHit | null = null;
   try {
-    const res = await fetch(
+    const res = await fetchImpl(
       `${BASE}/places/suggestions?query=${encodeURIComponent(query)}`,
       { headers: headers(), signal: AbortSignal.timeout(8000) },
     );
     if (res.ok) {
       const json = await res.json().catch(() => null);
-      const places = (json?.data ?? []) as {
-        type?: string; iata_code?: string; airports?: { iata_code?: string }[];
-      }[];
+      type Place = { type?: string; iata_code?: string; latitude?: number | null; longitude?: number | null; airports?: Place[] };
+      const places = (json?.data ?? []) as Place[];
       // An airport is sellable as itself. A city is sellable by its own code
       // when it has one — that is how "all airports in London" is bought.
       const hit = places.find(p => p.type === 'airport' && p.iata_code)
         ?? places.find(p => p.iata_code);
-      code = hit?.iata_code ?? hit?.airports?.[0]?.iata_code ?? null;
+      const code = hit?.iata_code ?? hit?.airports?.[0]?.iata_code ?? null;
+      const at = [hit, hit?.airports?.[0]].find(p => Number.isFinite(p?.latitude) && Number.isFinite(p?.longitude));
+      if (code) found = { iata: code, lat: at ? Number(at.latitude) : null, lng: at ? Number(at.longitude) : null };
     } else {
       console.error('[duffel] place lookup failed', { status: res.status });
     }
@@ -131,8 +145,8 @@ export async function resolveAirport(place: string): Promise<string | null> {
     console.error('[duffel] place lookup unreachable', e instanceof Error ? e.message : String(e));
   }
 
-  airportCache.set(query, code);
-  return code;
+  airportCache.set(query, found);
+  return found;
 }
 
 /** An airport near somewhere, and how far it is as the crow flies. */

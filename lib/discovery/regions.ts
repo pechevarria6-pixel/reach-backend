@@ -12,7 +12,15 @@
 // would have "downloaded" an HTML page and found no venues in Aberdeen.
 // A place in a country this table does not know is logged and skipped
 // rather than sent to the nearest path that looks right. France, for
-// instance, is four gigabytes and nobody has planned a trip there yet.
+// instance, is four gigabytes.
+//
+// The one exception is the world list (world-destinations.ts): the most
+// visited cities and the Seven Wonders' towns, matched to Geofabrik files
+// from Geofabrik's own index by scripts/ingest/world-regions.mjs rather
+// than typed here. Paris is read from Île-de-France, not from France.
+
+import { WORLD_REGIONS } from './world-regions.generated.ts';
+import { WORLD_DESTINATIONS, type WorldDestination } from './world-destinations.ts';
 
 /** Geofabrik's file for each US state, keyed by USPS code. */
 const US_STATES: Record<string, string> = {
@@ -71,13 +79,29 @@ export function regionFor(at: WhereAbouts): string | null {
   return COUNTRIES[country] ?? null;
 }
 
-/** Every region path this table can produce, for validating input. */
-export function knownRegions(): string[] {
+/**
+ * The paths regionFor can answer with: the hand-checked table above. The
+ * world list's generator walks up to one of these where a point is in a
+ * country this table already files, so the two never disagree about a town.
+ */
+export function legacyRegions(): string[] {
   return [...new Set([
     ...Object.values(US_STATES).map(s => `north-america/us/${s}`),
     ...Object.values(COUNTRIES),
     ...Object.values(UK_NATIONS),
   ])].sort();
+}
+
+/**
+ * Every region path the weekly load may read, for validating input: the
+ * table above, and the files the world destinations were matched to from
+ * Geofabrik's own index (world-regions.generated.ts).
+ *
+ * regionFor still answers only from the table. A plan to Lyon is not
+ * guessed into a file; the world list is placed from its own coordinates.
+ */
+export function knownRegions(): string[] {
+  return [...new Set([...legacyRegions(), ...Object.values(WORLD_REGIONS).flat()])].sort();
 }
 
 /** The download for a region. `-latest` redirects to the dated file. */
@@ -105,7 +129,7 @@ export interface Seed {
   lng: number;
   region: string;
   radius_miles?: number;
-  /** Where it came from: plan, area, profile, or several joined by commas. */
+  /** Where it came from: plan, area, profile, world, or several joined by commas. */
   source: string;
 }
 
@@ -308,4 +332,34 @@ export function seedCandidates(input: {
     add(area);
   }
   return [...kept.values()];
+}
+
+// ─── The world list ──────────────────────────────────────────────────────
+
+/**
+ * A seed for every file each world destination's circle reaches, placed
+ * from the list's own coordinates — no geocoder — and matched to files by
+ * scripts/ingest/world-regions.mjs from Geofabrik's index.
+ *
+ * A destination the generator has not matched yet has no regions and so no
+ * seeds; the unit tests fail on that rather than letting it pass quietly.
+ */
+export function worldSeeds(): Seed[] {
+  const seeds: Seed[] = [];
+  for (const d of WORLD_DESTINATIONS) {
+    for (const region of WORLD_REGIONS[d.name] ?? []) {
+      seeds.push({ name: d.name, lat: d.lat, lng: d.lng, region, source: 'world' });
+    }
+  }
+  return seeds;
+}
+
+/**
+ * The world destination a placed town is, if it is one: the same name and
+ * within a few miles (sameTown). A plan to Paris is placed by the geocoder
+ * in a country regionFor does not file; it is still read, as the world
+ * list's Paris, rather than logged as skipped.
+ */
+export function worldTownFor(placed: { name: string; lat?: number | null; lng?: number | null }): WorldDestination | null {
+  return WORLD_DESTINATIONS.find(d => sameTown(placed, d)) ?? null;
 }
