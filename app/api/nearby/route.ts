@@ -177,6 +177,8 @@ export async function GET(req: NextRequest) {
     starts_on: e.date,
     every_weekday: e.date ? null : parseWhen(e.meta, day).everyWeekdayIndex,
     venue_name: e.venue,
+    // When and where, in the listing's own words, for the day's full list.
+    when_text: e.meta || null,
     booking_url: e.url,
     interest: e.category,
   })), day, 7);

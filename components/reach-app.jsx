@@ -1341,6 +1341,9 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
   // What is on day by day for the week ahead — quizzes, karaoke, a festival
   // — gathered from listings that were never on the same calendar.
   const [week,setWeek]=useState([]);
+  // The day whose whole list is open. A day with nine things on showed three
+  // and "+6 more" that could not be tapped, so six were unreachable.
+  const [openDay,setOpenDay]=useState(null);
   const [loading,setLoading]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [reason,setReason]=useState(null);
@@ -1737,7 +1740,11 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
                       </div>
                     ))}
                   {d.events.length>3&&(
-                    <div style={{fontSize:11,color:C.t3}}>+{d.events.length-3} more</div>
+                    <button onClick={()=>setOpenDay(d.day)}
+                      style={{background:"none",border:"none",padding:0,fontSize:11.5,fontWeight:600,
+                        color:C.accentText,cursor:"pointer"}}>
+                      See all {d.events.length} →
+                    </button>
                   )}
                 </div>
               );
@@ -1745,6 +1752,36 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride}){
           </div>
         </div>
       )}
+
+      {/* One day, everything on it. */}
+      {(()=>{
+        const d=openDay&&week.find(w=>w.day===openDay);
+        if(!d)return null;
+        const names=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+        return(
+          <div onClick={()=>setOpenDay(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:60,display:"flex",alignItems:"flex-end"}}>
+            <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxHeight:"80vh",overflowY:"auto",background:C.s1,
+              borderRadius:"20px 20px 0 0",padding:"18px 20px 28px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <div style={{fontSize:17,fontWeight:700,color:C.t1}}>{names[d.weekday]} {Number(d.day.slice(8,10))}</div>
+                <button onClick={()=>setOpenDay(null)} style={{background:"none",border:"none",color:C.t2,fontSize:14,cursor:"pointer"}}>Done</button>
+              </div>
+              <div style={{fontSize:12,color:C.t3,marginBottom:12}}>{plural(d.events.length,"thing","things")} we've found on</div>
+              {d.events.map((e,i)=>(
+                <div key={`${e.id||"e"}-${i}`} style={{padding:"11px 0",borderTop:`1px solid ${C.border}`}}>
+                  {e.booking_url
+                    ?<a href={e.booking_url} target="_blank" rel="noopener noreferrer"
+                        style={{fontSize:14,fontWeight:600,color:C.t1,textDecoration:"none",lineHeight:1.35}}>{e.title} ↗</a>
+                    :<div style={{fontSize:14,fontWeight:600,color:C.t1,lineHeight:1.35}}>{e.title}</div>}
+                  <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.45}}>
+                    {[e.when_text||e.venue_name,e.recurring?"every week":null].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Main cards */}
       {/* Undo, because a dismissal is only as safe as the way back from a
