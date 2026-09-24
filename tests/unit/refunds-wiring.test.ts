@@ -70,7 +70,10 @@ test('the refund route takes the plan lock, then claims the payment, then asks S
   const claim = src.indexOf(".from('refunds')\n        .insert(");
   // The Stripe call lives in sendClaim; the claim must come before it is called.
   const stripe = src.indexOf('results.push(await sendClaim(db, planId, stripeKey, claimId, {');
-  assert.match(src, /async function sendClaim[\s\S]{0,1200}stripeCall\('https:\/\/api\.stripe\.com\/v1\/refunds', stripeKey, request\)/);
+  assert.match(src, /async function sendClaim[\s\S]{0,1200}stripeCall\('https:\/\/api\.stripe\.com\/v1\/refunds', stripeKey, \{ body: request\.body, key: idempotencyKey \}\)/);
+  // The claim's key reaches Stripe as its Idempotency-Key, never dropped on the way.
+  assert.match(src, /const idempotencyKey = request\.key;/);
+  assert.match(src, /if \(init\.key\) headers\['Idempotency-Key'\] = init\.key;/);
   assert.ok(lock > 0 && claim > 0 && stripe > 0, 'lock, claim and Stripe call must all be there');
   assert.ok(lock < claim && claim < stripe, 'the lock and the claim must be taken before Stripe is called');
   assert.match(src, /key: refundIdempotencyKey\(piece\.contributionId, piece\.attempt\)/);

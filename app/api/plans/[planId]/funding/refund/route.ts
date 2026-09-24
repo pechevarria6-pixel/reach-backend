@@ -200,7 +200,9 @@ async function sendClaim(
   claimId: string, request: { key: string; body: Record<string, string> },
   piece: Pick<RefundPiece, 'contributionId' | 'cents' | 'refundedBefore' | 'amountCents'>,
 ): Promise<PieceResult> {
-  const answer = await stripeCall('https://api.stripe.com/v1/refunds', stripeKey, request);
+  // The claim's own key (refundIdempotencyKey), the same on every resend.
+  const idempotencyKey = request.key;
+  const answer = await stripeCall('https://api.stripe.com/v1/refunds', stripeKey, { body: request.body, key: idempotencyKey });
 
   if (answer.ok && answer.body?.id) {
     const stripeStatus = String(answer.body.status ?? 'pending');
