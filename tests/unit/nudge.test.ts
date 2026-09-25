@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   claimNudge, releaseNudge, limitsNudge, NUDGE_ACTION,
   claimPeople, releasePeople, nudgedUntil, personKey, PERSON_NUDGE_ACTION,
+  fundingStanding,
 } from '../../lib/nudge.ts';
 
 type Row = { id: string; action: string; resource_id: string; created_at: string; [k: string]: unknown };
@@ -237,4 +238,50 @@ test('a funding nudge reaches the bell and phone, and names no amount there', ()
   const funding = route.slice(route.indexOf("kind: 'funding',"), route.indexOf('}, pushSender());', route.indexOf("kind: 'funding',")));
   assert.ok(funding.length > 0);
   assert.doesNotMatch(funding, /shares\[|shareCents|cents|dollars|\$\d/i);
+});
+
+// ─── Paid is what checkout says is paid ──────────────────────────────────
+const paid = (user_id: string, amount_cents: number, refunded_cents = 0) =>
+  ({ user_id, amount_cents, refunded_cents, status: 'succeeded' });
+
+test('somebody who paid their share and now owes a top-up is pending, not paid', () => {
+  // Sam paid $120 towards a $480 hotel for four; then a $320 flight was added.
+  const members = ['sam', 'jo', 'al', 'bo'];
+  const before = fundingStanding([{ id: 'h', price_cents: 48000 }], 0, [paid('sam', 12000)], members);
+  assert.ok(before.done.has('sam'));
+  const after = fundingStanding(
+    [{ id: 'h', price_cents: 48000 }, { id: 'f', price_cents: 32000 }], 0, [paid('sam', 12000)], members,
+  );
+  assert.equal(after.remaining.sam, 8000);
+  assert.ok(!after.done.has('sam'), 'a paid tick over $80 checkout is still asking for');
+  assert.ok(!after.notNeeded.has('sam'));
+});
+
+test('a payment partly refunded counts only what is still held', () => {
+  const s = fundingStanding([{ id: 'h', price_cents: 20000 }], 0, [paid('sam', 10000, 4000), paid('jo', 10000)], ['sam', 'jo']);
+  assert.equal(s.remaining.sam, 4000);
+  assert.ok(!s.done.has('sam'));
+  assert.ok(s.done.has('jo'));
+});
+
+test('once money is in, the budget is not a share — as checkout has it', () => {
+  // Four people, a $400 budget, one paid, then the only priced booking failed.
+  const s = fundingStanding([], 40000, [paid('al', 10000)], ['al', 'jo', 'sam', 'bo']);
+  for (const id of ['jo', 'sam', 'bo']) {
+    assert.equal(s.shares[id], 0);
+    assert.ok(s.notNeeded.has(id), `${id} would be told to pay what checkout says they do not owe`);
+  }
+  assert.ok(s.done.has('al'));
+});
+
+test('before anything is paid or priced, the budget is split evenly and everyone owes', () => {
+  const s = fundingStanding([], 40000, [], ['al', 'jo']);
+  assert.equal(s.remaining.al, 20000);
+  assert.equal(s.done.size + s.notNeeded.size, 0);
+});
+
+test('the notify route reads paid from fundingStanding, not from any succeeded row', () => {
+  assert.match(route, /fundingStanding\(/);
+  assert.doesNotMatch(route, /status === 'succeeded'\) out\.done/);
+  assert.doesNotMatch(route, /planShares\(/);
 });

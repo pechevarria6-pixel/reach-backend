@@ -16,6 +16,8 @@
 // left on the record would push the minute along, and somebody pressing
 // every few seconds could keep the button shut for ever.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { planShares, type PlanBooking, type Skip } from './money.ts';
+import { netCollectedCents } from './booking/approval.ts';
 
 export const NUDGE_ACTION = 'prefs_nudged';
 export const NUDGE_COOLDOWN_MS = 60_000;
@@ -267,6 +269,50 @@ export async function nudgedUntil(
   for (const id of userIds) {
     const row = first.get(personKey(planId, id));
     if (row) out[id] = new Date(new Date(row.created_at).getTime() + PERSON_COOLDOWN_MS).toISOString();
+  }
+  return out;
+}
+
+// ─── Who still owes, for the funding nudge and its faces ────────────────
+// Worked out exactly as checkout works it out (fundingStatus in
+// app/api/plans/[planId]/funding/route.ts), because the faces say "paid" or
+// "pending" and the nudge says "your share is still to pay": both are claims
+// about what checkout will ask for, and they must not disagree with it.
+//
+// Two ways this used to go wrong. Any successful payment counted as paid, so
+// somebody who owed a top-up after a flight was added, or had been partly
+// refunded, wore a paid tick over money checkout was still asking for and
+// could not be nudged. And the share came from the budget every time, where
+// checkout drops the budget once any money is in — so after a hotel failed
+// at the provider, people checkout says owe nothing were told to pay.
+
+export interface FundingStanding {
+  /** Owes nothing more, and has paid something towards it. */
+  done: Set<string>;
+  /** Owes nothing and paid nothing — sitting all of it out. */
+  notNeeded: Set<string>;
+  /** Each member's share: the figure checkout divides the plan into. */
+  shares: Record<string, number>;
+  /** What checkout would ask each member for now (myRemainingCents). */
+  remaining: Record<string, number>;
+}
+
+type Contribution = { status?: unknown; amount_cents?: unknown; refunded_cents?: unknown; user_id?: unknown };
+
+export function fundingStanding(
+  bookings: PlanBooking[], budgetCents: number | null | undefined,
+  contributions: Contribution[] | null | undefined, memberIds: string[], skips: Skip[] = [],
+): FundingStanding {
+  // The budget is a guess only until money has come in — checkout's rule.
+  const guessCents = netCollectedCents(contributions) > 0 ? 0 : Math.max(0, budgetCents || 0);
+  const shares = planShares(bookings, guessCents, memberIds, skips);
+  const out: FundingStanding = { done: new Set(), notNeeded: new Set(), shares, remaining: {} };
+  for (const id of memberIds) {
+    const paid = netCollectedCents(contributions, id);
+    const owe = Math.max(0, (shares[id] ?? 0) - paid);
+    out.remaining[id] = owe;
+    if (owe > 0) continue;
+    (paid > 0 ? out.done : out.notNeeded).add(id);
   }
   return out;
 }

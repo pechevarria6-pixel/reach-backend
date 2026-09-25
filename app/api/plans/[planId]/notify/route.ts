@@ -27,9 +27,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { sendVoteNeeded, sendFundingNeeded, sendAnswersNeeded, type SendResult } from '@/lib/email';
-import { planShares } from '@/lib/money';
 import { planSkips } from '@/lib/participation';
-import { claimNudge, releaseNudge, limitsNudge, claimPeople, releasePeople, nudgedUntil } from '@/lib/nudge';
+import { claimNudge, releaseNudge, limitsNudge, claimPeople, releasePeople, nudgedUntil, fundingStanding } from '@/lib/nudge';
 import { z } from 'zod';
 import { readIdeas, shownTitle } from '@/lib/trip-vote';
 import { notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
@@ -73,17 +72,20 @@ async function standing(db: SupabaseClient, planId: string, kind: Kind, plan: Pl
     if (error) { console.error('[notify] could not read who has answered', { planId, code: error.code }); return null; }
     for (const r of data || []) if (r.submitted_at) out.done.add(String(r.user_id));
   } else {
-    const [{ data, error }, { data: planBookings, error: bErr }] = await Promise.all([
-      db.from('contributions').select('user_id, status').eq('plan_id', planId),
+    // select('*'), never naming refunded_cents, as checkout reads it: before
+    // that migration runs the column is not there and naming it fails the read.
+    const [{ data, error }, { data: planBookings, error: bErr }, skips] = await Promise.all([
+      db.from('contributions').select('*').eq('plan_id', planId),
       db.from('bookings').select('id,price_cents,status,mode,provider').eq('plan_id', planId).not('status', 'in', NOT_CHARGED),
+      planSkips(db, planId),
     ]);
     if (error || bErr) { console.error('[notify] could not read who has paid', { planId, code: (error || bErr)?.code }); return null; }
-    for (const c of data || []) if (c.status === 'succeeded') out.done.add(String(c.user_id));
-    // Each person's own share, the same figure checkout will charge them.
-    // Somebody sitting all of it out owes nothing and is not chased for it —
-    // this used to email them "your share: $0.00".
-    out.shares = planShares(chargedRows(planBookings), plan.budget_cents || 0, memberIds, await planSkips(db, planId));
-    for (const id of memberIds) if ((out.shares[id] ?? 0) <= 0 && !out.done.has(id)) out.notNeeded.add(id);
+    // Paid means owing nothing more, by checkout's own sums (lib/nudge.ts):
+    // a top-up still owed is pending, not a tick. Somebody sitting all of it
+    // out owes nothing and is not chased — this used to email them
+    // "your share: $0.00".
+    const f = fundingStanding(chargedRows(planBookings), plan.budget_cents, data, memberIds, skips);
+    out.done = f.done; out.notNeeded = f.notNeeded; out.shares = f.shares;
   }
   return out;
 }
