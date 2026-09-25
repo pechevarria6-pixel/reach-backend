@@ -74,10 +74,16 @@ export function tripDay(startDate: unknown, n: number): string | null {
  */
 export function rowWhen(scheduledTime: unknown, startDate: unknown): { date: string; time: string | null } | null {
   const text = typeof scheduledTime === 'string' ? scheduledTime : '';
-  const m = /^Day (\d+)\s*(?:[·\-–—:,]\s*(.*))?$/.exec(text.trim());
+  // Any row that starts with a day number is on that day, whatever follows
+  // and however it is written. The strict "Day N · …" pattern put "Day 3 at
+  // 7pm", "day 3 · evening" and "Day 3 7:30 PM" — all typeable in the free
+  // "Time / Day" box on a hand-added item — on day 1, an event on the wrong
+  // day. lib/budget.ts dayOf reads the same field as /^day\s+(\d+)/i, and
+  // the two must agree on which day a row is.
+  const m = /^day\s*(\d+)(?!\d)\s*(?:[·\-–—:,]|\bat\b)?\s*([\s\S]*)$/i.exec(text.trim());
   const date = m ? tripDay(startDate, parseInt(m[1], 10)) : validDay(startDate);
   if (!date) return null;
-  const rest = m ? (m[2] ?? '') : text;
+  const rest = m ? m[2] : text;
   return { date, time: clockOf(rest) ? rest.trim() : null };
 }
 

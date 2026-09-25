@@ -54,3 +54,38 @@ test('the word as machinery is not copy', () => {
   ].join('\n') + '\n');
   assert.equal(r.code, 0, r.out);
 });
+
+// The first JSX scan read only a brace-free run of text on one line, so the
+// two usual shapes of settle-up copy — a value interpolated into the
+// sentence, and a sentence on its own line between tags — both walked past.
+test('money words fire in JSX text that interpolates a value or sits on its own line', () => {
+  for (const src of [
+    'export const B = ({ amt }) => <p>Your payout of {amt} is on its way</p>;\n',
+    'export const B = ({ amt, name }) => <p>Reach transfers {amt} to {name}</p>;\n',
+    'export const B = () => (\n  <p>\n    Reach transfers the money to Sam\n  </p>\n);\n',
+    'export const B = ({ amt }) => (\n  <p className="x">\n    Your {fmt({ amt })} payout\n    is on its way\n  </p>\n);\n',
+  ]) {
+    const r = run(src);
+    assert.equal(r.code, 1, src + r.out);
+  }
+  const r = run('export const B = () => (\n  <p>\n    Reach transfers the money to Sam\n  </p>\n);\n');
+  assert.match(r.out, /planted\.tsx:3\s+"transfer"/, 'reported on the line the copy is on');
+});
+
+test('code between a > and a < is not JSX text', () => {
+  const r = run([
+    'export const B = ({ transfers, n }) => (',
+    '  <div>{n > 0 ? transfers.map(t => <Row key={t.id} t={t} />) : null}</div>',
+    ');',
+    'export const C = ({ a, transfers }) => a > transfers.length && <p>Settled</p>;',
+    'const x = new Map<string, Transfer>();',
+    'export const D = () => <p>{"Hi there, friend"}</p>;',
+  ].join('\n') + '\n');
+  assert.equal(r.code, 0, r.out);
+});
+
+test('a quoted money word inside JSX braces is reported once, not twice', () => {
+  const r = run('export const B = () => <p>{"Your payout arrives Friday"}</p>;\n');
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /✗ 1 internal/);
+});

@@ -139,7 +139,41 @@ const walk = d => {
 walk('components'); walk('app'); walk('lib');
 
 let found = 0;
+
+/**
+ * Money words in JSX text — "Reach transfers it to Sam" between two tags
+ * opens no quote. Read across the whole file, not line by line, and with
+ * every `{…}` taken out first: the first version only saw a brace-free run
+ * of text on one line, so "Your payout of {amt} is on its way" and copy
+ * sitting on its own line between tags — the two usual shapes of settle-up
+ * copy — both walked past it.
+ *
+ * Only text between a tag's `>` and the next `<`, and only when what is left
+ * reads as prose: the same word as a type or a variable (settleUp returns
+ * Transfer[]) is machinery, not copy. An arrow's `=>` is not a tag.
+ */
+function jsxMoney(f, source, stringHits) {
+  for (const m of source.matchAll(/(?<![=\-])>([^<>]*)</g)) {
+    let text = m[1];
+    for (let prev; prev !== text;) { prev = text; text = text.replace(/\{[^{}]*\}/g, ' '); }
+    if (!/[A-Za-z]/.test(text)) continue;
+    // Code, not copy: an unbalanced brace, an operator, a call, a property.
+    if (/[{}=;()\[\]]|&&|\|\||\s\?\s|\w\.\w/.test(text)) continue;
+    // The line the words are on, not the line the tag closed on.
+    const line = source.slice(0, m.index + 1 + m[1].search(/\S/)).split('\n').length;
+    const money = text.toLowerCase().replace(/\s+/g, ' ').replace(TRAVEL_TRANSFER, ' ');
+    for (const word of MONEY_WORDS) {
+      if (!money.includes(word)) continue;
+      // Already reported as a quoted string on the line where the text starts.
+      if (stringHits.get(line)?.has(word)) continue;
+      console.log(`  ${f}:${line}  "${word}" in: ${text.replace(/\s+/g, ' ').trim().slice(0, 68)}`);
+      found++;
+    }
+  }
+}
+
 for (const f of files) {
+  const stringHits = new Map();
   // Block comments removed whole, before anything is read line by line.
   //
   // Stripping `//` and lines beginning `*` or `/*` missed a JSX comment —
@@ -170,6 +204,7 @@ for (const f of files) {
     // is eleven and is a promise the app cannot keep.
     const strings = [...code.matchAll(/(["'`])((?:(?!\1).){8,})\1/g)];
     const inStrings = new Set();
+    stringHits.set(i + 1, inStrings);
     for (const match of strings) {
       const text = match[2];
       if (!/\s/.test(text)) continue;
@@ -190,18 +225,6 @@ for (const f of files) {
         }
       }
     }
-    // Money words in JSX text too — "Reach transfers it to Sam" between two
-    // tags opens no quote. Only text between tags: the same word as a type or
-    // a variable (settleUp returns Transfer[]) is machinery, not copy.
-    for (const m of code.matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g)) {
-      const money = m[1].toLowerCase().replace(TRAVEL_TRANSFER, ' ');
-      for (const word of MONEY_WORDS) {
-        if (!inStrings.has(word) && money.includes(word)) {
-          console.log(`  ${f}:${i + 1}  "${word}" in: ${m[1].trim().slice(0, 68)}`);
-          found++;
-        }
-      }
-    }
     // A promise is a promise wherever it is written: in JSX text between
     // tags, or on the continuation line of an email's template string, where
     // no quote opens and closes on the line. "Reach never holds your money"
@@ -216,6 +239,7 @@ for (const f of files) {
       }
     }
   });
+  if (/\.(tsx|jsx)$/.test(f)) jsxMoney(f, source, stringHits);
 }
 
 if (found) {

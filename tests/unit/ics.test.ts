@@ -84,6 +84,20 @@ test("an itinerary row's day and time are read, and a vague time is not invented
   assert.equal(rowWhen('Day 0', '2026-10-03'), null);
 });
 
+test('a row that starts with a day number is on that day, however it is written', () => {
+  // Hand-added items have a free "Time / Day" box; none of these is day 1.
+  assert.deepEqual(rowWhen('Day 3 at 7pm', '2026-10-01'), { date: '2026-10-03', time: '7pm' });
+  assert.deepEqual(rowWhen('day 3 · evening', '2026-10-01'), { date: '2026-10-03', time: null });
+  assert.deepEqual(rowWhen('Day 3 7:30 PM', '2026-10-01'), { date: '2026-10-03', time: '7:30 PM' });
+  assert.deepEqual(rowWhen('DAY 12 - 19:30', '2026-10-01'), { date: '2026-10-12', time: '19:30' });
+  assert.deepEqual(rowWhen('Day 3 evening drinks', '2026-10-01'), { date: '2026-10-03', time: null });
+  assert.deepEqual(rowWhen('Day3', '2026-10-01'), { date: '2026-10-03', time: null });
+  // A day number that names no day of the trip is no date, not day 1.
+  assert.equal(rowWhen('day 0 at 7pm', '2026-10-01'), null);
+  // Not a day number: stays on the start date.
+  assert.deepEqual(rowWhen('Daytime walk', '2026-10-01'), { date: '2026-10-01', time: null });
+});
+
 test('only real clock times are times', () => {
   assert.deepEqual(clockOf('19:30'), { h: 19, m: 30 });
   assert.deepEqual(clockOf('7pm'), { h: 19, m: 0 });
