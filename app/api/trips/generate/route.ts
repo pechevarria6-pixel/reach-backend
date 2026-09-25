@@ -36,7 +36,11 @@ import { ideasFrom, findDecision, isOrganiser, daysDecision, ideasReadyCopy, typ
 import { readSavedIdeas, saveIdeas, attachDays, clearVotes, membersOf, organiserOf, organisersOf, firstName } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
-import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, type RealPlace } from '@/lib/discovery/real-places';
+import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, readBackCoherence, type RealPlace } from '@/lib/discovery/real-places';
+import { track, isEventName } from '@/lib/track';
+
+/** Logged when a stop is dropped for being nowhere near the rest of its day. */
+const DROPPED_LOCATION: string = 'itinerary_item_dropped_location';
 
 // ─── Models ──────────────────────────────────────────────────────────────
 // Stage 1 only names destinations and estimates costs, and the person is
@@ -943,9 +947,12 @@ that does not is "walk_in". Only a flight, a hotel or a ticketed tour is
 
 Never write "placeholder", "TBD" or any other filler.
 
-insider_tip is what a place is like, not what a business does. Weather,
-crowds, terrain, light, parking, how long things take, what to bring — all
-good, and being wrong about them costs an hour.
+Each slot's "tip" is about that slot and nothing else — never another stop,
+never the day as a whole. Weather, crowds, terrain, light, parking, how long
+getting there takes, what to bring — all good, and being wrong about them
+costs an hour. A tip on a slot that names a place is about getting there or
+the time of day, not about what is inside. Nothing true to say is an empty
+string.
 
 Never state a named business's opening hours, prices, cover charge, payment,
 booking policy, or what it will do for you. "Milt's is cash-only and has no
@@ -977,9 +984,11 @@ somebody does with the first line of a plan is act on it. Write the day
 outside: arrive, drop the bags, and go and look at the town.
 ${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${weatherHere}${wantedBlock}
 
-${solo ? `On their own, so every slot works for one: counter or bar seating,
-neighbourhoods that are comfortable solo, some days to meet people and some to
-talk to nobody. Nothing that needs a second person. Never mention sharing.
+${solo ? `On their own, so every slot works for one: neighbourhoods that are
+comfortable solo, some days to meet people and some to talk to nobody. Nothing
+that needs a second person. Never mention sharing. Being on their own is not a
+reason to describe a place's seating or what it is like inside — the menu
+below does not say, so neither do you.
 ` : ''}
 ${menu}
 
@@ -1005,9 +1014,12 @@ not exist is not.
 Use the verified list above for every venue you name. Neighbourhoods,
 distances and the shape of the day are yours; the names are not.
 
-insider_tip is what a place is like, not what a business does. Weather,
-crowds, terrain, light, parking, how long things take, what to bring — all
-good, and being wrong about them costs an hour.
+Each slot's "tip" is about that slot and nothing else — never another stop,
+never the day as a whole. Weather, crowds, terrain, light, parking, how long
+getting there takes, what to bring — all good, and being wrong about them
+costs an hour. A tip on a slot that names a place is about getting there or
+the time of day, not about what is inside. Nothing true to say is an empty
+string.
 
 Never state a named business's opening hours, prices, cover charge, payment,
 booking policy, or what it will do for you. "Milt's is cash-only and has no
@@ -1167,8 +1179,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       const candidates = [...new Set(days.flatMap(day =>
         [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])]
           .filter(Boolean)
-          .flatMap(slot => unverifiedNames(slot!.plan, realPlaces, vouchers))
-          .concat(unverifiedNames(day.insider_tip, realPlaces, vouchers)),
+          .flatMap(slot => [...unverifiedNames(slot!.plan, realPlaces, vouchers), ...unverifiedNames(slot!.tip ?? '', realPlaces, vouchers)]),
       ))];
       let geography = new Set<string>();
       if (candidates.length) {
@@ -1327,24 +1338,58 @@ you have made up; a day that is simply a good day is allowed to be one.`;
             console.error('[trips itinerary] discarded a place_ref that is not one', { got: String(slot.place_ref).slice(0, 40) });
             slot.place_ref = null;
           }
+          // The slot's own tip, read back like its line. A slot whose line
+          // went has nothing for a tip to be about, so the tip goes too.
+          if (!slot.plan) slot.tip = '';
+          const tip = withoutUnverified(String(slot.tip ?? ''), realPlaces, vouchers);
+          if (tip.removed.length) {
+            tip.removed.forEach(n => stripped.add(n));
+            // Softening works when the name is the object of the sentence.
+            // When it is the subject it does not: a live run produced "a local
+            // spot stays lively after evening shows let out", which is not a
+            // sentence anybody wrote. A tip is flavour, so it is dropped rather
+            // than mangled — and a tip naming a business was already against
+            // the rule that a tip describes a place, not what a business does.
+            slot.tip = wouldMangle(String(slot.tip ?? ''), tip.removed) ? '' : tip.text;
+          }
+          // A tip is flavour: broken, it goes.
+          if (slot.tip && corruptionAt(slot.tip) >= 0) {
+            console.error('[trips itinerary] dropped a tip that came back broken', {
+              destination, tip: String(slot.tip).slice(0, 80),
+            });
+            slot.tip = '';
+          }
         }
-        const tip = withoutUnverified(day.insider_tip, realPlaces, vouchers);
-        if (tip.removed.length) {
-          tip.removed.forEach(n => stripped.add(n));
-          // Softening works when the name is the object of the sentence.
-          // When it is the subject it does not: a live run produced "a local
-          // spot stays lively after evening shows let out", which is not a
-          // sentence anybody wrote. A tip is flavour, so it is dropped rather
-          // than mangled — and a tip naming a business was already against
-          // the rule that a tip describes a place, not what a business does.
-          day.insider_tip = wouldMangle(day.insider_tip, tip.removed) ? '' : tip.text;
-        }
-        // A tip is flavour: broken, it goes.
-        if (day.insider_tip && corruptionAt(day.insider_tip) >= 0) {
-          console.error('[trips itinerary] dropped a tip that came back broken', {
-            destination, tip: String(day.insider_tip).slice(0, 80),
+      }
+
+      // ── Does each line describe the place it names, where it is ─────
+      // The names above are all real by now; this reads what the lines say
+      // ABOUT them. Plan f979c880 named SPIN, a cocktail bar on F Street,
+      // and said it was good for dancing, under a tip about the monuments
+      // on the Mall — every name vouched for, and the evening described a
+      // different place. See readBackCoherence (lib/discovery/real-places).
+      const coherence = readBackCoherence(days, realPlaces, { night: isNightPlan });
+      for (const note of coherence) {
+        if (note.what === 'dropped_location') {
+          console.error('[trips itinerary] dropped a stop nowhere near the rest', {
+            destination, plan: groupPlan?.id ?? null, day: note.day, slot: note.slot,
+            place: note.place, km: note.km, reason: note.reason,
           });
-          day.insider_tip = '';
+          // Added to EVENT_NAMES in lib/track.ts by its own change; until
+          // that lands this writes nothing rather than a name the table
+          // would refuse. The log line above is the record either way.
+          if (isEventName(DROPPED_LOCATION)) {
+            void track(supabase, DROPPED_LOCATION, {
+              userId: ctx.user.id, groupId: String(groupId), planId: groupPlan?.id ?? null,
+              props: { day: note.day, slot: note.slot, km: note.km, reason: note.reason, night: isNightPlan },
+            });
+          }
+        } else {
+          console.error(note.what === 'rewritten'
+            ? '[trips itinerary] replaced a line that described another kind of place'
+            : '[trips itinerary] dropped a tip about another kind of place', {
+            destination, day: note.day, slot: note.slot, place: note.place, topics: note.topics,
+          });
         }
       }
       if (softened || stripped.size) {
@@ -1421,7 +1466,8 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       let title: string | null = null;
       if (isNightPlan) {
         const venues = [...new Set(days.flatMap(d => [d.morning, d.afternoon, d.evening])
-          .map(sl => (sl && typeof sl === 'object' ? (sl as { venue?: string | null }).venue : null))
+          // A slot the read-back emptied names nowhere, whatever venue it kept.
+          .map(sl => (sl && typeof sl === 'object' && sl.plan ? (sl as { venue?: string | null }).venue : null))
           .filter((v): v is string => !!v && !!v.trim()))];
         if (venues.length) title = venues.length === 1 ? `An evening at ${venues[0]}` : `${venues[0]} & ${venues[venues.length - 1]}`;
       }

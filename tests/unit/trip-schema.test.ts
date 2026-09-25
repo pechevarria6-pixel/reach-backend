@@ -42,6 +42,28 @@ test('itinerary JSON Schema and zod schema agree', () => {
   assert.deepEqual([...item.required].sort(), zodKeys);
 });
 
+test('the tip is on the slot it is about, never on the day', () => {
+  // A day-level insider_tip was printed under the day's last slot and saved
+  // as that venue's description: plan f979c880 had the Mall's monuments
+  // under SPIN, a cocktail bar. The day has no tip to misplace now.
+  const day = (ITINERARY_JSON_SCHEMA as any).properties.itinerary.items;
+  assert.equal(day.properties.insider_tip, undefined);
+  assert.ok(!day.required.includes('insider_tip'));
+  const slotWire = day.properties.morning;
+  assert.deepEqual(slotWire.properties.tip, { type: 'string' });
+  assert.ok(slotWire.required.includes('tip'), 'required on the wire, so it cannot be skipped in silence');
+  // kind is the route's, from the row the slot cites — never the model's.
+  assert.equal(slotWire.properties.kind, undefined);
+});
+
+test('an older answer with a day tip still parses, and the tip stays behind', () => {
+  const withTip = { ...validDay, morning: { ...slot('Walk the old town'), tip: 'Go before the heat.' } };
+  const out = parseModelJSON(JSON.stringify({ itinerary: [withTip] }), ItinerarySchema, 'test');
+  assert.ok(out);
+  assert.equal((out!.itinerary[0] as Record<string, unknown>).insider_tip, undefined);
+  assert.equal(out!.itinerary[0].morning.tip, 'Go before the heat.');
+});
+
 test('price diversity is enforced by the schema, not just the prompt', () => {
   const item = (TRIPS_JSON_SCHEMA as any).properties.trips.items;
   assert.deepEqual(item.properties.tier.enum, ['saver', 'on_budget', 'stretch']);

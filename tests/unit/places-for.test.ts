@@ -152,8 +152,10 @@ test('shut on the evening of the plan is dropped; open, unknown or undated is ke
 test('the menu quotes the map\'s hours as the map\'s, and gives none it was not given', async () => {
   const rows = [venue('Sunday Closed Grill', 0.2, { opening_hours: 'Mo-Sa 17:00-22:00; Su off' }), venue('Nobody Mapped Hours', 0.4)];
   const menu = placeMenu(await placesFor(fakeDb(rows).db, WHERE, {}, geocoder));
-  assert.match(menu, /Sunday Closed Grill\n\s+hours per OpenStreetMap: Mo-Sa 17:00-22:00; Su off/);
-  assert.doesNotMatch(menu, /Nobody Mapped Hours\n\s+hours/);
+  // The name's line now goes on to say what it is ("— restaurant · …"), so
+  // the hours are looked for on the line after it, however long that is.
+  assert.match(menu, /Sunday Closed Grill[^\n]*\n\s+hours per OpenStreetMap: Mo-Sa 17:00-22:00; Su off/);
+  assert.doesNotMatch(menu, /Nobody Mapped Hours[^\n]*\n\s+hours/);
 });
 
 test('a hotel is never dinner, whatever interest it was filed under', async () => {

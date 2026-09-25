@@ -47,7 +47,10 @@ const CLAIMS: [ClaimKind, RegExp][] = [
   // "the open kitchen" is a room you can see into, not an opening time, and
   // a bare `opens?` read it as a claim about a restaurant's hours. An hour
   // has to be attached to something for this to be about hours at all.
-  ['hours',  /\b(opens? (at|early|late|from)|right at open|open (until|till|from)|closes? (at|early|late)|closing time|opening (time|hours)|last (seating|orders?|call)|kitchen (shuts|closes)|doors? (open|at))\b/i],
+  // "the Saturday hours run late enough not to rush" reached plan f979c880
+  // over MXDC as though somebody had checked: an hour policy with no clock
+  // time in it, which the phrases below all missed.
+  ['hours',  /\b(hours (run|go|stay) late|open late|stays? open (late|until|till)|opens? (at|early|late|from)|right at open|open (until|till|from)|closes? (at|early|late)|closing time|opening (time|hours)|last (seating|orders?|call)|kitchen (shuts|closes)|doors? (open|at))\b/i],
   ['availability', /\b(sells? out|sold out|books? up|fills? (up |fast)|book (at least |ahead|a week)|reserve ahead|walk[- ]ins?|waitlist|no reservations|queue|line up)\b/i],
   ['service', /\b(they'?ll|will (ship|hold|fire|store|deliver|let you)|offers?|provides?|lets? you|can arrange|ask [A-Z]|ask (for|them)|bring your own)\b/i],
   // Somewhere with a name, being described.

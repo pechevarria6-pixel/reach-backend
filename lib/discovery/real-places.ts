@@ -30,6 +30,7 @@ import { closedThroughout, neverOpen, windowFor } from './hours.ts';
 import { regionCountries, geocoderNames } from './regions.ts';
 import { siteTown } from './world-destinations.ts';
 import { rowPhoto } from './place-photo.ts';
+import { misfits, neutralLine } from './category.ts';
 
 /** What the map calls somewhere to sleep, once underscores are spaces. */
 const LODGING_KIND = /\b(hotel|guest ?house|hostel|motel|apartment)s?\b/i;
@@ -64,6 +65,16 @@ export interface RealPlace {
   source: string;
   /** "118 S Main St", as the map records it, when it does. */
   street?: string | null;
+  /**
+   * Where it is, from the row. Carried so a day can be read back for
+   * whether its stops are anywhere near each other — the menu is built
+   * from a 25-mile box, and two stops at opposite corners of it are two
+   * journeys and an hour in a car, not an evening.
+   */
+  lat?: number | null;
+  lng?: number | null;
+  /** How far it is from the middle of the town the menu was read for, in miles. */
+  miles?: number | null;
   /**
    * OpenStreetMap's opening_hours, exactly as mapped, when it has them.
    * Quoted to the model as the map's and never restated as our own: a
@@ -180,7 +191,7 @@ type ReadError = { code?: string; message?: string } | null;
 type Shaped = {
   id: string; rawKind: string | null; name: string; kind: string; interest: string | null;
   url: string | null; city: string | null; street: string | null; hours: string | null;
-  miles: number; cuisine: string;
+  miles: number; lat: number | null; lng: number | null; cuisine: string;
   reservation: Reservation; phone: string | null; reserveUrl: string | null;
   photo: { url: string; credit: string; link: string | null } | null;
 };
@@ -428,6 +439,9 @@ export async function placesFor(
         street: (v.street as string | null) || null,
         hours: (v.opening_hours as string | null) || null,
         miles: milesBetween(at.lat, at.lng, Number(v.lat), Number(v.lng)),
+        // Not Number(null), which is 0 and finite: Null Island twice already.
+        lat: v.lat != null && Number.isFinite(Number(v.lat)) ? Number(v.lat) : null,
+        lng: v.lng != null && Number.isFinite(Number(v.lng)) ? Number(v.lng) : null,
         cuisine: String((v.osm_tags ?? {}).cuisine ?? ''),
         reservation: takesBookings((v.osm_tags ?? {}).reservation),
         phone: dialable(v.phone || (v.osm_tags ?? {}).phone || (v.osm_tags ?? {})['contact:phone'], countryCode),
@@ -510,6 +524,7 @@ export async function placesFor(
   const asPlace = (r: typeof rows[number], ref: string, forFood?: string): RealPlace => ({
     ref, name: r.name, kind: r.kind, interest: r.interest, url: r.url, city: r.city, source: 'osm',
     street: r.street, hours: r.hours,
+    lat: r.lat, lng: r.lng, miles: r.miles,
     reservation: r.reservation, phone: r.phone, reserveUrl: r.reserveUrl,
     photo: r.photo,
     ...(forFood ? { forFood } : {}),
@@ -626,7 +641,7 @@ export function placeMenu(places: RealPlace[]): string {
     // not one of the venues with a known night was chosen.
     const ordered = [...list].sort((a, b) => (b.whatsOn?.length ?? 0) - (a.whatsOn?.length ?? 0));
     for (const p of ordered) {
-      lines.push(`  [${p.ref}] ${p.name}`);
+      lines.push(menuLine(p));
       // The map's hours, labelled as the map's. They let the plan put the
       // Sunday-closed restaurant on Saturday; they are not ours to promise.
       if (p.hours) lines.push(`        hours per OpenStreetMap: ${p.hours}`);
@@ -650,9 +665,18 @@ export function placeMenu(places: RealPlace[]): string {
     '- A slot that needs no venue — a walk, a drive, a morning off — sets',
     '  place_ref to null and names nothing. That is a good answer.',
     '- Do not describe what a place is like inside, what it is known for,',
-    '  what it costs or how busy it gets. The list gives you a name, a kind,',
-    '  sometimes its hours and sometimes what is on there.',
-    '  That is everything we know about it.',
+    '  what it costs or how busy it gets — not its seating, its games, its',
+    '  dance floor or its view. The list gives you a name, a kind, what the',
+    '  map files it as, its street, sometimes its hours and sometimes what is',
+    '  on there. That is everything we know about it.',
+    '- Write each line about the kind the list gives. A place listed as a bar',
+    '  is a bar: do not have them dancing, playing games or seeing monuments',
+    '  there because of its name or what you remember of it. Every line is',
+    '  read back against the kind, and a line that does not fit it is',
+    '  replaced with the name, the kind and the street.',
+    '- A slot\'s tip is about that slot only — getting there, the time of day,',
+    '  the weather, what to bring — never about another stop or the day as a',
+    '  whole. Nothing true to say is an empty tip.',
     '- "hours per OpenStreetMap" is what volunteers mapped, and may be out of',
     '  date. Use it to put a place on a day it is open. If you mention the',
     '  hours at all, say they are per OpenStreetMap; never state them as',
@@ -668,6 +692,26 @@ export function placeMenu(places: RealPlace[]): string {
     '  invent one for a place that has none.',
   );
   return lines.join('\n');
+}
+
+/**
+ * One place, as the menu lists it: the ref, the name, and the three things
+ * the row says it is — its kind, what the quiz files it as, its street.
+ *
+ *   [p4] SPIN — bar · cocktail bars · 1332 F Street Northwest
+ *
+ * The name alone was all the model was given, and from "SPIN" it wrote a
+ * dance floor. The kind is the fact the copy has to fit, so it is on the
+ * line the copy is written from, not only in a heading several lines up.
+ * The interest is left out where it only repeats the kind ("bar", "bars").
+ */
+export function menuLine(p: RealPlace): string {
+  const kind = String(p.kind || '').trim();
+  const interest = String(p.interest || '').trim();
+  const stem = (t: string) => normalise(t).replace(/s /g, ' ');
+  const repeats = !interest || stem(interest) === stem(kind);
+  const about = [kind, repeats ? '' : interest, String(p.street || '').trim()].filter(Boolean).join(' · ');
+  return `  [${p.ref}] ${p.name}${about ? ` — ${about}` : ''}`;
 }
 
 /**
@@ -989,4 +1033,188 @@ export function bookingFor(
   // Claimed and unsupportable. "Reserve ahead" is the honest neighbour: it
   // tells somebody this needs arranging without promising we will do it.
   return 'ahead';
+}
+
+// ─── Does the line describe the place it names, where it is ──────────────
+// Plan f979c880, Day 1 · Evening, as it reached the screen:
+//
+//   End the night at SPIN, a bar with counter seating and a Friday-night
+//   pace good for dancing on your own terms.
+//   💡 The monuments near the Mall are spread further apart than the map
+//   suggests on foot…
+//
+// Three faults, none of which the name check could see, because SPIN is on
+// the menu and every name in both lines was vouched for:
+//
+//   1. The monuments tip was never about SPIN. insider_tip was a field on
+//      the DAY, written about the Mall walk and the Renwick, and the client
+//      printed it under the day's last slot — so it was saved as the bar's
+//      own description. The tip is on the slot now (SlotSchema.tip), and
+//      is about that slot or it is empty.
+//   2. "Dancing" came from the model, not from anything we hold. The menu
+//      gave it "[p4] SPIN" under a "bar:" heading and nothing else — no
+//      interest, no street — and the solo prompt asked for "counter or bar
+//      seating" in the same breath as the menu forbade describing a
+//      venue's inside. The menu line now carries the kind, the interest and
+//      the street, the contradiction is gone, and the line is read back
+//      against the row (misfits, in category.ts).
+//   3. The slot was typed "restaurant" because it was the evening. Each
+//      slot now carries the kind of the place it names (slot.kind).
+//
+// What the read-back cannot know it leaves alone. It takes copy away when
+// the row contradicts it; it never certifies what it lets through.
+
+/** The fields of a generated slot this read-back reads and rewrites. */
+// Optional throughout because that is how zod infers a parsed answer here,
+// and a model's answer is untrusted input whatever the schema asked for.
+export interface ReadBackSlot {
+  plan?: string;
+  place_ref?: string | null;
+  tip?: string | null;
+  kind?: string | null;
+  because?: string | null;
+}
+
+export interface ReadBackDay {
+  day?: number;
+  morning?: ReadBackSlot | null;
+  afternoon?: ReadBackSlot | null;
+  evening?: ReadBackSlot | null;
+  daytime?: ReadBackSlot[] | null;
+}
+
+/** What the read-back changed, one entry per change, for the log. */
+export type CoherenceNote =
+  | { what: 'rewritten'; day: number; slot: string; place: string; topics: string[] }
+  | { what: 'tip_dropped'; day: number; slot: string; place: string; topics: string[] }
+  | { what: 'dropped_location'; day: number; slot: string; place: string; km: number; reason: 'radius' | 'cluster' };
+
+/** Furthest a stop may be from the middle of the destination. */
+export const RADIUS_KM = 40;
+/** An evening is one part of town: a short walk or one short ride. */
+export const SAME_EVENING_KM = 5;
+/** A day in one place, with room for a drive out to a trailhead and back. */
+export const SAME_DAY_KM = 30;
+const KM_PER_MILE = 1.609344;
+
+/**
+ * The menu place a line names by its exact name, when it cites none.
+ *
+ * The prompt asks for the [ref] and mostly gets it; a line that names a menu
+ * place and leaves place_ref empty is still about that place, and still has
+ * to fit it. Exact spelling, as the menu wrote it, on word boundaries, the
+ * longest name first — so "The Pour House" is not read as "Pour House" and a
+ * name inside another word is not read at all.
+ */
+export function namedPlace(text: unknown, places: RealPlace[]): RealPlace | null {
+  const t = String(text ?? '');
+  if (!t.trim()) return null;
+  const byLength = [...places].filter(p => String(p.name || '').trim().length >= 3)
+    .sort((a, b) => b.name.length - a.name.length);
+  for (const p of byLength) {
+    const escaped = p.name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(^|[^\\w])${escaped}(?![\\w])`).test(t)) return p;
+  }
+  return null;
+}
+
+/** The place a slot is about: the one it cites, else the one it names. */
+export function placeOf(slot: ReadBackSlot | null | undefined, places: RealPlace[]): RealPlace | null {
+  if (!slot?.plan) return null;
+  return citedPlace(slot.place_ref, places) ?? namedPlace(slot.plan, places);
+}
+
+/** Kilometres between two held places, or null when either has no point. */
+function kmBetween(a: RealPlace, b: RealPlace): number | null {
+  if (a.lat == null || a.lng == null || b.lat == null || b.lng == null) return null;
+  return milesBetween(a.lat, a.lng, b.lat, b.lng) * KM_PER_MILE;
+}
+
+/**
+ * The stops that are nowhere near the rest of the day.
+ *
+ * The day is the biggest group of stops that each sit within `limitKm` of
+ * another in it, grown from the stop with the most neighbours (the earliest,
+ * on a tie). Everything outside that group is a stray. With two stops far
+ * apart, the first is the day and the second the stray: the day was planned
+ * from its start. A stop with no point on the map is never a stray — not
+ * knowing where something is is not evidence that it is far.
+ */
+export function strays<T extends { place: RealPlace }>(stops: T[], limitKm: number): T[] {
+  const located = stops.filter(s => s.place.lat != null && s.place.lng != null);
+  if (located.length < 2) return [];
+  const near = (a: T, b: T) => { const km = kmBetween(a.place, b.place); return km != null && km <= limitKm; };
+  let anchor = located[0];
+  let best = -1;
+  for (const s of located) {
+    const n = located.filter(o => o !== s && near(s, o)).length;
+    if (n > best) { best = n; anchor = s; }
+  }
+  const day = new Set<T>([anchor]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const s of located) {
+      if (day.has(s)) continue;
+      if ([...day].some(d => near(d, s))) { day.add(s); grew = true; }
+    }
+  }
+  return located.filter(s => !day.has(s));
+}
+
+/**
+ * Read every slot back against the place it names, and every day against
+ * where its places are. Rewrites in place and says what it changed.
+ *
+ * - A line saying something of the wrong kind about its place becomes that
+ *   place's neutral line (name · kind · street). A `because` of the wrong
+ *   kind goes with it — "the dancing they wanted" under a bar is the same
+ *   claim in another field.
+ * - A tip of the wrong kind for its slot's place is dropped: a tip is
+ *   flavour, and there is nothing to rebuild it from.
+ * - A stop further than RADIUS_KM from the destination, or away from the
+ *   rest of its day (SAME_EVENING_KM on a night out, SAME_DAY_KM on a trip
+ *   day), is dropped: its line, its tip and its citation.
+ * - Every slot is given the kind of the place it names, or none.
+ */
+export function readBackCoherence(days: ReadBackDay[], places: RealPlace[], opts: { night: boolean }): CoherenceNote[] {
+  const notes: CoherenceNote[] = [];
+  const limit = opts.night ? SAME_EVENING_KM : SAME_DAY_KM;
+  const drop = (slot: ReadBackSlot) => { slot.plan = ''; slot.tip = ''; slot.place_ref = null; slot.kind = null; };
+  for (const day of days ?? []) {
+    const n = Number(day.day) || 0;
+    const named: { slot: ReadBackSlot; label: string; place: RealPlace }[] = [];
+    const slots: [string, ReadBackSlot | null | undefined][] = [
+      ['morning', day.morning], ['afternoon', day.afternoon], ['evening', day.evening],
+      ...(day.daytime ?? []).map((s, i) => [`daytime ${i + 1}`, s] as [string, ReadBackSlot]),
+    ];
+    for (const [label, slot] of slots) {
+      if (!slot) continue;
+      const place = placeOf(slot, places);
+      slot.kind = place?.kind ?? null;
+      if (!place) continue;
+      const wrong = misfits(slot.plan, place);
+      if (wrong.length) {
+        notes.push({ what: 'rewritten', day: n, slot: label, place: place.name, topics: wrong });
+        slot.plan = neutralLine(place);
+        if (misfits(slot.because, place).length) slot.because = '';
+      }
+      const wrongTip = misfits(slot.tip, place);
+      if (wrongTip.length) {
+        notes.push({ what: 'tip_dropped', day: n, slot: label, place: place.name, topics: wrongTip });
+        slot.tip = '';
+      }
+      if (place.miles != null && place.miles * KM_PER_MILE > RADIUS_KM) {
+        notes.push({ what: 'dropped_location', day: n, slot: label, place: place.name, km: Math.round(place.miles * KM_PER_MILE), reason: 'radius' });
+        drop(slot);
+        continue;
+      }
+      named.push({ slot, label, place });
+    }
+    for (const s of strays(named, limit)) {
+      const others = named.filter(o => o !== s).map(o => kmBetween(s.place, o.place)).filter((k): k is number => k != null);
+      notes.push({ what: 'dropped_location', day: n, slot: s.label, place: s.place.name, km: Math.round(Math.min(...others)), reason: 'cluster' });
+      drop(s.slot);
+    }
+  }
+  return notes;
 }

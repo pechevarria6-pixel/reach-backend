@@ -136,6 +136,26 @@ export const SlotSchema = z.object({
   // good day, and a model with nothing to say should send null rather than
   // invent a reason or omit the key and lose the whole slot.
   because: z.string().nullish(),
+  /**
+   * A tip about this one slot — getting there, the time of day, the weather,
+   * what to bring. Written by the model, about this slot and nothing else;
+   * empty when there is nothing true to say.
+   *
+   * It was `insider_tip` on the day, and the day's last slot wore it. Plan
+   * f979c880 put "the monuments near the Mall are spread further apart than
+   * the map suggests" under SPIN, a cocktail bar on F Street, because that
+   * was Day 1's evening. It was saved as the bar's own description and read
+   * as one. A tip lives on the slot it is about, so it cannot land on
+   * another.
+   */
+  tip: z.string().nullish(),
+  /**
+   * What the place this slot names is, from the row it cites — "bar",
+   * "museum". Attached by the route, never by the model; null for a slot
+   * that names no place. The slot's type comes from this rather than from
+   * its position, which typed a bar "restaurant" for being the evening.
+   */
+  kind: z.string().nullish(),
 });
 
 export const ItineraryDaySchema = z.object({
@@ -145,7 +165,9 @@ export const ItineraryDaySchema = z.object({
   afternoon: SlotSchema,
   evening: SlotSchema,
   cost_today: z.number(),
-  insider_tip: z.string(),
+  // No insider_tip. It was the day's, and printed under the day's last slot
+  // as though it described that place — see SlotSchema.tip. An older answer
+  // still carrying one parses: zod drops a key it was not told about.
   /**
    * What the day around it could be, for an evening only.
    *
@@ -246,8 +268,10 @@ export const slot = {
     // allowed to be empty: a day that answers nobody in particular should
     // say so rather than have a reason invented for it.
     because: str,
+    // About this slot only, or empty. Same bargain again.
+    tip: str,
   },
-  required: ['plan', 'cost', 'booking', 'payment', 'place_ref', 'because'],
+  required: ['plan', 'cost', 'booking', 'payment', 'place_ref', 'because', 'tip'],
   additionalProperties: false,
 } as const;
 
@@ -263,9 +287,9 @@ export const ITINERARY_JSON_SCHEMA = {
           // The offer, not the plan: what the day around an evening could
           // be, shown only if somebody asks for it. Empty on a trip.
           daytime: { type: 'array', items: slot },
-          evening: slot, cost_today: num, insider_tip: str,
+          evening: slot, cost_today: num,
         },
-        required: ['day', 'title', 'morning', 'afternoon', 'evening', 'cost_today', 'insider_tip', 'daytime'],
+        required: ['day', 'title', 'morning', 'afternoon', 'evening', 'cost_today', 'daytime'],
         additionalProperties: false,
       },
     },

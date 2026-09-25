@@ -95,6 +95,16 @@ test('an item with no tip gains one when a traveller has written about it', () =
   assert.equal(tip.unverified, null);
 });
 
+test('hours stated with no clock time are still hours', () => {
+  // Plan f979c880, Day 2 · Evening, over MXDC: nobody had checked.
+  const line = 'Dinner at MXDC Cocina Mexicana, a table for one is easy here and the Saturday hours run late enough not to rush.';
+  assert.deepEqual(claimsIn(line).map(c => c.kind), ['hours']);
+  assert.ok(needsSource('The bar stays open late on Fridays.'));
+  assert.ok(needsSource('It is open late, so there is no rush.'));
+  // Advice about the day is still not a claim about a business.
+  assert.ok(!needsSource('October evenings cool quickly once the sun drops.'));
+});
+
 test('setting a tip aside is never destroying it', () => {
   const original = 'Woody’s charges a cover only after 9pm on weekends.';
   const tip = tipFor(original, null, MOAB);
