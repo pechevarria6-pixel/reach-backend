@@ -30,7 +30,7 @@ import { closedThroughout, neverOpen, windowFor } from './hours.ts';
 import { regionCountries, geocoderNames } from './regions.ts';
 import { siteTown } from './world-destinations.ts';
 import { rowPhoto } from './place-photo.ts';
-import { misfits, neutralLine } from './category.ts';
+import { lineMisfits, asideMisfits, topicsIn, neutralLine } from './category.ts';
 
 /** What the map calls somewhere to sleep, once underscores are spaces. */
 const LODGING_KIND = /\b(hotel|guest ?house|hostel|motel|apartment)s?\b/i;
@@ -1073,6 +1073,8 @@ export interface ReadBackSlot {
   tip?: string | null;
   kind?: string | null;
   because?: string | null;
+  /** Set by the route on the slot that holds the real ticketed event. */
+  ticket_url?: string | null;
 }
 
 export interface ReadBackDay {
@@ -1139,18 +1141,28 @@ function kmBetween(a: RealPlace, b: RealPlace): number | null {
  * apart, the first is the day and the second the stray: the day was planned
  * from its start. A stop with no point on the map is never a stray — not
  * knowing where something is is not evidence that it is far.
+ *
+ * `pinned` stops are the day whatever their neighbours say: the ticketed gig
+ * a night out was built around, or an evening's own stops when its optional
+ * daytime offers are read against it. The group grows from all of them, and
+ * none of them is ever a stray. Neighbour counts decide nothing when
+ * something is pinned — a tie had kept the pre-drinks and dropped the gig.
  */
-export function strays<T extends { place: RealPlace }>(stops: T[], limitKm: number): T[] {
+export function strays<T extends { place: RealPlace }>(stops: T[], limitKm: number, pinned: (s: T) => boolean = () => false): T[] {
   const located = stops.filter(s => s.place.lat != null && s.place.lng != null);
   if (located.length < 2) return [];
   const near = (a: T, b: T) => { const km = kmBetween(a.place, b.place); return km != null && km <= limitKm; };
-  let anchor = located[0];
-  let best = -1;
-  for (const s of located) {
-    const n = located.filter(o => o !== s && near(s, o)).length;
-    if (n > best) { best = n; anchor = s; }
+  const fixed = located.filter(pinned);
+  const day = new Set<T>(fixed);
+  if (!day.size) {
+    let anchor = located[0];
+    let best = -1;
+    for (const s of located) {
+      const n = located.filter(o => o !== s && near(s, o)).length;
+      if (n > best) { best = n; anchor = s; }
+    }
+    day.add(anchor);
   }
-  const day = new Set<T>([anchor]);
   for (let grew = true; grew;) {
     grew = false;
     for (const s of located) {
@@ -1162,55 +1174,105 @@ export function strays<T extends { place: RealPlace }>(stops: T[], limitKm: numb
 }
 
 /**
+ * The real ticketed event a plan was built around, as the listing gave it.
+ * The slot holding it is the one the route attached `ticket_url` to.
+ */
+export interface ReadBackEvent {
+  title: string;
+  venue?: string | null;
+}
+
+/**
  * Read every slot back against the place it names, and every day against
  * where its places are. Rewrites in place and says what it changed.
  *
  * - A line saying something of the wrong kind about its place becomes that
- *   place's neutral line (name · kind · street). A `because` of the wrong
- *   kind goes with it — "the dancing they wanted" under a bar is the same
- *   claim in another field.
- * - A tip of the wrong kind for its slot's place is dropped: a tip is
- *   flavour, and there is nothing to rebuild it from.
+ *   place's neutral line (name · kind · street). Only the part of the line
+ *   about the place is read (lineMisfits): "before the hike" is the day.
+ * - A tip or a `because` of the wrong kind for its slot's place is dropped,
+ *   whether or not the line was: "the dancing they wanted" under a bar is
+ *   the same claim in another field. A part that is about something else
+ *   may mention what the day's own lines hold.
+ * - The slot holding the real ticketed event is read against the listing as
+ *   well as the row — the gig vouches for the concert — and if it must still
+ *   be rewritten it keeps the act's name. It is never dropped for where it
+ *   is: the evening is planned around it, so the rest is read against it.
  * - A stop further than RADIUS_KM from the destination, or away from the
  *   rest of its day (SAME_EVENING_KM on a night out, SAME_DAY_KM on a trip
- *   day), is dropped: its line, its tip and its citation.
+ *   day), is dropped: its line, its tip and its citation. On a night out
+ *   the evening's own slots are the evening; the optional daytime offers
+ *   are read against it at SAME_DAY_KM and can never outvote it.
  * - Every slot is given the kind of the place it names, or none.
  */
-export function readBackCoherence(days: ReadBackDay[], places: RealPlace[], opts: { night: boolean }): CoherenceNote[] {
+export function readBackCoherence(days: ReadBackDay[], places: RealPlace[], opts: { night: boolean; event?: ReadBackEvent | null }): CoherenceNote[] {
   const notes: CoherenceNote[] = [];
-  const limit = opts.night ? SAME_EVENING_KM : SAME_DAY_KM;
   const drop = (slot: ReadBackSlot) => { slot.plan = ''; slot.tip = ''; slot.place_ref = null; slot.kind = null; };
+  const event = opts.event?.title ? opts.event : null;
   for (const day of days ?? []) {
     const n = Number(day.day) || 0;
-    const named: { slot: ReadBackSlot; label: string; place: RealPlace }[] = [];
-    const slots: [string, ReadBackSlot | null | undefined][] = [
-      ['morning', day.morning], ['afternoon', day.afternoon], ['evening', day.evening],
-      ...(day.daytime ?? []).map((s, i) => [`daytime ${i + 1}`, s] as [string, ReadBackSlot]),
+    type Stop = { slot: ReadBackSlot; label: string; place: RealPlace; ticketed: boolean; daytime: boolean };
+    const named: Stop[] = [];
+    const slots: [string, ReadBackSlot | null | undefined, boolean][] = [
+      ['morning', day.morning, false], ['afternoon', day.afternoon, false], ['evening', day.evening, false],
+      ...(day.daytime ?? []).map((s, i) => [`daytime ${i + 1}`, s, true] as [string, ReadBackSlot, boolean]),
     ];
-    for (const [label, slot] of slots) {
+    // Pass one: what the day's lines hold besides the places they cite, and
+    // what the gig is — so a tip about the hike or a drink before the
+    // concert is read as the day, not as a claim about the cafe.
+    const dayHolds = new Set<string>();
+    const readAs = new Map<ReadBackSlot, RealPlace>();
+    for (const [, slot] of slots) {
       if (!slot) continue;
       const place = placeOf(slot, places);
       slot.kind = place?.kind ?? null;
-      if (!place) continue;
-      const wrong = misfits(slot.plan, place);
-      if (wrong.length) {
-        notes.push({ what: 'rewritten', day: n, slot: label, place: place.name, topics: wrong });
-        slot.plan = neutralLine(place);
-        if (misfits(slot.because, place).length) slot.because = '';
+      if (!place) {
+        for (const t of topicsIn(slot.plan)) dayHolds.add(t);
+        continue;
       }
-      const wrongTip = misfits(slot.tip, place);
+      const ticketed = !!event && !!slot.ticket_url;
+      const row: RealPlace = ticketed
+        ? { ...place, whatsOn: [...(place.whatsOn ?? []), event!.title, event!.venue ?? '', 'live event'].filter(Boolean) }
+        : place;
+      readAs.set(slot, row);
+      for (const t of lineMisfits(slot.plan, row).elsewhere) dayHolds.add(t);
+    }
+    if (event) dayHolds.add('live music');
+    for (const [label, slot, daytime] of slots) {
+      if (!slot) continue;
+      const row = readAs.get(slot);
+      if (!row) continue;
+      const ticketed = !!event && !!slot.ticket_url;
+      const wrong = lineMisfits(slot.plan, row).wrong;
+      if (wrong.length) {
+        notes.push({ what: 'rewritten', day: n, slot: label, place: row.name, topics: wrong });
+        slot.plan = ticketed ? `${event!.title} · ${neutralLine(row)}` : neutralLine(row);
+      }
+      if (asideMisfits(slot.because, row, dayHolds).length) slot.because = '';
+      const wrongTip = asideMisfits(slot.tip, row, dayHolds);
       if (wrongTip.length) {
-        notes.push({ what: 'tip_dropped', day: n, slot: label, place: place.name, topics: wrongTip });
+        notes.push({ what: 'tip_dropped', day: n, slot: label, place: row.name, topics: wrongTip });
         slot.tip = '';
       }
-      if (place.miles != null && place.miles * KM_PER_MILE > RADIUS_KM) {
-        notes.push({ what: 'dropped_location', day: n, slot: label, place: place.name, km: Math.round(place.miles * KM_PER_MILE), reason: 'radius' });
+      if (!ticketed && row.miles != null && row.miles * KM_PER_MILE > RADIUS_KM) {
+        notes.push({ what: 'dropped_location', day: n, slot: label, place: row.name, km: Math.round(row.miles * KM_PER_MILE), reason: 'radius' });
         drop(slot);
         continue;
       }
-      named.push({ slot, label, place });
+      named.push({ slot, label, place: row, ticketed, daytime });
     }
-    for (const s of strays(named, limit)) {
+    const lost: Stop[] = [];
+    if (opts.night) {
+      const evening = named.filter(s => !s.daytime);
+      const offers = named.filter(s => s.daytime);
+      const out = strays(evening, SAME_EVENING_KM, s => s.ticketed);
+      lost.push(...out);
+      const kept = evening.filter(s => !out.includes(s));
+      const anyKept = kept.some(s => s.place.lat != null && s.place.lng != null);
+      lost.push(...strays([...kept, ...offers], SAME_DAY_KM, s => anyKept ? !s.daytime : s.ticketed));
+    } else {
+      lost.push(...strays(named, SAME_DAY_KM, s => s.ticketed));
+    }
+    for (const s of lost) {
       const others = named.filter(o => o !== s).map(o => kmBetween(s.place, o.place)).filter((k): k is number => k != null);
       notes.push({ what: 'dropped_location', day: n, slot: s.label, place: s.place.name, km: Math.round(Math.min(...others)), reason: 'cluster' });
       drop(s.slot);

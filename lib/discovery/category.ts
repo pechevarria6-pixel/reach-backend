@@ -139,3 +139,82 @@ export function neutralLine(place: Describable): string {
   const label = kind && kind !== 'place' ? kind[0].toUpperCase() + kind.slice(1) : '';
   return [place.name, label, String(place.street || '').trim()].filter(Boolean).join(' · ');
 }
+
+// ─── Which part of a line is about the place ────────────────────────────
+// misfits() reads a whole text as a claim about one place, which is right
+// for "End the night at SPIN, … good for dancing" and wrong for "Breakfast
+// at Love Muffin before the hike": the hike is the day, not the cafe. Wiping
+// that line to "Love Muffin · Cafe" took the shape of the day away and said
+// nothing more true about the cafe, so the read-back scopes it first.
+//
+// A line is cut where it moves on to something else — "before", "after",
+// "then", "ahead of", "on the way to", "followed by" — and nowhere else.
+// Commas and dashes are not cuts: "SPIN, a bar … good for dancing" is one
+// claim about SPIN. The lead part is about the place; so is any later part
+// that names it or points back at it ("dancing there", "its rooftop").
+// Everything else is about the thing the line moves on to, is not read
+// against this place, and tells the rest of the day what the day holds.
+//
+// A tip or a reason (`because`) is cut the same way and at sentences too. A
+// part that names or points at the place is read against the place. A part
+// that does not may only mention what the day's own lines already moved on
+// to: "the trail has no water" under the cafe of a day that heads out on a
+// hike is about the hike; "the dance floor fills late" under a bar, on a day
+// that holds no dancing anywhere, is about the bar and is not ours to say.
+
+const MOVES_ON = /\b(?:before|after(?:wards)?|then|ahead of|on (?:the|your) way (?:to|back)|followed by|en route to)\b/i;
+const POINTS_BACK = /\b(?:here|its|inside|there(?!\s+(?:is|are|was|were|'s|’s)\b)|this (?:spot|place|bar|venue|cafe|restaurant|museum|room))\b/i;
+
+function mentions(text: string, name: string): boolean {
+  if (!name) return false;
+  return new RegExp(`(^|[^\\w])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'i').test(text);
+}
+
+function aboutIt(part: string, name: string): boolean {
+  return mentions(part, name) || POINTS_BACK.test(part.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' '));
+}
+
+/** The topics a text raises at all, whatever it raises them about. */
+export function topicsIn(text: unknown): string[] {
+  const t = String(text ?? '');
+  return TOPICS.filter(({ says }) => says.test(t)).map(({ topic }) => topic);
+}
+
+/**
+ * A plan line read against the place it cites, only where it speaks of that
+ * place. Returns what it caught, and the topics of the parts that moved on to
+ * something else — which is what the day holds besides this place.
+ */
+export function lineMisfits(text: unknown, place: Describable | null | undefined): { wrong: string[]; elsewhere: string[] } {
+  const t = String(text ?? '');
+  if (!place || !t.trim()) return { wrong: [], elsewhere: [] };
+  const name = String(place.name || '').trim();
+  const parts = t.split(new RegExp(MOVES_ON.source, 'i'));
+  const wrong = new Set<string>();
+  const elsewhere = new Set<string>();
+  parts.forEach((part, i) => {
+    if (i === 0 || aboutIt(part, name)) for (const w of misfits(part, place)) wrong.add(w);
+    else for (const w of topicsIn(part.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' '))) elsewhere.add(w);
+  });
+  return { wrong: [...wrong], elsewhere: [...elsewhere] };
+}
+
+/**
+ * A tip or a reason read against its slot's place. A part that names the
+ * place or points back at it must fit the place; a part that does neither
+ * must fit the place or be something the day already holds (`dayHolds`).
+ */
+export function asideMisfits(text: unknown, place: Describable | null | undefined, dayHolds: Iterable<string>): string[] {
+  const t = String(text ?? '');
+  if (!place || !t.trim()) return [];
+  const name = String(place.name || '').trim();
+  const holds = new Set(dayHolds);
+  const parts = t.split(new RegExp(`${MOVES_ON.source}|[.;!?](?:\\s|$)`, 'i'));
+  const wrong = new Set<string>();
+  for (const part of parts) {
+    if (!part || !part.trim()) continue;
+    const caught = misfits(part, place);
+    for (const w of caught) if (aboutIt(part, name) || !holds.has(w)) wrong.add(w);
+  }
+  return [...wrong];
+}

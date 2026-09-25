@@ -4,7 +4,7 @@ import {
   placeMenu, unverifiedNames, withoutUnverified, bookingFor, type RealPlace,
   menuLine, namedPlace, readBackCoherence, strays,
 } from '../../lib/discovery/real-places.ts';
-import { misfits, neutralLine } from '../../lib/discovery/category.ts';
+import { misfits, neutralLine, lineMisfits, asideMisfits } from '../../lib/discovery/category.ts';
 
 // ─── The rule this whole product rests on ───────────────────────────────
 // Reach may only state what it has verified. These freeze the behaviour
@@ -255,4 +255,100 @@ test('the day is its biggest group, and a stop with no point is never a stray', 
   assert.deepEqual(strays([stop(SPIN), stop({ ...BALLSTON, lat: null, lng: null })], 5), []);
   // Two stops far apart: the day was planned from its first.
   assert.deepEqual(strays([stop(SPIN), stop(BALLSTON)], 5).map(s => s.place.name), ['Ballston Quarter']);
+});
+
+// ─── The gig the night was built around ──────────────────────────────────
+// Review of 8649a5c: the read-back never looked at the Ticketmaster listing,
+// so the cluster check could drop the concert itself and the topic check
+// could wipe "Catch the concert at City Winery" down to "City Winery ·
+// Restaurant", losing the act — a fact we held, not passed on.
+
+const CITY_WINERY: RealPlace = {
+  ref: 'p11', name: 'City Winery', kind: 'restaurant', interest: 'wine bars', url: null,
+  city: 'Washington', source: 'osm', street: '1350 Okie Street Northeast', lat: 38.9150, lng: -76.9860, miles: 2.5,
+};
+const GIG = { title: 'J. Cole', venue: 'City Winery' };
+
+type TicketSlot = Slot & { ticket_url?: string | null };
+
+test('the ticketed gig is never the stray: the pre-drinks far from it go instead', () => {
+  // Ballston is ~11 km from City Winery; neighbour counts tie 0–0 and the
+  // earliest used to win, which was the pre-drinks.
+  const morning: TicketSlot = { plan: 'Pre-drinks at Ballston Quarter.', place_ref: 'p8' };
+  const afternoon: TicketSlot = { plan: 'J. Cole at City Winery.', place_ref: 'p11', ticket_url: 'https://tm.example/j-cole' };
+  const notes = readBackCoherence([{ day: 1, morning, afternoon }], [...DC, BALLSTON, CITY_WINERY], { night: true, event: GIG });
+  assert.match(afternoon.plan, /J\. Cole at City Winery/);
+  assert.equal(afternoon.ticket_url, 'https://tm.example/j-cole');
+  assert.equal(morning.plan, '');
+  const dropped = notes.filter(n => n.what === 'dropped_location') as { slot: string }[];
+  assert.deepEqual(dropped.map(d => d.slot), ['morning']);
+});
+
+test('the listing vouches for the concert; a rewrite keeps the act', () => {
+  const evening: TicketSlot = { plan: 'Catch the concert at City Winery.', place_ref: 'p11', ticket_url: 'https://tm.example/j-cole' };
+  assert.deepEqual(readBackCoherence([{ day: 1, evening }], [CITY_WINERY], { night: true, event: GIG }), []);
+  assert.equal(evening.plan, 'Catch the concert at City Winery.');
+  // Still something the listing does not say: rewritten, but the act stays.
+  const dancing: TicketSlot = { plan: 'J. Cole at City Winery, then dancing there till close.', place_ref: 'p11', ticket_url: 'https://tm.example/j-cole' };
+  readBackCoherence([{ day: 1, evening: dancing }], [CITY_WINERY], { night: true, event: GIG });
+  assert.equal(dancing.plan, 'J. Cole · City Winery · Restaurant · 1350 Okie Street Northeast');
+  // Without the ticket the same restaurant may not be said to host a concert.
+  const plain: TicketSlot = { plan: 'Catch the concert at City Winery.', place_ref: 'p11' };
+  readBackCoherence([{ day: 1, evening: plain }], [CITY_WINERY], { night: true, event: GIG });
+  assert.equal(plain.plan, 'City Winery · Restaurant · 1350 Okie Street Northeast');
+});
+
+test('a night out’s daytime offers never outvote the evening’s own stops', () => {
+  // The bar is the evening; two museums ~10 km off are optional daytime.
+  const far1: RealPlace = { ...RENWICK, ref: 'p12', name: 'Far Museum One', lat: 38.99, lng: -77.10, miles: 7 };
+  const far2: RealPlace = { ...RENWICK, ref: 'p13', name: 'Far Museum Two', lat: 38.991, lng: -77.101, miles: 7 };
+  const afternoon: Slot = { plan: 'Drinks at SPIN.', place_ref: 'p4' };
+  const daytime: Slot[] = [
+    { plan: 'Far Museum One, if you make a day of it.', place_ref: 'p12' },
+    { plan: 'Far Museum Two, if you make a day of it.', place_ref: 'p13' },
+  ];
+  readBackCoherence([{ day: 1, morning: { plan: '' }, afternoon, evening: { plan: '' }, daytime }], [...DC, far1, far2], { night: true });
+  assert.equal(afternoon.plan, 'Drinks at SPIN.');
+  // ~10 km is a fine ride for a day stretched around the evening.
+  assert.match(daytime[0].plan, /Far Museum One/);
+  // An offer beyond a day's reach of the evening goes, the evening stays.
+  const farther: RealPlace = { ...RENWICK, ref: 'p14', name: 'Far Museum Three', lat: 39.2, lng: -77.3, miles: 22 };
+  const eve: Slot = { plan: 'Drinks at SPIN.', place_ref: 'p4' };
+  const offers: Slot[] = [{ plan: 'Far Museum Three.', place_ref: 'p14' }];
+  readBackCoherence([{ day: 1, evening: eve, daytime: offers }], [...DC, farther], { night: true });
+  assert.equal(eve.plan, 'Drinks at SPIN.');
+  assert.equal(offers[0].plan, '');
+});
+
+// ─── The part of a line that is about the place ──────────────────────────
+
+const LOVE_MUFFIN: RealPlace = { ref: 'p15', name: 'Love Muffin', kind: 'cafe', interest: 'places to eat', url: null, city: 'Moab', source: 'osm' };
+const WUNDER: RealPlace = { ref: 'p16', name: 'Wunder Garten', kind: 'bar', interest: 'beer gardens', url: null, city: 'Washington', source: 'osm' };
+
+test('the thing a line moves on to is the day, not a claim about the place', () => {
+  const morning: Slot = { plan: 'Breakfast at Love Muffin before the hike.', place_ref: 'p15', tip: 'Fill your bottles here; the trail has no water.' };
+  assert.deepEqual(readBackCoherence([{ day: 1, morning }], [LOVE_MUFFIN], { night: false }), []);
+  assert.equal(morning.plan, 'Breakfast at Love Muffin before the hike.');
+  assert.equal(morning.tip, 'Fill your bottles here; the trail has no water.');
+  assert.deepEqual(lineMisfits('A drink at Wunder Garten before the concert.', WUNDER).wrong, []);
+  assert.deepEqual(lineMisfits('Coffee at Grace Street Coffee Roasters at AIA, then walk to the memorials.', GRACE).wrong, []);
+  // A part that comes back to the place is about the place.
+  assert.deepEqual(lineMisfits('Dinner at Wunder Garten, then dancing there.', WUNDER).wrong, ['dancing']);
+  // And the lead part is always the place's, however it is phrased.
+  assert.deepEqual(lineMisfits('Wunder Garten, a dance floor under the lights.', WUNDER).wrong, ['dancing']);
+  // A tip on a day that holds no trail may not talk about one.
+  assert.deepEqual(asideMisfits('The trail has no water.', LOVE_MUFFIN, []), ['trails']);
+  assert.deepEqual(asideMisfits('The trail has no water.', LOVE_MUFFIN, ['trails']), []);
+  // Pointing back at the place is a claim about it, whatever the day holds.
+  assert.deepEqual(asideMisfits('The dance floor here fills late.', WUNDER, ['dancing']), ['dancing']);
+});
+
+test('a clean line does not carry a wrong-kind reason through', () => {
+  const evening: Slot = { plan: 'End the night at Wunder Garten.', place_ref: 'p16', because: 'the dancing they asked for' };
+  readBackCoherence([{ day: 1, evening }], [WUNDER], { night: true });
+  assert.equal(evening.plan, 'End the night at Wunder Garten.');
+  assert.equal(evening.because, '');
+  const fits: Slot = { plan: 'End the night at Wunder Garten.', place_ref: 'p16', because: 'the craft beers they asked for' };
+  readBackCoherence([{ day: 1, evening: fits }], [WUNDER], { night: true });
+  assert.equal(fits.because, 'the craft beers they asked for');
 });
