@@ -14,32 +14,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { createServerClient } from '@/lib/supabase';
-import { track, isEventName, type EventName } from '@/lib/track';
+import { track, isEventName, BROWSER_EVENT_NAMES, type EventName } from '@/lib/track';
 
 export const dynamic = 'force-dynamic';
 
-/** Only these may be sent from a browser. The rest are the server's own. */
-const FROM_BROWSER = new Set<EventName>([
-  'invite_link_opened',
-  'quiz_completed',
-  'trip_input_submitted',
-  'recommendation_dismissed',
-  // What only the quiz screen can see: which screen, skipped or not, which
-  // bar was nudged. Props are the screen or question id and nothing typed —
-  // and scrubProps would drop anything longer anyway.
-  'quiz_started',
-  'quiz_screen_viewed',
-  'quiz_screen_skipped',
-  'quiz_result_viewed',
-  'quiz_dial_adjusted',
-  'quiz_shared',
-  // Opened before anybody has an account, like an invitation.
-  'quiz_share_opened',
-  'quiz_share_joined',
-  'drip_shown',
-  'drip_answered',
-  'drip_dismissed',
-]);
+/**
+ * Only these may be sent from a browser. The rest are the server's own. The
+ * list lives in lib/track.ts beside the names, so a name added for a screen
+ * is added to both in one place, and a test can read both.
+ */
+const FROM_BROWSER = new Set<EventName>(BROWSER_EVENT_NAMES);
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));

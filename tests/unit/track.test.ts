@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { track, scrubProps, isEventName, EVENT_NAMES } from '../../lib/track.ts';
+import { track, scrubProps, isEventName, EVENT_NAMES, BROWSER_EVENT_NAMES } from '../../lib/track.ts';
 
 function db(error: unknown = null, onInsert?: (row: Record<string, unknown>) => void) {
   return {
@@ -51,8 +51,9 @@ test('a long string is prose, and prose is never a property', () => {
 test('only the listed names may be written', () => {
   assert.equal(isEventName('booking_confirmed'), true);
   assert.equal(isEventName('something_i_invented'), false);
-  // 17 before the onboarding quiz v3, whose section 8 adds eleven.
-  assert.equal(EVENT_NAMES.length, 28);
+  // 17 before the onboarding quiz v3, whose section 8 adds eleven, and nine
+  // more for the checkout spec of 2026-09-25.
+  assert.equal(EVENT_NAMES.length, 37);
   for (const n of ['quiz_started', 'quiz_screen_viewed', 'quiz_screen_skipped', 'quiz_result_viewed',
     'quiz_dial_adjusted', 'quiz_shared', 'quiz_share_opened', 'quiz_share_joined',
     'drip_shown', 'drip_answered', 'drip_dismissed', 'quiz_completed']) assert.equal(isEventName(n), true, n);
@@ -94,4 +95,41 @@ test('the props bag still refuses anything about a person', () => {
   // a way for prose to get in.
   const kept = scrubProps({ plan: 'p1', name: 'Peter', email: 'a@b.c', note: 'hi' });
   assert.deepEqual(Object.keys(kept), ['plan']);
+});
+
+// The checkout spec's names, added in one change. A screen fires each of them,
+// so each must be both a name and one the browser may send — a name in only
+// one list is a button whose tap is answered 400 and never counted.
+const CHECKOUT_EVENTS = [
+  'checkout_state_shown', 'checkout_cta_tapped', 'slot_unfilled',
+  'itinerary_item_dropped_location', 'itinerary_item_swapped',
+  'next_trip_started_from_close', 'settle_up_link_opened',
+  'settle_up_marked_paid', 'celebration_shown',
+];
+
+test('every checkout event is a name and may come from a browser', () => {
+  const browser = new Set<string>(BROWSER_EVENT_NAMES);
+  for (const n of CHECKOUT_EVENTS) {
+    assert.equal(isEventName(n), true, `${n} is not in EVENT_NAMES`);
+    assert.equal(browser.has(n), true, `${n} is not in the browser list`);
+  }
+});
+
+test('the browser may only send names that exist, and never the money-truth ones', () => {
+  for (const n of BROWSER_EVENT_NAMES) assert.equal(isEventName(n), true, n);
+  // Stripe says when a contribution succeeded, not a screen.
+  for (const n of ['contribution_succeeded', 'plan_fully_funded', 'booking_confirmed']) {
+    assert.equal(BROWSER_EVENT_NAMES.includes(n as never), false, n);
+  }
+});
+
+test('the route reads its allowlist from the same list', async () => {
+  const { readFileSync } = await import('node:fs');
+  const route = readFileSync(new URL('../../app/api/track/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /new Set<EventName>\(BROWSER_EVENT_NAMES\)/);
+});
+
+test('a settle-up event keeps its app and amount and loses anything personal', () => {
+  const out = scrubProps({ app: 'venmo', amount_cents: 4200, handle_note: 'Cabo trip', recipient_name: 'Sam' });
+  assert.deepEqual(out, { app: 'venmo', amount_cents: 4200 });
 });

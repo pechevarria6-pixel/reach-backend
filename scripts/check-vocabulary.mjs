@@ -102,6 +102,22 @@ const FAKE_SCIENCE = [
   '40 years of research',
 ];
 
+/**
+ * Words that say Reach moves money. It does not: settle-up works out who owes
+ * whom and opens the payer's own Venmo or Cash App (lib/settle-links.ts), and
+ * the payment happens there, between two people. "Transfer" and "payout" are
+ * what a money business says about money it holds — the checkout spec rules
+ * both out by name, because copy that implies custody is a claim about the
+ * product, and a false one.
+ *
+ * Travel has its own "transfer" — the ride from the airport — and that one is
+ * copy we mean ("Airport transfers" is a fixed-cost line). Those phrases are
+ * taken out before the money words are looked for, so the ride is allowed and
+ * the money is not.
+ */
+const MONEY_WORDS = ['transfer', 'payout'];
+const TRAVEL_TRANSFER = /\b(?:airport|hotel|station|port|ferry|shuttle|ground|private|shared)[ -]transfers?\b|\btransfers? (?:to|from|between) (?:the |your )?(?:airport|hotel|station|port|terminal)s?\b/g;
+
 /** Values that are never copy, wherever they turn up in a rendered string. */
 const NEVER_RENDERED = ['undefined', 'NaN', '[object Object]'];
 
@@ -163,6 +179,26 @@ for (const f of files) {
           console.log(`  ${f}:${i + 1}  "${word}" in: ${text.slice(0, 68)}`);
           found++;
           inStrings.add(word);
+        }
+      }
+      const money = text.toLowerCase().replace(TRAVEL_TRANSFER, ' ');
+      for (const word of MONEY_WORDS) {
+        if (money.includes(word)) {
+          console.log(`  ${f}:${i + 1}  "${word}" in: ${text.slice(0, 68)}`);
+          found++;
+          inStrings.add(word);
+        }
+      }
+    }
+    // Money words in JSX text too — "Reach transfers it to Sam" between two
+    // tags opens no quote. Only text between tags: the same word as a type or
+    // a variable (settleUp returns Transfer[]) is machinery, not copy.
+    for (const m of code.matchAll(/>([^<>{}]*[A-Za-z][^<>{}]*)</g)) {
+      const money = m[1].toLowerCase().replace(TRAVEL_TRANSFER, ' ');
+      for (const word of MONEY_WORDS) {
+        if (!inStrings.has(word) && money.includes(word)) {
+          console.log(`  ${f}:${i + 1}  "${word}" in: ${m[1].trim().slice(0, 68)}`);
+          found++;
         }
       }
     }
