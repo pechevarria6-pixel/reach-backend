@@ -7,7 +7,7 @@ import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { placesFor } from '@/lib/discovery/real-places';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { readActive, closeStale, refusalBody, type ActiveCandidate } from '@/lib/one-active';
+import { readActive, closeStale, refusalBody, refusalFor } from '@/lib/one-active';
 import { pinPlan } from '@/lib/trip-map';
 
 const CreatePlanSchema = z.object({
@@ -39,6 +39,10 @@ const CreatePlanSchema = z.object({
   why_chosen: z.array(z.string()).nullish(),
   // A trip somebody is taking alone waits for nobody.
   solo_mode: z.boolean().nullish(),
+  // The caller opens the plan a 409 `one_active` names instead of keeping
+  // its own copy. Until it says so it is only refused under the older rule
+  // (lib/one-active.ts refusalFor). Never stored.
+  accepts_one_active: z.boolean().nullish(),
 });
 
 // POST /api/plans — create a new plan
@@ -123,8 +127,13 @@ export async function POST(req: NextRequest) {
   // sql/trip-options-2026-09-23.sql; plans_one_active,
   // sql/one-active-plan-2026-09-25.sql) cannot read dates, and would
   // otherwise refuse this plan over one nobody can go on any more.
+  //
+  // Not in a group of one, and `one_active` only to a caller that can act
+  // on it — see refusalFor for both.
+  const incoming = { type: body.type, undecided, solo: soloGroup, understands: body.accepts_one_active === true };
   const active = await activePlans(supabase, body.group_id, body.type);
-  if (active.live) return oneActive(active.live, { type: body.type, undecided, solo: soloGroup });
+  const refused = refusalFor(active, incoming);
+  if (refused) return NextResponse.json(refused, { status: 409 });
   if (active.stale.length) await closeStale(supabase, body.group_id, active.stale);
 
   const row: Record<string, unknown> = {
@@ -178,7 +187,8 @@ export async function POST(req: NextRequest) {
   // unique index refused this one. Theirs is the plan.
   if (error?.code === '23505') {
     const existing = await activePlans(supabase, body.group_id, body.type);
-    if (existing.live) return oneActive(existing.live, { type: body.type, undecided, solo: soloGroup });
+    const theirs = existing.waiting ?? existing.live;
+    if (theirs) return NextResponse.json(refusalBody(theirs, incoming), { status: 409 });
   }
 
   if (error || !plan) {
@@ -263,9 +273,3 @@ function activePlans(db: import('@supabase/supabase-js').SupabaseClient, groupId
   return readActive(db, groupId, { type });
 }
 
-function oneActive(
-  existing: ActiveCandidate,
-  incoming: { type: string; undecided: boolean; solo: boolean },
-) {
-  return NextResponse.json(refusalBody(existing, incoming), { status: 409 });
-}

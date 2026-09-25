@@ -16,7 +16,7 @@ import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
 import { pinPlan, pinMoves } from '@/lib/trip-map';
-import { readActive, closeStale, refusalBody, ACTIVE_STATUSES } from '@/lib/one-active';
+import { readActive, closeStale, refusalBody, refusalFor, ACTIVE_STATUSES } from '@/lib/one-active';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -45,6 +45,10 @@ const UpdatePlanSchema = z.object({
   // place, the budget and the reasons are then taken from the idea as the
   // group saw it, not from whatever the caller sent. Never stored.
   pick_option: z.string().max(200).nullish(),
+  // The caller opens the plan a 409 `one_active` names; without it,
+  // reopening a plan is not refused (lib/one-active.ts refusalFor). Never
+  // stored.
+  accepts_one_active: z.boolean().nullish(),
 });
 
 // GET /api/plans/[id] — get a single plan with itinerary and votes
@@ -123,7 +127,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
 
   // Handle status-specific timestamps
   // confirmDateChange is a decision about this request, not a column.
-  const { confirmDateChange: _confirm, only_if_undecided: onlyIfUndecided, pick_option: pickOption, ...fields } = body as Record<string, unknown>;
+  const { confirmDateChange: _confirm, only_if_undecided: onlyIfUndecided, pick_option: pickOption, accepts_one_active: acceptsOneActive, ...fields } = body as Record<string, unknown>;
   const updates: any = { ...fields };
 
   // ── Deciding where a group trip goes ──────────────────────────────────
@@ -358,7 +362,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     const found = await inTheWay();
     if (found.live) {
       const solo = (await membersOf(supabase, String(plan.group_id)))?.length === 1;
-      return NextResponse.json(refusalBody(found.live, { type: String(plan.type ?? 'trip'), undecided: false, solo }), { status: 409 });
+      const refused = refusalFor(found, { type: String(plan.type ?? 'trip'), undecided: false, solo, understands: acceptsOneActive === true });
+      if (refused) return NextResponse.json(refused, { status: 409 });
     }
     if (found.stale.length) await closeStale(supabase, String(plan.group_id), found.stale);
   }

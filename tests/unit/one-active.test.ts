@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   kindOf, activePlanIn, staleActiveIn, refusalCode, refusalBody, refusalCopy, readActive, earliestToday,
+  refusalFor, waitingPlanIn,
   type ActiveCandidate,
 } from '../../lib/one-active.ts';
 
@@ -133,7 +134,7 @@ function dbAnswering(answer: { data?: unknown[]; error?: { code: string } }) {
 
 test('a read that fails is nothing in the way — the index holds the line, not a guess', async () => {
   const { db } = dbAnswering({ error: { code: '57014' } });
-  assert.deepEqual(await readActive(db, 'g1', { type: 'trip', today }), { live: null, stale: [] });
+  assert.deepEqual(await readActive(db, 'g1', { type: 'trip', today }), { live: null, waiting: null, stale: [] });
 });
 
 test('the read is this group, in planning or voting', async () => {
@@ -141,4 +142,54 @@ test('the read is this group, in planning or voting', async () => {
   const r = await readActive(db, 'g1', { type: 'trip', today });
   assert.equal(r.live?.id, 'a');
   assert.deepEqual(seen, [['group_id', 'g1'], ['status', ['planning', 'voting']]]);
+});
+
+// ─── Who the rule reaches, and who is told ──────────────────────────────
+
+const group = { type: 'trip', undecided: false, solo: false, understands: true };
+
+test('a group of one is never refused: every solo plan lives in the one "Just me" group', () => {
+  const lisbon = plan({ id: 'lisbon', title: 'Lisbon', start_date: '2026-12-01', end_date: '2026-12-08' });
+  assert.equal(refusalFor({ live: lisbon, waiting: null }, { ...group, solo: true }), null);
+  assert.equal(refusalFor({ live: lisbon, waiting: lisbon }, { ...group, solo: true, undecided: true }), null);
+  assert.equal(refusalFor({ live: lisbon, waiting: null }, group)?.code, 'one_active');
+});
+
+test('one_active is only answered to a caller that can open the plan it names', () => {
+  // Until reach-app.jsx handles it, a refused plan becomes a ghost the
+  // screens call saved. Such a caller meets only the older rule.
+  const dinner = plan({ id: 'dinner', type: 'restaurant', start_date: null, end_date: null });
+  assert.equal(refusalFor({ live: dinner, waiting: null }, { ...group, type: 'restaurant', understands: false }), null);
+  const body = refusalFor({ live: dinner, waiting: null }, { ...group, type: 'restaurant' });
+  assert.equal(body?.code, 'one_active');
+  assert.equal(body?.planId, 'dinner');
+});
+
+test('the older already_waiting holds for every caller, even behind a decided trip made first', () => {
+  const decided = plan({ id: 'decided', created_at: '2026-09-01T00:00:00Z' });
+  const waiting = plan({ id: 'waiting', destination_style: 'undecided', created_at: '2026-09-10T00:00:00Z' });
+  const plans = [decided, waiting];
+  assert.equal(activePlanIn(plans, { type: 'trip', today })?.id, 'decided');
+  assert.equal(waitingPlanIn(plans, { type: 'trip', today })?.id, 'waiting');
+  const body = refusalFor({ live: decided, waiting }, { ...group, undecided: true, understands: false });
+  assert.equal(body?.code, 'already_waiting');
+  assert.equal(body?.planId, 'waiting');
+  // A decided trip alone does not stop an undecided one for an old caller.
+  assert.equal(refusalFor({ live: decided, waiting: null }, { ...group, undecided: true, understands: false }), null);
+});
+
+test('waiting is the undecided plan of this exact type, still on by its dates', () => {
+  const weekend = plan({ id: 'w', type: 'weekend', destination_style: 'undecided' });
+  assert.equal(waitingPlanIn([weekend], { type: 'trip', today }), null);
+  assert.equal(waitingPlanIn([weekend], { type: 'weekend', today })?.id, 'w');
+  assert.equal(waitingPlanIn([plan({ destination_style: 'undecided', end_date: '2026-09-01', start_date: '2026-08-30' })], { type: 'trip', today }), null);
+});
+
+test('the index stays on hold while the client cannot act on one_active', () => {
+  // plans_one_active refuses the insert whoever asks; run before the client
+  // opens the plan it names, every refused plan is a ghost again.
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  const sql = readFileSync(new URL('../../sql/one-active-plan-2026-09-25.sql', import.meta.url), 'utf8');
+  const wired = /accepts_one_active\s*:\s*true/.test(app) && /["']one_active["']/.test(app);
+  if (!wired) assert.match(sql.split('\n')[1] ?? '', /HOLD — do not run yet/);
 });

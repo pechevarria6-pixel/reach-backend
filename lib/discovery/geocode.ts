@@ -65,9 +65,18 @@ type NominatimAddress = {
   state?: string; country?: string;
 };
 
-/** "Moab, Utah, United States" — the town, then whatever of state and country the map gave. */
-function labelOf(name: string, a?: NominatimAddress): string {
-  const town = a?.city || a?.town || a?.village || a?.hamlet || a?.municipality || name;
+/**
+ * "Moab, Utah, United States" — the place that matched, then whatever of
+ * state and country the map gave.
+ *
+ * The place's own name comes first, not address.city: a suburb, borough or
+ * neighbourhood is a settlement here, and its address.city is the city
+ * around it. Brooklyn comes back { suburb: "Brooklyn", city: "New York" },
+ * and reading city first labelled a Brooklyn trip "New York, New York" —
+ * the same pin as a Manhattan trip, and not the place the plan names.
+ */
+export function labelOf(name: string, a?: NominatimAddress): string {
+  const town = String(name || '').trim() || a?.city || a?.town || a?.village || a?.hamlet || a?.municipality || '';
   const parts: string[] = [];
   for (const p of [town, a?.state, a?.country]) {
     const v = String(p ?? '').trim();
@@ -116,7 +125,7 @@ export async function locateOrFail(
   const url = `${API}?q=${encodeURIComponent(q)}&format=json&limit=1&addressdetails=1`;
 
   let hits: {
-    lat?: string; lon?: string; display_name?: string; class?: string; type?: string;
+    lat?: string; lon?: string; display_name?: string; name?: string; class?: string; type?: string;
     address?: NominatimAddress;
   }[];
   try {
@@ -152,7 +161,7 @@ export async function locateOrFail(
     lat, lng, name, from: q,
     countryCode: hit.address?.country_code ?? null,
     subdivision: hit.address?.['ISO3166-2-lvl4'] ?? null,
-    label: labelOf(name, hit.address),
+    label: labelOf(String(hit.name || '').trim() || name, hit.address),
   };
 }
 

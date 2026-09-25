@@ -1,5 +1,19 @@
 -- ─── One trip and one night out being planned per group ─────────────────
--- Run me. Written 2026-09-25. Safe to run twice.
+-- HOLD — do not run yet. Written 2026-09-25. Safe to run twice, once it is time.
+--
+-- Two things have to be true first, and neither is yet:
+--   1. components/reach-app.jsx handles a 409 `one_active` (drops its own
+--      copy, opens `planId`) and sends `accepts_one_active: true`. Until
+--      then the route only answers `one_active` to a caller that asks for
+--      it, but this index cannot tell callers apart: it would refuse the
+--      insert anyway, and the client would keep a ghost plan and say it was
+--      saved.
+--   2. A group of one is left out. The route exempts it (a solo user's
+--      personal "Just me" group holds every plan they make alone), but an
+--      index cannot count members. Before running, add a condition that
+--      does — e.g. `and not solo_mode` once every plan saved into a group of
+--      one carries solo_mode (ExpDetailScreen's plans do not yet).
+-- tests/unit/one-active.test.ts keeps this line here until (1) is done.
 --
 -- The owner's rule (a), 2026-09-25: a group may have one TRIP and one NIGHT
 -- OUT in planning or voting at a time. Starting a second of the same kind is

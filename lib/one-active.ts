@@ -128,21 +128,21 @@ export type Stale = { id: string; closeAs: 'cancelled' | 'completed' };
  */
 export async function readActive(
   db: SupabaseClient, groupId: string, p: { type: string; today?: string; except?: string | null },
-): Promise<{ live: ActiveCandidate | null; stale: Stale[] }> {
+): Promise<{ live: ActiveCandidate | null; waiting: ActiveCandidate | null; stale: Stale[] }> {
   const { data, error } = await db.from('plans')
     .select('id, title, type, destination_style, status, start_date, end_date, created_at')
     .eq('group_id', groupId)
     .in('status', [...ACTIVE_STATUSES]);
   if (error) {
     console.error('[one-active] could not check for a plan of this kind already being planned', { groupId, code: error.code });
-    return { live: null, stale: [] };
+    return { live: null, waiting: null, stale: [] };
   }
   const plans: ActiveCandidate[] = (data ?? []).map(r => ({
     id: String(r.id), title: r.title, type: r.type, destination_style: r.destination_style, status: r.status,
     start_date: r.start_date, end_date: r.end_date, created_at: r.created_at,
   }));
   const q = { ...p, today: p.today ?? earliestToday() };
-  return { live: activePlanIn(plans, q), stale: staleActiveIn(plans, q) };
+  return { live: activePlanIn(plans, q), waiting: waitingPlanIn(plans, q), stale: staleActiveIn(plans, q) };
 }
 
 /**
@@ -189,4 +189,49 @@ export function refusalBody(
     planId: existing.id,
     kind,
   };
+}
+
+/**
+ * Whether this request is refused, and with what — or null to let it through.
+ *
+ * Two cases the rule does not reach, both found in review on 2026-09-25:
+ *
+ * · A group of one. Planning alone puts every plan into the one personal
+ *   "Just me" group (CreatePlanFlow's chooseSolo), so the rule there would
+ *   mean one trip and one dinner across everything somebody plans on their
+ *   own — Lisbon in December would block Tokyo in March. The rule exists so a
+ *   group is not split across two trips; a group of one cannot be. The old
+ *   guard exempted solo groups too.
+ *
+ * · A caller that cannot act on `one_active`. Until components/reach-app.jsx
+ *   handles it, a refused plan is kept on the device as a ghost and the
+ *   screens say it was saved — "Saved to your plans", "added to <group> 🎉" —
+ *   which is exactly the claim CLAUDE.md forbids. So `one_active` is only
+ *   answered to a caller that says it understands it (`accepts_one_active`);
+ *   anyone else gets the older rule alone, whose `already_waiting` every
+ *   caller already opens.
+ */
+export function refusalFor(
+  found: { live: ActiveCandidate | null; waiting?: ActiveCandidate | null },
+  incoming: { type: string; undecided: boolean; solo: boolean; understands: boolean },
+): ReturnType<typeof refusalBody> | null {
+  if (incoming.solo) return null;
+  // The older case first, for every caller: a second undecided group trip
+  // meets the undecided one of its type, even behind a decided trip that was
+  // made earlier (which `live` would name, and plans_one_waiting would then
+  // refuse at the insert with nothing to show for it).
+  if (incoming.undecided && found.waiting) return refusalBody(found.waiting, incoming);
+  if (found.live && incoming.understands) return refusalBody(found.live, incoming);
+  return null;
+}
+
+/**
+ * The undecided plan of exactly this type still on by its dates — the one
+ * the older rule (plans_one_waiting) keeps to one per group.
+ */
+export function waitingPlanIn<T extends ActiveCandidate>(
+  plans: T[], p: { type: string; today: string; except?: string | null },
+): T | null {
+  return activeOfKind(plans, kindOf(p.type), p.except)
+    .find(x => x.destination_style === 'undecided' && String(x.type ?? 'trip') === p.type && live(x, p.today)) ?? null;
 }

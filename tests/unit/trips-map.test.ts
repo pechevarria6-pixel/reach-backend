@@ -201,3 +201,23 @@ test('upcoming soonest first, past most recent first, undated plans still coming
   assert.deepEqual(m.upcoming.map(p => p.planId), ['soon', 'later', 'undated']);
   assert.deepEqual(m.past.map(p => p.planId), ['recent', 'old']);
 });
+
+test('a borough is labelled by its own name, not the city around it', async () => {
+  // Nominatim, live, 2026-09-25: Brooklyn is a boundary whose address.city
+  // is New York. Reading city first gave a Brooklyn trip Manhattan's label.
+  const BROOKLYN = [{
+    lat: '40.6526', lon: '-73.9497', name: 'Brooklyn',
+    display_name: 'Brooklyn, Kings County, New York, United States',
+    class: 'boundary', type: 'administrative',
+    address: { suburb: 'Brooklyn', city: 'New York', state: 'New York', country: 'United States', country_code: 'us' },
+  }];
+  const { impl } = geocoder({ 'Brooklyn, US': BROOKLYN });
+  const found = await locatePlanOrFail({ destination_city: 'Brooklyn', destination_country: 'US' }, impl);
+  assert.ok(found && found !== 'failed');
+  assert.equal(found.label, 'Brooklyn, New York, United States');
+  // And without `name`, the display name's first part is the place, still.
+  const { impl: bare } = geocoder({ 'Brooklyn, US': [{ ...BROOKLYN[0], name: undefined }] });
+  const again = await locatePlanOrFail({ destination_city: 'Brooklyn', destination_country: 'US' }, bare);
+  assert.ok(again && again !== 'failed');
+  assert.equal(again.label, 'Brooklyn, New York, United States');
+});
