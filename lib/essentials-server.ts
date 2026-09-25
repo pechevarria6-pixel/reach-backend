@@ -6,6 +6,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { readinessOf, blockingMessage, type Readiness } from '@/lib/essentials';
 import { onTheTrip, type Person } from '@/lib/booking/approval';
+import { originOf, type Origin } from '@/lib/airports';
+import { locate } from '@/lib/discovery/geocode';
+import { nearestAirports } from '@/lib/booking/providers/flights.duffel';
 
 export interface GroupReadiness {
   travelers: Readiness[];
@@ -185,4 +188,61 @@ export async function travellersFor(
 export function tripTravellerIds(plan: TripPlan): string[] | null {
   if (plan.solo_mode !== true) return null;
   return typeof plan.created_by === 'string' && plan.created_by ? [plan.created_by] : [];
+}
+
+/**
+ * The nearest airport to a home city, for somebody who saved neither an
+ * airport nor a city the table knows. Two lookups — Nominatim for the point,
+ * Duffel for the airports around it — so it is only asked for the people it
+ * is needed for. Null when either answers nothing or cannot be asked.
+ */
+export async function nearestHomeAirport(city: string): Promise<string | null> {
+  try {
+    const point = await locate(city);
+    if (!point) return null;
+    const near = await nearestAirports(point);
+    return near[0]?.iata ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Nominatim asks for a request a second at most; a trip needs a handful. */
+export const MAX_NEAREST_LOOKUPS = 4;
+
+/**
+ * Where each person on this trip flies from (originOf in lib/airports.ts):
+ * their saved airport, the airport for their home city, or the nearest one
+ * to it — the last two labelled as worked out. The same people bookings are
+ * for (onTheTrip): a solo plan's traveller, otherwise the group.
+ *
+ * Null when the group cannot be read. Only the airport code comes back,
+ * never the home city it was worked out from.
+ */
+export async function travellerOrigins(
+  db: SupabaseClient, plan: TripPlan,
+  nearest: (city: string) => Promise<string | null> = nearestHomeAirport,
+): Promise<Origin[] | null> {
+  const cols = 'user_id, users(id, name, first_name, last_name, home_city, home_airport)';
+  const res = await db.from('group_members').select(cols).eq('group_id', String(plan.group_id));
+  if (res.error) {
+    console.error('[origins] could not read where the group flies from', { groupId: plan.group_id, code: res.error.code });
+    return null;
+  }
+  const rows = (res.data ?? []) as unknown as Record<string, unknown>[];
+  const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const people = onTheTrip(plan, rows.map(m => {
+    const u = joined(m);
+    return { userId: String(m.user_id), name: displayName(u), homeCity: s(u.home_city), homeAirport: s(u.home_airport) };
+  }), rows.length);
+
+  let asked = 0;
+  const out: Origin[] = [];
+  for (const p of people) {
+    const first = originOf(p);
+    if (first.airport || !p.homeCity || asked >= MAX_NEAREST_LOOKUPS) { out.push(first); continue; }
+    asked++;
+    out.push(originOf(p, await nearest(p.homeCity).catch(() => null)));
+  }
+  return out;
 }

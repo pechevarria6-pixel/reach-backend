@@ -34,6 +34,8 @@ import { travellersFor } from '@/lib/essentials-server';
 import { airlineOnly } from '@/lib/booking/approval';
 import { airlineHandoff } from '@/lib/booking/duffel-map';
 import { pinQuoted } from '@/lib/booking/pin';
+import { nothingFound, nearbyAsk, nearbyDates, TRY_NEARBY_DATES } from '@/lib/booking/failures';
+import { today } from '@/lib/calendar';
 
 /**
  * The request sized for who is on this booking now, not who was when it was
@@ -94,7 +96,20 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const refused = changeRefusal(booking);
   if (refused) return NextResponse.json({ current, options: [], changeable: false, why: refused });
   const found = booking.vertical === 'hotel' ? await hotelOptions(request) : await flightOptions(request);
-  return NextResponse.json({ current, options: found.options, changeable: true, why: found.error });
+  // Nothing else on sale for these dates is a dates problem, and the next
+  // step is nearby dates — the same offer /bookable makes for a line that
+  // found nothing (lib/booking/failures.ts). An offer to search, never a
+  // promise that the search will find anything.
+  const empty = !found.options.length && nothingFound(booking.vertical, found.error);
+  const plan = ctx.plan as { start_date?: string | null; end_date?: string | null };
+  return NextResponse.json({
+    current, options: found.options, changeable: true, why: found.error,
+    ...(empty ? {
+      reason: TRY_NEARBY_DATES,
+      ask: nearbyAsk(booking.vertical),
+      nearby: nearbyDates(plan.start_date, plan.end_date, today()),
+    } : {}),
+  });
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

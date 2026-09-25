@@ -32,6 +32,14 @@ export const BookingRow = z.object({
   detail: z.unknown().nullish(),
   response_payload: z.unknown().nullish(),
   itinerary_item_id: z.string().nullish(),
+  /**
+   * What the member typed on "I've got it" after finishing it elsewhere
+   * (sql/booking-confirmation-2026-09-25.sql). Absent until that runs — which
+   * is why it is not in BOOKING_COLUMNS: a narrow select naming it would fail
+   * the whole read with 42703 before the migration. GET /api/bookings reads
+   * `*`, so it arrives the moment the column exists.
+   */
+  confirmation_number: z.string().nullish(),
 });
 export type BookingRow = z.infer<typeof BookingRow>;
 
@@ -65,6 +73,12 @@ export interface BookingFacts {
    */
   payload: unknown;
   itineraryItemId: string | null;
+  /**
+   * The confirmation number the member entered on "I've got it". Typed by a
+   * person, not seen by Reach: a screen shows it as "You entered ABC123",
+   * never as confirmed by Reach.
+   */
+  confirmationNumber: string | null;
   /**
    * What the provider said about changing, refunding or cancelling it, in
    * its own terms. Null when it said nothing — which the screen has to say
@@ -104,8 +118,52 @@ export function bookingFacts(row: Record<string, unknown>): BookingFacts {
     detail: r.detail ?? null,
     payload: r.response_payload ?? null,
     itineraryItemId: r.itinerary_item_id ?? null,
+    confirmationNumber: r.confirmation_number?.trim() || null,
     conditions: conditionsOf(r.vertical ?? null, r.response_payload),
   };
+}
+
+// ─── "I've got it" ───────────────────────────────────────────────────────
+// Somebody finished a booking on the seller's own site and came back. The
+// one fact worth keeping is the number the seller gave them. It is optional
+// — plenty of places send nothing but an email — and it is theirs to type,
+// so it is kept as typed, trimmed, and never checked against anything.
+
+/** Longest confirmation number kept; matches the SQL CHECK. */
+export const CONFIRMATION_MAX = 100;
+
+/**
+ * The number from the request body: trimmed, inner runs of space collapsed,
+ * and an empty one read as "I didn't get one" (null). Refused only when it is
+ * too long or holds control characters — never for its shape, since every
+ * seller writes theirs differently.
+ */
+export function confirmationInput(raw: unknown): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (raw === undefined || raw === null) return { ok: true, value: null };
+  if (typeof raw !== 'string') return { ok: false, error: 'The confirmation number should be text.' };
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(raw.replace(/[\t\n\r]/g, ' '))) {
+    return { ok: false, error: "That confirmation number has characters in it we can't keep — type it again." };
+  }
+  const value = raw.replace(/\s+/g, ' ').trim();
+  if (!value) return { ok: true, value: null };
+  if (value.length > CONFIRMATION_MAX) {
+    return { ok: false, error: `That's longer than any confirmation number we've seen — ${CONFIRMATION_MAX} characters at most.` };
+  }
+  return { ok: true, value };
+}
+
+/**
+ * The write refused because bookings.confirmation_number is not there yet —
+ * sql/booking-confirmation-2026-09-25.sql has not run. PostgREST says
+ * PGRST204 for a column missing from its cache, Postgres says 42703.
+ */
+export function confirmationColumnMissing(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  // The shape CHECK names the column too, and is a real refusal of what was
+  // typed — never a reason to drop it and carry on.
+  if (error.code === '23514') return false;
+  return error.code === 'PGRST204' || error.code === '42703' || /confirmation_number/.test(error.message ?? '');
 }
 
 /**

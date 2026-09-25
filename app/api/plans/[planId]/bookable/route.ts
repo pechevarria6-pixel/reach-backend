@@ -15,7 +15,7 @@
 // re-opening checkout adds what is missing and touches nothing else.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { groupReadiness, tripTravellerIds } from '@/lib/essentials-server';
+import { groupReadiness, tripTravellerIds, travellerOrigins } from '@/lib/essentials-server';
 import { type Gateway } from '@/lib/booking/providers/flights.duffel';
 import { arrivalFor } from '@/lib/booking/arrival';
 import { partySize as countParty } from '@/lib/participation';
@@ -26,9 +26,12 @@ import { rentalLine } from '@/lib/ground';
 import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
 import { findProduct } from '@/lib/booking/providers/viator-search';
 import { roomsFor } from '@/lib/booking/party';
-import { failuresByLine, lockedByPayment } from '@/lib/booking/failures';
+import { failuresByLine, lockedByPayment, TRY_NEARBY_DATES } from '@/lib/booking/failures';
 import { heldVenueNear } from '@/lib/discovery/held-venue';
 import { locatePlan } from '@/lib/discovery/geocode';
+import { byDepartureAirport, departureWhy } from '@/lib/airports';
+import { flightSearchUrl } from '@/lib/booking/duffel-map';
+import { track } from '@/lib/track';
 
 export const maxDuration = 60;
 
@@ -60,6 +63,18 @@ const CANNOT: Record<string, string> = {
   event: 'tickets are bought on the seller\'s own site',
   flight: 'flights need everyone\'s traveller details first',
   transport: 'not something Reach books',
+};
+
+/**
+ * A line that was not priced, and why. `reason` is a code for the screen to
+ * key an action on; `searches` is the flight search per departure airport
+ * when a group leaves from several (one booking per airport).
+ */
+type Skipped = {
+  title: string;
+  why: string;
+  reason?: 'split_departures' | 'no_home_airport' | 'origins_unread';
+  searches?: { airport: string; userIds: string[]; url: string | null }[];
 };
 
 type Item = {
@@ -336,7 +351,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const partySize = await countParty(ctx.db, ctx.plan as { group_id?: unknown; solo_mode?: boolean | null });
 
   const requests: (BookingItemRequest & { itineraryItemId: string; title: string })[] = [];
-  const skipped: { title: string; why: string }[] = [...lockedOut];
+  const skipped: Skipped[] = [...lockedOut];
 
   // A flight or hotel already on the list, quoted for a different number of
   // people than are now going on it — a trip for one that somebody has since
@@ -395,21 +410,49 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // may not know what "MX" is, and the country only ever narrowed it.
   // Where the trip lands: the town's airport, or the nearest one with flights
   // from home (lib/booking/arrival.ts — the trip options use the same).
+  //
+  // Where it leaves from is each traveller's own airport, not the organiser's.
+  // This read the home airport of whoever opened checkout and priced every
+  // seat from there — a friend in Raleigh on a Pittsburgh flight. The owner's
+  // rule is one flight booking per departure airport: when everybody leaves
+  // from one airport the line is priced from it; when they leave from several
+  // it is skipped, naming who flies from where, with a search per airport, so
+  // nobody is quoted a seat from somebody else's city (lib/airports.ts).
   let flightTo: string | null = null;
   let gateway: Gateway | null = null;
+  let departure: ReturnType<typeof byDepartureAirport> | null = null;
+  let originWhy: string | null = null;
+  let originReason: 'split_departures' | 'no_home_airport' | 'origins_unread' | null = null;
   if (hasFlight && !flightWhy) {
-    const { data: me } = await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).maybeSingle();
+    const origins = await travellerOrigins(ctx.db, ctx.plan);
+    departure = origins ? byDepartureAirport(origins) : null;
+    originWhy = departure
+      ? departureWhy(departure, ctx.user.id)
+      : 'we could not read where everyone flies from just now — open checkout again in a moment';
+    originReason = !departure ? 'origins_unread'
+      : departure.unknown.length ? 'no_home_airport'
+        : departure.groups.length > 1 ? 'split_departures' : null;
     const landed = await arrivalFor({
-      city, countryCode, named, home: me?.home_airport ?? null,
+      // The gateway is probed from where most of the group leaves: a landing
+      // airport is one place for everybody, whichever city they fly from.
+      city, countryCode, named, home: departure?.groups[0]?.airport ?? null,
       start: plan.start_date, end: plan.end_date, seats: partySize,
     });
     flightTo = landed?.iata ?? null;
     gateway = landed?.gateway ?? null;
   }
-  const flightFrom = hasFlight && !flightWhy && flightTo
-    ? (await ctx.db.from('users').select('home_airport').eq('id', ctx.user.id).single())
-      .data?.home_airport ?? null
+  const flightFrom = hasFlight && !flightWhy && flightTo && !originWhy
+    ? departure?.groups[0]?.airport ?? null
     : null;
+  /** One search per departure airport, when the line is skipped for leaving from several. */
+  const perAirportSearches = () => (departure?.groups ?? []).map(g => ({
+    airport: g.airport,
+    userIds: g.userIds,
+    url: flightSearchUrl({
+      origin: g.airport, destination: flightTo ?? undefined, departDate: plan.start_date ?? undefined,
+      returnDate: plan.end_date && plan.end_date !== plan.start_date ? plan.end_date : undefined,
+    }),
+  })).filter(s => s.url);
 
   // Where the trip is on the map, for finding its restaurants in our venue
   // table. Asked once, and only when there is a restaurant line to look up.
@@ -482,8 +525,26 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
     const request = asRequest(item, plan, ids, city, countryCode, partySize, product,
       { from: flightFrom, to: flightTo }, table);
-    if (request) requests.push(request);
-    else skipped.push({
+    if (request) { requests.push(request); continue; }
+    // A flight that cannot be priced because of where people leave from
+    // carries what to do next: a search for each airport, or who still needs
+    // to say where they fly from.
+    if (item.type === 'flight' && !flightWhy && flightTo && originWhy) {
+      skipped.push({
+        title: item.title, why: originWhy, reason: originReason ?? undefined,
+        ...(originReason === 'split_departures' ? { searches: perAirportSearches() } : {}),
+      });
+      continue;
+    }
+    if (item.type === 'flight' && !flightWhy && hasFlight && !flightTo) {
+      // Nothing we can reach flies anywhere near the trip: the count that
+      // says where coverage is thin. The props are codes, never the place.
+      void track(ctx.db, 'slot_unfilled', {
+        userId: ctx.user.id, groupId: ids.groupId, planId: params.planId,
+        props: { vertical: 'flight', reason: 'no_airport' },
+      });
+    }
+    skipped.push({
       title: item.title,
       // A flight first. BOOKABLE has a flight entry, so asking it first sent
       // every skipped flight to "this trip has no dates yet" — on Puerto
@@ -595,15 +656,34 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   // A booking priced again in place for a new headcount is not a new one.
   const repriced = results.filter(r => r.status !== 'failed' && (r as { repriced?: boolean }).repriced).length;
+  // Named, because a line that could not be quoted is a line somebody is
+  // about to pay for and will not receive.
+  // By the line each result was asked for — see lib/booking/failures.ts. A
+  // search that found nothing for these dates keeps its line and comes back
+  // with the nearby-dates offer (reason try_nearby_dates), and is counted.
+  const failures = failuresByLine(requests, results, { start: plan.start_date, end: plan.end_date, today: today() });
+  for (const f of failures) {
+    if (f.reason !== TRY_NEARBY_DATES) continue;
+    void track(ctx.db, 'slot_unfilled', {
+      userId: ctx.user.id, groupId: ids.groupId, planId: params.planId,
+      props: { vertical: f.vertical ?? 'unknown', reason: TRY_NEARBY_DATES },
+    });
+  }
   return NextResponse.json({
     created: results.length - failed.length - repriced,
     repriced,
     failed: failed.length,
-    // Named, because a line that could not be quoted is a line somebody is
-    // about to pay for and will not receive.
-    // By the line each result was asked for — see lib/booking/failures.ts.
-    failures: failuresByLine(requests, results),
+    failures,
     alreadyBooked: alreadyBooked.size,
     skipped,
+    // Where the flight was priced from, and whether that airport was chosen
+    // or worked out — "Flying from PIT (from your home city — change it in
+    // Profile)". Null when no flight was priced.
+    flightFrom: flightFrom ? {
+      airport: flightFrom,
+      // Whose airport was worked out rather than chosen, so the screen can
+      // say it to them and let them change it.
+      derivedFor: departure?.groups[0]?.derivedFor ?? [],
+    } : null,
   });
 }
