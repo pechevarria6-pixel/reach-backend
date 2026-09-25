@@ -24,6 +24,7 @@ import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter, HOLD_MS, BLEND_WINDOW_MS } from "@/lib/quiz-screens";
+import { mayGoAhead as mayGoAheadRule } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
 import { quizFromMe, withinQuietPeriod } from "@/lib/contracts/traveler-profile";
@@ -7331,12 +7332,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         const haveAnswered=members.filter(m=>m.answered);
         const nameOf=m=>m.userId===me?"you":first(m.name);
         // The organiser can go ahead with who has answered once somebody
-        // besides whoever made the trip has, or it is 48 hours old — the same
-        // rule the server holds (lib/group-answers.ts mayGoAhead).
-        const madeAt=Date.parse(wp.createdAt||"");
+        // besides whoever made the trip has, or it is 48 hours old — the
+        // server's own rule, imported (lib/group-answers.ts mayGoAhead).
+        // Somebody must have answered: nobody's answers are nothing to plan from.
         const mayGoAhead=iOrganise&&!allAnswered&&members.length>0
-          &&(members.some(m=>m.answered&&m.userId!==wp.createdBy)
-            ||(Number.isFinite(madeAt)&&Date.now()-madeAt>=48*60*60*1000));
+          &&mayGoAheadRule({members,createdBy:wp.createdBy||null,createdAt:wp.createdAt||null});
         return(
           <div style={{flex:1,overflowY:"auto",padding:"0 20px 30px"}}>
             <div style={{fontSize:12.5,color:C.t3,marginBottom:4}}>

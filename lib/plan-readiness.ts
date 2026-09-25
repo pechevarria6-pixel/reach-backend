@@ -171,9 +171,12 @@ export async function planReadiness(
   });
 
   const allReady = rows.length > 0 && rows.every(r => r.ready);
-  // Only asked when somebody is still out: a trip everybody answered has
-  // nothing to go ahead past.
-  if (!allReady && rows.length > 0 && await wentAheadWith(db, planId)) {
+  // Asked unless everybody has actually answered: that trip has nothing to
+  // go ahead past. Not gated on the lenient allReady — on a trip nobody has
+  // answered for, allReady is true, the row was never read, and the ideas a
+  // go-ahead had built could not have their days written.
+  const everyoneAnswered = rows.length > 0 && rows.every(r => r.answered);
+  if (!everyoneAnswered && rows.length > 0 && await wentAheadWith(db, planId)) {
     return {
       members: rows.map(r => ({ ...r, ready: true })),
       allReady: true, waitingOn: [], solo: false, wentAhead: true,

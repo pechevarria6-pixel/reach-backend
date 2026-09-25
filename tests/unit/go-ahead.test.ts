@@ -124,13 +124,13 @@ test('"3 of 4 have answered."', () => {
 });
 
 // A db that answers the readiness reads, and the go-ahead row if there is one.
-function db(opts: { wentAhead: boolean }) {
+function db(opts: { wentAhead: boolean; nobodyAnswered?: boolean }) {
   const members = [
     { user_id: 'u-org', users: { id: 'u-org', name: 'Peter' } },
     { user_id: 'u-marco', users: { id: 'u-marco', name: 'Marco' } },
     { user_id: 'u-sam', users: { id: 'u-sam', name: 'Sam' } },
   ];
-  const prefs = [
+  const prefs = opts.nobodyAnswered ? [] : [
     { user_id: 'u-org', submitted_at: '2026-09-24T10:00:00Z' },
     { user_id: 'u-marco', submitted_at: '2026-09-24T11:00:00Z' },
   ];
@@ -172,4 +172,30 @@ test('the wait screen offers the go-ahead to the organiser only, with the count'
   assert.match(app, /Plan with who's answered/);
   assert.match(app, /withAnswered:opts\.withAnswered===true/);
   assert.match(app, /\{iOrganise&&\(\s*<div[^>]*>\{haveAnswered\.length\} of \{members\.length\}/);
+});
+
+// With nobody answered, the 48-hour rule alone opened the button, the ideas
+// were built from no one's wishes, and then — because planReadiness only
+// read the go-ahead when its lenient allReady was false, and with nobody
+// asked it is true — every idea's days were refused with a 409.
+test('nobody having answered is never enough to go ahead, however old the trip', () => {
+  const nobody = [{ ...org, answered: false }, marco, sam];
+  const weekOld = new Date(NOW - 7 * 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(mayGoAhead({ members: nobody, createdBy: 'u-org', createdAt: weekOld, now: NOW }), false);
+  // The organiser alone, after 48 hours, still is.
+  assert.equal(mayGoAhead({ members: [org, marco, sam], createdBy: 'u-org', createdAt: weekOld, now: NOW }), true);
+  // The wait screen uses the same rule, not a copy of it.
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(app, /import \{ mayGoAhead as mayGoAheadRule \} from "@\/lib\/group-answers";/);
+  assert.match(app, /const mayGoAhead=iOrganise&&!allAnswered&&members\.length>0\s*&&mayGoAheadRule\(\{members,/);
+});
+
+test('a go-ahead is read back even on a trip nobody has answered for', async () => {
+  const r = await planReadiness(db({ wentAhead: true, nobodyAnswered: true }) as never, 'plan-1', 'g', false);
+  assert.equal(r.wentAhead, true, 'the days of its ideas must not stall');
+  assert.equal(r.allReady, true);
+  assert.ok(r.members.every(m => !m.answered));
+  const none = await planReadiness(db({ wentAhead: false, nobodyAnswered: true }) as never, 'plan-1', 'g', false);
+  assert.equal(none.wentAhead, undefined);
+  assert.equal(none.allReady, true, 'the old-trip grace is unchanged');
 });

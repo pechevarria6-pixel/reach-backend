@@ -474,6 +474,10 @@ export const GO_AHEAD_AFTER_MS = 48 * 60 * 60 * 1000;
  * member other than whoever created the trip has answered, or 48 hours have
  * passed since it was created. A missing or unreadable created time is not
  * "long ago" — it only opens on an answer.
+ *
+ * Either way somebody must have answered. Planning "with who's answered"
+ * when nobody has — the organiser's own answers failed to save, say —
+ * built three ideas from no one's wishes.
  */
 export function mayGoAhead(p: {
   members: Pick<Answered, 'userId' | 'answered'>[];
@@ -481,6 +485,7 @@ export function mayGoAhead(p: {
   createdAt: string | null | undefined;
   now?: number;
 }): boolean {
+  if (!p.members.some(m => m.answered)) return false;
   const someoneElse = p.members.some(m => m.answered && m.userId !== p.createdBy);
   if (someoneElse) return true;
   const made = p.createdAt ? Date.parse(p.createdAt) : NaN;
