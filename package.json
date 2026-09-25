@@ -25,7 +25,8 @@
     "check:tests": "node scripts/check-tests.mjs",
     "check:writes": "node scripts/check-writes.mjs",
     "build:only": "next build",
-    "check:solo-copy": "node scripts/check-solo-copy.mjs"
+    "check:solo-copy": "node scripts/check-solo-copy.mjs",
+    "coverage": "node scripts/coverage.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

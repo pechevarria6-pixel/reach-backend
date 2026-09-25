@@ -1,0 +1,5 @@
+# Beta towns — one per line, for `npm run coverage`.
+#
+# Each tester's home city, as you'd type it into the app: "Raleigh, NC",
+# "Fayetteville, AR", "Edinburgh, Scotland". Lines starting with # and blank
+# lines are ignored. The report is read-only and always exits 0.
