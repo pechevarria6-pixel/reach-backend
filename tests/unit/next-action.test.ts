@@ -10,7 +10,7 @@ import {
 } from '../../lib/next-action.ts';
 import { BookingRow } from '../../lib/contracts/booking.ts';
 import { ItineraryItemRow, itemFromRow } from '../../lib/contracts/itinerary-item.ts';
-import { stepStates, type Review } from '../../lib/plan-steps.ts';
+import { stepStates, cannotSign, bookingTracker, type Review } from '../../lib/plan-steps.ts';
 import { isSoloCount } from '../../lib/joining.ts';
 
 // ─── Fixtures, on the contract shapes ────────────────────────────────────
@@ -47,9 +47,18 @@ const flight = (status: string, extra: Partial<NextBooking> = {}) => booking({
   id: 'b-flight', vertical: 'flight', status, price_cents: 30000, mode: 'native', provider: 'duffel',
   itinerary_item_id: 'l-flight', detail: 'American Airlines · RDU → CNY', ...extra,
 });
+// The shape POST /api/bookings writes for a table or a seat: every quote
+// becomes 'awaiting_approval', and checkout never approves a redirect, so it
+// stays there. 'redirected' is only written for a flight handed off at approval.
 const table = (extra: Partial<NextBooking> = {}) => booking({
-  id: 'b-table', vertical: 'restaurant', status: 'redirected', mode: 'redirect', provider: 'resy',
+  id: 'b-table', vertical: 'restaurant', status: 'awaiting_approval', mode: 'redirect', provider: 'resy',
   redirect_url: 'https://resy.com/cities/moab/desert-bistro', detail: 'Desert Bistro', ...extra,
+});
+
+/** Nobody asked yet: plan-readiness counts each member ready, and nobody has answered. */
+const notAsked = (ids: string[]) => ({
+  members: ids.map(userId => ({ userId, name: userId === ME ? 'Pat Me' : userId === SAM ? 'Sam Lee' : 'Alex Kim', ready: true, answered: false })),
+  waitingOn: [], solo: false,
 });
 
 const answers = (who: Record<string, boolean>) => ({
@@ -277,6 +286,120 @@ test('signed off, then something failed: the rows win and the screen says so', (
   assert.match(a.body ?? '', /signed off before this happened/);
 });
 
+// ─── Rows in the shapes production writes ────────────────────────────────
+
+const EVENT_LINE = line({ id: 'l-gig', title: 'J. Cole', type: 'event', booking_mode: 'reach' });
+const gig = (extra: Partial<NextBooking> = {}) => booking({
+  id: 'b-gig', vertical: 'event', status: 'awaiting_approval', mode: 'redirect', provider: 'ticketmaster',
+  redirect_url: 'https://ticketmaster.com/x', itinerary_item_id: 'l-gig', detail: 'J. Cole', ...extra,
+});
+const NO_MONEY = { memberCount: 3, targetCents: 0, collectedCents: 0, funded: false, myPaidCents: 0, myRemainingCents: 0 };
+const nightOut = (over: Partial<NextActionInput> = {}) => base({
+  plan: { id: 'p1', type: 'restaurant', title: 'J. Cole', itinerary: [EVENT_LINE] }, bookings: [gig()], funding: NO_MONEY, ...over,
+});
+/** The flight handed to the airline at approval (approve route: mode 'redirect', status 'redirected'). */
+const handedFlight = (extra: Partial<NextBooking> = {}) => flight('redirected', { mode: 'redirect', redirect_url: 'https://aa.com/b/1', ...extra });
+const flightGotElsewhere = () => base({
+  plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE] },
+  bookings: [hotel('confirmed'), handedFlight({ confirmation_number: 'ABC123' })], funding: FUNDED,
+});
+/** A group of three, a hotel booked, and a flight line /bookable skipped, so it has no row. */
+const flightUnrowed = (me: string, createdBy: string) => base({
+  plan: { id: 'p1', createdBy, itinerary: [HOTEL_LINE, FLIGHT_LINE] }, me,
+  bookings: [hotel('confirmed')], funding: FUNDED,
+  vote: { organiser: { name: 'Sam', isYou: me === createdBy } },
+});
+
+const EXTRA: [string, NextActionInput][] = [
+  ['a Ticketmaster seat, as POST /api/bookings writes it', nightOut()],
+  ['a Ticketmaster seat somebody got', nightOut({ bookings: [gig({ confirmation_number: 'X1' })] })],
+  ['a flight bought on the airline\'s site', flightGotElsewhere()],
+  ['a flight line skipped, as a member', flightUnrowed(ME, SAM)],
+  ['a flight line skipped, as the organiser', flightUnrowed(SAM, SAM)],
+  ['undecided, nobody asked yet', base({ plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] },
+    readiness: notAsked([ME, SAM, ALEX]), signoffs: {} })],
+  ['undecided, readiness unread', base({ plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] },
+    readiness: null, signoffs: {} })],
+];
+const ex = (name: string) => EXTRA.find(([n]) => n.startsWith(name))![1];
+
+test('a redirect in the shape production writes reaches finish_elsewhere, with the link and "I\'ve got it"', () => {
+  const a = run(ex('a Ticketmaster seat, as'));
+  assert.equal(a.state, 'finish_elsewhere');
+  assert.equal(a.title, 'Finish on Ticketmaster');
+  assert.deepEqual(a.cta, { label: 'Finish on Ticketmaster →', kind: 'link', href: 'https://ticketmaster.com/x' });
+  assert.deepEqual(a.secondary, { label: "I've got it ✓", kind: 'confirm', bookingId: 'b-gig' });
+  // The Resy table in the same shape, on a line Reach does not track.
+  const t = run(fx('the table is on Resy'));
+  assert.equal(t.state, 'finish_elsewhere');
+  // And the flight handed off at approval, which is written 'redirected'.
+  const f = run(base({ plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE] },
+    bookings: [hotel('confirmed'), handedFlight()], funding: FUNDED }));
+  assert.equal(f.state, 'finish_elsewhere');
+  assert.equal(f.title, 'Finish on the airline');
+});
+
+test('a redirect somebody has got moves on, and never back to "isn\'t booked yet"', () => {
+  const a = run(ex('a Ticketmaster seat somebody got'));
+  assert.notEqual(a.state, 'finish_elsewhere');
+  assert.doesNotMatch(a.title, /isn't booked yet/);
+  const got = run(base({ funding: FUNDED, signoffs: ALL_SIGNED, bookings: [hotel('confirmed'), table({ confirmation_number: 'R-1' })] }));
+  assert.equal(got.state, 'booked');
+});
+
+/** What POST /api/plans/[id]/review would answer to a Book-tab sign-off for this input. */
+function serverRefuses(i: NextActionInput): string | null {
+  const t = bookingTracker(i.plan.itinerary ?? [], (i.bookings ?? []).map(b => ({ itinerary_item_id: b.itinerary_item_id ?? null, status: String(b.status ?? '') })));
+  return cannotSign('bookings', { ...i.signoffs, bookings: null }, t.total - t.done);
+}
+
+test('sign_off is only offered where the server would take the sign-off', () => {
+  const all = [...FIXTURES.map(f => [f.name, f.input] as [string, NextActionInput]), ...EXTRA];
+  let seen = 0;
+  for (const [name, input] of all) {
+    for (const i of [input, alone(input)]) {
+      const a = run(i);
+      if (a.state !== 'sign_off') continue;
+      seen++;
+      assert.equal(serverRefuses(i), null, `${name}: offered "${a.title}" and the server says no`);
+    }
+  }
+  assert.ok(seen > 0, 'some fixture reaches sign_off');
+});
+
+test('a flight bought on the airline\'s site, which the Book tab still counts, is not "Everything\'s booked"', () => {
+  const i = flightGotElsewhere();
+  assert.ok(serverRefuses(i), 'the server does refuse it');
+  const a = run(i);
+  assert.equal(a.state, 'needs_attention');
+  assert.equal(a.allBooked, false);
+  assert.doesNotMatch(`${a.title} ${a.body}`, /Everything's booked/);
+  assert.equal(a.cta?.kind, 'link');
+  // The same for a ticket on a line Reach tracks.
+  assert.notEqual(run(ex('a Ticketmaster seat somebody got')).state, 'sign_off');
+});
+
+test('a line Reach books with no row, after something is booked, is not sent back to lock in', () => {
+  for (const [who, i] of [['member', flightUnrowed(ME, SAM)], ['organiser', flightUnrowed(SAM, SAM)]] as const) {
+    const a = run(i);
+    assert.equal(a.state, 'needs_attention', who);
+    assert.notEqual(a.title, 'Lock it in', who);
+    assert.doesNotMatch(`${a.title} ${a.body}`, /Nothing is booked|still have/, who);
+    assert.equal(a.title, 'RDU → CNY has no price yet', who);
+    assert.equal(a.cta?.kind === 'navigate' && a.cta.route.screen, 'checkout', who);
+  }
+});
+
+test('"Everyone has answered" only when everyone has', () => {
+  for (const name of ['undecided, nobody asked yet', 'undecided, readiness unread']) {
+    const a = run(ex(name));
+    assert.equal(a.state, 'needs_trip_input', name);
+    assert.doesNotMatch(`${a.title} ${a.body}`, /Everyone|each of you/, name);
+  }
+  const all = run(base({ plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] }, signoffs: {} }));
+  assert.equal(all.title, 'Everyone has answered');
+});
+
 // ─── One thing to press, and words that are true ─────────────────────────
 
 const everyAction = () => FIXTURES.flatMap(f => [
@@ -292,6 +415,10 @@ const everyAction = () => FIXTURES.flatMap(f => [
     vote: { decided: false, myVote: 'Moab', everyoneVoted: true, mayPick: true, stillToVote: [] }, signoffs: {} })) },
   { name: 'everyone answered', solo: false, a: run(base({
     plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] }, signoffs: {} })) },
+  ...EXTRA.flatMap(([name, input]) => [
+    { name, solo: false, a: run(input) },
+    { name: `${name} (solo)`, solo: true, a: run(alone(input)) },
+  ]),
 ]);
 
 test('each state has one CTA, except a booking with the provider, which has nothing to press', () => {

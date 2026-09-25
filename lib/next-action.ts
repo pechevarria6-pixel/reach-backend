@@ -26,10 +26,19 @@
 //     confirmation is not left out — it stops at `finish_elsewhere` first.
 //     A held row ('quoted') is not booked either: it stops at
 //     `needs_attention` first, because the person chose to wait on it.
-//   - every line the Book tab tracks done, and the Book tab signed off —
-//     so `booked` and the tabs' "Ready to go" cannot disagree. Where the
+//   - every line the Book tab tracks done — by bookingTracker itself, the
+//     count POST /api/plans/[id]/review refuses a sign-off on, so a
+//     "sign it off" here is one the server will take — and the Book tab
+//     signed off, so `booked` and the tabs' "Ready to go" cannot disagree. Where the
 //     rows and a sign-off do disagree (signed, then a booking failed), the
 //     rows win and the state says the sign-off is out of date.
+//
+// A redirect is a row whose mode is 'redirect', whatever its status: POST
+// /api/bookings writes a Ticketmaster seat or a Resy table as
+// 'awaiting_approval' like everything else, and checkout never approves it
+// (Reach does not buy it), so it never reaches 'redirected'. Only the flight
+// handed to the airline at approval is written 'redirected'. Reading the
+// status alone missed the common hand-off entirely.
 //
 // A plan with no booking rows at all — a night of walk-ins — can reach
 // `booked` through the sign-off, but `allBooked` is false and the copy never
@@ -247,6 +256,11 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     },
   });
 
+  /** A hand-off to the seller's own site, still open (see the top of this file). */
+  const handedOff = (r: NextBooking) => (r.mode === 'redirect' || r.status === 'redirected')
+    && !['confirmed', 'failed', 'cancelled'].includes(String(r.status ?? ''));
+  const gotElsewhere = (r: NextBooking) => handedOff(r) && !!r.confirmation_number?.trim();
+
   const rows = (input.bookings ?? []).map(r => ({ ...r, vertical: r.vertical ?? '' }) as CheckoutRow & NextBooking);
   const live = dedupe(rows) as (CheckoutRow & NextBooking)[];
   const cs = rows.length ? checkoutState(rows, { funding, now: input.now }) : null;
@@ -323,9 +337,17 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       return plan.hasOptions
         ? say({ state: 'needs_trip_input', title: 'Pick the one you want', body: `The ideas for ${called(plan)} are ready.`,
           cta: { label: 'See them →', ...nav('groupTrip') }, chip: 'Planning' })
-        : say({ state: 'needs_trip_input', title: solo ? `Find the ${trips(plan)}` : 'Everyone has answered',
-          body: solo ? `Nothing is picked for ${called(plan)} yet.` : `Find the ${trips(plan)} — built from what each of you said.`,
-          cta: { label: 'Find them →', ...nav('groupTrip') }, chip: 'Planning' });
+        // "Everyone has answered" only where every member's answer is in the
+        // read. plan-readiness counts a member nobody has asked as ready, so
+        // an empty waitingOn is not the same thing, and a failed read says
+        // nothing about anybody.
+        : !solo && answers && answers.members.length > 0 && answers.members.every(m => m.answered)
+          ? say({ state: 'needs_trip_input', title: 'Everyone has answered',
+            body: `Find the ${trips(plan)} — built from what each of you said.`,
+            cta: { label: 'Find them →', ...nav('groupTrip') }, chip: 'Planning' })
+          : say({ state: 'needs_trip_input', title: `Find the ${trips(plan)}`,
+            body: `Nothing is picked for ${called(plan)} yet.`,
+            cta: { label: 'Find them →', ...nav('groupTrip') }, chip: 'Planning' });
     }
 
     if (!lines.length) {
@@ -476,7 +498,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   const skipCount = new Map<string, number>();
   for (const s of input.skips ?? []) skipCount.set(s.ref, (skipCount.get(s.ref) ?? 0) + 1);
 
-  const unfinished = live.filter(r => r.status === 'redirected' && !r.confirmation_number?.trim() && !(r.id && mySkips.has(r.id)));
+  const unfinished = live.filter(r => handedOff(r) && !gotElsewhere(r) && !(r.id && mySkips.has(r.id)));
   if (unfinished.length) {
     const r = unfinished[0];
     const where = providerName(r);
@@ -490,7 +512,9 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     });
   }
 
-  const tracker = bookingTracker(lines, live.map(r => ({ itinerary_item_id: r.itinerary_item_id ?? null, status: String(r.status ?? '') })));
+  // The whole row, so the day bookingTracker learns to read a confirmation
+  // number this reads it too.
+  const tracker = bookingTracker(lines, live.map(r => ({ ...r, itinerary_item_id: r.itinerary_item_id ?? null, status: String(r.status ?? '') })));
   const yours = tracker.items.filter(i => i.who === 'you' && !i.done);
   if (yours.length) {
     const line = yours[0].line;
@@ -508,8 +532,18 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     });
   }
 
+  // Moving, and a line Reach books still has no row: /bookable was asked
+  // and skipped it (a flight when members' airports differ, say). Sending
+  // anybody back to "Lock it in" loops — the budget is signed and the same
+  // skip happens again — and "Nothing is booked until then" is untrue once
+  // something is. Checkout lists what /bookable skipped and why.
   if (unrowed.length) {
-    return lockIn('bookings', `${unrowed.length === 1 ? '1 thing' : `${unrowed.length} things`} for Reach to book still have no price.`);
+    const first = unrowed[0] as NextLine;
+    const name = first.venue_name?.trim() || first.title?.trim() || null;
+    return attention(
+      unrowed.length === 1 ? `${name ?? 'One thing'} has no price yet` : `${unrowed.length} things have no price yet`,
+      `Reach couldn't price ${unrowed.length === 1 ? 'it' : 'them'}, so ${unrowed.length === 1 ? "it isn't" : "they aren't"} booked. Checkout says why.`,
+      toCheckout('See why →'));
   }
 
   const held = live.filter(r => r.status === 'quoted' && reachBuys(r));
@@ -522,11 +556,13 @@ export function getNextAction(input: NextActionInput): NextAction | null {
 
   // The rows that count toward "booked" (see the top of this file).
   const counted = live.filter(r =>
-    !(r.status === 'redirected' && r.confirmation_number?.trim())
+    !gotElsewhere(r)
     && !(r.id && input.memberCount > 0 && (skipCount.get(r.id) ?? 0) >= input.memberCount));
   const claim = counted.length ? bookedClaim(counted) : null;
+  // What the Book tab still counts as to book, by the server's own count.
+  const leftOnTab = tracker.items.filter(i => !i.done);
   base.claim = claim;
-  base.allBooked = claim === 'all_booked';
+  base.allBooked = claim === 'all_booked' && leftOnTab.length === 0;
 
   if (claim && claim !== 'all_booked') {
     if (claim === 'booked_with_gaps' || claim === 'nothing_booked') {
@@ -540,6 +576,24 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     const open = counted.find(r => r.status !== 'confirmed');
     return attention(`${open ? itemTitle(open) : 'Something'} isn't booked yet`, 'Checkout says where it stands.',
       toCheckout('Open checkout →'));
+  }
+
+  // The rows say nothing is left, and the Book tab still counts a line as
+  // to book. Offering "sign it off" here was a button the server refuses
+  // with "1 thing is still to book". Said as it stands instead.
+  if (leftOnTab.length) {
+    const t = leftOnTab[0].line as NextLine;
+    const row = live.find(r => r.itinerary_item_id && r.itinerary_item_id === t.id) ?? null;
+    const name = t.venue_name?.trim() || t.title?.trim() || (row ? itemTitle(row) : 'One thing');
+    if (row && gotElsewhere(row)) {
+      const where = providerName(row);
+      return attention(`${name} was bought ${where ? `on ${where}` : 'elsewhere'}`,
+        "It has a confirmation number, and the Book tab only counts what Reach booked, so it won't sign off with this on it yet. Write to us with the number.",
+        write('Bought elsewhere, and the Book tab still counts it'));
+    }
+    return attention(`${name} is still to book`,
+      "The Book tab won't sign off until it is booked or taken off the plan.",
+      { label: 'Open the Book tab →', ...nav('planDetail', 'bookings') });
   }
 
   // Everything that can be booked is. The owner's last check is the Book
