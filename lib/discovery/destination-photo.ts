@@ -24,7 +24,18 @@ export interface DestinationPhoto {
   source: string | null;
 }
 
+import { locate } from './geocode.ts';
+import { milesBetween } from './cache.ts';
+import { usStateName } from './regions.ts';
+
 const API = 'https://en.wikipedia.org/w/api.php';
+
+/**
+ * How far an article's own coordinates may sit from the place, in miles.
+ * A town's article is pinned at its centre; forty miles is a county, not a
+ * country — and "Moab" the ancient kingdom is pinned in Jordan.
+ */
+const SAME_PLACE_MILES = 40;
 const AGENT = 'Reach/1.0 (+https://www.alcanzar.io; hello@alcanzar.io)';
 
 /** Markup out of the attribution fields, which arrive as HTML. */
@@ -49,7 +60,9 @@ export function articleTitle(destination: string): string | null {
   if (!parts.length) return null;
 
   // A trailing country is the one part an article title rarely carries.
-  const COUNTRY = /^(usa|us|united states|uk|united kingdom|england|scotland|wales|mexico|canada|france|spain|italy|portugal|germany)$/i;
+  // A two-letter code ("PR", "MX") is how plans store the country, and
+  // never part of an article title either.
+  const COUNTRY = /^(usa|us|united states|uk|united kingdom|england|scotland|wales|mexico|canada|france|spain|italy|portugal|germany|[a-z]{2})$/i;
   const kept = parts.length > 1 && COUNTRY.test(parts[parts.length - 1])
     ? parts.slice(0, -1)
     : parts;
@@ -69,22 +82,51 @@ export async function destinationPhoto(
   fetchImpl: typeof fetch = fetch,
   /** Counts a lookup that could not be made, so a miss is not cached for it. */
   asked?: { failed: number },
+  /** Where the place is, when the caller knows. Otherwise it is looked up. */
+  where?: { lat: number; lng: number; subdivision?: string | null } | null,
 ): Promise<DestinationPhoto | null> {
   const failed = () => { if (asked) asked.failed += 1; return null; };
   const title = articleTitle(destination);
   if (!title) return null;
 
   try {
-    const q = `${API}?action=query&prop=pageimages&piprop=thumbnail|name`
-      + `&pithumbsize=1200&titles=${encodeURIComponent(title)}`
-      + '&format=json&formatversion=2&redirects=1';
-    const res = await fetchImpl(q, { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return failed();
+    // The article must be OF this place. "Moab, US" asked Wikipedia for
+    // "Moab" and got the ancient kingdom's map; "St. Augustine" got a
+    // portrait of the saint. A town's article carries coordinates at the
+    // town, so the page is kept only when its own point is near the place
+    // the map puts this destination — and a page with no point (a person,
+    // a saint, a book) never is.
+    const parts = String(destination).split(',').map(p => p.trim()).filter(Boolean);
+    const cc = parts.length > 1 && /^[A-Za-z]{2}$/.test(parts[parts.length - 1]) ? parts[parts.length - 1] : null;
+    const at = where ?? await locate(cc ? parts.slice(0, -1).join(', ') : parts.join(', '), cc, fetchImpl);
+    if (!at) return failed();
+    const town = parts[0];
+    const state = usStateName(at.subdivision);
+    // The encyclopaedia's own disambiguations: "Moab, Utah", "Rincón, Puerto Rico".
+    let countryName: string | null = null;
+    try { countryName = cc ? new Intl.DisplayNames(['en'], { type: 'region' }).of(cc.toUpperCase()) ?? null : null; } catch { countryName = null; }
+    const titles = [...new Set([
+      title,
+      ...(state && !title.includes(',') ? [`${town}, ${state}`] : []),
+      ...(countryName && !title.includes(',') ? [`${town}, ${countryName}`] : []),
+    ])];
 
-    const json = await res.json() as {
-      query?: { pages?: { thumbnail?: { source: string; width: number; height: number }; pageimage?: string }[] };
-    };
-    const page = json.query?.pages?.[0];
+    type Page = { thumbnail?: { source: string; width: number; height: number }; pageimage?: string; coordinates?: { lat: number; lon: number }[] };
+    let page: Page | undefined;
+    for (const t of titles) {
+      const q = `${API}?action=query&prop=pageimages|coordinates&piprop=thumbnail|name&colimit=1`
+        + `&pithumbsize=1200&titles=${encodeURIComponent(t)}`
+        + '&format=json&formatversion=2&redirects=1';
+      const res = await fetchImpl(q, { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return failed();
+      const json = await res.json() as { query?: { pages?: Page[] } };
+      const candidate = json.query?.pages?.[0];
+      const pin = candidate?.coordinates?.[0];
+      if (candidate?.thumbnail?.source && pin && milesBetween(at.lat, at.lng, pin.lat, pin.lon) <= SAME_PLACE_MILES) {
+        page = candidate;
+        break;
+      }
+    }
     const thumb = page?.thumbnail;
     if (!thumb?.source) return null;
 

@@ -46,6 +46,12 @@ const US_STATES: Record<string, string> = {
 };
 
 /** The USPS code for a US state's region path ("NC" for north-carolina), or null. */
+/** "US-UT" → "Utah": the state's name as an encyclopaedia titles it. */
+export function usStateName(subdivision: string | null | undefined): string | null {
+  const slug = US_STATES[String(subdivision || '').toUpperCase().replace(/^US-/, '')];
+  return slug ? slug.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ') : null;
+}
+
 export function usStateCode(region: string): string | null {
   const file = String(region || '').replace(/^north-america\/us\//, '');
   if (file === region) return null;
