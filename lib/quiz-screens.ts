@@ -1,16 +1,11 @@
 // ─── The six upfront quiz screens, and how a tap moves through them ──────
-// The attention-span rule: six screens, about a minute. Only screen 2 (what
-// you're into) and screen 6 (No way, José) take more than one answer and so
-// end with a Done tap. Every other screen goes on the moment it is tapped.
-//
-// Screens 1, 3, 4 and 5 had become "pick any that fit" with a Done button,
-// which turned a six-tap quiz into a twelve-tap one. A blended answer is
-// still worth something — somebody who eats first and then wanders is both —
-// so it is kept, but never in the way of a single tap: holding an option
-// starts a blend, and every tap within BLEND_WINDOW_MS of the last one adds
-// to it; the screen goes on once the taps stop. The scorer takes one answer
-// or several (lib/traveler-profile.ts scoreQuiz), so a blend already saved
-// still scores.
+// Six screens, about a minute. Every screen that asks about you takes as
+// many answers as fit — people are more than one thing — and ends with Done.
+// The owner, 2026-09-25: "make it multiple choice availablity dont just have
+// people have the option to only do 1". An earlier version answered on one
+// tap and hid multiple picks behind press-and-hold, which nobody would find.
+// The scorer blends several answers (lib/traveler-profile.ts scoreQuiz): a
+// screen's weight is shared across its picks and a dial is their average.
 //
 // Screen 4's Scout answers say what Discover can show. A place is named only
 // when it has its own website, so a food truck never appears, and nothing we
@@ -42,7 +37,7 @@ export interface QuizScreen {
 }
 
 export const QUIZ_SCREENS: QuizScreen[] = [
-  {id:"first_move",field:"first_move",blend:true,title:"You just landed. First move?",sub:"Tap one. Hold to pick more.",options:[
+  {id:"first_move",field:"first_move",blend:true,title:"You just landed. First move?",sub:"Pick all that fit.",options:[
     {v:"eat",e:"🍜",l:"Find the best local spot to eat"},
     {v:"wander",e:"🚶",l:"Walk until something looks interesting"},
     {v:"famous",e:"🗽",l:"Straight to the famous thing"},
@@ -50,20 +45,20 @@ export const QUIZ_SCREENS: QuizScreen[] = [
     {v:"group",e:"💬",l:"Text the group: “who's out tonight?”"},
   ]},
   {id:"interests",field:"interests",multi:true,title:"What are you into?",sub:"Pick as many as you like."},
-  {id:"plan",field:"plan",scale:true,blend:true,title:"How much plan do you like?",sub:"Tap one. Hold to pick more.",options:[
+  {id:"plan",field:"plan",scale:true,blend:true,title:"How much plan do you like?",sub:"Pick all that fit.",options:[
     {v:"wing",e:"🎲",l:"Wing it"},
     {v:"loose",e:"🗺️",l:"Loose outline"},
     {v:"daily",e:"📋",l:"Daily plan"},
     {v:"full",e:"🌅",l:"Morning to night"},
     {v:"hourly",e:"⏱️",l:"Every hour"},
   ]},
-  {id:"restaurant",field:"restaurant",blend:true,title:"Pick the restaurant.",sub:"Tap one. Hold to pick more.",options:[
+  {id:"restaurant",field:"restaurant",blend:true,title:"Pick the restaurant.",sub:"Pick all that fit.",options:[
     {v:"famous",e:"⭐",l:"5,000 reviews, can't miss"},
     {v:"locals",e:"🏠",l:"The neighborhood favorite"},
     {v:"new",e:"✨",l:"Somewhere I've never heard of"},
     {v:"truck",e:"🤫",l:"The spot only locals know"},
   ]},
-  {id:"late",field:"late",blend:true,title:"It's 11pm on the trip. You're…",sub:"Tap one. Hold to pick more.",options:[
+  {id:"late",field:"late",blend:true,title:"It's 11pm on the trip. You're…",sub:"Pick all that fit.",options:[
     {v:"asleep",e:"😴",l:"Asleep"},
     {v:"one_more",e:"🍷",l:"One more, then bed"},
     {v:"next_spot",e:"🕺",l:"Where's the next spot?"},
@@ -77,9 +72,15 @@ export const HOLD_MS = 450;
 /** A tap within this long of the last one adds to a blend; then it goes on. */
 export const BLEND_WINDOW_MS = 1500;
 
-/** Only screen 2 and screen 6 end with a Done tap. */
-export function needsDone(s: Pick<QuizScreen, 'id' | 'multi'>): boolean {
-  return !!s.multi || s.id === 'no_way';
+/**
+ * Which screens end with Done: every screen that takes more than one
+ * answer. The owner, 2026-09-25: "make it multiple choice availablity dont
+ * just have people have the option to only do 1". Screens 1, 3, 4 and 5 are
+ * pick-all-that-fit again; a hidden press-and-hold to blend was not
+ * something anybody would find.
+ */
+export function needsDone(s: Pick<QuizScreen, 'id' | 'multi' | 'blend'>): boolean {
+  return !!s.multi || !!s.blend || s.id === 'no_way';
 }
 
 export interface TapState {
@@ -93,7 +94,9 @@ export type TapResult =
   /** Answer with these and go on after the short beat that shows the tap. */
   | { picked: string[]; advance: 'now' }
   /** Keep the screen, and go on once BLEND_WINDOW_MS passes with no tap. */
-  | { picked: string[]; advance: 'after-window' };
+  | { picked: string[]; advance: 'after-window' }
+  /** Keep the screen; Done moves on. */
+  | { picked: string[]; advance: 'stay' };
 
 /**
  * What a tap or a hold on a single-answer screen does.
@@ -103,11 +106,10 @@ export type TapResult =
  * adds or takes away, and restarts the window; the screen goes on once the
  * taps stop.
  */
-export function onOptionPress(state: TapState, v: string, how: 'tap' | 'hold'): TapResult {
-  if (how === 'tap' && !state.blending) return { picked: [v], advance: 'now' };
-  const base = state.blending ? state.picked : [];
-  const picked = how === 'tap' && base.includes(v) ? base.filter(x => x !== v) : base.includes(v) ? base : [...base, v];
-  return { picked, advance: 'after-window' };
+export function onOptionPress(state: TapState, v: string, _how: 'tap' | 'hold' = 'tap'): TapResult {
+  // Every tap adds or takes away; Done moves on. Nothing advances by itself.
+  const picked = state.picked.includes(v) ? state.picked.filter(x => x !== v) : [...state.picked, v];
+  return { picked, advance: 'stay' };
 }
 
 /**

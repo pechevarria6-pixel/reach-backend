@@ -26,7 +26,7 @@ import { ideaClimateFrom } from "@/lib/contracts/idea-climate";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
-import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter, HOLD_MS, BLEND_WINDOW_MS } from "@/lib/quiz-screens";
+import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
 import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
@@ -4272,19 +4272,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
     setAnswers(final);
     const sk=new Set(skipped);sk.delete(s.id);setSkipped(sk);
     clearTimeout(advanceTimer.current);
-    // A beat to see the tap land, then on. No "Next" on a single choice.
-    const armedOn=step;
-    if(r.advance==="now"){setBlending(false);advanceTimer.current=setTimeout(()=>next(final,sk,armedOn),170);}
-    else{setBlending(true);advanceTimer.current=setTimeout(()=>next(final,sk,armedOn),BLEND_WINDOW_MS);}
+    // Pick all that fit; Done moves on (lib/quiz-screens.ts needsDone).
   };
-  const pressProps=v=>({
-    onPointerDown:()=>{held.current=false;clearTimeout(holdTimer.current);
-      holdTimer.current=setTimeout(()=>{held.current=true;press(v,"hold");},HOLD_MS);},
-    onPointerUp:()=>clearTimeout(holdTimer.current),
-    onPointerLeave:()=>clearTimeout(holdTimer.current),
-    onContextMenu:e=>e.preventDefault(),
-    onClick:()=>{if(held.current){held.current=false;return;}clearTimeout(holdTimer.current);press(v,"tap");},
-  });
+  const pressProps=v=>({onClick:()=>press(v,"tap")});
   const toggle=(field,v)=>setAnswers(a=>{
     const have=a[field]||[];
     return {...a,[field]:have.includes(v)?have.filter(x=>x!==v):[...have,v]};
@@ -4439,14 +4429,12 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
         )}
       </div>
 
-      {blending&&(
-        <div style={{textAlign:"center",fontSize:12,color:C.t3,padding:"0 16px 8px"}}>Tap any others — it moves on when you stop.</div>
-      )}
-      {/* Only screens 2 and 6 end with Done; every other screen goes on
-          when tapped (lib/quiz-screens.ts needsDone). */}
+      {/* Every screen that takes more than one answer ends with Done
+          (lib/quiz-screens.ts needsDone). A pick-all screen with nothing
+          picked is answered by Skip, not by an empty Done. */}
       {needsDone(s)&&(
         <div style={{padding:"8px 16px 28px"}}>
-          <button className={s.id==="no_way"?"bs":"bp"} disabled={saving} onClick={()=>{
+          <button className={s.id==="no_way"?"bs":"bp"} disabled={saving||(s.blend&&!(answers[s.field]||[]).length)} onClick={()=>{
               const sk=new Set(skipped);sk.delete(s.id);setSkipped(sk);next(answers,sk);
             }}>
             {saving?"Saving…":"Done"}
