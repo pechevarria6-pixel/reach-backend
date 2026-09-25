@@ -33,7 +33,17 @@ export const ItineraryItemRow = z.object({
   id: z.string().nullish(),
   scheduled_time: z.string().nullish(),
   title: z.string(),
+  /**
+   * The slot's own tip (`slot.tip`), about the place this line names. Never
+   * the day's title or the day's tip: those were about other lines, and
+   * printed here they read as a description of this one.
+   */
   subtitle: z.string().nullish(),
+  /**
+   * From the cited place's kind (`slot.kind`, through typeForKind) when the
+   * slot cites one; from the ticket or the journey's words before that; from
+   * the slot's position only when nothing says what the place is.
+   */
   type: z.string().nullish(),
   confirmation_number: z.string().nullish(),
   is_confirmed: z.boolean().nullish(),
@@ -165,6 +175,46 @@ export function honestMode(type: unknown, mode: unknown): string | null {
   return m;
 }
 
+/**
+ * What a line is, from what the place it cites is.
+ *
+ * The type used to come from where a slot sat in the day: every evening was
+ * a "restaurant", so SPIN — a bar we hold as kind `bar` at 1332 F Street NW —
+ * was filed as somewhere to book a table, with a knife and fork beside it.
+ * The generator now hands back the cited row's kind as `slot.kind`, and the
+ * row decides.
+ *
+ * Only two answers, because only two are honest from a kind alone: somewhere
+ * you go to eat, or somewhere you go. A hotel is never on the menu, a ticket
+ * is decided by the ticket, and the journey by its words — all before this
+ * is asked. Null when there is no kind, so the caller keeps whatever it
+ * would have said without one rather than this guessing.
+ */
+const EATS = /\b(?:restaurants?|cafes?|cafés?|bakery|bakeries|bistro|diner|deli|food|places to eat|markets?|ice cream|brunch|pizzeria|steakhouse|noodles?|taqueria)\b/i;
+export type SlotType = 'restaurant' | 'activity';
+export function typeForKind(kind: unknown): SlotType | null {
+  const k = typeof kind === 'string' ? kind.replace(/_/g, ' ').trim() : '';
+  if (!k) return null;
+  return EATS.test(k) ? 'restaurant' : 'activity';
+}
+
+/**
+ * The line shown under an item, or nothing.
+ *
+ * The subtitle holds the slot's own tip — about that place, written with it.
+ * Until 2026-09-25 it could also hold the whole day's tip, pinned under the
+ * evening row behind a 💡 so it "read as a note about the day": on f979c880
+ * SPIN was captioned with advice about walking between the monuments. That
+ * was the only thing that ever wrote a 💡 into a subtitle, and slot tips are
+ * stored without one, so a 💡 line is a day note on the wrong row. It stays
+ * in the table as the record; it is not shown as that place's description.
+ */
+const DAY_NOTE = '💡';
+export function itemNote(sub: unknown): string {
+  const s = typeof sub === 'string' ? sub.trim() : '';
+  return s.startsWith(DAY_NOTE) ? '' : s;
+}
+
 export function rowFromItem(item: Record<string, unknown>, sortOrder: number): Record<string, unknown> {
   const pick = (...keys: string[]) => {
     for (const k of keys) {
@@ -177,7 +227,10 @@ export function rowFromItem(item: Record<string, unknown>, sortOrder: number): R
   return {
     type: item.type ?? null,
     title: item.title,
-    subtitle: pick('sub', 'subtitle'),
+    // The slot's own tip is its subtitle. There is no separate column, and a
+    // field with nowhere to be stored works once and vanishes on reload. A
+    // caller handing over `tip` is read, not dropped.
+    subtitle: pick('sub', 'subtitle', 'tip'),
     scheduled_time: pick('time', 'scheduled_time'),
     confirmation_number: conf,
     // Confirmed is not the same as holding a reference for it: a ticket

@@ -3,7 +3,7 @@ import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
 import { namesList } from "@/lib/group-answers";
 import { shownTitle, isOrganiser, waitingTripIn } from "@/lib/trip-vote";
-import { itemsFromRows } from "@/lib/contracts/itinerary-item";
+import { itemsFromRows, typeForKind, itemNote } from "@/lib/contracts/itinerary-item";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive, dayWhere } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
@@ -486,12 +486,22 @@ function isSoloGroup(g){return (g?.memberIds||[]).length<=1;}
 // A slot is an object: what it is, how you get in, what they take. Older
 // generations sent a bare string, so both are read.
 const asSlot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null,cost:null}:(v||{});
-function slotRow(raw,{time,sub="",fallback,cost}){
+function slotRow(raw,{time,fallback,cost}){
   const sl=asSlot(raw);
   // A slot carrying a ticket link IS the event, whichever part of the
   // evening it landed in, and carries the page that sells the ticket. A slot
   // that is the journey home is transport, and leaving is not reserved.
-  const type=sl.ticket_url?"event":isJourney(sl.plan)?"transport":fallback;
+  // Otherwise it is what the place it cites is: `slot.kind` is the kind on
+  // the row it named. This went straight to the position's fallback, so
+  // every evening was a "restaurant" and a bar got a knife and fork and an
+  // OpenTable search. The position decides only when nothing else does.
+  const type=sl.ticket_url?"event":isJourney(sl.plan)?"transport":(typeForKind(sl.kind)||fallback);
+  // The line under it is the slot's own tip, about this place — never the
+  // day's title or the day's tip, which were about other lines and read as
+  // a description of this one.
+  // Stored without a 💡: that mark now means an old day note on the wrong
+  // row, and itemNote keeps those off screen.
+  const sub=typeof sl.tip==="string"?sl.tip.replace(/^\s*💡\s*/u,"").trim():"";
   return {
     time,title:sl.plan,sub,type,conf:null,filled:false,
     cost_cents:sl.cost!=null?Math.round(sl.cost*100):(cost??0),
@@ -540,14 +550,16 @@ function itineraryRows(days,nightOut=false){
     // Each event carries its own cost so the budget screen can itemise;
     // anything generated before per-event costs spreads the day's figure.
     const each=Math.round(cost/3);
+    // Each slot carries its own tip now. The day's title used to sit under
+    // the morning row and the day's insider_tip under the evening one, and
+    // on f979c880 that captioned SPIN with advice about walking between the
+    // monuments — saved as the bar's subtitle, so every screen read it as
+    // a description of the bar. A day-level tip from an older generation
+    // has no row it belongs to, and is left on the day in the preview.
     return [
-      // The day's own title sits under its first slot on a trip; on an
-      // evening it would echo the plan's name at the top of the screen.
-      slotRow(day.morning,{time:label(day,0),sub:nightOut?"":(day.title||""),fallback:nightOut?"restaurant":"activity",cost:each}),
+      slotRow(day.morning,{time:label(day,0),fallback:nightOut?"restaurant":"activity",cost:each}),
       slotRow(day.afternoon,{time:label(day,1),fallback:"activity",cost:each}),
-      // The tip belongs to the day, printed under its last slot and marked
-      // so it reads as a note about the day, not a description of dinner.
-      slotRow(day.evening,{time:label(day,2),sub:day.insider_tip?`💡 ${day.insider_tip}`:"",fallback:"restaurant",cost:each}),
+      slotRow(day.evening,{time:label(day,2),fallback:"restaurant",cost:each}),
     ].filter(r=>r.title);
   });
 }
@@ -6216,10 +6228,19 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
               <div style={{fontSize:12,fontWeight:700,color:C.accentText,marginBottom:6}}>
                 Day {day.day} · {day.title}
               </div>
+              {/* Each slot's tip under the slot it is about. It used to
+                  be one tip for the whole day, and on the saved plan it
+                  landed under dinner as if it described dinner. */}
               <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>
-                ☀️ {txt(day.morning)}<br/>
-                🌤️ {txt(day.afternoon)}<br/>
-                🌙 {txt(day.evening)}
+                {[["☀️",day.morning],["🌤️",day.afternoon],["🌙",day.evening]].map(([ic,v],k)=>{
+                  const tip=typeof v?.tip==="string"?v.tip.replace(/^\s*💡\s*/u,"").trim():"";
+                  return(
+                    <div key={k}>
+                      {ic} {txt(v)}
+                      {tip&&<div style={{fontSize:11,color:C.t3,fontStyle:"italic",lineHeight:1.45,margin:"1px 0 3px 20px"}}>{tip}</div>}
+                    </div>
+                  );
+                })}
               </div>
               {cashOnly&&(
                 <div style={{fontSize:11,color:C.amber,marginTop:5}}>💵 {cashOnly}</div>
@@ -10100,7 +10121,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     </div>
                     <div className="it-cont">
                       <div style={{display:"flex",alignItems:"center",gap:6}}><span>{tIc[item.type]||"📌"}</span><div className="it-tt">{item.title}</div></div>
-                      <div className="it-sb">{item.sub}</div>
+                      {/* The slot's own tip. A 💡 line saved before
+                          2026-09-25 is the day's tip pinned to this row, and
+                          is not shown as this place's description. */}
+                      <div className="it-sb">{itemNote(item.sub)}</div>
                       {/* The place or act this line names, from the row it
                           cited or the listing that sold the ticket. A box of
                           fixed height, so a picture loading late moves
