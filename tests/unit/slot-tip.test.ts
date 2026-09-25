@@ -88,3 +88,30 @@ test('the itinerary tab prints the note through itemNote', () => {
   assert.ok(app.includes('<div className="it-sb">{itemNote(item.sub)}</div>'));
   assert.ok(!app.includes('<div className="it-sb">{item.sub}</div>'));
 });
+
+// ItemActions' phone gate, read out of the component. Typing rows by kind
+// made SPIN (a bar, reservation recommended, phone held) an "activity", and
+// the gate was type==="restaurant", so its number was stored and never shown.
+function phoneGate(): (item: Record<string, unknown>) => unknown {
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  const fn = app.indexOf('function ItemActions(');
+  assert.ok(fn > 0, 'ItemActions moved; point this test at it');
+  const body = app.slice(fn, app.indexOf('const looks=', fn));
+  const ticketed = body.match(/const ticketed=[^;]+;/);
+  const phone = body.match(/const phone=[^;]+;/);
+  assert.ok(ticketed && phone, 'the ticketed/phone lines in ItemActions moved');
+  return new Function('item', `${ticketed[0]} ${phone[0]} return phone;`) as (item: Record<string, unknown>) => unknown;
+}
+
+test('a phone we hold is shown on a bar, a museum or a restaurant, not only a restaurant', () => {
+  const phone = phoneGate();
+  const evening = builders().itineraryRows([{ ...DAY, evening: { ...DAY.evening, place_phone: '+1 202-555-0134' } }])[2];
+  assert.equal(evening.type, 'activity');
+  assert.equal(evening.venue_phone, '+1 202-555-0134');
+  assert.ok(phone(evening), 'SPIN\'s number is held and must be callable');
+  assert.ok(phone({ type: 'activity', venue_phone: '+1 202-555-0100' }), 'a verified museum keeps its number');
+  assert.ok(phone({ type: 'restaurant', venue_phone: '+1 202-555-0101' }));
+  assert.ok(!phone({ type: 'activity' }), 'no number, no button');
+  assert.ok(!phone({ type: 'event', venue_website: 'https://www.ticketmaster.com/e/1', venue_phone: '+1 202-555-0102' }),
+    'a ticketed line points at its sellers');
+});

@@ -8808,7 +8808,12 @@ function ItemActions({item,markGot,tight,city}){
   if(!item)return null;
   const ticketed=item.type==="event"&&item.venue_website;
   const site=item.type!=="event"&&item.venue_website;
-  const phone=item.type==="restaurant"&&item.venue_phone;
+  // A number we hold is shown wherever we hold it. It was gated on
+  // type==="restaurant", and once rows were typed by the place they cite a
+  // bar, a pub or a museum became "activity" and kept its number in the row
+  // with no Call button — a fact held and not passed on. A ticketed line
+  // has its sellers instead, and never carries a phone (slotRow).
+  const phone=!ticketed&&item.venue_phone;
   // Book-ahead with nothing named: somewhere to look, said as a search
   // (lib/find-links.ts), so the line can still be done from here.
   const looks=!ticketed&&!site&&!phone&&item.booking_mode==="ahead"?findLinks({title:item.title,type:item.type,city}):[];
@@ -8867,8 +8872,9 @@ function ItemActions({item,markGot,tight,city}){
           {item.venue_name||"Their site"} →
         </a>
       )}
-      {/* Most restaurants are not on a booking platform. For those the phone
-          is the answer, and it is the one we hold most often. */}
+      {/* Most restaurants, bars and small venues are not on a booking
+          platform. For those the phone is the answer, and it is the one we
+          hold most often. */}
       {phone&&(
         <a href={`tel:${String(item.venue_phone).replace(/[^0-9+]/g,"")}`}
           style={{display:"inline-flex",alignItems:"center",gap:6,
