@@ -11,7 +11,9 @@ import { loadLedger } from '../../lib/ledger.ts';
 
 type Row = Record<string, any>;
 
-function fakeDb(seed: Record<string, Row[]>) {
+// `beforeInsert` lets a test hold one request's insert while another runs
+// all the way through — the window between reading the ledger and writing.
+function fakeDb(seed: Record<string, Row[]>, beforeInsert?: (t: string, row: Row) => Promise<void>) {
   const tables: Record<string, Row[]> = { settlements: [], events: [], ...seed };
   let n = 0;
   const tick = () => new Promise(r => setImmediate(r));
@@ -44,6 +46,7 @@ function fakeDb(seed: Record<string, Row[]>) {
       update(patch: Row) { op = 'update'; payload = patch; return q; },
       async run(): Promise<{ data: any; error: any }> {
         await tick();
+        if (op === 'insert' && beforeInsert) await beforeInsert(t, payload);
         const rows = tables[t] ?? [];
         if (op === 'insert') {
           const row = { id: `s${++n}`, created_at: new Date(Date.now() + n).toISOString(), ...payload };
@@ -73,12 +76,31 @@ function fakeDb(seed: Record<string, Row[]>) {
 
 const plan = { id: 'plan1', group_id: 'g1', budget_cents: 0, destination_city: 'Cabo' };
 // Sam paid an $84 dinner for Sam and Alex: Alex owes Sam $42.
-function trip(extra: Record<string, Row[]> = {}) {
+function trip(extra: Record<string, Row[]> = {}, beforeInsert?: (t: string, row: Row) => Promise<void>) {
   return fakeDb({
     group_members: [{ group_id: 'g1', user_id: 'sam' }, { group_id: 'g1', user_id: 'alex' }],
     expenses: [{ plan_id: 'plan1', paid_by: 'sam', amount_cents: 8400, split_between: ['sam', 'alex'] }],
     ...extra,
-  });
+  }, beforeInsert);
+}
+
+/**
+ * Holds the first settlements insert whose key matches `held` until
+ * `release()` is called, so the other request can finish in between.
+ */
+function holdInsert(held: RegExp) {
+  let release!: () => void;
+  const gate = new Promise<void>(r => { release = r; });
+  let reached!: () => void;
+  const atGate = new Promise<void>(r => { reached = r; });
+  let used = false;
+  const beforeInsert = async (t: string, row: Row) => {
+    if (used || t !== 'settlements' || !held.test(String(row.idempotency_key))) return;
+    used = true;
+    reached();
+    await gate;
+  };
+  return { beforeInsert, atGate, release };
 }
 const paidRows = (tables: Record<string, Row[]>) => tables.settlements.filter(s => s.status === 'paid');
 const markPaid = { toUserId: 'sam', amountCents: 4200, method: 'venmo', status: 'paid' };
@@ -180,3 +202,66 @@ test('a trip of one writes nothing', async () => {
   assert.equal(res.status, 409);
   assert.equal(tables.settlements.length, 0);
 });
+
+// The owed check is a read, and the pending index only blocks while a row is
+// pending. Once one side's row has gone to paid, the other side's insert is
+// no longer blocked by anything — so the check has to be made again once our
+// own pending row holds the pair, not only before it.
+test('"Mark received" held behind a completed "Mark as paid" is refused, not counted twice', async () => {
+  const h = holdInsert(/:sam:/);
+  const { db, tables } = trip({}, h.beforeInsert);
+  const sam = recordSettlement(db, plan, 'sam', { fromUserId: 'alex', amountCents: 4200, method: 'venmo', status: 'paid', idempotencyKey: 'sam-k-0001' });
+  await h.atGate; // Sam has read "owed 4200" and is about to insert
+  const alex = await recordSettlement(db, plan, 'alex', { ...markPaid, idempotencyKey: 'alex-k-0001' });
+  assert.equal(alex.status, 200);
+  h.release();
+  const samRes = await sam;
+  assert.equal(samRes.status, 409, JSON.stringify(samRes.body));
+  assert.equal(samRes.body.reason, 'nothing_owed');
+  assert.equal(paidRows(tables).length, 1, JSON.stringify(tables.settlements));
+  assert.deepEqual((await loadLedger(db, plan)).netBalances, { sam: 0, alex: 0 });
+  assert.equal(tables.settlements.filter(s => s.status === 'pending').length, 0, 'the refused row does not linger as a claim');
+});
+
+test('the payee closing "Sent on Venmo?" while the payer marks it paid counts it once', async () => {
+  const h = holdInsert(/:alex:paid:/);
+  const { db, tables } = trip({}, h.beforeInsert);
+  await recordSettlement(db, plan, 'alex', { toUserId: 'sam', amountCents: 4200, method: 'venmo', status: 'pending', idempotencyKey: 'tap-venmo-1' });
+  const pendingId = tables.settlements[0].id;
+  const alex = recordSettlement(db, plan, 'alex', { ...markPaid, idempotencyKey: 'line-other-1' });
+  await h.atGate;
+  const sam = await moveSettlement(db, plan, 'sam', { id: pendingId, status: 'paid' });
+  assert.equal(sam.status, 200);
+  h.release();
+  const alexRes = await alex;
+  assert.equal(alexRes.status, 409, JSON.stringify(alexRes.body));
+  assert.equal(paidRows(tables).length, 1, JSON.stringify(tables.settlements));
+  assert.deepEqual((await loadLedger(db, plan)).netBalances, { sam: 0, alex: 0 });
+});
+
+test('one person marking it paid from two devices with two line keys counts it once', async () => {
+  const h = holdInsert(/phone-key/);
+  const { db, tables } = trip({}, h.beforeInsert);
+  const phone = recordSettlement(db, plan, 'alex', { ...markPaid, idempotencyKey: 'phone-key-1' });
+  await h.atGate;
+  const laptop = await recordSettlement(db, plan, 'alex', { ...markPaid, idempotencyKey: 'laptop-key-1' });
+  assert.equal(laptop.status, 200);
+  h.release();
+  assert.equal((await phone).status, 409);
+  assert.equal(paidRows(tables).length, 1, JSON.stringify(tables.settlements));
+  assert.deepEqual((await loadLedger(db, plan)).netBalances, { sam: 0, alex: 0 });
+});
+
+test('a pay-button tap held behind a completed "Mark received" leaves no claim to answer', async () => {
+  const h = holdInsert(/:alex:pending:/);
+  const { db, tables } = trip({}, h.beforeInsert);
+  const tap = recordSettlement(db, plan, 'alex', { toUserId: 'sam', amountCents: 4200, method: 'venmo', status: 'pending', idempotencyKey: 'tap-venmo-1' });
+  await h.atGate;
+  const sam = await recordSettlement(db, plan, 'sam', { fromUserId: 'alex', amountCents: 4200, method: 'other', status: 'paid', idempotencyKey: 'sam-k-0001' });
+  assert.equal(sam.status, 200);
+  h.release();
+  assert.equal((await tap).status, 409);
+  assert.equal(tables.settlements.filter(s => s.status === 'pending').length, 0, JSON.stringify(tables.settlements));
+  assert.deepEqual((await loadLedger(db, plan)).lines, []);
+});
+

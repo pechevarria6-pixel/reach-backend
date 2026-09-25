@@ -17,9 +17,23 @@
 //      update wins;
 //   3. nothing is recorded for more than the ledger still says is owed, so a
 //      stale screen tapped after the other side marked it is refused.
+//
+// The third is a read, and a read before the write is not enough: once the
+// other side's row has gone from pending to paid, the pending index blocks
+// nothing, so a request that read "owed $42" a moment earlier could insert
+// and close a second $42 and leave the payee owing the payer. So the check
+// is made again after our own pending row is in place (`stillOwed`). While
+// it is pending that row holds the pair — no other row for the pair can be
+// inserted, and every earlier one is already paid or cancelled — so what
+// the second read sees cannot change under it before the row is closed. A
+// row that fails the second read is withdrawn, not left as a claim.
+//
+// Not covered: two different pairs on a plan whose settle-up lines are
+// reshaped between them (the lines are worked out for the whole group). Each
+// payment is still held to its own pair's line.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { loadLedger, settlementsMissing, SETTLE_UP_SQL } from './ledger.ts';
-import { checkSettlement, settlementKey, settlementMoveRefused } from './money.ts';
+import { checkSettlement, settleLines, settlementKey, settlementMoveRefused } from './money.ts';
 import { track } from './track.ts';
 
 export const METHODS = ['venmo', 'cashapp', 'zelle', 'other'] as const;
@@ -90,7 +104,10 @@ export async function recordSettlement(db: SupabaseClient, plan: Plan, me: strin
     }
     if (again) {
       const row = again as SettlementRow;
-      if (status === 'paid' && row.status === 'pending') return closeAsPaid(db, row, me, plan, amountCents);
+      if (status === 'paid' && row.status === 'pending') {
+        // Our own earlier attempt made this row and never closed it.
+        return closeAsPaid(db, row, me, plan, amountCents, { check: true, own: true });
+      }
       return ok(row, 200, true);
     }
   }
@@ -137,6 +154,7 @@ export async function recordSettlement(db: SupabaseClient, plan: Plan, me: strin
     if (data) row = data as SettlementRow;
   }
   let replay = false;
+  const inserted = !!row;
   if (!row) {
     // 23505: this key landed a moment ago (a double tap), or the pair
     // already has a pending one. Either way, that row is the answer.
@@ -155,10 +173,53 @@ export async function recordSettlement(db: SupabaseClient, plan: Plan, me: strin
     row = open as SettlementRow;
   }
 
+  if (inserted) {
+    // Our pending row now holds the pair: read the ledger again (see the top
+    // of this file). A row the second read refuses is withdrawn, so it is
+    // neither counted nor left on the screen as a claim to answer.
+    const again = await stillOwed(db, plan, row, amountCents);
+    if (again) {
+      await withdrawOwn(db, row, me);
+      return again;
+    }
+  }
+
   if (status === 'pending') return ok(row, replay ? 200 : 201, replay);
   // "Mark as paid" on a line the ledger says is $20 is a claim of $20, even
   // when an earlier "Sent on Venmo?" for the pair said something else.
-  return closeAsPaid(db, row, me, plan, amountCents);
+  // A row we joined rather than made (ours was checked just above) is
+  // checked before it is closed: this request is the one turning it into
+  // money.
+  return closeAsPaid(db, row, me, plan, amountCents, { check: !inserted, own: false });
+}
+
+/** A refusal, or null when `row` for `amountCents` is still within what is owed. */
+async function stillOwed(db: SupabaseClient, plan: Plan, row: SettlementRow, amountCents: number): Promise<Outcome | null> {
+  let ledger;
+  try {
+    ledger = await loadLedger(db, plan);
+  } catch (e) {
+    console.error('[settlements] ledger re-read', e instanceof Error ? e.message : 'unknown');
+    return refuse(500, 'Could not read the ledger');
+  }
+  // The row itself counts for nothing in this read: if it had been closed
+  // already, it would be measuring against itself.
+  const others = ledger.settlements.filter(s => s.id !== row.id);
+  const lines = settleLines(ledger.baseBalances, others);
+  const refused = checkSettlement(lines, row.from_user_id, row.to_user_id, amountCents);
+  if (!refused) return null;
+  console.warn('[settlements] refused on the second read', { planId: String(plan.id), reason: refused.reason });
+  return refuse(409, refused.reason === 'nothing_owed'
+    ? 'Nothing is owed there any more. It may already be marked as paid.'
+    : 'That is more than is still owed there.', { reason: refused.reason, owedCents: refused.owedCents });
+}
+
+/** Withdraws a row this request made, only while it is still pending. */
+async function withdrawOwn(db: SupabaseClient, row: SettlementRow, me: string): Promise<void> {
+  const { error } = await db.from('settlements')
+    .update({ status: 'cancelled', paid_at: null, closed_by: me, updated_at: new Date().toISOString() })
+    .eq('id', row.id).eq('status', 'pending');
+  if (error) console.error('[settlements] withdraw refused row', error.code, error.message);
 }
 
 export async function moveSettlement(
@@ -202,8 +263,21 @@ export async function moveSettlement(
  * pending → paid, only while it is still pending. The loser of a race
  * between both sides finds the row already paid and gets it back as it is.
  */
-async function closeAsPaid(db: SupabaseClient, row: SettlementRow, me: string, plan: Plan, amountCents?: number): Promise<Outcome> {
+async function closeAsPaid(
+  db: SupabaseClient, row: SettlementRow, me: string, plan: Plan, amountCents?: number,
+  verify?: { check: boolean; own: boolean },
+): Promise<Outcome> {
   if (row.status === 'paid') return ok(row, 200, true);
+  // A PATCH is somebody answering a claim already on the screen, one that
+  // passed the second read when it was made; it is not checked again, so a
+  // payee can still say a "Sent on Venmo?" arrived after the lines moved.
+  if (verify?.check) {
+    const refused = await stillOwed(db, plan, row, amountCents ?? Math.round(Number(row.amount_cents) || 0));
+    if (refused) {
+      if (verify.own) await withdrawOwn(db, row, me);
+      return refused;
+    }
+  }
   const now = new Date().toISOString();
   const { data: moved, error } = await db.from('settlements')
     .update({
