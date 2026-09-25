@@ -12,6 +12,7 @@ import { canTurnUp, notRuledOut } from './rules.ts';
 import { kindFor } from './taste.ts';
 import { dayWhere } from '../calendar.ts';
 import { rowPhoto } from './place-photo.ts';
+import { placeName } from './where.ts';
 
 /**
  * The area a point belongs to, rounded to about seven miles. Everybody in a
@@ -428,7 +429,7 @@ export async function noteArea(db: SupabaseClient, seeker: Seeker): Promise<void
         interests: merged,
         asked_count: (existing.asked_count || 0) + 1,
         last_asked_at: new Date().toISOString(),
-        city: seeker.city || undefined,
+        city: placeName(seeker.city) || undefined,
       }).eq('id', existing.id);
       return;
     }
@@ -436,7 +437,7 @@ export async function noteArea(db: SupabaseClient, seeker: Seeker): Promise<void
     // note about where somebody looked must never fail the screen they are
     // looking at. The sweep comes round again regardless.
     await db.from('discovery_areas').insert({
-      lat: area.lat, lng: area.lng, city: seeker.city || null, interests,
+      lat: area.lat, lng: area.lng, city: placeName(seeker.city) || null, interests,
     });
   } catch (e) {
     // Never fail a screen over bookkeeping for a background job.

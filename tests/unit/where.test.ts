@@ -34,3 +34,13 @@ test('impossible coordinates are refused', () => {
   assert.equal(whereFrom(params('lat=91&lng=0.5')), null);
   assert.equal(whereFrom(params('lat=35&lng=181')), null);
 });
+
+test('an airport code is not a city — the point stands, the label is refused', async () => {
+  const { placeName } = await import('../../lib/discovery/where.ts');
+  assert.equal(placeName('ABE'), '');
+  assert.equal(placeName('RDU'), '');
+  assert.equal(placeName('Paris'), 'Paris');
+  assert.equal(placeName('Rincón'), 'Rincón');
+  assert.equal(placeName('Ely'), 'Ely');
+  assert.equal(placeName(null), '');
+});

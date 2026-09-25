@@ -18,7 +18,7 @@ import { yelpEvents, yelpPlaces } from '@/lib/discovery/yelp';
 import { cachedVenues, cachedEvents, noteArea, rememberEvents } from '@/lib/discovery/cache';
 import { rank, rotateDaily, seedOf, THIN_POOL } from '@/lib/discovery/rank';
 import { byDistance } from '@/lib/discovery/distance';
-import { whereFrom } from '@/lib/discovery/where';
+import { whereFrom, placeName } from '@/lib/discovery/where';
 import { tasteFrom } from '@/lib/discovery/taste';
 import { readProfile } from '@/lib/quiz-store';
 import { barLed, NOT_DRINKING } from '@/lib/traveler-profile';
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   // Number(null) is 0 and 0 is finite, so reading these with Number() let a
   // request carrying no location at all through as 0,0 — and the providers
   // answered for somewhere else entirely.
-  const city = req.nextUrl.searchParams.get('city') || '';
+  const city = placeName(req.nextUrl.searchParams.get('city'));
   const where = whereFrom(req.nextUrl.searchParams);
   if (!where) return empty('no_location', city);
   const { lat, lng } = where;
