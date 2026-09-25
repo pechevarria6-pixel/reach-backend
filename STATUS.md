@@ -8,6 +8,50 @@ Legend: ✅ done · 🟡 partial · ❌ missing · 🔒 owner-blocked
 
 ---
 
+## 0. Owner to run — checkout migrations, 2026-09-25
+
+Written, not run. Each file is safe to run twice. Run them in the Supabase
+SQL editor in this order; each line says what waits on it. Until a file runs,
+the code that needs it must fail soft on 42703 / PGRST205 and name the file.
+
+Probed 2026-09-25 with read-only PostgREST GETs: every column and table
+below is absent live (42703 or PGRST205). Each file was also run twice
+against a throwaway Postgres 18 (PGlite) whose base tables were built from
+the live schema's column list, and every constraint and index was exercised
+there — duplicate claim, double tap, Null Island, blank confirmation number,
+a handle stored with its `@`/`$`, anon-key reads.
+
+| # | file | what it adds | waits on it |
+|---|---|---|---|
+| 1 | `sql/view-privacy-2026-09-25.sql` | revokes anon/authenticated on `v_trip_funnel`, `v_invite_loop`, `v_organizer_conversion`, and sets `security_invoker` | **a live leak, today**: with the public anon key, `v_trip_funnel` and `v_invite_loop` answer 200 with rows — every trip's title and group id, money collected, every group's name. Nothing in the app reads these views, so nothing breaks |
+| 2 | `sql/booking-confirmation-2026-09-25.sql` | `bookings.confirmation_number` (typed by the member on "I've got it"; shown as entered, never as verified) | `POST /api/bookings/[id]/confirmation` keeping the number |
+| 3 | `sql/trip-map-2026-09-25.sql` | `plans.destination_lat`, `destination_lng`, `destination_label`; both-or-neither, in range, never 0,0 | the geocode step, `GET /api/me/trips-map`, then `scripts/backfill-plan-coords.mjs` (run after this) |
+| 4 | `sql/settle-up-2026-09-25.sql` | `users.venmo_handle`, `cashtag`, `zelle_contact` (stored bare, no `@`/`$`); `settlements` with unique `idempotency_key` and one pending line per pair per trip | "Mark as paid" and the settle-up handles |
+| 5 | `sql/pings-2026-09-25.sql` | `ping_log`, unique on (plan, user, kind, local_day); `plan_notification_mutes` | the pings job (a second run sends nothing) and the per-trip opt-out |
+| 6 | `sql/user-taste-profile-2026-09-25.sql` | `user_taste_profile`, `taste_profile_ids` (the `profile_id` map), view `v_taste_signals` over the rows we already hold, view `v_taste_profile_ops` by `profile_id`; both views revoked from anon | the distill in `/api/cron/knowledge` and the ops read |
+| 7 | `sql/itinerary-suggestions-2026-09-25.sql` | `itinerary_item_suggestions` (one open per line per place), `itinerary_item_suggestion_votes` (one 👍 per person) | "Sam suggests …" on group trips before lock |
+| 8 | `sql/post-trip-close-2026-09-25.sql` | `trip_reviews`, one 3-point answer per person per trip | the "How was it?" card |
+
+Deliberately **not** written:
+- **Per-traveller booking rows** — owner decision 7 is still open. No SQL
+  until it is decided.
+- A best-photo bucket (decision 19 defers it), a `completed` flip
+  (decision 18: derived from dates), a day-note column (decision 11: the tip
+  lives on the slot), a `signals` table (decision 20: views over what we
+  hold), a Tier-2 cohort view (it needs the profile's facet shape first).
+
+**Is `bookings_one_per_itinerary_item` live?** Not provable by GET —
+PostgREST does not expose `pg_indexes`. What the rows say: 42 bookings, 22
+linked to an itinerary line, and no two rows of any status share a line,
+which is consistent with the index (the bookable route's release of
+superseded attempts was written because of it, commit 1c3218d) but does not
+prove it. It is in no file under `sql/`. Settle it in the SQL editor before
+anything splits a line into per-traveller rows:
+
+    select indexname, indexdef from pg_indexes
+     where schemaname = 'public' and tablename = 'bookings';
+
+
 ## 1. Migration state — definitive
 
 Probed by selecting the one column each migration creates. This is the real
