@@ -150,3 +150,112 @@ test('apportioning collected money adds up exactly and follows the shares', () =
   assert.deepEqual(apportion(300, [0, 0, 0]), [100, 100, 100]);
   assert.deepEqual(apportion(500, []), []);
 });
+
+// ── Settling up ─────────────────────────────────────────────────────────
+import {
+  applySettlements, settleLines, viewerLines, payeesOf, checkSettlement,
+  settlementMoveRefused, settlementKey, type Settlement,
+} from '../../lib/money.ts';
+
+const paid = (from: string, to: string, cents: number, id = `${from}${to}${cents}`): Settlement =>
+  ({ id, from_user_id: from, to_user_id: to, amount_cents: cents, status: 'paid', method: 'venmo' });
+const pending = (from: string, to: string, cents: number, id = `p-${from}${to}`): Settlement =>
+  ({ id, from_user_id: from, to_user_id: to, amount_cents: cents, status: 'pending', method: 'venmo', created_at: '2026-09-25T12:00:00Z' });
+
+test('a settlement marked paid feeds back into the balances and closes the line', () => {
+  const net = { sam: 4200, alex: -4200 };
+  assert.deepEqual(settleLines(net, []).map(l => [l.from, l.to, l.amountCents]), [['alex', 'sam', 4200]]);
+  const after = applySettlements(net, [paid('alex', 'sam', 4200)]);
+  assert.deepEqual(after, { sam: 0, alex: 0 });
+  assert.deepEqual(settleLines(net, [paid('alex', 'sam', 4200)]), []);
+});
+
+test('a part payment leaves the rest owed, on the same pair', () => {
+  const lines = settleLines({ sam: 4200, alex: -4200 }, [paid('alex', 'sam', 1200)]);
+  assert.deepEqual(lines.map(l => [l.from, l.to, l.amountCents]), [['alex', 'sam', 3000]]);
+});
+
+test('pending and cancelled settlements move nothing', () => {
+  const net = { sam: 4200, alex: -4200 };
+  const cancelled = { ...paid('alex', 'sam', 4200), status: 'cancelled' };
+  assert.deepEqual(applySettlements(net, [pending('alex', 'sam', 4200), cancelled]), net);
+  const [line] = settleLines(net, [pending('alex', 'sam', 4200)]);
+  assert.equal(line.amountCents, 4200, 'a "Sent on Venmo?" is not money arrived');
+  assert.equal(line.pending?.id, 'p-alexsam', 'both sides see the pending claim on the line');
+});
+
+test('a pending claim whose line has gone is still shown, so the payee can answer it', () => {
+  const lines = settleLines({ sam: 0, alex: 0 }, [pending('alex', 'sam', 4200)]);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].amountCents, 0);
+  assert.equal(lines[0].pending?.amountCents, 4200);
+});
+
+test('a person only gets the handle of someone they owe', () => {
+  // Alex and Jo both owe Sam. Everybody has handles.
+  const net = { sam: 6000, alex: -4200, jo: -1800 };
+  const lines = settleLines(net, []);
+  const handles = {
+    sam: { venmo: 'sam-lee-1', cashtag: 'samlee', zelle: 'sam@example.com' },
+    alex: { venmo: 'alex-p-22', cashtag: 'alexp', zelle: 'alex@example.com' },
+    jo: { venmo: 'jo-jo-333', cashtag: 'jojo', zelle: 'jo@example.com' },
+  };
+
+  const alex = viewerLines('alex', lines, handles, 'Cabo trip');
+  assert.deepEqual(alex.map(l => [l.direction, l.with, l.amountCents]), [['you_owe', 'sam', 4200]]);
+  assert.equal(alex[0].pay?.venmo?.app, 'venmo://paycharge?txn=pay&recipients=sam-lee-1&amount=42.00&note=Cabo%20trip');
+  assert.equal(alex[0].pay?.cashApp, 'https://cash.app/$samlee/42.00');
+  assert.equal(alex[0].pay?.zelle?.value, 'sam@example.com');
+  // Nothing of Jo's reaches Alex: Jo's line is not Alex's, and Alex does not owe Jo.
+  assert.doesNotMatch(JSON.stringify(alex), /jo-jo|jojo|jo@example/);
+
+  // Sam is owed by both and pays nobody: no pay links, and none of their handles.
+  const sam = viewerLines('sam', lines, handles, 'Cabo trip');
+  assert.deepEqual(sam.map(l => [l.direction, l.with]), [['owed_to_you', 'alex'], ['owed_to_you', 'jo']]);
+  assert.ok(sam.every(l => l.pay === null));
+  assert.doesNotMatch(JSON.stringify(sam), /alex-p|alexp|alex@example|jo-jo|jojo|jo@example/);
+
+  assert.deepEqual(payeesOf('sam', lines), []);
+  assert.deepEqual(payeesOf('alex', lines), ['sam']);
+});
+
+test('a payee with no handle gives a line with no links, not a broken one', () => {
+  const lines = settleLines({ sam: 4200, alex: -4200 }, []);
+  const [line] = viewerLines('alex', lines, {}, 'Cabo trip');
+  assert.equal(line.pay, null);
+  const [junk] = viewerLines('alex', lines, { sam: { venmo: '@x', cashtag: '', zelle: 'nope' } }, 'Cabo trip');
+  assert.deepEqual(junk.pay, { venmo: null, cashApp: null, zelle: null });
+});
+
+test('nothing is recorded for more than is still owed, so a stale second tap is refused', () => {
+  const net = { sam: 4200, alex: -4200 };
+  assert.equal(checkSettlement(settleLines(net, []), 'alex', 'sam', 4200), null);
+  assert.equal(checkSettlement(settleLines(net, []), 'alex', 'sam', 1000), null, 'a part payment is fine');
+  assert.deepEqual(checkSettlement(settleLines(net, []), 'alex', 'sam', 5000), { reason: 'more_than_owed', owedCents: 4200 });
+  assert.deepEqual(checkSettlement(settleLines(net, []), 'sam', 'alex', 100), { reason: 'nothing_owed', owedCents: 0 });
+  // Sam marked it received; Alex's screen still shows the line and Alex taps "Mark as paid".
+  const after = settleLines(net, [paid('alex', 'sam', 4200)]);
+  assert.deepEqual(checkSettlement(after, 'alex', 'sam', 4200), { reason: 'nothing_owed', owedCents: 0 });
+});
+
+test('either side closes a pending one; only the payee can undo a paid one', () => {
+  const p = { from_user_id: 'alex', to_user_id: 'sam', status: 'pending' };
+  assert.equal(settlementMoveRefused(p, 'alex', 'paid'), null);
+  assert.equal(settlementMoveRefused(p, 'sam', 'paid'), null);
+  assert.equal(settlementMoveRefused(p, 'alex', 'cancelled'), null);
+  assert.equal(settlementMoveRefused(p, 'jo', 'paid'), 'not_yours');
+  const done = { ...p, status: 'paid' };
+  assert.equal(settlementMoveRefused(done, 'alex', 'paid'), null, 'a repeat is not a change');
+  assert.equal(settlementMoveRefused(done, 'alex', 'cancelled'), 'only_payee_can_undo');
+  assert.equal(settlementMoveRefused(done, 'sam', 'cancelled'), null);
+  assert.equal(settlementMoveRefused({ ...p, status: 'cancelled' }, 'alex', 'paid'), 'closed');
+});
+
+test('an idempotency key is scoped to the plan and the person, and junk is refused', () => {
+  assert.equal(settlementKey('plan1', 'alex', 'line-abc-123'), 'settle:plan1:alex:line-abc-123');
+  assert.notEqual(settlementKey('plan1', 'alex', 'line-abc-123'), settlementKey('plan1', 'sam', 'line-abc-123'));
+  assert.notEqual(settlementKey('plan1', 'alex', 'line-abc-123'), settlementKey('plan2', 'alex', 'line-abc-123'));
+  for (const bad of [undefined, null, '', 'short', 42, 'has spaces in it', 'x'.repeat(101)]) {
+    assert.equal(settlementKey('plan1', 'alex', bad), null, String(bad));
+  }
+});

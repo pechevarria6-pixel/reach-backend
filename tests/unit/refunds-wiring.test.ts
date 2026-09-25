@@ -39,7 +39,8 @@ test('nothing names refunded_cents in a select, so every read works before the m
 
 test('the funding total, the ledger, the funded announcement and approval all count net of refunds', () => {
   assert.match(read('app/api/plans/[planId]/funding/route.ts'), /netCollectedCents\(contributions\)/);
-  assert.match(read('app/api/plans/[planId]/ledger/route.ts'), /netPaidCents\(/);
+  // The ledger's sums moved into lib/ledger.ts so "Mark as paid" reads the same ones.
+  assert.match(read('lib/ledger.ts'), /netPaidCents\(/);
   assert.match(read('app/api/webhooks/stripe/route.ts'), /sumCollected\(/);
   // Approval is where a counted-but-refunded dollar would be spent. It reads
   // every contribution column (so refunded_cents arrives with the migration)

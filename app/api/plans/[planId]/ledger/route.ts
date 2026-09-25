@@ -1,17 +1,20 @@
 // ─── /api/plans/[planId]/ledger — trip close-out ─────────────────────────
-// GET  → per-person totals (contributions + expenses) and a minimal
-//        settle-up plan ("Alex pays Sam $34.50").
+// GET  → per-person totals (contributions + expenses), net of every payment
+//        members have marked as paid to each other, and the caller's own
+//        settle-up lines ("You owe Sam $42 · Alex owes you $18") with the
+//        ways to pay each one. See lib/ledger.ts and lib/money.ts.
 // POST { description, amountCents, splitBetween[] } → log an on-trip expense.
 //
 // Every id here is a `users.id` UUID. `paid_by` used to hold a Clerk id while
 // `split_between` held UUIDs from the member list, so the payer and the people
 // splitting the bill were never the same person and settle-up was nonsense.
-import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
+//
+// Reach never moves this money. The pay links open the payer's own Venmo or
+// Cash App; Zelle has no link, so it is the contact the payee typed for it.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
-import { apportion, evenSplit, planShares, settleUp } from '@/lib/money';
-import { planSkips } from '@/lib/participation';
-import { netPaidCents } from '@/lib/refunds';
+import { loadLedger, settleNote } from '@/lib/ledger';
+import { payeesOf, viewerLines, type Handles } from '@/lib/money';
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -42,56 +45,102 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     amount_cents: Math.round(amountCents),
     split_between: splitBetween,
   }).select().single();
-  console.error('[plans/planId/ledger] failed', error);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    console.error('[plans/planId/ledger] failed', error.code, error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
   return NextResponse.json({ expense: data });
 }
+
+type HandleRow = { id: string; venmo_handle?: string | null; cashtag?: string | null; zelle_contact?: string | null };
 
 export async function GET(_req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
+  const me = ctx.user.id;
 
-  const [{ data: expenses }, { data: contributions }, { data: bookings }, skips] = await Promise.all([
-    ctx.db.from('expenses').select('*').eq('plan_id', params.planId),
-    ctx.db.from('contributions').select('*').eq('plan_id', params.planId).eq('status', 'succeeded'),
-    ctx.db.from('bookings').select('id,price_cents,status,mode,provider').eq('plan_id', params.planId)
-      .not('status', 'in', NOT_CHARGED),
-    planSkips(ctx.db, params.planId),
-  ]);
-
-  const members = await groupMemberIds(ctx.db, ctx.plan.group_id as string);
-
-  // Net balance per person, in cents: positive = is owed, negative = owes.
-  const net: Record<string, number> = Object.fromEntries(members.map(id => [id, 0]));
-  const add = (id: string, cents: number) => { net[id] = (net[id] || 0) + cents; };
-
-  for (const e of expenses || []) {
-    const parties: string[] = e.split_between || [];
-    if (parties.length === 0) continue;
-    add(e.paid_by, e.amount_cents);
-    evenSplit(e.amount_cents, parties.length).forEach((share, i) => add(parties[i], -share));
+  let ledger;
+  try {
+    ledger = await loadLedger(ctx.db, ctx.plan);
+  } catch (e) {
+    console.error('[ledger GET]', e instanceof Error ? e.message : 'unknown');
+    return NextResponse.json({ error: 'Could not read the ledger' }, { status: 500 });
   }
 
-  // Contributions were fetched but never counted, so money already collected
-  // for the trip did not reduce anyone's balance.
-  //
-  // Net of refunds: a share Stripe has handed back is not money in the pot,
-  // and counting it would show the payer as owed money they already have.
-  // netPaidCents reads a missing refunded_cents column as nothing refunded.
-  const target = (contributions || []).reduce((s, c) => s + netPaidCents(c), 0);
-  if (target > 0 && members.length > 0) {
-    // Collected money is owed in proportion to each person's share, so
-    // somebody who sat out the dinner is not down for a slice of it. With
-    // nobody sitting anything out this is the even split it always was.
-    const owed = planShares(chargedRows(bookings), Number(ctx.plan.budget_cents) || 0, members, skips);
-    apportion(target, members.map(id => owed[id] || 0)).forEach((share, i) => add(members[i], -share));
-    for (const c of contributions || []) add(c.user_id, netPaidCents(c));
+  // A trip of one has nobody to settle up with. Nothing to settle, no lines,
+  // and no prompt to add a Venmo nobody will ever pay into.
+  if (ledger.solo) {
+    return NextResponse.json({
+      solo: true,
+      settlementsAvailable: ledger.settlementsAvailable,
+      contributions: ledger.contributions,
+      expenses: ledger.expenses,
+      netBalances: {},
+      settleUp: [],
+      lines: [],
+      people: {},
+      you: { hasHandle: false, handlesAvailable: false, askForHandle: false },
+    });
   }
+
+  // The handles of the people this caller owes, and the caller's own — the
+  // caller's only to say whether they have given one, never to anyone else.
+  // viewerLines keeps the rule a second time: it gives pay links only on a
+  // line the caller pays, whatever this read returned.
+  const payees = payeesOf(me, ledger.lines);
+  let handlesAvailable = true;
+  const handles: Record<string, Handles> = {};
+  let mine: HandleRow | undefined;
+  {
+    const { data, error } = await ctx.db.from('users')
+      .select('id, venmo_handle, cashtag, zelle_contact')
+      .in('id', [...payees, me]);
+    if (error) {
+      // Before sql/settle-up-2026-09-25.sql the columns are not there. Say
+      // so, rather than reading it as "nobody has a Venmo".
+      handlesAvailable = false;
+      if (!/^(42703|PGRST204)$/.test(String(error.code ?? ''))) {
+        console.error('[ledger] could not read settle-up handles', error.code);
+      }
+    }
+    for (const r of (data || []) as HandleRow[]) {
+      if (r.id === me) { mine = r; continue; }
+      handles[r.id] = { venmo: r.venmo_handle, cashtag: r.cashtag, zelle: r.zelle_contact };
+    }
+  }
+
+  const lines = viewerLines(me, ledger.lines, handles, settleNote(ctx.plan));
+
+  // The names of the people on the caller's lines, which they already see on
+  // the group's member list. Nothing else about them.
+  const others = [...new Set(lines.map(l => l.with))];
+  const people: Record<string, { name: string | null }> = {};
+  if (others.length) {
+    const { data } = await ctx.db.from('users').select('id, name, first_name').in('id', others);
+    for (const u of data || []) people[u.id] = { name: u.first_name || u.name || null };
+  }
+
+  const hasHandle = !!(mine && (mine.venmo_handle || mine.cashtag || mine.zelle_contact));
+  const owedToMe = lines.some(l => l.direction === 'owed_to_you' && l.amountCents > 0);
 
   return NextResponse.json({
-    contributions: contributions || [],
-    expenses: expenses || [],
-    netBalances: net,
-    settleUp: settleUp(net),
+    solo: false,
+    settlementsAvailable: ledger.settlementsAvailable,
+    contributions: ledger.contributions,
+    expenses: ledger.expenses,
+    // After every settlement marked paid; a pending one moves nothing.
+    netBalances: ledger.netBalances,
+    // The whole group's lines, amounts only — no handles, no pending detail.
+    settleUp: ledger.lines.filter(l => l.amountCents > 0).map(({ from, to, amountCents }) => ({ from, to, amountCents })),
+    // The caller's own lines, with pay links on the ones they pay.
+    lines,
+    people,
+    you: {
+      hasHandle,
+      handlesAvailable,
+      // "Add your Venmo so friends can pay you back": only to someone who is
+      // owed, has not given a way to be paid, and can save one.
+      askForHandle: handlesAvailable && owedToMe && !hasHandle,
+    },
   });
 }

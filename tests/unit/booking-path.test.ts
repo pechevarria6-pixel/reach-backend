@@ -47,7 +47,7 @@ test('every route that sums a plan\'s bookings applies the same rule', () => {
   const routes = [
     'app/api/plans/[planId]/funding/route.ts',
     'app/api/bookings/[id]/approve/route.ts',
-    'app/api/plans/[planId]/ledger/route.ts',
+    'lib/ledger.ts', // the ledger route and "Mark as paid" both read it
     'app/api/plans/[planId]/notify/route.ts',
     'app/api/plans/[planId]/participation/route.ts',
     'app/api/plans/[planId]/savings/route.ts',

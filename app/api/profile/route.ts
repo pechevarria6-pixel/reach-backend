@@ -6,14 +6,15 @@
 // existed all along with nothing reading or writing them.
 //
 // GET   → stats, documents (masked), loyalty, connected accounts, cards,
-//         recent payments, preferences, deletion state
-// PATCH → travel documents and preferences
+//         recent payments, preferences, settle-up handles, deletion state
+// PATCH → travel documents, preferences and settle-up handles
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { encrypt, decrypt } from '@/lib/encryption';
 import { GENDERS, missingFor, validBirthDate, plausiblePhone } from '@/lib/essentials';
 import { z } from 'zod';
 import { paymentRefundCents } from '@/lib/refunds';
+import { cashtag, venmoHandle, zelleContact } from '@/lib/settle-links';
 
 // A document number is stored encrypted and must never travel back in full.
 // The screen only needs to prove it holds the right one, so it gets the last
@@ -158,6 +159,17 @@ export async function GET() {
       dietary: row.dietary_needs ?? null,
       climate: row.climate_preference ?? null,
     },
+    // How friends can pay this person back: their own Venmo, Cash App and
+    // Zelle contact, to this person only. Another member is only ever given
+    // the one they need to pay them, by the ledger (lib/money.ts viewerLines).
+    // `available: false` means sql/settle-up-2026-09-25.sql has not run and
+    // there is nowhere to save one yet.
+    settleUp: {
+      venmo: row.venmo_handle ?? null,
+      cashtag: row.cashtag ?? null,
+      zelle: row.zelle_contact ?? null,
+      available: 'venmo_handle' in row,
+    },
     consent: {
       personalized: row.consent_personalized ?? true,
       analytics: row.consent_analytics ?? true,
@@ -170,6 +182,8 @@ export async function GET() {
     provider: row.auth_provider ?? 'email',
   });
 }
+
+const SETTLE_COLUMNS = ['venmo_handle', 'cashtag', 'zelle_contact'];
 
 const DOC_FIELDS = {
   passport: 'passport_number_enc',
@@ -207,6 +221,22 @@ const Schema = z.object({
   phone: z.string().trim().max(32)
     .refine(v => plausiblePhone(v), 'That does not look like a phone number an airline will accept')
     .nullable().optional(),
+  // Settle-up handles, optional and typed by the person for exactly this.
+  // Stored bare — "sam-lee", not "@sam-lee" — because the link builders add
+  // what each app wants. Zelle is the contact typed for Zelle; it is never
+  // filled from the phone above (owner decision 21).
+  venmoHandle: z.string().trim().max(64)
+    .refine(v => v === '' || venmoHandle(v) !== null, 'A Venmo username is 5 to 30 letters, numbers, - or _')
+    .transform(v => (v === '' ? null : venmoHandle(v)))
+    .nullable().optional(),
+  cashtag: z.string().trim().max(64)
+    .refine(v => v === '' || cashtag(v) !== null, 'A $Cashtag is up to 20 letters or numbers, with at least one letter')
+    .transform(v => (v === '' ? null : cashtag(v)))
+    .nullable().optional(),
+  zelleContact: z.string().trim().max(254)
+    .refine(v => v === '' || zelleContact(v) !== null, 'Zelle needs the email or US phone number you use with it')
+    .transform(v => (v === '' ? null : zelleContact(v)?.value ?? null))
+    .nullable().optional(),
 });
 
 export async function PATCH(req: NextRequest) {
@@ -234,6 +264,7 @@ export async function PATCH(req: NextRequest) {
     ['homeAirport', 'home_airport'], ['homeCity', 'home_city'],
     ['firstName', 'first_name'], ['lastName', 'last_name'],
     ['dateOfBirth', 'date_of_birth'], ['gender', 'gender'], ['phone', 'phone'],
+    ['venmoHandle', 'venmo_handle'], ['cashtag', 'cashtag'], ['zelleContact', 'zelle_contact'],
   ] as const) {
     const value = parsed.data[key];
     if (value !== undefined) updates[column] = value || null;
@@ -262,12 +293,14 @@ export async function PATCH(req: NextRequest) {
     console.error('[profile PATCH]', error.code, error.message);
     // The home-airport columns arrive in a migration. Say so plainly instead
     // of "could not save that", which sends someone hunting for a typo.
-    const missingColumn = /column "?([a-z_]+)"? .*does not exist/i.exec(error.message || '');
+    // Postgres words it one way, PostgREST (PGRST204) the other.
+    const missingColumn = /column "?([a-z_]+)"? .*does not exist/i.exec(error.message || '')
+      || /could not find the '([a-z_]+)' column/i.exec(error.message || '');
     if (missingColumn) {
       // Name the migration that adds the column that is actually missing —
       // sending someone to the wrong file is worse than saying nothing.
-      const file = missingColumn[1] === 'gender'
-        ? 'sql/travel-essentials-2026-09-18.sql'
+      const file = missingColumn[1] === 'gender' ? 'sql/travel-essentials-2026-09-18.sql'
+        : SETTLE_COLUMNS.includes(missingColumn[1]) ? 'sql/settle-up-2026-09-25.sql'
         : 'sql/home-airport-2026-09-12.sql';
       return NextResponse.json({ error: `This needs a migration: run ${file} in Supabase.` }, { status: 503 });
     }
