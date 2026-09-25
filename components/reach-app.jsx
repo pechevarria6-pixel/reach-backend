@@ -24,7 +24,7 @@ import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter, HOLD_MS, BLEND_WINDOW_MS } from "@/lib/quiz-screens";
-import { mayGoAhead as mayGoAheadRule } from "@/lib/group-answers";
+import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
 import { quizFromMe, withinQuietPeriod } from "@/lib/contracts/traveler-profile";
@@ -7337,6 +7337,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // Somebody must have answered: nobody's answers are nothing to plan from.
         const mayGoAhead=iOrganise&&!allAnswered&&members.length>0
           &&mayGoAheadRule({members,createdBy:wp.createdBy||null,createdAt:wp.createdAt||null});
+        // The organiser's own wait says what going ahead does, never "we
+        // wait until everyone has answered" above the button that doesn't.
+        const orgWait=iOrganise&&!allAnswered&&members.length>0
+          ?organiserWaitCopy({members,mayGoAhead,createdBy:wp.createdBy||null,createdAt:wp.createdAt||null,me,night:nightWait})
+          :null;
         return(
           <div style={{flex:1,overflowY:"auto",padding:"0 20px 30px"}}>
             <div style={{fontSize:12.5,color:C.t3,marginBottom:4}}>
@@ -7348,18 +7353,16 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {!isSolo&&(
               <>
                 <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,lineHeight:1.2,marginBottom:8}}>
-                  {allAnswered?"Everyone has answered":"Waiting on everyone's answers"}
+                  {allAnswered?"Everyone has answered":orgWait?orgWait.title:"Waiting on everyone's answers"}
                 </div>
                 <div style={{fontSize:14,color:C.t2,lineHeight:1.6,marginBottom:14}}>
                   {allAnswered
                     ?`Everyone's in — your ${nightWait?"nights out":"trips"} will be built from all of your answers.`
+                    :orgWait?orgWait.body
                     :`Your three ${nightWait?"ideas for the night":"trip ideas"} are built from what every one of you wants, so we wait until everyone has answered. Nothing gets picked on one person's say-so.`}
                 </div>
                 {members.length>0&&!allAnswered&&(
                   <div style={{fontSize:13.5,color:C.t1,lineHeight:1.6,marginBottom:12}}>
-                    {iOrganise&&(
-                      <div style={{fontWeight:600,marginBottom:2}}>{haveAnswered.length} of {members.length} {haveAnswered.length===1?"has":"have"} answered.</div>
-                    )}
                     {stillToAnswer.length>0&&(
                       <div><strong>Still to answer:</strong> {namesList(stillToAnswer.map(nameOf))}</div>
                     )}

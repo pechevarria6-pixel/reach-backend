@@ -515,6 +515,35 @@ export function answeredCount(members: Pick<Answered, 'answered'>[]): string {
 }
 
 /**
+ * The organiser's wait: the count, and what is true about going ahead from
+ * where they stand. The members' wait keeps "we wait until everyone has
+ * answered"; the organiser's used to say it too — "Nothing gets picked on
+ * one person's say-so" — directly above a button that plans on exactly
+ * that, so theirs says what the button does instead.
+ */
+export function organiserWaitCopy(p: {
+  members: Pick<Answered, 'userId' | 'answered'>[];
+  mayGoAhead: boolean;
+  createdBy: string | null;
+  createdAt: string | null | undefined;
+  me: string | null;
+  night: boolean;
+}): { title: string; body: string } {
+  const title = answeredCount(p.members);
+  const ideas = p.night ? 'ideas for the night' : 'trip ideas';
+  if (p.mayGoAhead) {
+    return { title, body: `Your three ${ideas} are built from the answers that are in when you plan. You can go ahead now, or wait for the rest.` };
+  }
+  if (!p.members.some(m => m.answered)) {
+    return { title, body: `Nobody has answered yet, and your three ${ideas} are built from what you say you want — so there's nothing to plan from until somebody does.` };
+  }
+  const besides = p.createdBy && p.createdBy === p.me ? 'somebody besides you' : 'somebody besides whoever set it up';
+  const made = p.createdAt ? Date.parse(p.createdAt) : NaN;
+  const orTime = Number.isFinite(made) ? ', or two days after the trip was made' : '';
+  return { title, body: `You can plan with who's answered once ${besides} has answered${orTime}.` };
+}
+
+/**
  * Whose standing profile shapes the prompt. Everybody, normally. When the
  * organiser went ahead, only those who answered: somebody who has not said
  * what they want from this trip adds no wishes to it. `everyone` is still

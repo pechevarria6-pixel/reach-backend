@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  mayGoAhead, goAheadDecision, answeredCount, whoShapesIt, answersFrom, answersBlock,
+  mayGoAhead, goAheadDecision, answeredCount, organiserWaitCopy, whoShapesIt, answersFrom, answersBlock,
   PLANNED_WITH_ANSWERED, GO_AHEAD_AFTER_MS,
 } from '../../lib/group-answers.ts';
 import { planReadiness } from '../../lib/plan-readiness.ts';
@@ -171,7 +171,9 @@ test('the wait screen offers the go-ahead to the organiser only, with the count'
   assert.match(app, /const mayGoAhead=iOrganise&&!allAnswered/);
   assert.match(app, /Plan with who's answered/);
   assert.match(app, /withAnswered:opts\.withAnswered===true/);
-  assert.match(app, /\{iOrganise&&\(\s*<div[^>]*>\{haveAnswered\.length\} of \{members\.length\}/);
+  // The count is the organiser's heading, said once.
+  assert.match(app, /allAnswered\?"Everyone has answered":orgWait\?orgWait\.title:"Waiting on everyone's answers"/);
+  assert.doesNotMatch(app, /\{haveAnswered\.length\} of \{members\.length\}/);
 });
 
 // With nobody answered, the 48-hour rule alone opened the button, the ideas
@@ -186,7 +188,7 @@ test('nobody having answered is never enough to go ahead, however old the trip',
   assert.equal(mayGoAhead({ members: [org, marco, sam], createdBy: 'u-org', createdAt: weekOld, now: NOW }), true);
   // The wait screen uses the same rule, not a copy of it.
   const app = readFileSync('components/reach-app.jsx', 'utf8');
-  assert.match(app, /import \{ mayGoAhead as mayGoAheadRule \} from "@\/lib\/group-answers";/);
+  assert.match(app, /import \{ mayGoAhead as mayGoAheadRule[ ,}][^\n]*from "@\/lib\/group-answers";/);
   assert.match(app, /const mayGoAhead=iOrganise&&!allAnswered&&members\.length>0\s*&&mayGoAheadRule\(\{members,/);
 });
 
@@ -198,4 +200,32 @@ test('a go-ahead is read back even on a trip nobody has answered for', async () 
   const none = await planReadiness(db({ wentAhead: false, nobodyAnswered: true }) as never, 'plan-1', 'g', false);
   assert.equal(none.wentAhead, undefined);
   assert.equal(none.allReady, true, 'the old-trip grace is unchanged');
+});
+
+// The organiser's screen said "we wait until everyone has answered. Nothing
+// gets picked on one person's say-so." directly above "Plan with who's
+// answered" — which, after 48 hours, plans on exactly one person's say-so.
+test("the organiser's wait never says it waits for everyone, above the button that doesn't", () => {
+  const weekOld = new Date(NOW - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const cases = [
+    { members: [org, marco, sam, { userId: 'x', answered: false }], mayGoAhead: true, createdAt: weekOld },
+    { members: [org, { ...marco, answered: true }, sam], mayGoAhead: true, createdAt: null },
+    { members: [org, marco], mayGoAhead: false, createdAt: '2026-09-24T11:00:00Z' },
+    { members: [{ ...org, answered: false }, marco], mayGoAhead: false, createdAt: weekOld },
+  ];
+  for (const c of cases) for (const night of [false, true]) {
+    const copy = organiserWaitCopy({ ...c, createdBy: 'u-org', me: 'u-org', night });
+    assert.match(copy.title, /^\d+ of \d+ (has|have) answered\.$/);
+    assert.doesNotMatch(`${copy.title} ${copy.body}`, /say-so|wait until everyone|every one of you/i);
+  }
+  const alone = organiserWaitCopy({ members: [org, marco, sam], mayGoAhead: true, createdBy: 'u-org', createdAt: weekOld, me: 'u-org', night: false });
+  assert.equal(alone.title, '1 of 3 has answered.');
+  assert.match(alone.body, /answers that are in when you plan/);
+  const early = organiserWaitCopy({ members: [org, marco], mayGoAhead: false, createdBy: 'u-org', createdAt: '2026-09-24T11:00:00Z', me: 'u-org', night: false });
+  assert.equal(early.body, "You can plan with who's answered once somebody besides you has answered, or two days after the trip was made.");
+  // The screen puts the organiser's copy in place of the members' sentence.
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  const at = app.indexOf(':orgWait?orgWait.body');
+  const say = app.indexOf("Nothing gets picked on one person's say-so.");
+  assert.ok(at > 0 && say > at, "the say-so sentence is the members' fallback, after the organiser's copy");
 });
