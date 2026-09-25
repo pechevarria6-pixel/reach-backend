@@ -248,6 +248,15 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
     members: view.total,
     everyoneVoted: view.everyoneVoted,
     stillToVote: view.notVoted.map(id => (id === ctx.user.id ? 'you' : nameOf.get(id) ?? 'Someone')),
+    // Everyone, by id, for the faces: a grey face is tapped to nudge that
+    // one person (POST /notify { kind: "vote", userId }). Whether each has
+    // voted, never what for.
+    people: members.map(m => ({
+      userId: m.userId,
+      name: m.userId === ctx.user.id ? 'You' : (nameOf.get(m.userId) ?? 'Someone'),
+      isYou: m.userId === ctx.user.id,
+      voted: !view.notVoted.includes(m.userId),
+    })),
     leader: view.leader,
     tied: view.tied,
     organiser: organiser ? { name: firstName(organiser.name), isYou: organiser.userId === ctx.user.id } : null,

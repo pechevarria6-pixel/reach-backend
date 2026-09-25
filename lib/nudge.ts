@@ -22,13 +22,13 @@ export const NUDGE_COOLDOWN_MS = 60_000;
 
 /**
  * Which nudges are held to the minute. Every nudge that reaches somebody —
- * the bell, their phone, or their inbox — is: answers still to give, and
- * votes still to cast. Only a nudge that could never reach anyone would be
- * exempt, and there is none. Funding nudges are outside this change and
- * are left as they were.
+ * the bell, their phone, or their inbox — is: answers still to give, votes
+ * still to cast, and shares still to pay. The funding nudge used to be left
+ * out, so "remind everyone to pay" could be pressed as often as anybody
+ * liked, each press an email in every unpaid inbox.
  */
 export function limitsNudge(kind: string): boolean {
-  return kind === 'prefs' || kind === 'vote';
+  return kind === 'prefs' || kind === 'vote' || kind === 'funding';
 }
 
 export interface NudgeClaim {
@@ -105,4 +105,168 @@ export async function releaseNudge(db: SupabaseClient, claimId: string | null | 
   if (!claimId) return;
   const { error } = await db.from('audit_logs').delete().eq('id', claimId);
   if (error) console.error('[nudge] could not release a nudge that sent nothing', { code: error.code });
+}
+
+// ─── One nudge per person per twelve hours ──────────────────────────────
+// The minute above is per trip, and it bounds how often the button fires.
+// It does not bound how often one person hears about it: a group of four
+// pressing it once a minute each is still a message a minute in Sam's
+// pocket. And once any grey face can be tapped to nudge that one person,
+// the minute cannot be the limit at all — tapping Sam, then Jo, then Sam
+// again would each be a fresh press.
+//
+// So each person on a plan can be nudged once in twelve hours, whoever does
+// it and whichever thing they are still to do. Per plan: the same group's
+// night out and trip are two different asks. The same claim-then-look as the
+// minute, one audit_logs row per person, keyed plan:person — so a tap on
+// Sam's face and "Remind everyone" landing at the same instant send Sam one
+// nudge between them, not two.
+
+export const PERSON_NUDGE_ACTION = 'person_nudged';
+export const PERSON_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+
+/** The audit_logs resource_id that holds one person's twelve hours on one plan. */
+export function personKey(planId: string, userId: string): string {
+  return `${planId}:${userId}`;
+}
+
+export interface PeopleClaim {
+  /** People this nudge may reach. claimId is null when the record could not be written. */
+  claimed: Array<{ userId: string; claimId: string | null }>;
+  /** People nudged in the last twelve hours, and how long until they can be again. */
+  held: Array<{ userId: string; retryAfterSeconds: number }>;
+}
+
+type KeyedRow = { id: string; created_at: string; resource_id: string };
+
+/** The oldest claim for each key inside the window: the one that holds it. */
+function firstByKey(rows: KeyedRow[]): Map<string, KeyedRow> {
+  const first = new Map<string, KeyedRow>();
+  const sorted = [...rows].sort((a, b) =>
+    a.created_at.localeCompare(b.created_at) || String(a.id).localeCompare(String(b.id)));
+  for (const r of sorted) if (!first.has(r.resource_id)) first.set(r.resource_id, r);
+  return first;
+}
+
+function waitFrom(row: KeyedRow, now: Date): number {
+  return Math.max(1, Math.ceil((new Date(row.created_at).getTime() + PERSON_COOLDOWN_MS - now.getTime()) / 1000));
+}
+
+function recentPeople(db: SupabaseClient, keys: string[], now: Date) {
+  const since = new Date(now.getTime() - PERSON_COOLDOWN_MS).toISOString();
+  return db
+    .from('audit_logs').select('id, created_at, resource_id')
+    .eq('action', PERSON_NUDGE_ACTION).in('resource_id', keys)
+    .gte('created_at', since)
+    .order('created_at', { ascending: true }).order('id', { ascending: true });
+}
+
+/**
+ * Claims the next twelve hours of nudging for each of these people on this
+ * plan, and says who was nudged too recently.
+ *
+ * Fails open, like the minute: if the record cannot be read or written the
+ * nudge goes, uncounted, and it is logged. The minute still bounds a
+ * whole-group press when that happens.
+ */
+export async function claimPeople(
+  db: SupabaseClient,
+  planId: string,
+  byUserId: string,
+  recipientIds: string[],
+  now: Date = new Date(),
+): Promise<PeopleClaim> {
+  const people = [...new Set(recipientIds.filter(Boolean))];
+  if (!people.length) return { claimed: [], held: [] };
+  const uncounted = (ids: string[]) => ids.map(userId => ({ userId, claimId: null }));
+
+  const before = await recentPeople(db, people.map(id => personKey(planId, id)), now);
+  if (before.error) {
+    console.error('[nudge] could not read who was nudged lately — allowing', { planId, code: before.error.code });
+    return { claimed: uncounted(people), held: [] };
+  }
+  const already = firstByKey((before.data || []) as KeyedRow[]);
+  const held: PeopleClaim['held'] = [];
+  const candidates: string[] = [];
+  for (const userId of people) {
+    const row = already.get(personKey(planId, userId));
+    if (row) held.push({ userId, retryAfterSeconds: waitFrom(row, now) });
+    else candidates.push(userId);
+  }
+  if (!candidates.length) return { claimed: [], held };
+
+  const { data: mine, error: wrote } = await db
+    .from('audit_logs')
+    .insert(candidates.map(userId => ({
+      user_id: byUserId, action: PERSON_NUDGE_ACTION, resource: 'plans',
+      resource_id: personKey(planId, userId), success: true,
+      metadata: { plan: planId, to: userId },
+    })))
+    .select('id, resource_id');
+  if (wrote || !mine) {
+    console.error('[nudge] could not record who was nudged — allowing, uncounted', { planId, code: wrote?.code });
+    return { claimed: uncounted(candidates), held };
+  }
+  const myRow = new Map((mine as Array<{ id: string; resource_id: string }>).map(r => [r.resource_id, String(r.id)]));
+
+  const after = await recentPeople(db, candidates.map(id => personKey(planId, id)), now);
+  const winners = after.error ? null : firstByKey((after.data || []) as KeyedRow[]);
+  const claimed: PeopleClaim['claimed'] = [];
+  const lost: string[] = [];
+  for (const userId of candidates) {
+    const key = personKey(planId, userId);
+    const id = myRow.get(key) ?? null;
+    const first = winners?.get(key);
+    // Ours is the oldest, or we cannot tell: the nudge goes.
+    if (!first || String(first.id) === id) {
+      claimed.push({ userId, claimId: id });
+      continue;
+    }
+    // Somebody else's nudge for this person got there first.
+    held.push({ userId, retryAfterSeconds: waitFrom(first, now) });
+    if (id) lost.push(id);
+  }
+  // Taken back out, like the minute's: a refused claim left on the record
+  // would move this person's twelve hours along.
+  if (lost.length) {
+    const { error: undone } = await db.from('audit_logs').delete().in('id', lost);
+    if (undone) console.error('[nudge] could not take back refused claims', { planId, code: undone.code });
+  }
+  return { claimed, held };
+}
+
+/**
+ * Gives back the twelve hours for people the nudge never reached — no bell,
+ * no phone, the email failed — so they can be nudged again straight away.
+ */
+export async function releasePeople(db: SupabaseClient, claimIds: Array<string | null | undefined>): Promise<void> {
+  const ids = claimIds.filter((x): x is string => !!x);
+  if (!ids.length) return;
+  const { error } = await db.from('audit_logs').delete().in('id', ids);
+  if (error) console.error('[nudge] could not release nudges that reached nobody', { code: error.code });
+}
+
+/**
+ * When each of these people can next be nudged on this plan: an ISO time,
+ * or null when they can be now. For the faces, so a grey face somebody
+ * nudged this morning says so instead of offering a tap that will be
+ * refused. Null for everyone when the record cannot be read — the tap is
+ * still held to the limit by claimPeople.
+ */
+export async function nudgedUntil(
+  db: SupabaseClient, planId: string, userIds: string[], now: Date = new Date(),
+): Promise<Record<string, string | null>> {
+  const out: Record<string, string | null> = Object.fromEntries(userIds.map(id => [id, null]));
+  if (!userIds.length) return out;
+  const { data, error } = await recentPeople(db, userIds.map(id => personKey(planId, id)), now);
+  if (error) {
+    console.error('[nudge] could not read who was nudged lately', { planId, code: error.code });
+    return out;
+  }
+  const first = firstByKey((data || []) as KeyedRow[]);
+  for (const id of userIds) {
+    const row = first.get(personKey(planId, id));
+    if (row) out[id] = new Date(new Date(row.created_at).getTime() + PERSON_COOLDOWN_MS).toISOString();
+  }
+  return out;
 }
