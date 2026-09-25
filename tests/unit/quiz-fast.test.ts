@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { QUIZ_SCREENS, needsDone, onOptionPress, BLEND_WINDOW_MS } from '../../lib/quiz-screens.ts';
+import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter, BLEND_WINDOW_MS } from '../../lib/quiz-screens.ts';
 import { scoreQuiz } from '../../lib/traveler-profile.ts';
 
 /**
@@ -69,4 +69,39 @@ test('the quiz screen renders Done only where needsDone says, and says how long 
   assert.match(screen, /About a minute/);
   assert.match(screen, /\{step\+1\} of \{total\}/);
   assert.match(screen, /trackEvent\("quiz_completed",\{duration_ms:Date\.now\(\)-started\.current/);
+});
+
+// Hold "Asleep" on screen 5 to start a blend, then tap Skip inside the 1.5 s
+// window. Skip moved to screen 6; the blend's timer, still running, then
+// added one more — step 6, QUIZ_SCREENS[6] undefined, and the quiz crashed.
+// On screens 1 and 3 the same move jumped a whole screen.
+test('a blend timer that outlives its screen goes nowhere', () => {
+  const total = QUIZ_SCREENS.length;
+  const late = QUIZ_SCREENS.findIndex(s => s.id === 'late');
+  assert.equal(late, 4);
+  // Skip ran first: the person is on screen 6 when the timer fires.
+  assert.equal(stepAfter(late, late + 1, total), null, 'stale timer must not advance');
+  assert.equal(stepAfter(0, 1, total), null, 'screen 1 hold + Skip must not jump screen 2');
+  // Back ran first.
+  assert.equal(stepAfter(2, 1, total), null);
+  // A timer that fires on its own screen goes on, and the last one finishes.
+  assert.equal(stepAfter(late, late, total), late + 1);
+  assert.equal(stepAfter(total - 1, total - 1, total), 'finish');
+  // Never a step past the last screen, whatever it is handed.
+  for (let armed = 0; armed < total; armed++) for (let now = 0; now < total; now++) {
+    const to = stepAfter(armed, now, total);
+    assert.ok(to === null || to === 'finish' || (to >= 0 && to < total));
+  }
+});
+
+test('Skip and Back cancel a pending advance, and the timers carry the screen they were armed on', () => {
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  const skip = app.slice(app.indexOf('const skip=()=>{'), app.indexOf('const eatEverything=()=>{'));
+  assert.ok(skip.length > 0);
+  assert.match(skip, /cancelPending\(\)/, 'Skip must cancel the blend timer');
+  assert.match(app, /const cancelPending=\(\)=>\{clearTimeout\(advanceTimer\.current\);/);
+  assert.match(app, /onClick=\{\(\)=>\{cancelPending\(\);setStep\(n=>Math\.max\(0,n-1\)\);\}\} aria-label="Previous question"/);
+  assert.match(app, /setTimeout\(\(\)=>next\(final,sk,armedOn\),170\)/);
+  assert.match(app, /setTimeout\(\(\)=>next\(final,sk,armedOn\),BLEND_WINDOW_MS\)/);
+  assert.match(app, /const to=stepAfter\(from,stepNow\.current,total\);\s*if\(to===null\)return;/);
 });

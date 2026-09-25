@@ -23,7 +23,7 @@ import { picksFrom, seedFromPick } from "@/lib/contracts/trip-pick";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
-import { QUIZ_SCREENS, needsDone, onOptionPress, HOLD_MS, BLEND_WINDOW_MS } from "@/lib/quiz-screens";
+import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter, HOLD_MS, BLEND_WINDOW_MS } from "@/lib/quiz-screens";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
 import { quizFromMe, withinQuietPeriod } from "@/lib/contracts/traveler-profile";
@@ -4178,6 +4178,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
   const [error,setError]=useState(null);
   const started=useRef(Date.now());
   const advanceTimer=useRef(null);
+  // The screen on show now, for a timer armed on an earlier one (stepAfter).
+  const stepNow=useRef(step);
+  stepNow.current=step;
   // A hold starts a blend; taps within the window add to it; then it goes
   // on (lib/quiz-screens.ts). A single tap is the answer and goes on.
   const holdTimer=useRef(null);
@@ -4238,11 +4241,16 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
     if(onSaved)onSaved();
   };
 
-  const next=(final=answers,skippedNow=skipped)=>{
+  // `from` is the screen this was armed on. A timer that fires after Skip
+  // or Back has moved on goes nowhere (lib/quiz-screens.ts stepAfter).
+  const next=(final=answers,skippedNow=skipped,from=step)=>{
+    const to=stepAfter(from,stepNow.current,total);
+    if(to===null)return;
     setBlending(false);
-    if(step<total-1)setStep(n=>n+1);
-    else finish(final,skippedNow);
+    if(to==="finish")finish(final,skippedNow);
+    else setStep(to);
   };
+  const cancelPending=()=>{clearTimeout(advanceTimer.current);clearTimeout(holdTimer.current);setBlending(false);};
 
   const press=(v,how)=>{
     const r=onOptionPress({picked:answers[s.field]||[],blending},v,how);
@@ -4251,8 +4259,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
     const sk=new Set(skipped);sk.delete(s.id);setSkipped(sk);
     clearTimeout(advanceTimer.current);
     // A beat to see the tap land, then on. No "Next" on a single choice.
-    if(r.advance==="now"){setBlending(false);advanceTimer.current=setTimeout(()=>next(final,sk),170);}
-    else{setBlending(true);advanceTimer.current=setTimeout(()=>next(final,sk),BLEND_WINDOW_MS);}
+    const armedOn=step;
+    if(r.advance==="now"){setBlending(false);advanceTimer.current=setTimeout(()=>next(final,sk,armedOn),170);}
+    else{setBlending(true);advanceTimer.current=setTimeout(()=>next(final,sk,armedOn),BLEND_WINDOW_MS);}
   };
   const pressProps=v=>({
     onPointerDown:()=>{held.current=false;clearTimeout(holdTimer.current);
@@ -4267,6 +4276,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
     return {...a,[field]:have.includes(v)?have.filter(x=>x!==v):[...have,v]};
   });
   const skip=()=>{
+    // A blend still running on this screen must not fire after Skip has
+    // moved on — it would add a second step (a screen jumped, or a crash).
+    cancelPending();
     trackEvent("quiz_screen_skipped",{screen:s.id});
     const sk=new Set(skipped);sk.add(s.id);setSkipped(sk);
     next(answers,sk);
@@ -4299,7 +4311,7 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
       <div style={{padding:"12px 16px 6px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:12.5}}>
           {step>0
-            ?<button onClick={()=>{clearTimeout(advanceTimer.current);setBlending(false);setStep(n=>Math.max(0,n-1));}} aria-label="Previous question"
+            ?<button onClick={()=>{cancelPending();setStep(n=>Math.max(0,n-1));}} aria-label="Previous question"
                 style={{background:"none",border:"none",color:C.t2,cursor:"pointer",fontSize:13,padding:"4px 0"}}>← Back</button>
             :required
               ?<span style={{color:C.t2,fontWeight:600}}>About a minute</span>

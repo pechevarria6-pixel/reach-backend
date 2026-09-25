@@ -104,3 +104,18 @@ export function onOptionPress(state: TapState, v: string, how: 'tap' | 'hold'): 
   const picked = how === 'tap' && base.includes(v) ? base.filter(x => x !== v) : base.includes(v) ? base : [...base, v];
   return { picked, advance: 'after-window' };
 }
+
+/**
+ * Where a pending advance goes: the screen after the one it was armed on,
+ * "finish" after the last, or nowhere when the person has already left that
+ * screen. A blend arms a 1.5 s timer; Skip or Back inside that window used to
+ * leave it running, and when it fired it added one to wherever they had got
+ * to — a screen jumped over, or, from screen 5, a step past the last screen
+ * and a crash. Skip and Back cancel the timer, and this is the second lock:
+ * a timer that outlived its screen does nothing.
+ */
+export function stepAfter(armedOn: number, current: number, total: number): number | 'finish' | null {
+  if (armedOn !== current) return null;
+  if (current < 0 || current >= total) return null;
+  return current < total - 1 ? current + 1 : 'finish';
+}
