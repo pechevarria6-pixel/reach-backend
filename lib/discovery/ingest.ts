@@ -156,7 +156,7 @@ export interface VenueRow {
   harvest_status?: 'skip';
 }
 
-export type Skip = 'no_name' | 'no_website' | 'no_point' | 'not_a_kind' | 'cannot_turn_up' | 'no_id';
+export type Skip = 'no_name' | 'no_website' | 'no_point' | 'not_a_kind' | 'cannot_turn_up' | 'no_id' | 'name_is_address';
 
 /**
  * The rows one mapped feature becomes, or why it becomes none.
@@ -182,6 +182,10 @@ export function rowsFor(
   // no website is a place we cannot send anybody to.
   const name = (tags.name || '').trim();
   if (!name) return { skip: 'no_name' };
+  // A web address in the name tag is where the place lives online, not what
+  // it is called — "https://www.japygolfresort.com.br/" went out as a venue's
+  // name. "Klbackpacker.com" is somebody's actual name and stays.
+  if (/^(https?:\/\/|www\.)/i.test(name)) return { skip: 'name_is_address' };
   const site = websiteOf(tags);
   if (!site) return { skip: 'no_website' };
 

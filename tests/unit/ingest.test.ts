@@ -118,6 +118,15 @@ test('a place far from every seed is written: the region is read whole', () => {
   assert.equal(out.rows[0].region, REGION);
 });
 
+test('a web address in the name tag is not a name', () => {
+  for (const name of ['https://www.japygolfresort.com.br/', 'www.victoires.com']) {
+    const out = rowsFor(feature(6, { name, amenity: 'restaurant', website: 'https://r.example' }), REGION, SEEN);
+    assert.deepEqual(out, { skip: 'name_is_address' });
+  }
+  const real = rowsFor(feature(7, { name: 'Klbackpacker.com', tourism: 'hostel', website: 'https://k.example' }), REGION, SEEN);
+  assert.ok(!('skip' in real), JSON.stringify(real));
+});
+
 test('a caterer carries the tag and is still not a night out', () => {
   const out = rowsFor(feature(5, { name: 'Party Caterers', amenity: 'restaurant', website: 'https://c.example' }), REGION, SEEN);
   assert.deepEqual(out, { skip: 'cannot_turn_up' });
