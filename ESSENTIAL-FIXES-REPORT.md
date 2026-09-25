@@ -1,12 +1,12 @@
 # Essential fixes: report (2026-09-24)
 
 Spec: `REACH-ESSENTIAL-FIXES-2026-09-24.md`. Branch `fix/essential-2026-09-24`, worktree
-`.claude/worktrees/essential`, cut from `main` at cfc8b9b. One commit per fix, each made with
+`.claude/worktrees/essential`, cut from `main` at cfc8b9b, since rebased onto `main` at 803cc20. One commit per fix, each made with
 `npm run verify && git commit`. Every new test and guard was planted back and seen to fail, then restored.
 No SQL migrations. Nothing was written to the production database: the only live access was one
 read-only trial run of `npm run coverage`.
 
-## Fix 1: group plans no longer stall on one member (commit 2cc6d67)
+## Fix 1: group plans no longer stall on one member (commit 1c2572a)
 
 **What I found**
 - There is a per-trip quiz for groups. The organiser answers `TripQuiz` when starting a group trip, and every
@@ -48,7 +48,7 @@ read-only trial run of `npm run coverage`.
 - The wait screen offers the button only to the organiser.
 - Five planted bugs, each caught.
 
-## Fix 2: the quiz stays fast (commit cf452ab)
+## Fix 2: the quiz stays fast (commit 854ac97)
 
 **What I found:** all six screens needed a Done tap. Screens 1, 3, 4 and 5 were `blend:true` pick-any screens with
 Done, screen 2 has Done, and screen 6 has Done or "Nothing — I eat everything". The header already showed
@@ -71,7 +71,7 @@ Done, screen 2 has Done, and screen 6 has Done or "Nothing — I eat everything"
   `duration_ms`.
 - Four planted bugs, each caught.
 
-## Fix 3: stop promising what the data can't show (commit b5fc11f)
+## Fix 3: stop promising what the data can't show (commit 4e9ff73)
 
 **What I found:** nothing in discovery records when a place opened. Scout ranking only matches words like "new" in
 titles (`CHASES.scout`), so Discover cannot surface recent openings. Food trucks can never appear, because the
@@ -91,7 +91,7 @@ name-and-website rule in `lib/discovery/ingest.ts` excludes them.
 - `tests/unit/scout-copy.test.ts` pins the new labels, checks that scores are unchanged and that the guard holds the
   phrases.
 
-## Fix 4: no input that goes nowhere (commit 8e54804)
+## Fix 4: no input that goes nowhere (commit ed033f1)
 
 **a) "Anything you're weirdly into?"**
 - **Found:** that wording is not in the codebase. The question it describes is the `free_interests` drip, an id in
@@ -133,7 +133,7 @@ name-and-website rule in `lib/discovery/ingest.ts` excludes them.
   Planted in the plan screen, it fires.
 - Seven planted bugs, each caught.
 
-## Fix 5: beta coverage report (commit f1005e5)
+## Fix 5: beta coverage report (commit 5b56295)
 
 **What changed**
 - `npm run coverage` runs `scripts/coverage.mjs`. It is read-only, uses `.env.local`, always exits 0, and is not part of
@@ -160,6 +160,40 @@ name-and-website rule in `lib/discovery/ingest.ts` excludes them.
 - It also checks the towns file, the table, the exit code, that the script is read-only, and that it is not in verify.
 - Four planted bugs, each caught.
 
+## Review fixes
+
+A review of the five fixes found six defects. Each is fixed in its own commit with a test that was planted back and
+seen to fail, then restored.
+
+- **R1: Skip during a blend skipped a screen or crashed the quiz (330ccf4).** Holding an option armed the 1.5 s blend
+  timer; Skip moved on without cancelling it, and the timer then added one more step. From screen 5 that went to
+  step 6, which does not exist, and the quiz crashed; from screens 1 and 3 a screen was jumped. Skip now cancels
+  pending timers as Back does, and each timer carries the screen it was armed on (`stepAfter` in
+  `lib/quiz-screens.ts`), so a stale one does nothing. Tests in `tests/unit/quiz-fast.test.ts`.
+- **R2: the go-ahead was recorded before anything was built (3b101f9).** The `planned_with_answered` row was written
+  before the rate limit and the model call, so a 429 or a failed generation still marked the trip as gone ahead, and
+  "Everyone's in" was then never sent. The row is now written after the model has returned, just before the ideas
+  are saved, and removed if somebody else's ideas landed first. The go-ahead now applies to the ideas only, never to a
+  days request. Tests in `tests/unit/go-ahead.test.ts`.
+- **R3: a go-ahead with nobody answered stalled every idea's days (fb6c245).** After 48 hours the button opened on
+  age alone, so a trip whose organiser's own answers failed to save built ideas from no one's wishes. Then
+  `planReadiness` only read the go-ahead row when its lenient `allReady` was false (with nobody asked it is true),
+  and every idea's days got a 409. `mayGoAhead` now needs at least one answer, the wait screen imports that rule
+  instead of keeping its own copy, and `planReadiness` reads the row unless everybody has actually answered.
+- **R4: the organiser's wait contradicted its own button (dc5c769).** The organiser still read "Nothing gets picked on
+  one person's say-so" above "Plan with who's answered". The organiser's heading is now the count ("3 of 4 have
+  answered.", said once, no longer repeated in the list), and the body says what is true from where they stand
+  (`organiserWaitCopy` in `lib/group-answers.ts`). Members' copy is unchanged.
+- **R5: two screen-4 answers read the same, and the reveal was crossed (a170e2e).** "Locals' favorite" (novelty 50,
+  no Scout points) sat next to "The spot only locals know" (novelty 95, the most Scout points). The reveal told the
+  locals-know answer "Nobody's heard of it" and the never-heard-of answer "Off the beaten path". See Needs owner for
+  the new wording. Stored values and scores are unchanged. Tests in `tests/unit/scout-copy.test.ts`.
+- **R6: a restored draft kept a hidden weather no-go (e299d7e).** A create-plan draft saved before the chips were
+  hidden restored "Cold weather". The person could not see it or take it off, and it was posted to
+  `/api/recommendations`, whose trip and weekend briefs wrote "Avoid: Cold weather" as a rule. The draft now restores
+  only no-gos the screen offers, and the briefs split vetoes as the trip generator does (`avoidLine` in
+  `lib/recommendation-schema.ts`). Tests in `tests/unit/no-input-nowhere.test.ts`.
+
 ## Needs owner
 
 - **Per-trip quiz for groups exists** (TripQuiz, `planPrefs`, `plan_preferences`). This contradicts the 18 Sep "no quiz at trip
@@ -169,7 +203,12 @@ name-and-website rule in `lib/discovery/ingest.ts` excludes them.
 - **Members' wait copy was left unchanged, as the spec asked, and it is now not strictly true.** It says "we wait until everyone has answered.
   Nothing gets picked on one person's say-so". The step-0 panel, the finish note and the answer email all say trips
   are only found once everyone has answered. After 48 hours the organiser can go ahead on their own answers. This
-  needs new wording.
+  needs new wording. (The organiser's own screen no longer says it: see review fix R4.)
+- **Screen 4 wording (review fix R5).** To keep your two wordings ("The spot only locals know", "Somewhere I've never
+  heard of") and still have four answers a person can tell apart, "Locals' favorite" became "The neighborhood
+  favorite", and the Finds dial stops became Neighborhood favorites / Somewhere new to you / Local secrets. The
+  truck's 🚚 became 🤫. These are my words, not yours: replace them if you prefer others. The new test only requires
+  that no two answers share their distinguishing word and that each reveal stop matches its answer.
 - Someone who answers after the organiser went ahead does not shape the ideas already built, and the answer screen does not
   tell them. Decide what they should see.
 - When the organiser goes ahead, members who have not answered keep their **dietary needs, hard nos and not-drinking** as constraints, but their
@@ -190,8 +229,7 @@ name-and-website rule in `lib/discovery/ingest.ts` excludes them.
 - The spec's wording "Anything you're weirdly into?" is not in the code. I gated `free_interests`, which is the
   matching drip. Confirm that is the question you meant.
 - **Not pushed.** The spec says to push to main if verify is green. The orchestrator said not to push or merge because it merges after
-  review. The branch is ready to merge: a trial merge with current `main` (803cc20) is clean and passes verify, 1302 of
-  1302 tests.
+  review. The branch is rebased onto current `main` (803cc20).
 - From the spec, already known:
   - Add "Custody model pending legal review; Stripe stays in test mode until resolved." to the brief.
   - Fill `scripts/beta-towns.txt` with each tester's home city, then run `npm run coverage`.
@@ -200,4 +238,4 @@ name-and-website rule in `lib/discovery/ingest.ts` excludes them.
 
 ## Final verify
 
-`npm run verify` on `fix/essential-2026-09-24`: PASS, exit 0, all checks green, 1169 of 1169 unit tests pass.
+`npm run verify` on `fix/essential-2026-09-24` (rebased onto main 803cc20, all six review fixes in): PASS, exit 0, all checks green, 1311 of 1311 unit tests pass.
