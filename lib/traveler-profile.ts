@@ -384,7 +384,11 @@ export function dialsSetBy(answers: QuizAnswers | null | undefined): DialKey[] {
 
 export const DIAL_COPY: Record<DialKey, { label: string; stops: [number, string][] }> = {
   pace: { label: 'Pace', stops: [[0, 'Wing it'], [25, 'Loose outline'], [50, 'Daily plan'], [75, 'Morning to night'], [100, 'Every hour']] },
-  novelty: { label: 'Finds', stops: [[15, 'Tried-and-true'], [50, "Locals' spots"], [80, 'Off the beaten path'], [95, "Nobody's heard of it"]] },
+  // Each stop is said in the words of the screen-4 answer that lands on it:
+  // "Nobody's heard of it" at 95 told whoever picked "The spot only locals
+  // know" that nobody knows it, and "Somewhere I've never heard of" got
+  // "Off the beaten path" — each reveal describing the other answer.
+  novelty: { label: 'Finds', stops: [[15, 'Tried-and-true'], [50, 'Neighborhood favorites'], [80, 'Somewhere new to you'], [95, 'Local secrets']] },
   energy: { label: 'Nights', stops: [[15, 'Early night'], [45, 'One more drink'], [75, 'Next spot'], [95, 'Sunrise']] },
   crowd: { label: 'Crowd', stops: [[20, 'Small table'], [50, 'Buzzy room'], [80, 'Live show'], [95, 'Packed stadium']] },
 };

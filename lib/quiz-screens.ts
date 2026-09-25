@@ -18,6 +18,11 @@
 // "Opened last month" promised both. The stored values ("truck", "new") and
 // their scores are unchanged, so answers already given still score.
 //
+// "The spot only locals know" then sat under "Locals' favorite": two answers
+// a person cannot tell apart, one worth nothing and the other the most Scout
+// points on the screen. The middle answer is the neighborhood favorite, so
+// "locals" belongs to one option only, and the truck's 🚚 went with its words.
+//
 // The screen shape and the tap rules live here rather than in the component
 // so a scripted run can be tested without a browser.
 
@@ -54,9 +59,9 @@ export const QUIZ_SCREENS: QuizScreen[] = [
   ]},
   {id:"restaurant",field:"restaurant",blend:true,title:"Pick the restaurant.",sub:"Tap one. Hold to pick more.",options:[
     {v:"famous",e:"⭐",l:"5,000 reviews, can't miss"},
-    {v:"locals",e:"🏠",l:"Locals' favorite"},
+    {v:"locals",e:"🏠",l:"The neighborhood favorite"},
     {v:"new",e:"✨",l:"Somewhere I've never heard of"},
-    {v:"truck",e:"🚚",l:"The spot only locals know"},
+    {v:"truck",e:"🤫",l:"The spot only locals know"},
   ]},
   {id:"late",field:"late",blend:true,title:"It's 11pm on the trip. You're…",sub:"Tap one. Hold to pick more.",options:[
     {v:"asleep",e:"😴",l:"Asleep"},
