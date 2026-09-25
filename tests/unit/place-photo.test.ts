@@ -548,3 +548,18 @@ test('the nightly job is scheduled once a day, and is gated like the other jobs'
   assert.match(job!.schedule, /^\d+ \d+ \* \* \*$/, 'Hobby runs a cron once a day; anything more frequent is rejected silently');
   assert.match(read('app/api/discovery/photos/route.ts'), /CRON_SECRET/);
 });
+
+test('a place on the reject list never gets a Wikimedia photo, and loses one it had', async () => {
+  const { PHOTO_DENIED } = await import('../../lib/discovery/photo-job.ts');
+  assert.ok(PHOTO_DENIED['way/28992713'], 'AMC Southpoint 17 is on the list, with its reason');
+  const wiki = fakeWikimedia(
+    { Q43093095: { file: 'Fountain at Southpoint Mall Durham, NC.jpg', label: 'AMC Southpoint 17', lat: 35.90, lng: -78.94 } },
+    { 'Fountain at Southpoint Mall Durham, NC.jpg': { artist: 'Someone', licence: 'CC BY-SA 4.0' } });
+  const { db, updates } = jobDb([
+    { osm_type: 'way', osm_id: 28992713, osm_tags: { wikidata: 'Q43093095' }, image_source: 'wikimedia', name: 'AMC Southpoint 17', lat: 35.90, lng: -78.94, city: 'Durham' },
+  ]);
+  const run = await resolvePhotos(db, { fetchImpl: wiki.impl, now: new Date('2026-09-24T05:15:00Z') });
+  assert.equal(run.stored, 0);
+  const u = updates.find(x => x.where.osm_id === 28992713)!;
+  assert.equal(u.change.image_url, null, 'the wrong photo it had is taken off');
+});

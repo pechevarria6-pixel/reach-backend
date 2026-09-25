@@ -14,6 +14,18 @@ import { venuePhotos, photoRefsOf, type Asked, type PlacePhoto } from './place-p
 
 /** Places looked at per run. A few requests to Wikimedia per fifty. */
 export const PHOTO_PER_RUN = 300;
+
+/**
+ * Places whose map entry points at a picture that is not of them, found by
+ * looking at what the job stored. Each is never given a Wikimedia photo, and
+ * one it has is taken off. Keyed osm_type/osm_id, with why — a place is only
+ * ever here because somebody looked at the picture.
+ */
+export const PHOTO_DENIED: Record<string, string> = {
+  'node/445403900': 'Silvia Monfort (Paris): the item\'s image is a portrait, not the theatre',
+  'way/28992713': 'AMC Southpoint 17: the photo is the mall\'s fountain, not the cinema',
+  'node/13418749009': 'Fred Astaire Dance Studios: tagged with the chain\'s item, whose photo is another branch',
+};
 /** How long an answer stands before the entry is asked about again. */
 export const PHOTO_FRESH_DAYS = 30;
 export const PHOTO_SQL = 'sql/place-photos-2026-09-24.sql';
@@ -105,7 +117,8 @@ export async function resolvePhotos(
     if (places.size >= limit && !seen) break;
   }
   run.read = places.size;
-  const usable = [...places.entries()].filter(([, r]) => {
+  const usable = [...places.entries()].filter(([key, r]) => {
+    if (PHOTO_DENIED[key]) return false;
     const refs = photoRefsOf(r.osm_tags);
     return refs.wikidata || refs.file;
   });
