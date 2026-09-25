@@ -529,6 +529,11 @@ export async function ingestRegion(input: {
     runId = run.data?.[0]?.id ?? null;
   }
 
+  // Anything that throws from here on — osmium dying half way, a row the
+  // code did not expect — still says so on the run row. Italy's centre and
+  // Russia's central district stopped on 2026-09-25 with their rows reading
+  // "running" for good and the reason only in a log nobody can read later.
+  try {
   // 2. What the download holds, written as it is read.
   //
   // A whole region is tens of thousands of places (England is the largest),
@@ -633,6 +638,18 @@ export async function ingestRegion(input: {
     }
   } else if (db && report.failed) {
     log(`  retiring nothing: ${report.failed} rows did not store`);
+  }
+
+  } catch (e) {
+    if (db && runId) {
+      const why = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      const { error } = await db.patch(`ingest_runs?id=eq.${enc(runId)}`, {
+        finished_at: new Date().toISOString(), status: 'failed',
+        kept: report.kept, written: report.written, detail: `stopped part way: ${why}`.slice(0, 2000),
+      });
+      if (error) console.error('[ingest] could not record why the run stopped', describe(error));
+    }
+    throw e;
   }
 
   // 4. How it went.
