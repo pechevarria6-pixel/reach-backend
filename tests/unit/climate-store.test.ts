@@ -6,6 +6,8 @@ import { readFileSync } from 'node:fs';
 import { readClimate, pickClimateRow, normalsFromRow, sameCountry, climateNotReady, climateFor } from '../../lib/climate-store.ts';
 import { climatePlaces, countryOf, isStale, climateKey } from '../../lib/climate-places.ts';
 import { fetchPower as fetchPowerJs } from '../../scripts/ingest/climate.mjs';
+// These test the enforcement, which is switched off for the beta (lib/weather-no-go.ts).
+process.env.REACH_TEST_CLIMATE_CHECKS = '1';
 
 // The script is plain JavaScript; its fetcher is typed as the real fetch, and
 // these fakes answer only what it reads.

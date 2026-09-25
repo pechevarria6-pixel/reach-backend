@@ -32,6 +32,18 @@
 // Pure: no database, no network. The reader is lib/climate-store.ts, the
 // loader scripts/ingest/climate.mjs.
 
+import { CLIMATE_CHECKS_ENABLED } from './weather-no-go.ts';
+
+/**
+ * Whether the cold and heat no-gos are enforced. The switch itself is
+ * CLIMATE_CHECKS_ENABLED (lib/weather-no-go.ts), which the screens read too.
+ * REACH_TEST_CLIMATE_CHECKS exists only so the enforcement's own tests can
+ * run while the switch is off; nothing in the app sets it.
+ */
+export function climateChecksOn(): boolean {
+  return CLIMATE_CHECKS_ENABLED || process.env.REACH_TEST_CLIMATE_CHECKS === '1';
+}
+
 export const CLIMATE_SOURCE = 'NASA POWER';
 export const CLIMATE_SOURCE_URL = 'https://power.larc.nasa.gov';
 /** What POWER asks to be cited as. */
@@ -597,7 +609,12 @@ export function isWeatherVeto(v: unknown): boolean {
 }
 
 /** Which weather no-gos are among these vetoes. */
-export function climateVetoes(vetoes: unknown[]): { cold: boolean; heat: boolean } {
+export function climateVetoes(vetoes: unknown[], enabled: boolean = climateChecksOn()): { cold: boolean; heat: boolean } {
+  // Owner's call for the beta (2026-09-24): the averages are shown, the
+  // cold and heat no-gos are not enforced. Off, nobody has asked for one as
+  // far as this module is concerned — nothing is dropped, flagged or said to
+  // have passed — and the plan screen's "We can't check weather yet" stands.
+  if (!enabled) return { cold: false, heat: false };
   const keys = (vetoes || []).map(vetoKey);
   return { cold: keys.some(k => COLD_VETO.test(k)), heat: keys.some(k => HEAT_VETO.test(k)) };
 }
@@ -609,8 +626,9 @@ export function climateVetoes(vetoes: unknown[]): { cold: boolean; heat: boolean
  */
 export function climateBreach(
   c: TripClimate | null, vetoes: unknown[],
+  enabled: boolean = climateChecksOn(),
 ): { veto: 'coldWeather' | 'extremeHeat' | null; checked: boolean; asked: boolean } {
-  const want = climateVetoes(vetoes);
+  const want = climateVetoes(vetoes, enabled);
   const asked = want.cold || want.heat;
   if (!asked || !c) return { veto: null, checked: false, asked };
   const cold = coldness(c);

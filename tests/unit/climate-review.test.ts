@@ -11,6 +11,8 @@ import {
 import { ideaClimateNow, climateForScreen, ideasWithClimateNow, pickClimateRow } from '../../lib/climate-store.ts';
 import { ideaClimateFrom } from '../../lib/contracts/idea-climate.ts';
 import { vetoBreach, tripBreach } from '../../lib/vetoes.ts';
+// These test the enforcement, which is switched off for the beta (lib/weather-no-go.ts).
+process.env.REACH_TEST_CLIMATE_CHECKS = '1';
 
 const raw = (f: string) => JSON.parse(readFileSync(new URL(`./fixtures/climate/${f}.json`, import.meta.url), 'utf8'));
 function place(f: string, name: string, country: string): ClimateNormals {
