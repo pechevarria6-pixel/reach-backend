@@ -14,6 +14,7 @@ import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild } from "@/lib/itinerary-rebuild";
 import { ticketSources } from "@/lib/tickets";
 import { findLinks } from "@/lib/find-links";
+import { pollWhileVisible } from "@/lib/poll";
 import { byDay, dearestDay } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
@@ -683,14 +684,17 @@ function NotificationsBell(){
   const load=async()=>{
     try{
       const r=await fetch("/api/notifications");
+      // Signed out (or the session lapsed in an old tab): nobody to ask for.
+      if(r.status===401)return "stop";
       if(r.ok)setData(await r.json());
     }catch(e){console.error("[bell] could not load",e);}
   };
   useEffect(()=>{
-    load();
-    const t=setInterval(load,60000);
+    // Once a minute while the page is on screen, never two at once, and not
+    // at all after a 401 (lib/poll.ts).
+    const stop=pollWhileVisible(load,60000);
     pushState().then(setPush).catch(()=>setPush("unsupported"));
-    return()=>clearInterval(t);
+    return stop;
   },[]);
   const openBell=async()=>{
     setOpen(true);
@@ -6407,11 +6411,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
   };
   // Live while it is open: somebody else's vote, and the days of each idea
   // as they are written, arrive without anybody having to come back.
-  useEffect(()=>{
-    load();
-    const t=setInterval(load,15000);
-    return()=>clearInterval(t);
-  },[planId,rev]);
+  useEffect(()=>pollWhileVisible(load,15000),[planId,rev]);
   // Picked while this was open — by the poll, or by a bell tapped on a phone
   // that loaded before the pick. The rest of the app still has the trip as
   // undecided, so it is brought up to date once, here.
@@ -6738,10 +6738,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // Load quiz completion status for all members
   useEffect(()=>{
     if(!group)return;
-    loadMemberStatus();
-    // Poll every 15 seconds so status updates live
-    const interval=setInterval(loadMemberStatus,15000);
-    return()=>clearInterval(interval);
+    // Live while it is on screen: every 15 seconds, paused in a hidden tab.
+    return pollWhileVisible(loadMemberStatus,15000);
   },[groupId]);
 
   const loadMemberStatus=async()=>{
@@ -6774,9 +6772,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // opens the button without anybody having to come back.
   useEffect(()=>{
     if(step!=="wait"||!waitPlanId)return;
-    loadAnswered(waitPlanId);
-    const t=setInterval(()=>loadAnswered(waitPlanId),15000);
-    return()=>clearInterval(t);
+    return pollWhileVisible(()=>loadAnswered(waitPlanId),15000);
   },[step,waitPlanId]);
 
   const membersList=Object.values(memberStatus);
@@ -9381,8 +9377,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // runs only on some renders is a crash waiting for a slow load.
   useEffect(()=>{
     if(atab!=="vote"||!refreshGroup||isTempId(groupId))return;
-    const id=setInterval(()=>refreshGroup(groupId),12000);
-    return()=>clearInterval(id);
+    return pollWhileVisible(()=>refreshGroup(groupId),12000);
   },[atab,groupId]);
 
   if(!plan||!group)return <NotLoaded what={group?"This plan":"This group"} onBack={onBack}/>;
