@@ -24,10 +24,22 @@
 -- Probed 2026-09-25: user_taste_profile and signals both answer PGRST205.
 --
 -- Hard limits, enforced by what the view selects rather than by a promise:
---   * Travel and leisure only. users.dietary_needs is NOT in the view — it
---     stays exactly as the person typed it, read at the moment it is needed,
---     and is never copied into an inferred profile, so nothing can be
---     inferred from it.
+--   * Travel and leisure only. Nothing the quiz marks PRIVATE is in the
+--     view (lib/traveler-profile.ts, QuizAnswers): not users.dietary_needs,
+--     and not the copies of it and its neighbours that live inside the
+--     quiz answers — quiz_answers.dietary, eat_everything, dislikes,
+--     no_way_text and free_interests are removed from users.quiz_answers
+--     and from plan_preferences.answers by key. users.no_way_jose is left
+--     out too, because the typed hard no is appended to it verbatim. They
+--     stay where the person put them, read at the moment they are needed.
+--   * No free text at all: users.trip_summary and plan_preferences
+--     .summary_text are left out. A sentence somebody typed can say
+--     anything ("I'm coeliac"), and this view's limits are enforced by what
+--     it selects, which cannot be done on a sentence. Discover and trip
+--     generation read those columns live, as they do today.
+--   * Nobody who has asked to be deleted. deletion_scheduled_at is checked
+--     once, around the whole view, so a new branch cannot forget it and the
+--     distill cannot rebuild a profile during the grace period.
 --   * No name, email, phone, date of birth, gender, passport, KTN or
 --     payment detail. No coordinates: places are city names.
 --   * Never shown to the person or to other members. Nothing under
@@ -39,6 +51,9 @@
 -- scheduled (deletion_requests); the taste-profile builder adds the explicit
 -- delete to the deletion path rather than waiting on a worker that does not
 -- exist yet.
+-- Between the request and the purge the user row still exists, which is why
+-- the view filters on deletion_scheduled_at: otherwise the next distill
+-- would read their votes and bookings and write the profile back.
 
 -- ── The profile ─────────────────────────────────────────────────────────
 
@@ -86,12 +101,16 @@ comment on table public.taste_profile_ids is
 -- change without a migration.
 
 create or replace view public.v_taste_signals as
+select s.*
+  from (
   -- What they said about themselves (the quiz and Profile), one row each.
+  -- The quiz answers go in minus every key the quiz marks PRIVATE.
   select u.id as user_id, 'declared'::text as source, 'profile'::text as kind,
          null::text as ref, null::uuid as plan_id, null::uuid as group_id,
          jsonb_strip_nulls(jsonb_build_object(
            'quiz_version', u.quiz_version,
-           'quiz_answers', u.quiz_answers,
+           'quiz_answers', u.quiz_answers
+                             - array['dietary', 'eat_everything', 'dislikes', 'no_way_text', 'free_interests'],
            'traveler_profile', u.traveler_profile,
            'favorite_activities', to_jsonb(u.favorite_activities),
            'activity_vibe', to_jsonb(u.activity_vibe),
@@ -101,19 +120,16 @@ create or replace view public.v_taste_signals as
            'dining_vibe', u.dining_vibe,
            'drink_style', u.drink_style,
            'nightlife_style', u.nightlife_style,
-           'no_way_jose', to_jsonb(u.no_way_jose),
            'budget_range', u.budget_range,
            'travel_style', u.travel_style,
            'trip_frequency', u.trip_frequency,
            'climate_preference', u.climate_preference,
            'seat_preference', u.seat_preference,
            'home_city', u.home_city,
-           'home_airport', u.home_airport,
-           'trip_summary', u.trip_summary
+           'home_airport', u.home_airport
          )) as detail,
          coalesce(u.updated_at, u.created_at) as at
     from public.users u
-   where u.deletion_scheduled_at is null
 union all
   -- "Already done it" / "Not for me" on Discover.
   select f.user_id, 'behavioural', 'feedback_' || f.verdict,
@@ -140,9 +156,12 @@ union all
     from public.item_optouts o
     join public.plans p on p.id = o.plan_id
 union all
-  -- What they asked of a particular trip.
+  -- What they asked of a particular trip: the per-trip quiz answers, minus
+  -- the same PRIVATE keys. summary_text is free text and is not here.
   select pp.user_id, 'declared', 'trip_input', null, pp.plan_id, p.group_id,
-         jsonb_strip_nulls(jsonb_build_object('answers', pp.answers, 'summary', pp.summary_text)),
+         jsonb_strip_nulls(jsonb_build_object(
+           'answers', pp.answers
+                        - array['dietary', 'eat_everything', 'dislikes', 'no_way_text', 'free_interests'])),
          coalesce(pp.submitted_at, pp.updated_at)
     from public.plan_preferences pp
     join public.plans p on p.id = pp.plan_id
@@ -156,9 +175,18 @@ union all
     from public.availability_windows a
     join public.plans p on p.id = a.plan_id
 union all
-  -- What was actually booked, for everybody on that trip. bookings.plan_id
+  -- What was actually booked, for everybody who was on that trip. bookings.plan_id
   -- is text; only a well-formed uuid is joined, inside the CASE so a stray
   -- value can never fail the cast. City and country only — never a point.
+  -- Not everybody in the group today was on it:
+  --   * somebody who pressed "Skip this one" on this booking did not go, so
+  --     it is their skip row, not a booked row (item_optouts.item_ref is
+  --     bookings.id as text);
+  --   * somebody who joined the group after the trip ended was not there.
+  --     The day after the end date is allowed, because joined_at is UTC and
+  --     the trip's dates are local. A trip with no dates is measured against
+  --     the day it was booked. An unknown joined_at proves nothing and is
+  --     left out (the comparison is null).
   select gm.user_id, 'behavioural', 'booked', b.vertical, p.id, p.group_id,
          jsonb_strip_nulls(jsonb_build_object(
            'vertical', b.vertical, 'plan_type', p.type,
@@ -171,6 +199,12 @@ union all
                       then b.plan_id::uuid end)
     join public.group_members gm on gm.group_id = p.group_id
    where b.status = 'confirmed'
+     and gm.joined_at::date <= coalesce(p.end_date, p.start_date, b.created_at::date) + 1
+     and not exists (
+           select 1 from public.item_optouts o
+            where o.plan_id = p.id
+              and o.item_ref = b.id::text
+              and o.user_id = gm.user_id)
 union all
   -- Moments recorded as events: a swap (what replaced what), a Discover
   -- dismissal, a quiz dial moved by hand, a trip created (its budget), a
@@ -181,10 +215,13 @@ union all
     from public.events e
    where e.user_id is not null
      and e.name in ('itinerary_item_swapped', 'recommendation_dismissed', 'quiz_dial_adjusted',
-                    'plan_created', 'next_trip_started_from_close');
+                    'plan_created', 'next_trip_started_from_close')
+  ) s
+  -- One filter for every branch: nobody who has asked to be deleted.
+  join public.users du on du.id = s.user_id and du.deletion_scheduled_at is null;
 
 comment on view public.v_taste_signals is
-  'Every taste signal Reach already holds, one row each, for the distill in lib/taste-profile.ts. Service role only. Excludes dietary_needs and all contact, identity and payment fields on purpose.';
+  'Every taste signal Reach already holds, one row each, for the distill in lib/taste-profile.ts. Service role only. Excludes dietary_needs and every PRIVATE quiz key, all free text, all contact, identity and payment fields, and anybody scheduled for deletion, on purpose.';
 
 -- ── The ops read ────────────────────────────────────────────────────────
 
