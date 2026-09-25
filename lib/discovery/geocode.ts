@@ -50,9 +50,31 @@ export interface Located {
   countryCode?: string | null;
   /** ISO 3166-2 ("US-NC", "GB-SCT"), when it did. Says which download holds it. */
   subdivision?: string | null;
+  /**
+   * The town, its state and its country, as the map names them ("Portland,
+   * Oregon, United States"): what a pin says, so a person can see which
+   * Portland we mean. Built from the address parts rather than the display
+   * name, which puts a county in the middle.
+   */
+  label?: string;
 }
 
-type NominatimAddress = { country_code?: string; 'ISO3166-2-lvl4'?: string };
+type NominatimAddress = {
+  country_code?: string; 'ISO3166-2-lvl4'?: string;
+  city?: string; town?: string; village?: string; hamlet?: string; municipality?: string;
+  state?: string; country?: string;
+};
+
+/** "Moab, Utah, United States" — the town, then whatever of state and country the map gave. */
+function labelOf(name: string, a?: NominatimAddress): string {
+  const town = a?.city || a?.town || a?.village || a?.hamlet || a?.municipality || name;
+  const parts: string[] = [];
+  for (const p of [town, a?.state, a?.country]) {
+    const v = String(p ?? '').trim();
+    if (v && !parts.includes(v)) parts.push(v);
+  }
+  return parts.join(', ') || name;
+}
 
 /**
  * Where a town is, or null.
@@ -130,6 +152,7 @@ export async function locateOrFail(
     lat, lng, name, from: q,
     countryCode: hit.address?.country_code ?? null,
     subdivision: hit.address?.['ISO3166-2-lvl4'] ?? null,
+    label: labelOf(name, hit.address),
   };
 }
 
@@ -151,16 +174,41 @@ export async function locatePlan(
   plan: { title?: string | null; destination_city?: string | null; destination_country?: string | null },
   fetchImpl: typeof fetch = fetch,
 ): Promise<Located | null> {
+  const found = await locatePlanOrFail(plan, fetchImpl);
+  return found === 'failed' ? null : found;
+}
+
+/**
+ * locatePlan, telling "no such place" from "could not ask" — for anything
+ * that stores the answer. The trip map keeps the point on the plan, and a
+ * 503 kept as "nowhere" would leave a real trip off the map for good; a
+ * failure stores nothing and is asked again next time.
+ *
+ * `titleFallback: false` asks about destination_city only. A night out
+ * called "Friday drinks" is not a place, and a geocoder will still find one.
+ */
+export async function locatePlanOrFail(
+  plan: { title?: string | null; destination_city?: string | null; destination_country?: string | null },
+  fetchImpl: typeof fetch = fetch,
+  opts: { titleFallback?: boolean } = {},
+): Promise<Located | null | 'failed'> {
+  let failed = false;
   const city = String(plan.destination_city || '').trim();
   if (city) {
-    const found = await locate(city, plan.destination_country, fetchImpl);
-    if (found) return found;
+    const found = await locateOrFail(city, plan.destination_country, fetchImpl);
+    if (found === 'failed') failed = true;
+    else if (found) return found;
   }
 
   const title = String(plan.title || '').trim();
   // A title that is also the city would just repeat the query above.
-  if (!title || title.toLowerCase() === city.toLowerCase()) return null;
-  return locate(title, null, fetchImpl);
+  if (opts.titleFallback !== false && title && title.toLowerCase() !== city.toLowerCase()) {
+    const found = await locateOrFail(title, null, fetchImpl);
+    if (found === 'failed') failed = true;
+    else if (found) return found;
+  }
+  // One question unanswered means we do not know, even if the other said no.
+  return failed ? 'failed' : null;
 }
 
 /**

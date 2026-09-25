@@ -7,8 +7,8 @@ import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { placesFor } from '@/lib/discovery/real-places';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { waitingTripIn, staleWaitingIn, WAITING_STATUSES } from '@/lib/trip-vote';
-import { dayWhere } from '@/lib/calendar';
+import { readActive, closeStale, refusalBody, type ActiveCandidate } from '@/lib/one-active';
+import { pinPlan } from '@/lib/trip-map';
 
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),
@@ -108,23 +108,24 @@ export async function POST(req: NextRequest) {
   if (headErr) console.error('[plans] could not count the group — not marking it solo', { code: headErr.code });
   const soloGroup = !headErr && (headCount ?? 0) <= 1;
 
-  // ── One group trip waiting on its destination at a time ─────────────
-  // A second "Plan a trip together" while one is still gathering answers or
-  // being voted on asked everybody the same questions twice and split the
-  // group across two trips, neither of which could ever be found. The
-  // caller is given the one that exists instead, and the client opens it.
-  // sql/trip-options-2026-09-23.sql adds the index that makes this hold for
-  // two requests at the same instant; this is the answer somebody reads.
+  // ── One trip and one night out being planned at a time ─────────────
+  // The owner's rule (a), 2026-09-25: a group may have one trip and one
+  // night out in planning or voting at once, and a second of the same kind
+  // is refused with the first, so the client can offer to open it. A night
+  // out is never blocked by a trip. It grew out of the older rule — one group
+  // trip waiting on its destination at a time, answered `already_waiting`,
+  // which two "Plan a trip together" presses used to split a group across —
+  // and that case still gets that answer (lib/one-active.ts refusalCode).
   //
-  // Per kind — a trip being decided does not block a night out — and only
-  // while the waiting one is still on by its dates. One whose dates have
-  // passed is closed here, because the index cannot read dates and would
+  // Only while the one in the way is still on by its dates. One whose dates
+  // have passed is closed here, because the unique indexes that make this
+  // hold for two requests at the same instant (plans_one_waiting,
+  // sql/trip-options-2026-09-23.sql; plans_one_active,
+  // sql/one-active-plan-2026-09-25.sql) cannot read dates, and would
   // otherwise refuse this plan over one nobody can go on any more.
-  if (undecided) {
-    const waiting = await waitingTrip(supabase, body.group_id, body.type);
-    if (waiting.live && !soloGroup) return alreadyWaiting(waiting.live, body.type);
-    if (waiting.stale.length) await closeStale(supabase, body.group_id, waiting.stale);
-  }
+  const active = await activePlans(supabase, body.group_id, body.type);
+  if (active.live) return oneActive(active.live, { type: body.type, undecided, solo: soloGroup });
+  if (active.stale.length) await closeStale(supabase, body.group_id, active.stale);
 
   const row: Record<string, unknown> = {
     group_id: body.group_id,
@@ -173,17 +174,25 @@ export async function POST(req: NextRequest) {
   }
   const { data: plan, error } = attempt;
 
-  // Lost the race to another request making the same group trip: the
-  // unique index refused this one. Theirs is the trip.
-  if (error?.code === '23505' && undecided) {
-    const existing = await waitingTrip(supabase, body.group_id, body.type);
-    if (existing.live) return alreadyWaiting(existing.live, body.type);
+  // Lost the race to another request making a plan of the same kind: a
+  // unique index refused this one. Theirs is the plan.
+  if (error?.code === '23505') {
+    const existing = await activePlans(supabase, body.group_id, body.type);
+    if (existing.live) return oneActive(existing.live, { type: body.type, undecided, solo: soloGroup });
   }
 
   if (error || !plan) {
     console.error('[plans POST] insert failed', error);
     return NextResponse.json({ error: error?.message || 'Failed to create plan' }, { status: 500 });
   }
+
+  // Where it is on the map, now the plan exists — after the write, never as
+  // part of it, so a slow or broken geocoder can never cost anybody their
+  // plan. Started here and awaited at the end, beside the other bookkeeping,
+  // with a deadline of its own. Anything but a found town stores nothing:
+  // the backfill script, or the next destination change, asks again.
+  const pinning = within(pinPlan(supabase, plan), 2500, 'placing the plan on the map')
+    .catch(() => ({ outcome: 'failed' as const }));
 
   // The organiser has now said what this trip is for, which is exactly what
   // the readiness gate is waiting to hear. Recording it here is what makes
@@ -239,57 +248,24 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({ plan }, { status: 201 });
-}
-
-// "Today" for a server that keeps UTC: the earliest calendar day anywhere.
-// A night out in New York is still tonight at 9pm there, when the UTC date
-// has already turned over, so a plan only counts as over once it is over
-// everywhere — the error this can make is keeping a finished plan waiting a
-// few hours longer, never closing one somebody is still on.
-function earliestToday(): string {
-  return dayWhere(-180);
-}
-
-async function waitingTrip(
-  db: import('@supabase/supabase-js').SupabaseClient, groupId: string, type: string,
-): Promise<{ live: string | null; stale: string[] }> {
-  const { data, error } = await db.from('plans')
-    .select('id, type, destination_style, status, start_date, end_date, created_at')
-    .eq('group_id', groupId).eq('destination_style', UNDECIDED).eq('type', type)
-    .in('status', [...WAITING_STATUSES]);
-  if (error) {
-    // Not a reason to refuse somebody their trip: the index, once it is
-    // there, is what holds the line.
-    console.error('[plans POST] could not check for a group trip already waiting', { groupId, code: error.code });
-    return { live: null, stale: [] };
+  const pinned = await pinning;
+  if (pinned.outcome === 'write_failed' || pinned.outcome === 'failed') {
+    console.error('[plans POST] the plan is saved without a point on the map', { plan: plan.id, ...pinned });
   }
-  const plans = (data ?? []).map(r => ({
-    id: String(r.id), type: r.type, destination_style: r.destination_style, status: r.status,
-    start_date: r.start_date, end_date: r.end_date, created_at: r.created_at,
-  }));
-  const today = earliestToday();
-  return { live: waitingTripIn(plans, { type, today }), stale: staleWaitingIn(plans, { type, today }) };
+  const saved = pinned.outcome === 'stored'
+    ? { ...plan, destination_lat: pinned.lat, destination_lng: pinned.lng, destination_label: pinned.label }
+    : plan;
+
+  return NextResponse.json({ plan: saved }, { status: 201 });
 }
 
-// A plan still marked waiting whose dates have been and gone. Nobody can go
-// on it, and it no longer shows on Home; it is closed so the one-waiting
-// index lets the group start the next. Only while it is still undecided and
-// waiting — a pick landing at the same moment wins.
-async function closeStale(db: import('@supabase/supabase-js').SupabaseClient, groupId: string, ids: string[]) {
-  const { error } = await db.from('plans')
-    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-    .in('id', ids).eq('group_id', groupId).eq('destination_style', UNDECIDED)
-    .in('status', [...WAITING_STATUSES]);
-  if (error) console.error('[plans POST] could not close a waiting plan whose dates have passed', { groupId, ids, code: error.code });
-  else console.log('[plans POST] closed waiting plans whose dates have passed', { groupId, ids });
+function activePlans(db: import('@supabase/supabase-js').SupabaseClient, groupId: string, type: string) {
+  return readActive(db, groupId, { type });
 }
 
-function alreadyWaiting(planId: string, type?: string | null) {
-  const kind = type === 'restaurant' ? 'night out' : 'trip';
-  return NextResponse.json({
-    error: `This group already has a ${kind} waiting on everyone — here it is.`,
-    code: 'already_waiting',
-    planId,
-  }, { status: 409 });
+function oneActive(
+  existing: ActiveCandidate,
+  incoming: { type: string; undecided: boolean; solo: boolean },
+) {
+  return NextResponse.json(refusalBody(existing, incoming), { status: 409 });
 }

@@ -15,6 +15,8 @@ import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedT
 import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
+import { pinPlan, pinMoves } from '@/lib/trip-map';
+import { readActive, closeStale, refusalBody, ACTIVE_STATUSES } from '@/lib/one-active';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -105,7 +107,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   const user = ctx.user;
 
   const { data: plan } = await supabase.from('plans')
-    .select('group_id, start_date, end_date, created_by, destination_style, status, title, type').eq('id', params.planId).single();
+    .select('group_id, start_date, end_date, created_by, destination_style, status, title, type, destination_city, destination_country').eq('id', params.planId).single();
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
 
   const { data: membership } = await supabase
@@ -342,6 +344,32 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     }
   }
 
+  // ── Back into planning ────────────────────────────────────────────────
+  // A group may have one trip and one night out being planned at a time
+  // (lib/one-active.ts). Reopening a completed or cancelled plan is starting
+  // one, so it meets the same rule POST /api/plans applies, with the same
+  // answer; plans_one_active (sql/one-active-plan-2026-09-25.sql) refuses it
+  // anyway when two arrive together, and that refusal is read below.
+  const active = ACTIVE_STATUSES as readonly string[];
+  const reopening = typeof updates.status === 'string' && active.includes(updates.status)
+    && !active.includes(String(plan.status ?? 'planning'));
+  const inTheWay = () => readActive(supabase, String(plan.group_id), { type: String(plan.type ?? 'trip'), except: params.planId });
+  if (reopening) {
+    const found = await inTheWay();
+    if (found.live) {
+      const solo = (await membersOf(supabase, String(plan.group_id)))?.length === 1;
+      return NextResponse.json(refusalBody(found.live, { type: String(plan.type ?? 'trip'), undecided: false, solo }), { status: 409 });
+    }
+    if (found.stale.length) await closeStale(supabase, String(plan.group_id), found.stale);
+  }
+
+  // ── Where it is on the map ────────────────────────────────────────────
+  // A new destination makes the old point wrong, so it goes in the same
+  // write — a pin is never left on the town the trip used to go to — and
+  // the new one is looked up after the write, never inside it.
+  const repin = pinMoves(plan, updates);
+  if (repin) Object.assign(updates, { destination_lat: null, destination_lng: null, destination_label: null });
+
   // The error used to be discarded here, so a failed or no-op update answered
   // 200 with { plan: null } and anything writing through this route could
   // silently not save.
@@ -360,10 +388,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   // that has not had one yet should lose the sentence or the picture, not
   // the destination somebody just picked — the same bargain POST makes.
   const UNKNOWN = /could not find the '([a-z_]+)' column|column "?([a-z_]+)"? .*does not exist/i;
-  for (let i = 0; i < 4 && attempt.error; i++) {
+  for (let i = 0; i < 8 && attempt.error; i++) {
     const missing = UNKNOWN.exec(attempt.error.message || '');
     const name = missing ? (missing[1] || missing[2]) : null;
-    if (!name || !['why_chosen', 'image_url', 'image_credit', 'image_source'].includes(name) || !(name in updates)) break;
+    if (!name || !['why_chosen', 'image_url', 'image_credit', 'image_source', 'destination_lat', 'destination_lng', 'destination_label'].includes(name) || !(name in updates)) break;
     console.error('[plans PATCH] retrying without a column this database does not have yet', { column: name });
     delete updates[name];
     attempt = await write();
@@ -406,6 +434,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
       { status: 409 },
     );
   }
+  if (writeError?.code === '23505' && reopening) {
+    // Another plan of this kind got in first.
+    const found = await inTheWay();
+    if (found.live) {
+      const solo = (await membersOf(supabase, String(plan.group_id)))?.length === 1;
+      return NextResponse.json(refusalBody(found.live, { type: String(plan.type ?? 'trip'), undecided: false, solo }), { status: 409 });
+    }
+  }
   if (writeError || !updated) {
     console.error('[plans PATCH] update failed', { planId: params.planId, code: writeError?.code });
     return NextResponse.json({ error: 'Could not save that change' }, { status: 500 });
@@ -423,6 +459,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
       },
     });
     if (logged) console.error('[plans PATCH] date change not logged', { planId: params.planId, code: logged.code });
+  }
+
+  if (repin) {
+    const pinned = await within(pinPlan(supabase, { ...updated, id: params.planId }), 2500, 'placing the plan on the map')
+      .catch(() => ({ outcome: 'failed' as const }));
+    if (pinned.outcome === 'failed' || pinned.outcome === 'write_failed') {
+      console.error('[plans PATCH] the new destination has no point on the map yet', { planId: params.planId, ...pinned });
+    }
+    if (pinned.outcome === 'stored') {
+      return NextResponse.json({ plan: { ...updated, destination_lat: pinned.lat, destination_lng: pinned.lng, destination_label: pinned.label } });
+    }
   }
 
   return NextResponse.json({ plan: updated });
