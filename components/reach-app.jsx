@@ -20,7 +20,7 @@ import { visibleCategories } from "@/lib/discovery/category";
 import { priceLabel } from "@/lib/discovery/price-label";
 import { createPlanSteps } from "@/lib/create-plan-steps";
 import { picksFrom, seedFromPick } from "@/lib/contracts/trip-pick";
-import { howIsIt, climateLine, bestMonthsLine, climateCredit, fahrenheitFirst } from "@/lib/climate";
+import { howIsIt, climateLine, bestMonthsLine, climateCredit, fahrenheitFirst, climateIsFor, CLIMATE_CREDIT, CLIMATE_SOURCE_URL } from "@/lib/climate";
 import { ideaClimateFrom } from "@/lib/contracts/idea-climate";
 import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
@@ -5986,24 +5986,57 @@ function readerFahrenheit(){
 }
 const climateSmall={fontSize:10.5,color:C.t3,marginTop:2,lineHeight:1.4};
 
-/** The weather line on a trip idea, from the climate the route attached. */
-function IdeaClimateNote({raw}){
+/**
+ * The citation POWER asks for, with a link to the project. Once on a screen
+ * that shows its averages — under the list of ideas, not on every card — and
+ * worded so it credits NASA without suggesting NASA endorses Reach.
+ */
+function ClimateCitation({style}){
+  return(
+    <div style={{fontSize:10.5,color:C.t3,lineHeight:1.4,...style}}>
+      Weather averages: {CLIMATE_CREDIT.replace(/\.$/,"")} (<a href={CLIMATE_SOURCE_URL} target="_blank" rel="noopener noreferrer"
+        style={{color:C.t3,textDecoration:"underline"}}>NASA POWER</a>).
+    </div>
+  );
+}
+/** Whether any of these ideas shows averages we hold, so the citation belongs under them. */
+function ideasShowClimate(list){
+  return (list||[]).some(t=>ideaClimateFrom(t?.climate)?.held);
+}
+
+/**
+ * The weather line on a trip idea, from the climate the route attached —
+ * only when it was worked out for the dates the card is showing. A group's
+ * ideas are saved and the plan's dates can move under them; the vote route
+ * works each one out again (lib/climate-store.ts ideaClimateNow), and a
+ * climate for other dates is never shown as this trip's weather.
+ */
+function IdeaClimateNote({raw,startDate,endDate}){
   const c=ideaClimateFrom(raw);
   if(!c)return null;
+  if(!climateIsFor(c,{start:startDate||null,end:endDate||null}))return null;
   const f=readerFahrenheit();
   const line=c.trip?climateLine(c.trip,{fahrenheitFirst:f}):c.best;
+  // The dates moved after this idea was made and now break a weather no-go.
+  // It stays up — votes may be on it — and says so plainly.
+  const breach=c.breach==="coldWeather"
+    ?`On these dates it's usually too cold for a weather no-go on this trip (daytime highs under 10°C / 50°F).`
+    :c.breach==="extremeHeat"
+      ?`On these dates it's usually too hot for a weather no-go on this trip (daytime highs of 35°C / 95°F or more).`
+      :null;
   // A weather no-go that could not be checked is said, so the silence is
   // never read as a pass.
-  const unchecked=c.asked&&!c.checked
+  const unchecked=!breach&&c.asked&&!c.checked
     ?(!c.held?`We don't hold weather averages for ${c.place} yet, so this idea wasn't checked against the weather no-go.`
       :!c.trip?"No dates yet, so this idea wasn't checked against the weather no-go."
       :"These averages are for the high ground around it, so this idea couldn't be checked against the weather no-go.")
     :null;
-  if(!line&&!unchecked)return null;
+  if(!line&&!unchecked&&!breach)return null;
   return(
     <div style={{marginTop:10,fontSize:12,color:C.t2,lineHeight:1.5}}>
       {line&&<div>🌤️ {line}</div>}
       {line&&c.credit&&<div style={climateSmall}>{c.credit}</div>}
+      {breach&&<div style={{marginTop:4,fontSize:12,color:C.t1,fontWeight:600}}>⚠️ {breach}</div>}
       {unchecked&&<div style={{...climateSmall,color:C.t2}}>{unchecked}</div>}
     </div>
   );
@@ -6040,6 +6073,7 @@ function PlaceClimate({city,country,lat=null,lng=null,startDate,endDate,hint=fal
       {best&&<div>🗓️ {best}</div>}
       {line&&<div style={best?{marginTop:4}:undefined}>🌤️ {line}</div>}
       <div style={climateSmall}>{climateCredit(normals.period)}{hint?" — a hint, not a rule.":""}</div>
+      <ClimateCitation style={{marginTop:2}}/>
     </div>
   );
 }
@@ -6097,7 +6131,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
           <div style={{display:"inline-block",background:C.s3,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.t2,marginTop:8}}>
             {trip.vibe}
           </div>
-          <IdeaClimateNote raw={trip.climate}/>
+          <IdeaClimateNote raw={trip.climate} startDate={startDate} endDate={endDate}/>
           {/* What this option does about what somebody actually
               asked for, by name. The model has been writing these
               all along and no screen showed them, so the answer to
@@ -6557,6 +6591,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
           </TripIdeaCard>
         );
       })}
+      {ideasShowClimate(options)&&<ClimateCitation style={{padding:"0 20px 14px"}}/>}
 
       {v.mayPick&&!closed&&onRegenerate&&(
         <div style={{padding:"0 20px 40px"}}>
@@ -7598,6 +7633,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
               )}
             </TripIdeaCard>
           ))}
+          {ideasShowClimate(trips)&&<ClimateCitation style={{padding:"0 20px 14px"}}/>}
 
           {/* Regenerate */}
           <div style={{padding:"0 20px 40px"}}>

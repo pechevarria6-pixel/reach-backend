@@ -6,7 +6,7 @@
 // generation must not go down with it.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { nameKey } from './discovery/regions.ts';
-import { ideaClimate, type ClimateNormals, type IdeaClimate } from './climate.ts';
+import { ideaClimate, climateIsFor, vetoesFromWants, type ClimateNormals, type IdeaClimate } from './climate.ts';
 
 /**
  * The rows held under one folded name. Written out whole, and on its own,
@@ -57,7 +57,8 @@ export function normalsFromRow(r: Record<string, any> | null | undefined): Clima
  * Which held row is this place. By name first (case and accents folded, the
  * part before any comma); then, of the rows with that name:
  *   - with coordinates, the nearest within 0.75° (a POWER cell is 0.5°);
- *   - with a country, the one in that country;
+ *   - with a country, the one in that country — and none when that country
+ *     holds two towns of the name in different places;
  *   - with neither, only a name held once. Paris, France is not Paris, Texas,
  *     and a guess between them is worse than no weather at all.
  */
@@ -74,7 +75,13 @@ export function pickClimateRow<R extends { country?: string | null; lat: number;
   }
   if (want.country) {
     const inIt = rows.filter(r => sameCountry(r.country, want.country));
-    if (inIt.length) return inIt[0];
+    // Two towns of one name in one country (Fayetteville, AR and NC;
+    // Portland, OR and ME) are two rows, and the country cannot tell them
+    // apart — nor can the state, which is not held. The first row back is
+    // whichever PostgREST found first, so choosing it would quote one town's
+    // weather for the other. Only rows that are the same place (within one
+    // cell, as Cancun and Cancún are) count as one answer.
+    if (inIt.length) return inIt.every(r => Math.hypot(Number(r.lat) - Number(inIt[0].lat), Number(r.lng) - Number(inIt[0].lng)) <= 0.75) ? inIt[0] : null;
     // Rows whose country we never learned: only when that name is held once.
     return rows.length === 1 && !rows[0].country ? rows[0] : null;
   }
@@ -124,4 +131,56 @@ export async function climateFor(
   const town = String(place.name ?? '').split(',')[0].trim();
   const read = await readClimate(db, place);
   return { ...ideaClimate(read.normals, town, dates, vetoes), available: read.available };
+}
+
+/**
+ * A saved idea's climate, as it is for the dates the plan holds now. A
+ * group's ideas are saved with the weather for the dates they were made for,
+ * and the dates can move while the vote is open (the plan overview's "Use
+ * these dates"); a card that said "Usually in October" under January dates,
+ * or kept an idea the cold no-go now rules out, would be stating what is no
+ * longer so. Worked out again, with the same weather no-gos, whenever the
+ * dates differ; returned as saved when they do not. An idea whose new dates
+ * break a no-go comes back with `breach` set — flagged, not dropped, because
+ * people may already have voted for it.
+ */
+export async function ideaClimateNow(
+  db: SupabaseClient,
+  idea: { city?: unknown; destination?: unknown; country_code?: unknown; climate?: IdeaClimate | null },
+  dates: { start?: unknown; end?: unknown },
+): Promise<IdeaClimate | null | undefined> {
+  const saved = idea.climate;
+  if (!saved || typeof saved !== 'object') return saved;
+  if (climateIsFor(saved, dates)) return saved;
+  const name = String(idea.city || idea.destination || saved.place || '');
+  const country = typeof idea.country_code === 'string' ? idea.country_code : null;
+  const got = await climateFor(db, { name, country }, dates, vetoesFromWants(saved.wants));
+  // Nothing held any more (or the read failed): nothing is said rather than
+  // the old dates' weather — unless a no-go was asked for, which is then
+  // said to be unchecked.
+  if (!got.climate) return saved.asked ? { place: saved.place, held: false, trip: null, best: null, credit: '', asked: true, checked: false, dates: null, wants: saved.wants ?? null, breach: null } : null;
+  // An old save with no record of which no-go was asked: still asked, and
+  // not claimed to have been checked against the new dates.
+  if (saved.asked && !saved.wants) return { ...got.climate, asked: true, checked: false, breach: null };
+  return got.climate;
+}
+
+/** What a screen is sent: the climate without the record of which no-go somebody asked for. */
+export function climateForScreen(c: IdeaClimate | null | undefined): IdeaClimate | null | undefined {
+  if (!c || typeof c !== 'object') return c;
+  const { wants: _wants, ...shown } = c;
+  return shown;
+}
+
+/**
+ * A set of saved ideas as a screen gets them: each one's climate as it is for
+ * these dates (ideaClimateNow), without the record of which no-go was asked.
+ * Every route that hands saved ideas to a screen goes through this.
+ */
+export async function ideasWithClimateNow<T extends { city?: unknown; destination?: unknown; country_code?: unknown; climate?: IdeaClimate | null }>(
+  db: SupabaseClient, options: T[], dates: { start?: unknown; end?: unknown },
+): Promise<T[]> {
+  return Promise.all(options.map(async o => (o.climate
+    ? { ...o, climate: climateForScreen(await ideaClimateNow(db, o, dates)) }
+    : o)));
 }

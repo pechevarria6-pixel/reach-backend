@@ -13,7 +13,7 @@ import { withoutVetoed, tripBreach } from '@/lib/vetoes';
 import { splitVetoes, weatherLine } from '@/lib/weather-no-go';
 import { planReadiness, wentAheadWith, type ReadinessReport } from '@/lib/plan-readiness';
 import { howIsIt, climatePromptBlock, climateVetoes, COLD_HIGH_C, HOT_HIGH_C } from '@/lib/climate';
-import { readClimate, climateFor } from '@/lib/climate-store';
+import { readClimate, climateFor, ideasWithClimateNow } from '@/lib/climate-store';
 import { generationHints } from '@/lib/traveler-profile';
 import { readProfiles } from '@/lib/quiz-store';
 import {
@@ -301,7 +301,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: decision.error }, { status: decision.status });
       }
       if (decision.action === 'show' && read.ideas) {
-        return NextResponse.json({ success: true, trips: read.ideas.options, ideas: publicIdeas(read.ideas), saved: true, shared: true });
+        // The saved ideas' weather for the dates asked about now, which may
+        // not be the dates they were made for (lib/climate-store.ts).
+        const shownTrips = await ideasWithClimateNow(supabase, read.ideas.options, { start: startDate, end: endDate });
+        return NextResponse.json({ success: true, trips: shownTrips, ideas: publicIdeas(read.ideas), saved: true, shared: true });
       }
       if (decision.action === 'generate') replacing = decision.replacing;
     }
@@ -1870,7 +1873,7 @@ Return JSON only, shaped exactly like this:
       if (saved.outcome === 'saved') {
         if (replacing) await clearVotes(supabase, groupPlan.id);
         await tellTheGroup(supabase, groupPlan.id, String(groupId), groupPlan.created_by, ctx.user.id, isNightPlan, !!replacing, ideas.options.length);
-        return NextResponse.json({ success: true, trips: ideas.options, ideas: publicIdeas(ideas), saved: false, shared: true, meta });
+        return NextResponse.json({ success: true, trips: await ideasWithClimateNow(supabase, ideas.options, { start: startDate, end: endDate }), ideas: publicIdeas(ideas), saved: false, shared: true, meta });
       }
       if (saved.outcome === 'taken') {
         // Somebody else's Find landed first. Theirs are the group's ideas;
@@ -1886,7 +1889,7 @@ Return JSON only, shaped exactly like this:
             { status: 409 },
           );
         }
-        return NextResponse.json({ success: true, trips: saved.ideas.options, ideas: publicIdeas(saved.ideas), saved: true, shared: true, meta });
+        return NextResponse.json({ success: true, trips: await ideasWithClimateNow(supabase, saved.ideas.options, { start: startDate, end: endDate }), ideas: publicIdeas(saved.ideas), saved: true, shared: true, meta });
       }
       // 'unavailable' or 'error': fall through, unshared.
     }

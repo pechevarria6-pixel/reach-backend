@@ -99,7 +99,7 @@ test('the comfort rule is the one written down', () => {
 // ── The year ───────────────────────────────────────────────────────────
 
 test('the desert: best weather in spring and autumn, not in its summer or winter', () => {
-  assert.equal(bestMonthsLine(MOAB), 'Best weather in Moab: April–May, September–October');
+  assert.equal(bestMonthsLine(MOAB), 'Best weather on the high ground around Moab (1,819 m): April–May, September–October — Moab itself is often warmer, so the months either side can suit it too');
 });
 
 test('the tropical wet season: Agra is best in winter and wettest July to September', () => {
@@ -108,12 +108,12 @@ test('the tropical wet season: Agra is best in winter and wettest July to Septem
 });
 
 test('the cold winter town: Aspen’s best weather is its summer', () => {
-  assert.equal(bestMonthsLine(ASPEN), 'Best weather in Aspen: June–August');
+  assert.equal(bestMonthsLine(ASPEN), 'Best weather on the high ground around Aspen (3,268 m): June–August — Aspen itself is often warmer, so the months either side can suit it too');
   assert.deepEqual(bestMonths(ASPEN).scores.slice(0, 3), [0, 0, 0]);
 });
 
 test('the southern hemisphere: Cusco’s dry season is the northern summer and its wet season wraps the year', () => {
-  assert.equal(bestMonthsLine(CUSCO), 'Best weather in Cusco: April–November');
+  assert.equal(bestMonthsLine(CUSCO), 'Best weather on the high ground around Cusco (3,740 m): April–November — Cusco itself is often warmer, so the months either side can suit it too');
   assert.deepEqual(wettestMonths(CUSCO), [1, 2, 12]);
   assert.equal(monthRanges(wettestMonths(CUSCO)), 'December–February');
 });
@@ -149,7 +149,7 @@ test('the card line: the reader’s unit first, and a rank only where the data b
   const oct = howIsIt(RINCON, '2026-10-10', '2026-10-17')!;
   assert.equal(climateLine(oct, { fahrenheitFirst: true }), 'Usually in October: highs around 84°F / 29°C, one of the wetter months');
   const jan = howIsIt(AGRA, '2027-01-10', '2027-01-15')!;
-  assert.match(climateLine(jan), /^Usually in January: highs around 23°C \/ 74°F, about 12 mm \/ 0\.5 in of rain a month$/);
+  assert.match(climateLine(jan), /^Usually in January: highs around 23°C \/ 74°F, about 13 mm \/ 0\.5 in of rain a month$/);
   const dry = howIsIt(CUSCO, '2027-07-28', '2027-08-04')!;
   assert.match(climateLine(dry), /among the drier months$/);
 });
@@ -218,7 +218,10 @@ test('on high ground a cold verdict has to survive the town being warmer', () =>
 test('no climate held: kept, and never said to have passed', () => {
   const r = ideaClimate(null, 'Nowhere', { start: '2027-01-10', end: '2027-01-15' }, ['coldWeather']);
   assert.equal(r.breach, null);
-  assert.deepEqual(r.climate, { place: 'Nowhere', held: false, trip: null, best: null, credit: '', asked: true, checked: false });
+  assert.deepEqual(r.climate, {
+    place: 'Nowhere', held: false, trip: null, best: null, credit: '', asked: true, checked: false,
+    dates: { start: '2027-01-10', end: '2027-01-15' }, wants: { cold: true, heat: false }, breach: null,
+  });
   assert.equal(ideaClimate(null, 'Nowhere', { start: '2027-01-10' }, []).climate, null);
 });
 
@@ -226,7 +229,7 @@ test('no dates: the best months instead, and a weather no-go is not checked', ()
   const r = ideaClimate(MOAB, 'Moab', { start: null, end: null }, ['coldWeather']);
   assert.equal(r.breach, null);
   assert.equal(r.climate?.trip, null);
-  assert.equal(r.climate?.best, 'Best weather in Moab: April–May, September–October');
+  assert.match(r.climate?.best ?? '', /^Best weather on the high ground around Moab \(1,819 m\): April–May, September–October/);
   assert.equal(r.climate?.checked, false);
 });
 
@@ -266,7 +269,7 @@ test('the trips route gives both prompts the weather and judges every idea by it
 
 test('the screens carry the weather: the card, the When step, the plan, and the city the days are written for', () => {
   const app = readFileSync('components/reach-app.jsx', 'utf8');
-  assert.match(app, /<IdeaClimateNote raw=\{trip\.climate\}\/>/);
+  assert.match(app, /<IdeaClimateNote raw=\{trip\.climate\} startDate=\{startDate\} endDate=\{endDate\}\/>/);
   assert.match(app, /<PlaceClimate hint city=\{where\.city\}/);
   assert.match(app, /<PlaceClimate city=\{plan\.destinationCity\}/);
   assert.match(app, /tripData:\{destination:trip\.destination,vibe:trip\.vibe,costs:trip\.costs,city:trip\.city,country_code:trip\.country_code\}/);

@@ -11,7 +11,16 @@
 // against words: "escape the cold weather" is not a cold trip.
 
 import { isNegated } from './goal.ts';
-import { isWeatherVeto } from './climate.ts';
+
+/**
+ * The weather no-gos that name a kind of weather, not a thing somebody would
+ * do: "escape the cold weather" is not a cold trip, so these are judged only
+ * against the climate (lib/climate.ts). A one-word no-go that is also a
+ * weather — "snow", "heat", "freezing", "cold" — is still a word too: the
+ * person who typed "snow" does not want snow tubing in a mild March, and the
+ * climate rule alone would keep it.
+ */
+const WEATHER_ONLY = /^(coldweather|cold weather|extremeheat|extreme heat|hot weather)$/i;
 
 const PATTERNS: Record<string, RegExp> = {
   camping: /\b(camp(ing|site|sites|ground|grounds)?|tents?|glamping)\b/i,
@@ -41,7 +50,7 @@ export function vetoBreach(text: string, vetoes: string[]): string | null {
   if (!t.trim()) return null;
   for (const raw of vetoes) {
     const v = String(raw || '').replace(/^custom:/, '').trim();
-    if (!v || NOT_FROM_WORDS.has(v) || isWeatherVeto(v)) continue;
+    if (!v || NOT_FROM_WORDS.has(v) || WEATHER_ONLY.test(v.replace(/\s+/g, ' '))) continue;
     const known = PATTERNS[v] ?? PATTERNS[v.toLowerCase()];
     if (!known && v.split(/\s+/).length > 3) continue;
     const re = new RegExp((known ?? new RegExp(`\\b${escape(v)}\\b`, 'i')).source, 'gi');

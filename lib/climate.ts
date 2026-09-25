@@ -270,13 +270,29 @@ export function monthSummary(place: ClimateNormals, month: number): MonthSummary
  * The months with the most comfortable weather: every month within 10 points
  * of the best, and at least 50. Empty when no month reaches 50 — a place that
  * is never comfortable by this rule has no "best months", and saying so is
- * better than naming the least bad. `allYear` when eleven or twelve qualify.
+ * better than naming the least bad.
+ *
+ * `allYear` is a claim about the weather, not the score: every month
+ * qualifies AND the months are actually alike — the usual highs within
+ * STEADY_SPREAD_C of each other and no month drier or wetter than the rest.
+ * The score is flat from 18 to 27 °C, so twelve equal scores can hide a 9 °C
+ * swing, and eleven qualifying months leave one out by definition; neither
+ * is "much the same all year".
  */
+export const STEADY_SPREAD_C = 5;
 export function bestMonths(place: ClimateNormals): { months: number[]; allYear: boolean; scores: number[] } {
-  const scores = MONTH_NAMES.map((_, i) => monthSummary(place, i + 1).comfort);
+  const summaries = MONTH_NAMES.map((_, i) => monthSummary(place, i + 1));
+  const scores = summaries.map(m => m.comfort);
   const top = Math.max(...scores);
   const months = top < 50 ? [] : scores.map((s, i) => (s >= Math.max(50, top - 10) ? i + 1 : 0)).filter(Boolean);
-  return { months, allYear: months.length >= 11, scores };
+  const highs = MONTH_NAMES.map((_, i) => place.t2m[i] + place.t2mRange[i] / 2);
+  const steady = Math.max(...highs) - Math.min(...highs) <= STEADY_SPREAD_C && !rainVaries(place);
+  return { months, allYear: months.length === 12 && steady, scores };
+}
+
+/** The grid cell averages HIGH_GROUND_M or more (see HIGH_GROUND_M). */
+function onHighGround(place: { gridElevationM?: number | null }): boolean {
+  return (place.gridElevationM ?? 0) >= HIGH_GROUND_M;
 }
 
 /**
@@ -319,11 +335,26 @@ export function monthRanges(months: number[]): string {
   return runs.map(r => r.length === 1 ? MONTH_NAMES[r[0] - 1] : `${MONTH_NAMES[r[0] - 1]}–${MONTH_NAMES[r[r.length - 1] - 1]}`).join(', ');
 }
 
-/** "Best weather in Moab: April–May, September–October", or null when there is nothing honest to say. */
+/**
+ * "Best weather in Raleigh: April–May, October–November", or null when there
+ * is nothing honest to say.
+ *
+ * On high ground the months are ranked from the area's figures, which read
+ * colder than the town (HIGH_GROUND_M), so the ranking leans towards summer.
+ * Nothing is corrected — we hold no town heights — but the line says whose
+ * figures they are, the same as climateLine, and that the months either side
+ * may suit the town too.
+ */
 export function bestMonthsLine(place: ClimateNormals, name = place.name): string | null {
   const b = bestMonths(place);
   if (!b.months.length) return null;
+  if (onHighGround(place)) {
+    const where = `on the high ground around ${name} (${place.gridElevationM!.toLocaleString('en-US')} m)`;
+    const months = b.months.length === 12 ? 'all year' : monthRanges(b.months);
+    return `Best weather ${where}: ${months} — ${name} itself is often warmer, so the months either side can suit it too`;
+  }
   if (b.allYear) return `Weather in ${name} is much the same all year`;
+  if (b.months.length === 12) return `Weather in ${name} is usually comfortable all year, though it changes with the seasons`;
   return `Best weather in ${name}: ${monthRanges(b.months)}`;
 }
 
@@ -337,8 +368,26 @@ export interface TripClimate {
   when: string;
   /** Weighted by nights. */
   highC: number; lowC: number; highF: number; lowF: number;
+  /**
+   * The weighted high before rounding (to 0.01). The no-go verdicts are
+   * judged on this, the same value `cold`, `hot` and highF come from — never
+   * on the rounded highC, or 9.6 °C shows as 49 °F and passes the 10 °C rule.
+   */
+  highCExact?: number;
+  /**
+   * Whether the lows are worth saying. A cell that is mostly sea barely
+   * changes between day and night (Rincón's reads under 2 °C), so its "low"
+   * is not the town's night; under LOW_RANGE_MIN_C nobody is told a low.
+   */
+  lowsReliable?: boolean;
   /** Usual rain in the months, mm a day, weighted. */
   rainMmDay: number;
+  /**
+   * The usual month's total at these dates, mm: each month's own total (its
+   * mean a day times its own days) weighted by nights. The card, the label
+   * and the prompt all say this one number, so they cannot disagree.
+   */
+  rainMm?: number;
   label: string;
   /** The month with most nights, as monthSummary gives it. */
   lead: MonthSummary;
@@ -382,6 +431,8 @@ export const HOT_HIGH_C = 35;
  */
 export const HIGH_GROUND_M = 1500;
 export const HIGH_GROUND_ALLOWANCE_C = 6;
+/** A mean daily range under this is a cell that is mostly sea: its lows are not said. */
+export const LOW_RANGE_MIN_C = 5;
 
 const ymd = (s: unknown): [number, number, number] | null => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s ?? ''));
@@ -420,12 +471,13 @@ export function howIsIt(place: ClimateNormals, startDate: unknown, endDate?: unk
   const months = nightsByMonth(startDate, endDate);
   if (!months.length) return null;
   const total = months.reduce((a, m) => a + m.nights, 0);
-  let t = 0, r = 0, rain = 0;
+  let t = 0, r = 0, rain = 0, monthMm = 0;
   for (const { month, nights } of months) {
     const i = month - 1;
     t += place.t2m[i] * nights; r += place.t2mRange[i] * nights; rain += place.precipMmDay[i] * nights;
+    monthMm += monthRain(place, i) * nights;
   }
-  t /= total; r /= total; rain /= total;
+  t /= total; r /= total; rain /= total; monthMm /= total;
   const highC = t + r / 2, lowC = t - r / 2;
   const lead = monthSummary(place, [...months].sort((x, y) => y.nights - x.nights)[0].month);
   const wet = wettestMonths(place);
@@ -434,12 +486,15 @@ export function howIsIt(place: ClimateNormals, startDate: unknown, endDate?: unk
     months: months.map(m => ({ ...m, rainPlace: rainPlaceOf(place, m.month - 1) })),
     when: months.length === 1 ? MONTH_NAMES[months[0].month - 1] : `${MONTH_NAMES[months[0].month - 1]}–${MONTH_NAMES[months[months.length - 1].month - 1]}`,
     highC: round(highC), lowC: round(lowC), highF: round(cToF(highC)), lowF: round(cToF(lowC)),
+    highCExact: Math.round(highC * 100) / 100,
+    lowsReliable: r >= LOW_RANGE_MIN_C,
     rainMmDay: Math.round(rain * 10) / 10,
-    // The label reads a month's worth of rain at this rate.
-    label: climateLabel(highC, rain * 30),
+    rainMm: round(monthMm),
+    // The label reads the same month's total the card and the prompt say.
+    label: climateLabel(highC, monthMm),
     lead, inWettest: months.map(m => m.month).filter(m => wet.includes(m)),
     cold: highC < COLD_HIGH_C, hot: highC >= HOT_HIGH_C,
-    highGround: (place.gridElevationM ?? 0) >= HIGH_GROUND_M,
+    highGround: onHighGround(place),
     gridElevationM: place.gridElevationM ?? null,
     source: place.source, period: place.period,
   };
@@ -483,7 +538,7 @@ export function climateLine(c: TripClimate, opts: { fahrenheitFirst?: boolean } 
   const rank = c.months.length === 1 || !shared ? shared
     : shared.replace(/^one of the /, 'among the ').replace(/^the (\w+) month$/, 'among the $1 months');
   // No rank to give: the amount, which is what the number actually is.
-  const mm = Math.round(c.rainMmDay * 30);
+  const mm = c.rainMm ?? Math.round(c.rainMmDay * 30);
   const inches = Math.round(mm / 25.4 * 10) / 10;
   const amount = mm < 5 ? 'almost no rain' : `about ${f ? `${inches} in / ${mm} mm` : `${mm} mm / ${inches} in`} of rain a month`;
   const where = c.highGround && c.gridElevationM != null
@@ -502,15 +557,26 @@ export function climateCredit(period: string): string {
  * and what they are not, and what to do about them.
  */
 export function climatePromptBlock(c: TripClimate): string {
+  const mm = c.rainMm ?? c.lead.rainMm;
+  const inches = Math.round(mm / 25.4 * 10) / 10;
+  // Lows only where the cell's day and night actually differ: a cell that is
+  // mostly sea reads warm nights no town has (lowsReliable).
+  const lows = c.lowsReliable === false ? '' : `, lows around ${c.lowC}°C / ${c.lowF}°F`;
   const lines = [
     `WEATHER ON THESE DATES (${c.source} ${c.period} averages for the area around ${c.place} — not a forecast):`,
-    `- ${c.when}: highs around ${c.highC}°C / ${c.highF}°F, lows around ${c.lowC}°C / ${c.lowF}°F, ${c.lead.rainMm} mm (${c.lead.rainIn} in) of rain in ${c.lead.monthName} — ${c.label}${c.lead.rainPlace ? `, ${c.lead.rainPlace}` : ''}.`,
+    `- ${c.when}: highs around ${c.highC}°C / ${c.highF}°F${lows}, about ${mm} mm (${inches} in) of rain a month — ${c.label}${c.lead.rainPlace ? `; ${c.lead.monthName} is ${c.lead.rainPlace}` : ''}.`,
   ];
+  if (c.lowsReliable === false) lines.push('- No night-time low is given: this area is mostly sea and its averages barely change between day and night, so they say nothing about evenings in town. Do not state an evening temperature.');
   if (c.inWettest.length) lines.push(`- ${monthRanges(c.inWettest)} ${c.inWettest.length === 1 ? 'is one of' : 'are among'} the wettest months there.`);
   if (c.highGround && c.gridElevationM != null) lines.push(`- These are for the surrounding area, which averages ${c.gridElevationM} m; ${c.place} itself is probably lower and several degrees warmer.`);
+  // The same verdict the no-go check gives (coldness): on high ground a cold
+  // area is not a cold town unless it would still be cold 6 °C warmer, and
+  // the prompt does not say as fact what the check refuses to decide.
+  const cold = coldness(c);
   lines.push(
     'Plan for this weather. No beach, swimming or open-water day when highs are under 22°C / 72°F.'
-      + (c.cold ? ' It is cold: keep outdoor time short and give every day somewhere warm indoors.' : '')
+      + (cold === 'cold' ? ' It is cold: keep outdoor time short and give every day somewhere warm indoors.' : '')
+      + (cold === 'maybe' ? ` The area averages under ${COLD_HIGH_C}°C / 50°F, but ${c.place} itself is probably milder: give every day somewhere warm indoors, and do not tell them it will be cold.` : '')
       + (c.hot ? ' It is very hot: put anything outdoors early or late, and the middle of the day indoors.' : '')
       + (c.inWettest.length ? ' It is the wet season there: every day needs an indoor option.' : ''),
     'Do not repeat these figures as a promise, and never mention storms, hurricanes, cyclones or monsoons — the averages say nothing about them.',
@@ -547,15 +613,31 @@ export function climateBreach(
   const want = climateVetoes(vetoes);
   const asked = want.cold || want.heat;
   if (!asked || !c) return { veto: null, checked: false, asked };
-  // On high ground the town is usually warmer than the area: a cold verdict
-  // has to survive that allowance, and so does a pass on heat.
-  const allow = c.highGround ? HIGH_GROUND_ALLOWANCE_C : 0;
-  const high = c.highC;
-  if (want.cold && high + allow < COLD_HIGH_C) return { veto: 'coldWeather', checked: true, asked };
+  const cold = coldness(c);
+  const high = exactHigh(c);
+  if (want.cold && cold === 'cold') return { veto: 'coldWeather', checked: true, asked };
   if (want.heat && high >= HOT_HIGH_C) return { veto: 'extremeHeat', checked: true, asked };
-  const coldUnclear = want.cold && high < COLD_HIGH_C; // cold as the area, maybe not as the town
-  const heatUnclear = want.heat && high + allow >= HOT_HIGH_C;
+  const coldUnclear = want.cold && cold === 'maybe';
+  const heatUnclear = want.heat && high + allowance(c) >= HOT_HIGH_C;
   return { veto: null, checked: !coldUnclear && !heatUnclear, asked };
+}
+
+/** The unrounded high, which is what the thresholds are judged on. */
+const exactHigh = (c: TripClimate) => c.highCExact ?? c.highC;
+/** On high ground the town is usually warmer than the area (HIGH_GROUND_ALLOWANCE_C). */
+const allowance = (c: TripClimate) => c.highGround ? HIGH_GROUND_ALLOWANCE_C : 0;
+
+/**
+ * Whether these dates are cold: 'cold' when even the town-is-warmer
+ * allowance leaves the high under COLD_HIGH_C, 'maybe' when only the area's
+ * figures are, null when neither. One reading, used by the no-go check and
+ * the prompt alike.
+ */
+export function coldness(c: TripClimate): 'cold' | 'maybe' | null {
+  const high = exactHigh(c);
+  if (high + allowance(c) < COLD_HIGH_C) return 'cold';
+  if (high < COLD_HIGH_C) return 'maybe';
+  return null;
 }
 
 /**
@@ -577,6 +659,51 @@ export interface IdeaClimate {
   asked: boolean;
   /** …and this idea was actually checked against it (false = kept, not passed). */
   checked: boolean;
+  /**
+   * The dates this was worked out for, as "YYYY-MM-DD" or null. A group's
+   * ideas are saved, and the plan's dates can move under them; a climate
+   * whose dates are not the plan's is recomputed (lib/climate-store.ts
+   * ideaClimateNow) and never shown as it was.
+   */
+  dates?: { start: string | null; end: string | null } | null;
+  /**
+   * Which weather no-gos were asked for, so a recompute can judge the new
+   * dates by the same rule. Kept with the saved idea, never sent to a screen.
+   */
+  wants?: { cold: boolean; heat: boolean } | null;
+  /**
+   * A weather no-go these dates break. New ideas that break one are dropped;
+   * this is only ever set on a saved idea whose dates moved after the vote
+   * opened, where dropping an option people have voted on would lose votes.
+   */
+  breach?: 'coldWeather' | 'extremeHeat' | null;
+}
+
+/** "YYYY-MM-DD" from a stored date, or null. */
+export function dateKey(s: unknown): string | null {
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(s ?? ''));
+  return m ? m[1] : null;
+}
+
+/** The dates as an idea's climate records them: an end is the start when it is missing. */
+function datesKey(d: { start?: unknown; end?: unknown }): { start: string | null; end: string | null } {
+  const start = dateKey(d.start);
+  return { start, end: start ? (dateKey(d.end) ?? start) : null };
+}
+
+/**
+ * Whether this climate was worked out for these dates. One with no record of
+ * its dates is taken as not — it cannot be shown to be current.
+ */
+export function climateIsFor(c: { dates?: { start: string | null; end: string | null } | null }, dates: { start?: unknown; end?: unknown }): boolean {
+  if (!c.dates) return false;
+  const want = datesKey(dates), have = datesKey(c.dates);
+  return want.start === have.start && want.end === have.end;
+}
+
+/** The vetoes that stand for a recorded `wants`. */
+export function vetoesFromWants(w: { cold: boolean; heat: boolean } | null | undefined): string[] {
+  return [...(w?.cold ? ['coldWeather'] : []), ...(w?.heat ? ['extremeHeat'] : [])];
 }
 
 /**
@@ -588,15 +715,18 @@ export function ideaClimate(
 ): { climate: IdeaClimate | null; breach: 'coldWeather' | 'extremeHeat' | null } {
   const trip = n ? howIsIt(n, dates.start, dates.end) : null;
   const verdict = climateBreach(trip, vetoes);
+  const wants = climateVetoes(vetoes);
+  const at = datesKey(dates);
   if (!n) {
     // Nothing held: only worth a line when somebody's no-go could not be checked.
-    return { climate: verdict.asked ? { place, held: false, trip: null, best: null, credit: '', asked: true, checked: false } : null, breach: null };
+    return { climate: verdict.asked ? { place, held: false, trip: null, best: null, credit: '', asked: true, checked: false, dates: at, wants, breach: null } : null, breach: null };
   }
   return {
     climate: {
       place, held: true, trip,
       best: trip ? null : bestMonthsLine(n, place),
       credit: climateCredit(n.period), asked: verdict.asked, checked: verdict.checked,
+      dates: at, wants, breach: verdict.veto,
     },
     breach: verdict.veto,
   };

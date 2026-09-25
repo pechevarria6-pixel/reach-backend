@@ -15,7 +15,10 @@ const TripClimateShape = z.object({
   months: z.array(z.object({ month: num.int().min(1).max(12), nights: num.int().min(1), rainPlace: z.string().nullable() })).min(1),
   when: z.string().min(1),
   highC: num, lowC: num, highF: num, lowF: num,
+  highCExact: num.nullish(),
+  lowsReliable: z.boolean().nullish(),
   rainMmDay: num.min(0),
+  rainMm: num.min(0).nullish(),
   label: z.string(),
   lead: z.object({
     month: num, monthName: z.string(), highC: num, lowC: num, highF: num, lowF: num,
@@ -36,8 +39,12 @@ export const IdeaClimateShape = z.object({
   credit: z.string(),
   asked: z.boolean(),
   checked: z.boolean(),
+  dates: z.object({ start: z.string().nullable(), end: z.string().nullable() }).nullish(),
+  wants: z.object({ cold: z.boolean(), heat: z.boolean() }).nullish(),
+  breach: z.enum(['coldWeather', 'extremeHeat']).nullish(),
 }).refine(c => !c.held || !!c.credit, { message: 'held climate carries its source' })
-  .refine(c => c.held || !c.checked, { message: 'nothing held cannot have been checked' });
+  .refine(c => c.held || !c.checked, { message: 'nothing held cannot have been checked' })
+  .refine(c => !c.breach || (c.held && !!c.trip && c.checked), { message: 'a breach is a verdict on dates, from climate held' });
 
 /** A trip idea's climate as the card may use it, or null. */
 export function ideaClimateFrom(raw: unknown): IdeaClimate | null {

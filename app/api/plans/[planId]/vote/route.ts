@@ -7,6 +7,7 @@ import { readVetoes, membersOf, organiserOf, organisersOf, firstName, notMigrate
 import { claimOnce } from '@/lib/everyone-in';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
+import { ideasWithClimateNow } from '@/lib/climate-store';
 
 // ─── /api/plans/[id]/vote — the group's vote on where to go ──────────────
 // A group trip's three ideas are saved on the plan (plans.trip_options) and
@@ -23,6 +24,7 @@ type PlanRow = {
   id?: string; group_id?: string; status?: string; vote_options?: string[];
   trip_options?: unknown; created_by?: string | null; destination_style?: string | null;
   type?: string | null; title?: string | null; solo_mode?: boolean;
+  start_date?: string | null; end_date?: string | null;
 };
 
 // POST { option } — cast or change a vote
@@ -219,12 +221,18 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
   const organiser = organiserOf(members, plan.created_by ?? null);
   const nameOf = new Map(members.map(m => [m.userId, firstName(m.name)]));
 
+  // Each idea's weather for the dates the plan holds now, not the ones it was
+  // made for: the dates can move while the vote is open, and the card and
+  // the weather no-go both have to follow them (lib/climate-store.ts).
+  const dates = { start: plan.start_date ?? null, end: plan.end_date ?? null };
+  const options = ideas ? await ideasWithClimateNow(supabase, ideas.options, dates) : null;
+
   return NextResponse.json({
     // Kept for older screens: counts by option and how many votes in all.
     tally: view.counts,
     total: view.voted,
 
-    ideas: ideas ? { set: ideas.set, mode: ideas.mode, foundAt: ideas.foundAt, options: ideas.options } : null,
+    ideas: ideas ? { set: ideas.set, mode: ideas.mode, foundAt: ideas.foundAt, options } : null,
     ideasAvailable,
     vetoesAvailable: vetoRead.available,
     status: plan.status ?? null,
