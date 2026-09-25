@@ -15,6 +15,7 @@
 // can actually talk" — and a matcher that only looks for words finds
 // "clubs" there and books one. So every match is checked for what comes
 // before it, and a negated want becomes a hard no rather than a want.
+import { isWeatherNoGo, CLIMATE_CHECKS_ENABLED } from './weather-no-go.ts';
 
 /** Which quiz option each phrase plainly means. */
 type Vocab = Record<string, Record<string, string[]>>;
@@ -257,6 +258,9 @@ export function answersFromGoal(
   // Refusals first, because the same word can appear twice — "no big crowds
   // but somewhere lively" — and what somebody rules out should win.
   for (const [option, phrases] of Object.entries(NO_WAY)) {
+    // Not ticked for them while the option is hidden: nothing can check the
+    // weather yet (lib/weather-no-go.ts), and a hidden tick cannot be undone.
+    if (isWeatherNoGo(option) && !CLIMATE_CHECKS_ENABLED) continue;
     for (const phrase of phrases) {
       const at = findPhrase(text, phrase);
       if (at >= 0 && isNegated(text, at)) {

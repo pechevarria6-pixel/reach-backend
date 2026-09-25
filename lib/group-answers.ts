@@ -27,6 +27,7 @@
 // whatever the model writes is shown to every one of them. See
 // PRIVATE_ANSWERS_RULE below.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { splitVetoes } from './weather-no-go.ts';
 
 /**
  * What `plans.destination_style` holds while a group trip is waiting to be
@@ -149,7 +150,11 @@ export function answersFrom(rows: AnswerRow[] | null | undefined): GroupAnswers 
 
     const nos = [...list(a.noWayJose), ...list(a.noWay)];
     if (nos.length) {
-      parts.push(`will not: ${nos.join(', ')}`);
+      // A weather no-go is carried, but never as "will not": nothing can
+      // check it (lib/weather-no-go.ts), and the route says so once.
+      const { hard, weather } = splitVetoes(nos);
+      if (hard.length) parts.push(`will not: ${hard.join(', ')}`);
+      if (weather.length) parts.push(`would rather avoid, unchecked: ${weather.join(', ')}`);
       vetoes.push(...nos);
     }
 

@@ -74,6 +74,16 @@ const BROKEN_PROMISES = [
   'food truck',
   'opened last month',
   'new openings',
+  // Reach holds no climate data, so nothing checks the weather (lib/weather-
+  // no-go.ts). "We can't check weather yet." is the only thing said about it;
+  // these are the ways copy could claim otherwise.
+  'checked the weather',
+  'checks the weather',
+  'weather checked',
+  'weather-checked',
+  'avoids the cold',
+  'avoided the cold',
+  'away from the cold',
 ];
 
 /**

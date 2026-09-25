@@ -24,6 +24,7 @@ import { pushState, turnOnPush } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor } from "@/lib/quiz-steps";
 import { QUIZ_SCREENS, needsDone, onOptionPress, HOLD_MS, BLEND_WINDOW_MS } from "@/lib/quiz-screens";
+import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
 import { quizFromMe, withinQuietPeriod } from "@/lib/contracts/traveler-profile";
 import { pickDrip, localKey } from "@/lib/drip";
@@ -3827,7 +3828,8 @@ const TASTE_QUESTIONS=[
     title:"No Way José",
     sub:"Absolute nos. We will never suggest these, however good they look.",
     customPlaceholder:"Anything else that's a hard no?",
-    options:[
+    // Weather no-gos are hidden until something can check them (lib/weather-no-go.ts).
+    options:offeredNoGos([
       {id:"crowds",e:"👥",l:"Big crowds"},
       {id:"loud",e:"🔊",l:"Loud rooms"},
       {id:"earlyMornings",e:"⏰",l:"Early mornings"},
@@ -3837,7 +3839,7 @@ const TASTE_QUESTIONS=[
       {id:"coldWeather",e:"🥶",l:"Cold weather"},
       {id:"camping",e:"⛺",l:"Camping"},
       {id:"karaoke",e:"🎤",l:"Karaoke"},
-    ],
+    ],o=>o.id),
   },
   {
     // Last, and open. Everything above is a list somebody picks from, which
@@ -4373,7 +4375,9 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
           // Anything they said before that is not one of these chips is still
           // shown, so it can be kept or taken off rather than silently dropped.
           const dietChips=[...DIETARY,...(answers.dietary||[]).filter(d=>!DIETARY.includes(d))];
-          const noChips=[...DISLIKES,...(answers.dislikes||[]).filter(d=>!DISLIKES.includes(d))];
+          // Weather no-gos are hidden until something can check them; a saved
+          // one is kept, just not shown (lib/weather-no-go.ts).
+          const noChips=[...offeredNoGos(DISLIKES,d=>d),...(answers.dislikes||[]).filter(d=>!DISLIKES.includes(d))];
           const chip=(field,v)=>{
             const on=(answers[field]||[]).includes(v);
             return(
@@ -5085,7 +5089,9 @@ const DEST_TO_TRIP_TYPE={city:"city",beach:"beach",mountains:"nature",nature:"na
 const VIBE_TO_PACE={chill:"relaxed",active:"packed",culture:"balanced",mix:"balanced"};
 const STAY_TO_STAY={hotel:"hotel",rental:"airbnb",luxury:"resort",boutique:"boutique",hostel:"hostel"};
 const DEALBREAKER_TO_NOWAY={
-  "cold weather":"coldWeather","extreme heat":"coldWeather","crowds":"crowded",
+  // "extreme heat" was mapped to coldWeather, which planned somebody avoiding
+  // heat away from the cold. It is its own typed answer now.
+  "cold weather":"coldWeather","crowds":"crowded",
   "long flights":"longFlights","hiking":"hiking","early starts":"earlyMornings",
   "camping":"camping",
 };
@@ -5106,7 +5112,10 @@ function knownFromPlan(plan){
   // text rather than being quietly dropped, because "no camping" matters
   // whether or not it happens to be one of our six chips.
   const nos=(plan.dealbreakers||[]).map(d=>
-    DEALBREAKER_TO_NOWAY[String(d).toLowerCase().trim()]||("custom:"+d));
+    DEALBREAKER_TO_NOWAY[String(d).toLowerCase().trim()]||("custom:"+d))
+    // Not carried while the option is hidden: a tick nobody can see is a
+    // tick nobody can take off.
+    .filter(n=>CLIMATE_CHECKS_ENABLED||!isWeatherNoGo(n));
   if(nos.length)known.noWayJose=nos;
   // Never its dates or its budget. The quiz is for a NEW trip: a group's
   // Puerto Vallarta dates (Nov 2-9) and its $2,268 — which was our estimate
@@ -5326,14 +5335,15 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
       multi:true,
       optional:true,
       customPlaceholder:"Anything else that's a hard no?",
-      options:[
+      // Weather no-gos are hidden until something can check them (lib/weather-no-go.ts).
+      options:offeredNoGos([
         {id:"camping",e:"⛺",l:"Camping"},
         {id:"longFlights",e:"✈️",l:"10+ hr flights"},
         {id:"coldWeather",e:"🥶",l:"Cold weather"},
         {id:"crowded",e:"👥",l:"Touristy traps"},
         {id:"earlyMornings",e:"⏰",l:"Early mornings"},
         {id:"hiking",e:"🥾",l:"Hiking"},
-      ]
+      ],o=>o.id)
     },
   ];
 
@@ -7750,7 +7760,9 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
     return true;
   };
 
-  const DBS=["Cold weather","Extreme heat","Crowds","Long flights","Hiking","Nightlife","Spicy food","Early starts","Camping","Loud venues","Outdoor dining"];
+  // Cold weather and Extreme heat are hidden until something can check them
+  // (lib/weather-no-go.ts) — this screen says Reach won't cross these lines.
+  const DBS=offeredNoGos(["Cold weather","Extreme heat","Crowds","Long flights","Hiking","Nightlife","Spicy food","Early starts","Camping","Loud venues","Outdoor dining"],d=>d);
 
   // Which screen this is, by name. Screens were picked by position —
   // step===3 was always "Where to stay?" — while the list of steps differs by
@@ -9205,6 +9217,25 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   },[planId]);
   useEffect(()=>{loadShare();loadDates();},[planId]);
 
+  // Your own hard nos for this trip — only to know whether one of them is a
+  // weather no-go, which nothing can check yet (lib/weather-no-go.ts). Your
+  // own answers only: the group never sees what anybody said.
+  const [myNoGos,setMyNoGos]=useState([]);
+  useEffect(()=>{
+    if(CLIMATE_CHECKS_ENABLED||!planId||isTempId(planId))return;
+    let alive=true;
+    (async()=>{
+      try{
+        const r=await fetch(`/api/plans/${planId}/preferences`);
+        if(!r.ok)return;
+        const d=await r.json();
+        const a=d.answers&&typeof d.answers==="object"?d.answers:{};
+        if(alive)setMyNoGos([...(Array.isArray(a.noWayJose)?a.noWayJose:[]),...(Array.isArray(a.noWay)?a.noWay:[])]);
+      }catch(e){console.error("[plan] could not read your answers for this trip",e);}
+    })();
+    return()=>{alive=false;};
+  },[planId]);
+
   // "Results update in real time" was written on the screen and nothing was
   // refreshing it. Somebody waiting on the last vote watched a static number
   // and concluded Reach was broken. Now the claim is true, and only while the
@@ -9437,6 +9468,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       <div style={{flex:1,overflowY:"auto",paddingBottom:20}}>
         {atab==="overview"&&(
           <div style={{padding:"16px 0"}}>
+            {/* A weather no-go was saved, and nothing can check it. Said once,
+                quietly — never as though it was applied. */}
+            {!CLIMATE_CHECKS_ENABLED&&savedWeatherNoGo({dealbreakers:plan.dealbreakers,noWayJose:myNoGos})&&(
+              <div style={{margin:"0 20px 12px",fontSize:12.5,color:C.t3,lineHeight:1.5}}>{CANT_CHECK_WEATHER}</div>
+            )}
             {/* Built before we held places for this town, and we hold them
                 now: the rebuild is worth doing, and says by how much. */}
             {fresh?.stale&&!building&&(

@@ -10,6 +10,7 @@ import {
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
 import { withoutVetoed, tripBreach } from '@/lib/vetoes';
+import { splitVetoes, weatherLine } from '@/lib/weather-no-go';
 import { planReadiness, wentAheadWith, type ReadinessReport } from '@/lib/plan-readiness';
 import { generationHints } from '@/lib/traveler-profile';
 import { readProfiles } from '@/lib/quiz-store';
@@ -536,13 +537,17 @@ export async function POST(req: NextRequest) {
     console.log('[generate] priced for the lowest budget anybody gave', { plan: groupPlan?.id, budget: lowestAsked });
   }
 
-  const allVetoes = [...new Set([
+  const everyVeto = [...new Set([
     ...everyone.flatMap((p: any) => p.no_way_jose || []),
     ...(tripPrefs.noWayJose || []),
     // What anybody going said, for this trip, that they will not do.
     ...(groupAnswers?.vetoes ?? []),
   // "custom:" is how the quiz stores a typed answer, not part of the answer.
   ].map((v: unknown) => String(v).replace(/^custom:/, '').trim()).filter(Boolean))];
+  // A weather no-go is not a veto while nothing can check it: it leaves the
+  // "never include" lists and is said once, as a wish we cannot verify
+  // (lib/weather-no-go.ts). The model is never told it is enforced.
+  const { hard: allVetoes, weather: weatherNos } = splitVetoes(everyVeto);
   // Everyone's own answers for this trip, for the options prompt. The
   // itinerary stage builds its own from the same reader below. For a group
   // they go in unnamed, under the rule that nobody's are ever said back:
@@ -751,7 +756,9 @@ export async function POST(req: NextRequest) {
       if (!nightPrefs.energy && stored.energy) nightPrefs.energy = stored.energy;
       if (read.lowestBudget && !body.budgetPerPerson) effectiveBudget = read.lowestBudget;
     }
-    const allVetoesHere = [...new Set([...allVetoes, ...tripVetoes])];
+    const here = splitVetoes([...new Set([...allVetoes, ...weatherNos, ...tripVetoes.map(v => String(v).replace(/^custom:/, '').trim())])]);
+    const allVetoesHere = here.hard;
+    const weatherHere = weatherLine(here.weather);
     // The part of town is no longer asked for. It comes from where they
     // are, or the city they named in the first sentence, and from what they
     // want the room to be like — which is what energy and kind already say.
@@ -874,7 +881,7 @@ Music: ${musicGenres.slice(0, 3).join(', ') || 'mixed'}
 Drinks: ${drinkStyles.join(', ') || 'no preference'}
 A good night out, in their words: ${nightlife.join(', ') || 'no preference'}
 Dietary (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
-${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${wantedBlock}
+${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${weatherHere}${wantedBlock}
 
 Return exactly one day. Use its three slots as the shape of an EVENING — not
 a day. Nothing here happens before late afternoon:
@@ -954,7 +961,7 @@ no "back at the hotel", no room, no pool, no lobby, no breakfast included.
 Those read as facts about a booking that does not exist, and the first thing
 somebody does with the first line of a plan is act on it. Write the day
 outside: arrive, drop the bags, and go and look at the town.
-${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${wantedBlock}
+${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${weatherHere}${wantedBlock}
 
 ${solo ? `On their own, so every slot works for one: counter or bar seating,
 neighbourhoods that are comfortable solo, some days to meet people and some to
@@ -1444,7 +1451,7 @@ DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 A GOOD NIGHT OUT: ${nightlife.join(', ') || 'no preference'}
 DINING STYLE: ${diningVibes.join(', ') || 'no preference'}
 DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${eveningTravelBlock}${groupWanted}
-${allVetoes.length > 0 ? 'NEVER INCLUDE: ' + allVetoes.join(', ') : ''}
+${allVetoes.length > 0 ? 'NEVER INCLUDE: ' + allVetoes.join(', ') : ''}${weatherLine(weatherNos)}
 
 Each option is a real evening in a named neighbourhood — "Dinner and a gig in
 the Mission", not a city. destination is that evening's name: the KIND of
@@ -1503,7 +1510,7 @@ DRINKS: ${drinkStyles.join(', ') || 'no preference'}
 NIGHTLIFE: ${nightlife.join(', ') || 'no preference'}
 LIVE MUSIC THEY GO TO: ${concertTypes.slice(0, 4).join(', ') || 'no preference'}
 DIETARY (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}${saidBlock}${travelBlock}${groupWanted}
-${allVetoes.length > 0 ? 'VETOES (never include): ' + allVetoes.join(', ') : ''}
+${allVetoes.length > 0 ? 'VETOES (never include): ' + allVetoes.join(', ') : ''}${weatherLine(weatherNos)}
 
 Price diversity is required. Return exactly three options, one per tier, and
 hit these totals — specific numbers, not a range, because percentages of a

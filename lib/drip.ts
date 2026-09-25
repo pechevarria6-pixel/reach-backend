@@ -19,6 +19,20 @@ export const DRIP_IDS = ['drinks', 'seating', 'night_out', 'camera_roll', 'plan'
 export type DripId = typeof DRIP_IDS[number];
 
 /**
+ * "Anything you're weirdly into?" (free_interests) feeds Moments, and Moments
+ * does not exist yet — so the answer would reach no screen. The question is
+ * off until it does. The code, the contract field and any answers already
+ * saved are kept; turn this on in the commit that gives the answer a screen.
+ */
+export const MOMENTS_ENABLED = false;
+
+/** Drip questions whose answer has nowhere to go yet. */
+export function dripHasAHome(id: DripId, moments = MOMENTS_ENABLED): boolean {
+  if (id === 'free_interests') return moments;
+  return true;
+}
+
+/**
  * Screens a drip card may never appear on. The card components are not
  * mounted there either; this is the rule written down so a new call site
  * cannot quietly break it.
@@ -61,6 +75,7 @@ export interface DripContext {
 
 /** May this drip question be shown here, now? */
 export function dripAllowed(id: DripId, ctx: DripContext): boolean {
+  if (!dripHasAHome(id)) return false;
   if ((NO_DRIP_SCREENS as readonly string[]).includes(ctx.screen)) return false;
   // One per session. The same card re-rendering is still that one card.
   if (ctx.shownThisSession && ctx.shownThisSession !== id) return false;
