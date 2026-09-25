@@ -230,6 +230,8 @@ export async function POST(req: NextRequest) {
   // Set when the organiser went ahead with who had answered: whose wishes
   // the prompt may carry. Null means everybody's, as it always was.
   let answeredOnly: Set<string> | null = null;
+  // The organiser's go-ahead, recorded only once the ideas are built.
+  let goAhead: { answered: number; members: number } | null = null;
   // Whether plans.trip_options exists yet (sql/trip-options-2026-09-23.sql),
   // and which saved set a regenerate is replacing.
   let ideasAvailable = false;
@@ -321,32 +323,25 @@ export async function POST(req: NextRequest) {
       // somebody leaving between the two reads must not open the gate.
       const gate = readiness.wentAhead ? { open: true, waitingOn: [] } : optionsGate(readiness.members, false);
       const organiser = isOrganiser({ role: ctx.role, createdBy: groupPlan.created_by, userId: ctx.user.id });
-      if (withAnswered === true) {
+      if (withAnswered === true && !detailTripId) {
         // Server-enforced: only the organiser can go ahead, whatever the
-        // screen offered.
+        // screen offered. Only for the ideas: the days of an idea follow
+        // from the go-ahead that built it, and are never where one starts.
         const go = goAheadDecision({
           organiser,
           allowed: gate.open || mayGoAhead({ members: readiness.members, createdBy: groupPlan.created_by, createdAt: groupPlan.created_at }),
         });
         if (go.action === 'refuse') return NextResponse.json({ error: go.error }, { status: go.status });
         if (!gate.open) {
-          // Recorded before anything is built, so the days of each idea, the
-          // vote and any rebuild agree the trip went ahead. Without the row
-          // they would all still be waiting, so a failed write refuses.
-          const { error: noted } = await supabase.from('audit_logs').insert({
-            user_id: ctx.user.id, action: PLANNED_WITH_ANSWERED, resource: 'plans', resource_id: groupPlan.id, success: true,
-            metadata: { answered: readiness.members.filter(m => m.answered).length, members: readiness.members.length },
-          });
-          if (noted) {
-            console.error('[generate] could not record going ahead with who has answered', { plan: groupPlan.id, code: noted.code });
-            return NextResponse.json(
-              { error: "We couldn't start this with who's answered just now — try again in a moment." },
-              { status: 503 },
-            );
-          }
-          console.log('[generate] organiser went ahead with who has answered', {
-            plan: groupPlan.id, answered: readiness.members.filter(m => m.answered).length, members: readiness.members.length,
-          });
+          // Not recorded yet. The row says the ideas were built with who
+          // had answered — the days, the vote, a rebuild and "Everyone's
+          // in" all read it — so it is written once they have been, just
+          // before they are saved. A go-ahead that is rate limited or whose
+          // model call fails leaves no row, and the trip waits as before.
+          goAhead = {
+            answered: readiness.members.filter(m => m.answered).length,
+            members: readiness.members.length,
+          };
           gate.open = true;
           readiness = { ...readiness, wentAhead: true };
         }
@@ -1786,6 +1781,27 @@ Return JSON only, shaped exactly like this:
     // these three, votes on their own phone, and the organiser picks. Until
     // the migration has run they are shown to whoever found them only, and
     // the response says so rather than letting the screen imply otherwise.
+    // The ideas are built: now the go-ahead is a fact about this trip.
+    // Without the row the days of each idea and the vote would still be
+    // waiting, so a failed write refuses rather than hand over ideas that
+    // cannot go any further.
+    let goAheadRow: string | null = null;
+    if (goAhead && groupPlan) {
+      const { data: noted, error: notedErr } = await supabase.from('audit_logs').insert({
+        user_id: ctx.user.id, action: PLANNED_WITH_ANSWERED, resource: 'plans', resource_id: groupPlan.id, success: true,
+        metadata: goAhead,
+      }).select('id').single();
+      if (notedErr) {
+        console.error('[generate] could not record going ahead with who has answered', { plan: groupPlan.id, code: notedErr.code });
+        return NextResponse.json(
+          { error: "We couldn't start this with who's answered just now — try again in a moment." },
+          { status: 503 },
+        );
+      }
+      goAheadRow = noted?.id ? String(noted.id) : null;
+      console.log('[generate] organiser went ahead with who has answered', { plan: groupPlan.id, ...goAhead });
+    }
+
     if (groupPlan && isGroup && ideasAvailable) {
       const ideas = ideasFrom(trips as unknown as Array<Record<string, unknown>>, {
         set: randomUUID(), foundBy: ctx.user.id, foundAt: new Date().toISOString(),
@@ -1799,7 +1815,12 @@ Return JSON only, shaped exactly like this:
       }
       if (saved.outcome === 'taken') {
         // Somebody else's Find landed first. Theirs are the group's ideas;
-        // these three are dropped rather than shown beside them.
+        // these three are dropped rather than shown beside them — so this
+        // go-ahead built nothing the group will see, and its row goes.
+        if (goAheadRow && groupPlan) {
+          const { error: undo } = await supabase.from('audit_logs').delete().eq('id', goAheadRow);
+          if (undo) console.error('[generate] could not remove a go-ahead whose ideas were not kept', { plan: groupPlan.id, code: undo.code });
+        }
         if (!saved.ideas) {
           return NextResponse.json(
             { error: 'Somebody has already picked where this trip goes.', alreadyDecided: true },

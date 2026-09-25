@@ -47,16 +47,39 @@ test('anybody but the organiser is refused with a 403, even when it would be all
 
 test('the route checks the organiser on the server before building anything', () => {
   const route = readFileSync('app/api/trips/generate/route.ts', 'utf8');
-  const gate = route.indexOf('if (withAnswered === true)');
-  assert.ok(gate > 0, 'the route reads withAnswered');
+  const gate = route.indexOf('if (withAnswered === true && !detailTripId)');
+  assert.ok(gate > 0, 'the route reads withAnswered, for the ideas only');
   const decide = route.indexOf('goAheadDecision({', gate);
   const refuse = route.indexOf("if (go.action === 'refuse') return NextResponse.json({ error: go.error }, { status: go.status });", gate);
-  const firstModelCall = route.indexOf('withSchemaFallback(client');
+  const firstModelCall = route.indexOf('await withSchemaFallback(');
   assert.ok(decide > gate && refuse > decide, 'the decision is taken and a refusal returned');
   assert.ok(firstModelCall === -1 || refuse < firstModelCall, 'before any model call');
   assert.match(route.slice(gate, refuse), /isOrganiser\(|organiser,/);
-  // The go-ahead is recorded, so the days, the vote and a rebuild agree.
-  assert.match(route.slice(refuse, refuse + 1500), /PLANNED_WITH_ANSWERED/);
+});
+
+// The row used to be written before the rate limit and the model call, so a
+// go-ahead that got a 429 or a failed generation still marked the trip as
+// gone ahead for good — and "Everyone's in" was then never sent, though
+// nothing had been built without anybody.
+test('the go-ahead is recorded only once the ideas are built, and undone when they are not kept', () => {
+  const route = readFileSync('app/api/trips/generate/route.ts', 'utf8');
+  const insert = route.indexOf("action: PLANNED_WITH_ANSWERED");
+  assert.ok(insert > 0, 'the go-ahead is recorded');
+  assert.equal(route.indexOf("action: PLANNED_WITH_ANSWERED", insert + 1), -1, 'in one place');
+  const rateLimit = route.indexOf('const rate = await allowance(');
+  const lastModelCall = route.lastIndexOf('await withSchemaFallback(');
+  const save = route.indexOf('saveIdeas(supabase, groupPlan.id, ideas, replacing)');
+  assert.ok(rateLimit > 0 && lastModelCall > 0 && save > 0);
+  assert.ok(insert > rateLimit, 'after the rate limit');
+  assert.ok(insert > lastModelCall, 'after every model call');
+  assert.ok(insert < save, 'before the ideas are saved');
+  // The go-ahead branch itself writes nothing.
+  const gate = route.indexOf('if (withAnswered === true');
+  const gateEnd = route.indexOf('if (!gate.open) {\n        return NextResponse.json({', gate);
+  assert.doesNotMatch(route.slice(gate, gateEnd), /from\('audit_logs'\)/);
+  // Somebody else's ideas landed first: this go-ahead built nothing kept.
+  const taken = route.indexOf("if (saved.outcome === 'taken')", save);
+  assert.match(route.slice(taken, taken + 800), /from\('audit_logs'\)\.delete\(\)\.eq\('id', goAheadRow\)/);
 });
 
 test('party size comes from every member, whoever has answered', () => {
