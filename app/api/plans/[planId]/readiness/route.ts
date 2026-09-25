@@ -70,6 +70,9 @@ export async function GET(_req: Request, { params }: { params: { planId: string 
       // One flight booking per departure airport (owner, 2026-09-25).
       airports: split?.groups.map(g => ({ airport: g.airport, userIds: g.userIds })) ?? null,
       unplaced: split?.unknown.map(o => o.userId) ?? null,
+      // Saved a home city we could not turn into an airport just now — a
+      // lookup that failed, not a detail they owe us.
+      unread: split?.unread.map(o => o.userId) ?? null,
     } : null,
     // Whether the person asking still owes us anything, so the screen can put
     // the prompt in front of them rather than in front of the group.

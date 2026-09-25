@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   originOf, byDepartureAirport, departureWhy, travelDetails, iataOf,
+  originsFor, nearestAirportFor, MAX_NEAREST_LOOKUPS,
 } from '../../lib/airports.ts';
 import {
   failuresByLine, nothingFound, nearbyDates, nearbyAsk, TRY_NEARBY_DATES,
@@ -97,6 +98,75 @@ test('a night out never asks for an airport, and a failed read is not somebody\'
   assert.equal('needs' in dinner, false);
   const unread = travelDetails(ready, { flies: true, originsRead: false, origin: null });
   assert.equal(unread.status, 'ready');
+});
+
+test('a plan with no flight asks nobody for the fields a ticket is issued against', () => {
+  // Sam never gave a date of birth or gender: that holds up a flight, not a dinner.
+  const noDob = { userId: 'u-sam', name: 'Sam', ready: false, missing: ['date of birth', 'gender'] };
+  const dinner = travelDetails(noDob, { flies: false, originsRead: false, origin: null });
+  assert.equal(dinner.status, 'ready', 'a dinner and a bar need nobody\'s date of birth');
+  assert.equal('needs' in dinner, false);
+  const flight = travelDetails(noDob, { flies: true, originsRead: true, origin: originOf({ ...sam, homeAirport: 'PIT' }) });
+  assert.equal(flight.status, 'needs_details', 'the same gap still holds up a flight');
+});
+
+// ─── A lookup that failed is ours, not their missing airport ───────────
+
+test('a nearest-airport lookup that failed or was never asked is unread, not a missing airport', async () => {
+  const people = ['Boone, NC', 'Blowing Rock, NC', 'Banner Elk, NC', 'Valle Crucis, NC', 'Sugar Grove, NC', 'Todd, NC']
+    .map((homeCity, i) => ({ userId: `u-${i}`, name: `P${i}`, homeCity }));
+  let calls = 0;
+  const out = await originsFor(people, async () => { calls++; return 'TRI'; });
+  assert.equal(calls, MAX_NEAREST_LOOKUPS);
+  assert.deepEqual(out.slice(0, 4).map(o => o.airport), ['TRI', 'TRI', 'TRI', 'TRI']);
+  assert.deepEqual(out.slice(4).map(o => [o.airport, o.unread]), [[null, true], [null, true]], 'past the cap is not asked, not absent');
+
+  // One city asked once, however many live there.
+  let same = 0;
+  const town = await originsFor([1, 2, 3, 4, 5, 6].map(i => ({ userId: `u-${i}`, name: `P${i}`, homeCity: 'Boone, NC' })),
+    async () => { same++; return 'TRI'; });
+  assert.equal(same, 1);
+  assert.equal(town.every(o => o.airport === 'TRI'), true);
+
+  const [timedOut] = await originsFor([{ ...jo, homeCity: 'Boone, NC' }], async () => 'failed');
+  assert.equal(timedOut.unread, true);
+  const [threw] = await originsFor([{ ...jo, homeCity: 'Boone, NC' }], async () => { throw new Error('timeout'); });
+  assert.equal(threw.unread, true);
+  const [nowhere] = await originsFor([{ ...jo, homeCity: 'Nowhere' }], async () => null);
+  assert.equal(nowhere.unread, undefined, 'a lookup that answered "nothing near" is a real gap');
+
+  const split = byDepartureAirport([originOf({ ...sam, homeAirport: 'PIT' }), timedOut]);
+  assert.deepEqual(split.unknown, []);
+  assert.deepEqual(split.unread.map(o => o.userId), ['u-jo']);
+  const why = departureWhy(split, 'u-sam') ?? '';
+  assert.match(why, /couldn't work out where Jo flies from/);
+  assert.doesNotMatch(why, /Profile|home airport/i, 'nobody is sent to fix what is ours');
+  const mine = departureWhy(split, 'u-jo') ?? '';
+  assert.doesNotMatch(mine, /add your home airport/i);
+
+  const ready = { userId: 'u-jo', name: 'Jo', ready: true, missing: [] as string[] };
+  const t = travelDetails(ready, { flies: true, originsRead: true, origin: timedOut });
+  assert.equal(t.status, 'ready');
+  assert.deepEqual(t.needs, []);
+  assert.equal(t.origin?.unread, true);
+});
+
+test('nearestAirportFor tells "nothing near" from "could not ask"', async () => {
+  const pt = { lat: 36.2, lng: -81.7 };
+  const ok = (async () => new Response('{}', { status: 200 })) as typeof fetch;
+  const bad = (async () => new Response('', { status: 503 })) as typeof fetch;
+  const duffel = async (_p: unknown, _r?: number, f?: typeof fetch) => {
+    await f!('https://x');
+    return [];
+  };
+  const base = { locate: async () => pt, airports: duffel, keyed: true };
+  assert.equal(await nearestAirportFor('Boone', { ...base, fetchImpl: ok }), null);
+  assert.equal(await nearestAirportFor('Boone', { ...base, fetchImpl: bad }), 'failed', 'a Duffel 5xx is not "no airport"');
+  assert.equal(await nearestAirportFor('Boone', { ...base, keyed: false, fetchImpl: ok }), 'failed', 'no key, never asked');
+  assert.equal(await nearestAirportFor('Boone', { ...base, locate: async () => 'failed' as const, fetchImpl: ok }), 'failed');
+  assert.equal(await nearestAirportFor('Boone', { ...base, locate: async () => null, fetchImpl: ok }), null);
+  assert.equal(await nearestAirportFor('Boone', { ...base, fetchImpl: ((async () => { throw new Error('net'); }) as unknown as typeof fetch) }), 'failed');
+  assert.equal(await nearestAirportFor('Boone', { ...base, airports: async () => [{ iata: 'TRI' }], fetchImpl: ok }), 'TRI');
 });
 
 // ─── Nothing for these dates ────────────────────────────────────────────
@@ -203,4 +273,8 @@ test('"I\'ve got it" still works before the column exists', () => {
 
 test('readiness gives every member a status', () => {
   assert.match(readiness, /travelDetails\(t, /);
+});
+
+test('bookable reads a failed lookup as ours to retry', () => {
+  assert.match(bookable, /departure\.unread\.length \? 'origins_unread'/);
 });

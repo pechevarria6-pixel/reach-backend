@@ -431,7 +431,9 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       : 'we could not read where everyone flies from just now — open checkout again in a moment';
     originReason = !departure ? 'origins_unread'
       : departure.unknown.length ? 'no_home_airport'
-        : departure.groups.length > 1 ? 'split_departures' : null;
+        // A lookup that failed is ours to retry, not their airport to add.
+        : departure.unread.length ? 'origins_unread'
+          : departure.groups.length > 1 ? 'split_departures' : null;
     const landed = await arrivalFor({
       // The gateway is probed from where most of the group leaves: a landing
       // airport is one place for everybody, whichever city they fly from.
