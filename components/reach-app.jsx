@@ -7626,7 +7626,9 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       if(draft.cuisine)setCuisine(draft.cuisine);
       if(draft.concertGenre)setConcertGenre(draft.concertGenre);
       if(draft.accom)setAccom(draft.accom);
-      if(draft.bks)setBks(draft.bks);
+      // A no-go this screen no longer offers (a weather one, while nothing
+      // can check it) cannot be seen or taken off, so it is not restored.
+      if(draft.bks)setBks(offeredNoGos(draft.bks,d=>d));
       if(draft.budget)setBudget(draft.budget);
       if(draft.voting!==undefined)setVoting(draft.voting);
       if(draft.vopts)setVopts(draft.vopts);

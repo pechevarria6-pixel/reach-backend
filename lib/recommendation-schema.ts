@@ -9,6 +9,7 @@
 // because finding out at the door that it is cash only is the failure this
 // product exists to prevent.
 import { z } from 'zod';
+import { splitVetoes, weatherLine } from './weather-no-go.ts';
 
 export const RecommendationSchema = z.object({
   title: z.string(),
@@ -51,6 +52,19 @@ export const RECOMMENDATIONS_JSON_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/**
+ * "Avoid: …" for the getaway and trip briefs. A weather no-go is never in
+ * it: nothing here holds climate data, so "Avoid: Cold weather" would be a
+ * rule the model is trusted to keep and nothing checks. It goes as the same
+ * wish-not-a-rule line the trip generator uses (lib/weather-no-go.ts). A
+ * create-plan draft saved before the chip was hidden still carries one.
+ */
+export function avoidLine(dealbreakers: unknown): string {
+  const all = (Array.isArray(dealbreakers) ? dealbreakers : []).map(String).filter(Boolean);
+  const { hard, weather } = splitVetoes(all);
+  return `Avoid: ${hard.join(', ') || 'nothing'}.${weatherLine(weather)}`;
+}
+
 /** What each kind of experience is, in the words its own world uses.
  *
  * `location` is never defaulted. It used to read `near ${v.location || 'the
@@ -77,12 +91,12 @@ Venues in ${v.location} itself, or close enough to drive to and back in a night.
   weekend: v => `Six weekend getaways, two or three nights.
 Vibe: ${v.vibe || 'mixed'}. Staying in: ${v.accommodation || 'a hotel'}.
 About $${v.budget || 500} each for the weekend, ${v.travelers || 4} people,
-leaving from ${v.location}. Avoid: ${(v.dealbreakers as string[] || []).join(', ') || 'nothing'}.
+leaving from ${v.location}. ${avoidLine(v.dealbreakers)}
 "sub" is the length and the character of the place.`,
 
   trip: v => `Six destinations for a ${v.nights || 7}-night trip.
 Vibe: ${v.vibe || 'mixed'}. Style: ${v.destStyle || 'city'}. Staying in: ${v.accommodation || 'a hotel'}.
 About $${v.budget || 2000} each, ${v.travelers || 4} travelling, from ${v.location}.
-Avoid: ${(v.dealbreakers as string[] || []).join(', ') || 'nothing'}.
+${avoidLine(v.dealbreakers)}
 "sub" is the nights and the character of the place.`,
 };

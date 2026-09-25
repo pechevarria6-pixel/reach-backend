@@ -12,6 +12,7 @@ import {
 import { answersFrom, answersBlock } from '../../lib/group-answers.ts';
 import { answersFromGoal } from '../../lib/goal.ts';
 import { DISLIKES } from '../../lib/traveler-profile.ts';
+import { EXPERIENCE_BRIEF, avoidLine } from '../../lib/recommendation-schema.ts';
 
 const app = readFileSync('components/reach-app.jsx', 'utf8');
 
@@ -90,4 +91,22 @@ test('copy that claims the weather was checked is caught by check:vocabulary', (
   const guard = readFileSync('scripts/check-vocabulary.mjs', 'utf8');
   for (const p of ["'checked the weather'", "'weather checked'", "'avoids the cold'"]) assert.ok(guard.includes(p), p);
   assert.ok(!/weirdly into/i.test(app), 'no screen asks it');
+});
+
+// A create-plan draft saved before the chip was hidden came back with
+// "Cold weather" in it: invisible, impossible to take off, and posted to
+// /api/recommendations, whose brief said "Avoid: Cold weather" as a rule.
+test('a restored draft drops a weather no-go, and the recommendations brief never makes one a rule', () => {
+  const bks = ['Cold weather', 'Crowds', 'Extreme heat'];
+  for (const type of ['trip', 'weekend']) {
+    const prompt = EXPERIENCE_BRIEF[type]({ location: 'Raleigh', dealbreakers: bks });
+    assert.match(prompt, /Avoid: Crowds\./);
+    assert.doesNotMatch(prompt, /Avoid:[^\n]*(Cold weather|Extreme heat)/, `${type}: a weather no-go is not a rule`);
+    assert.match(prompt, /WEATHER \(a wish, not a rule\)/);
+  }
+  assert.equal(avoidLine([]), 'Avoid: nothing.');
+  assert.equal(avoidLine(['Cold weather']).startsWith('Avoid: nothing.'), true);
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(app, /if\(draft\.bks\)setBks\(offeredNoGos\(draft\.bks,d=>d\)\);/);
+  assert.doesNotMatch(app, /if\(draft\.bks\)setBks\(draft\.bks\)/);
 });
