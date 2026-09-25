@@ -890,6 +890,13 @@ function TripPicks({push,userLocation,toast,groups}){
               <div style={{fontSize:13,color:C.t1,lineHeight:1.45}}>{p.held}.</div>
               {p.matched&&<div style={{fontSize:12,color:C.t2,lineHeight:1.45}}>{p.matched}</div>}
               {p.leftOut&&<div style={{fontSize:11.5,color:C.t3,lineHeight:1.45}}>{p.leftOut}</div>}
+              {/* When the weather is usually best — averages, said as averages. */}
+              {p.weather?.line&&(
+                <div style={{fontSize:11.5,color:C.t2,lineHeight:1.45}} title={p.weather.credit}>
+                  🌤 {p.weather.line}
+                  <div style={{fontSize:9.5,color:C.t3,marginTop:1}}>{p.weather.credit}</div>
+                </div>
+              )}
               <div style={{marginTop:"auto",paddingTop:6}}>
                 <div style={{fontSize:13,color:C.t1,fontWeight:600}}>
                   About {money(p.cost.low)}–{money(p.cost.high)}{p.cost.each?" each":""}

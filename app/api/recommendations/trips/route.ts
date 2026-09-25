@@ -20,6 +20,7 @@ import { whereFrom } from '@/lib/discovery/where';
 import { snapshot } from '@/lib/recommendations/holdings';
 import { personFor } from '@/lib/recommendations/person';
 import { pickTrips } from '@/lib/recommendations/trip-picks';
+import { dressPicks } from '@/lib/recommendations/dress';
 import { TripPicksResponse } from '@/lib/contracts/trip-pick';
 
 export const dynamic = 'force-dynamic';
@@ -39,7 +40,11 @@ export async function GET(req: NextRequest) {
   try {
     const snap = await snapshot(ctx.db);
     const { person, from } = await personFor(ctx.db, ctx.user.id, { at, city, airport, candidates: snap.candidates });
-    const { picks, reason } = pickTrips(snap.candidates, snap.holdings, person);
+    const { picks: bare, reason } = pickTrips(snap.candidates, snap.holdings, person);
+    // The picture of each place and when its weather is usually best. Both are
+    // kept answers after the first time, and each has a short deadline, so a
+    // slow Wikipedia costs a card its photo, never Home its cards.
+    const picks = await dressPicks(ctx.db, bare);
 
     // Checked against the same contract the card reads with. A card that
     // fails it is a bug here, not something to send half-formed.

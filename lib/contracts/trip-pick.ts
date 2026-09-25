@@ -55,6 +55,12 @@ export const TripPickSchema = z.object({
     alt: z.string().min(1),
     credit: z.string().nullable(),
   }).nullable().optional(),
+  /**
+   * When the weather is usually best there, from the averages we hold:
+   * "Best weather in Moab: April–May, September–October". Information only —
+   * never a check that a no-go passed. Absent when nothing is held.
+   */
+  weather: z.object({ line: z.string().min(1), credit: z.string().min(1) }).nullable().optional(),
   howFar: z.string().min(1),
   /** An estimate, and labelled as one on the card. Never a price. */
   cost: z.object({
