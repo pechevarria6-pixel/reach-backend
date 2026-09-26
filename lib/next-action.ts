@@ -11,10 +11,24 @@
 //
 //   checkoutState / stepOf   (lib/checkout.ts)    what the money and rows allow
 //   bookedClaim              (lib/checkout.ts)    whether "booked" may be said
-//   stepStates, bookingTracker (lib/plan-steps.ts) the owner's three sign-offs
+//   bookingTracker           (lib/plan-steps.ts)  what the Book tab lists to book
 //
 // A second machine reading the same rows would drift from the first the day
 // somebody fixed one of them.
+//
+// ── The rail ──
+//
+// The owner's decision of 25 September: one progress rail, Plan → Vote →
+// Lock in → Pay → Booked, replaces the three sign-off tabs (Overview →
+// Budget → Book) asked for on the 24th. The rail is `rail` on the answer,
+// worked out here from the same place the state is, so the dots and the
+// button under them cannot disagree. Vote is there only when there is a
+// vote, never on a plan for one; Pay only when Reach buys something.
+//
+// "Lock in" is the plan agreed: plans.status past planning and voting, which
+// is what opens the booking (the Book tab's "Book everything" has always
+// waited on it). The sign-offs, POST /api/plans/[id]/review and the
+// plans.review column are left in place and read by nothing.
 //
 // ── What "booked" means here ──
 //
@@ -26,12 +40,10 @@
 //     confirmation is not left out — it stops at `finish_elsewhere` first.
 //     A held row ('quoted') is not booked either: it stops at
 //     `needs_attention` first, because the person chose to wait on it.
-//   - every line the Book tab tracks done — by bookingTracker itself, the
-//     count POST /api/plans/[id]/review refuses a sign-off on, so a
-//     "sign it off" here is one the server will take — and the Book tab
-//     signed off, so `booked` and the tabs' "Ready to go" cannot disagree. Where the
-//     rows and a sign-off do disagree (signed, then a booking failed), the
-//     rows win and the state says the sign-off is out of date.
+//   - every line the Book tab lists done (bookingTracker), a line bought
+//     elsewhere with a confirmation number counting as done — or, where
+//     nothing needs booking at all, the plan locked in and whatever needs
+//     reserving reserved.
 //
 // A redirect is a row whose mode is 'redirect', whatever its status: POST
 // /api/bookings writes a Ticketmaster seat or a Resy table as
@@ -40,8 +52,8 @@
 // handed to the airline at approval is written 'redirected'. Reading the
 // status alone missed the common hand-off entirely.
 //
-// A plan with no booking rows at all — a night of walk-ins — can reach
-// `booked` through the sign-off, but `allBooked` is false and the copy never
+// A plan with no booking rows at all — a night of walk-ins — reaches
+// `booked` once it is locked in, but `allBooked` is false and the copy never
 // says "booked": nothing was. The celebration reads `allBooked`.
 //
 // ── Solo ──
@@ -54,7 +66,7 @@ import {
   type BookedClaim, type CheckoutRow, type CheckoutStep, type FundingView,
 } from './checkout.ts';
 import { reachBuys } from './booking/charged.ts';
-import { STEPS, stepStates, bookingTracker, type Review, type Step, type TrackLine } from './plan-steps.ts';
+import { bookingTracker, type TrackLine } from './plan-steps.ts';
 
 export const NEXT_STATES = [
   'needs_trip_input',
@@ -68,7 +80,6 @@ export const NEXT_STATES = [
   'finish_elsewhere',
   'booking_in_progress',
   'needs_attention',
-  'sign_off',
   'booked',
 ] as const;
 export type NextState = typeof NEXT_STATES[number];
@@ -109,6 +120,16 @@ export interface NextAction {
   claim: BookedClaim | null;
   /** Every row that counts is confirmed, and there is at least one. What the celebration reads. */
   allBooked: boolean;
+  /** The progress rail, from this same answer: the only progress a screen draws. */
+  rail: RailDot[];
+}
+
+/** Plan → Vote → Lock in → Pay → Booked (the owner's decision 1, 25 September). */
+export type RailKey = 'plan' | 'vote' | 'lock' | 'pay' | 'booked';
+export interface RailDot {
+  key: RailKey;
+  label: string;
+  state: 'done' | 'current' | 'todo';
 }
 
 /** A booking row as the contract carries it (lib/contracts/booking.ts), plus what checkout reads. */
@@ -140,6 +161,13 @@ export interface NextPlan {
   /** Whether there are ideas to vote on or pick from. */
   hasOptions?: boolean;
   createdBy?: string | null;
+  /**
+   * The reader decides for this plan — whoever set it up, or an admin of the
+   * group (isOrganiser in lib/trip-vote.ts, worked out by the screen, which
+   * holds the reader's role). Without it only createdBy is read, and a plan
+   * made before created_by was recorded would wait on nobody for ever.
+   */
+  organiserIsMe?: boolean;
   itinerary?: NextLine[] | null;
 }
 
@@ -173,7 +201,6 @@ export interface NextActionInput {
   funding: FundingView | null | undefined;
   /** Who has answered for this trip. Null when the read failed: nobody is then named. */
   readiness: AnswersView | null | undefined;
-  signoffs: Review | null | undefined;
   /** Who can be put on a flight. Null when unknown: nobody is asked for anything. */
   essentials: DetailsView | null | undefined;
   memberCount: number;
@@ -240,8 +267,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   const me = input.me ?? null;
   const funding = input.funding ?? null;
   const lines = plan.itinerary ?? [];
-  const steps = stepStates(input.signoffs);
-  const organiser = solo || (!!me && plan.createdBy === me) || input.vote?.organiser?.isYou === true;
+  const organiser = solo || plan.organiserIsMe === true || (!!me && plan.createdBy === me) || input.vote?.organiser?.isYou === true;
   const organiserName = input.vote?.organiser && !input.vote.organiser.isYou ? input.vote.organiser.name : null;
 
   const nav = (screen: Screen, tab?: PlanTab) => ({
@@ -266,7 +292,30 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   const cs = rows.length ? checkoutState(rows, { funding, now: input.now }) : null;
 
   const base = { checkoutStep: cs?.step ?? null, claim: null as BookedClaim | null, allBooked: false };
-  const say = (a: Omit<NextAction, 'checkoutStep' | 'claim' | 'allBooked'> & Partial<NextAction>): NextAction => ({ ...base, ...a });
+
+  // ── The rail: which dots there are, and which one this answer is on ──
+  // A vote only where there is one, and never for one person. Pay only where
+  // Reach buys something: a line it books that is not a table or a seat
+  // (those are bought from the seller), a row it pays a provider for, or
+  // money already asked for or in.
+  const hasVote = !solo && plan.hasOptions === true;
+  const buys = lines.some(l => l.booking_mode === 'reach' && l.type !== 'restaurant' && l.type !== 'event')
+    || live.some(r => reachBuys(r) && r.status !== 'failed' && r.status !== 'cancelled')
+    || cents(funding?.targetCents) > 0 || cents(funding?.collectedCents) > 0;
+  // Something that has to be booked by somebody, so that "Booked" is a true
+  // word for the last dot. Otherwise it is "All set".
+  const anythingToBook = live.length > 0 || bookingTracker(lines, []).total > 0;
+  const keys: RailKey[] = ['plan', ...(hasVote ? ['vote' as const] : []), 'lock', ...(buys ? ['pay' as const] : []), 'booked'];
+  const LABEL: Record<RailKey, string> = { plan: 'Plan', vote: 'Vote', lock: 'Lock in', pay: 'Pay', booked: anythingToBook ? 'Booked' : 'All set' };
+  /** Where the answer being built sits on the rail. Moved on as the checks below pass. */
+  let stage: RailKey = 'plan';
+  const railAt = (state: NextState): RailDot[] => {
+    const at = state === 'booked' ? keys.length
+      : Math.max(0, keys.indexOf(stage === 'pay' && !buys ? 'booked' : stage === 'vote' && !hasVote ? 'plan' : stage));
+    return keys.map((key, i) => ({ key, label: LABEL[key], state: i < at ? 'done' : i === at ? 'current' : 'todo' }));
+  };
+  const say = (a: Omit<NextAction, 'checkoutStep' | 'claim' | 'allBooked' | 'rail'> & Partial<NextAction>): NextAction =>
+    ({ ...base, rail: railAt(a.state), ...a });
 
   const waitOn = (names: string[], title: string, body: string | null, cta: Cta): NextAction | null => {
     // Never on a plan for one, whatever the rows or the reads say.
@@ -284,6 +333,9 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   // is never sent back to a vote or a sign-off because a rule changed under
   // it — the same grace plan-readiness gives trips already in flight.
   const moving = live.some(r => r.status !== 'quoted') || cents(funding?.collectedCents) > 0;
+  // Agreed: past planning and voting. 'booked' is the old word for the same
+  // thing further on, and a plan already moving is past it whatever it says.
+  const lockedIn = moving || ['approved', 'booked', 'completed'].includes(String(plan.status ?? ''));
 
   if (!moving) {
     const answers = input.readiness && !input.readiness.solo && !solo ? input.readiness : null;
@@ -307,6 +359,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     }
 
     if (voting) {
+      stage = 'vote';
       const v = input.vote;
       if (!v) {
         // The vote could not be read, so whether this person has voted is
@@ -334,6 +387,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     }
 
     if (undecided) {
+      if (plan.hasOptions) stage = 'vote';
       return plan.hasOptions
         ? say({ state: 'needs_trip_input', title: 'Pick the one you want', body: `The ideas for ${called(plan)} are ready.`,
           cta: { label: 'See them →', ...nav('groupTrip') }, chip: 'Planning' })
@@ -355,33 +409,39 @@ export function getNextAction(input: NextActionInput): NextAction | null {
         cta: { label: 'Plan them →', ...nav('planDetail', 'itinerary') }, chip: 'Planning' });
     }
 
-    // Lock in: the overview and the budget signed off (decision 1 — "Lock in"
-    // is the Budget sign-off), which opens the Book tab.
-    if (steps.budget !== 'done') {
-      const tab: Step = steps.overview !== 'done' ? 'overview' : 'budget';
-      return lockIn(tab, tab === 'overview'
-        ? 'Check the overview and the budget. Nothing is booked until both are signed off.'
-        : 'Check the budget. Nothing is booked until it is signed off.');
-    }
+    // Lock in: the plan agreed. Until it is, nothing is priced or booked —
+    // the Book tab's "Book everything" waits on the same status.
+    stage = 'lock';
+    // A vote on a plan whose place was already set (options put to the group
+    // from the create flow) has no pick of its own: locking the plan in is
+    // what closes it, so until then the rail is still on the vote.
+    if (!lockedIn && hasVote && plan.status === 'voting') stage = 'vote';
+    if (!lockedIn) return lockIn();
   }
 
-  function lockIn(tab: Step, body: string): NextAction {
+  function lockIn(): NextAction {
+    const body = hasVote && !organiser ? null : 'Nothing is priced or booked until it is.';
     if (organiser) {
-      return say({ state: 'lock_in', title: 'Lock it in', body, cta: { label: 'Lock it in →', ...nav('planDetail', tab) }, chip: 'Planning' });
+      return say({ state: 'lock_in', title: 'Lock it in', body, cta: { label: 'Lock it in →', ...nav('planDetail', 'overview') }, chip: 'Planning' });
     }
     const who = organiserName ?? 'the organiser';
-    return waitOn([who], `Waiting on ${who} to lock it in`, 'Nothing is booked until then.',
-      { label: 'See the plan →', ...nav('planDetail', tab) })
+    return waitOn([who], `Waiting on ${who} to lock it in`, 'Nothing is priced or booked until then.',
+      { label: 'See the plan →', ...nav('planDetail', 'overview') })
       // Unreachable (solo is always the organiser); the type wants an answer.
-      ?? say({ state: 'lock_in', title: 'Lock it in', body, cta: { label: 'Lock it in →', ...nav('planDetail', tab) }, chip: 'Planning' });
+      ?? say({ state: 'lock_in', title: 'Lock it in', body, cta: { label: 'Lock it in →', ...nav('planDetail', 'overview') }, chip: 'Planning' });
   }
 
-  // Lines Reach books that have no row yet: "Lock it in" is what makes the
-  // rows (the Book tab's "Book everything", via /bookable — the B1 bridge).
+  // Locked in, and lines Reach books with no row yet: checkout is what makes
+  // the rows (it asks /bookable on the way in — the B1 bridge) and prices them.
+  stage = 'pay';
   const rowed = new Set(live.map(r => r.itinerary_item_id).filter(Boolean));
   const unrowed = lines.filter(l => l.booking_mode === 'reach' && !!l.id && !rowed.has(l.id));
   if (!moving && unrowed.length) {
-    return lockIn('bookings', `${unrowed.length === 1 ? '1 thing' : `${unrowed.length} things`} for Reach to book. See what it costs, then it's ready to pay for.`);
+    return say({
+      state: 'pay_share', title: 'See what it costs',
+      body: `${unrowed.length === 1 ? '1 thing' : `${unrowed.length} things`} for Reach to book. Checkout prices ${unrowed.length === 1 ? 'it' : 'them'}, and nothing is charged until you pay.`,
+      cta: toCheckout('See the prices →'), chip: 'Locked in',
+    });
   }
 
   // ── The checkout: what the money and the rows allow ──
@@ -395,16 +455,13 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       cta: { label: 'Add them →', ...nav('profile') }, chip: 'Details needed' });
   };
   const attention = (title: string, body: string | null, cta: Cta): NextAction =>
-    say({ state: 'needs_attention', title, body: staleSignOff(body), cta, chip: 'Needs you' });
-  // Signed off as ready, and the rows say otherwise: the rows win.
-  const staleSignOff = (body: string | null): string | null => steps.bookings === 'done'
-    ? [body, 'The Book tab was signed off before this happened.'].filter(Boolean).join(' ')
-    : body;
+    say({ state: 'needs_attention', title, body, cta, chip: 'Needs you' });
   const write = (what: string): Cta => ({
     label: 'Write to us', kind: 'link',
     href: supportMailto({ planId: plan.id, planName: plan.title, what, bookings: live.map(r => r.id ?? null) }),
   });
-  const toCheckout = (label: string): Cta => ({ label, ...nav('checkout') });
+  // A declaration, so the lock-in step above can use it too.
+  function toCheckout(label: string): Cta { return { label, ...nav('checkout') }; }
 
   if (input.outcome?.status === 409) {
     const up = cents(input.outcome.priceChangeCents);
@@ -417,7 +474,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   }
 
   if (cs) {
-    if (cs.step === 'in_progress') return inProgress(cs.rows.find(r => r.status === 'booking') ?? null);
+    if (cs.step === 'in_progress') { stage = 'booked'; return inProgress(cs.rows.find(r => r.status === 'booking') ?? null); }
     if (cs.step === 'in_doubt') {
       return attention("This may have gone through",
         "It was sent to be booked and no answer came back, so it isn't tried again from here. Write to us before booking it anywhere else.",
@@ -469,6 +526,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       }
     }
     if (cs.step === 'book') {
+      stage = 'booked';
       const details = needsMyDetails();
       if (details) return details;
       const others = flightWaiting ? (input.essentials?.travelers ?? []).filter(t => !t.ready && t.userId !== me) : [];
@@ -494,6 +552,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   }
 
   // ── After the round: what is left, and whether it is booked ──
+  stage = 'booked';
   const mySkips = new Set((input.skips ?? []).filter(s => s.userId === me).map(s => s.ref));
   const skipCount = new Map<string, number>();
   for (const s of input.skips ?? []) skipCount.set(s.ref, (skipCount.get(s.ref) ?? 0) + 1);
@@ -513,8 +572,13 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   }
 
   // The whole row, so the day bookingTracker learns to read a confirmation
-  // number this reads it too.
-  const tracker = bookingTracker(lines, live.map(r => ({ ...r, itinerary_item_id: r.itinerary_item_id ?? null, status: String(r.status ?? '') })));
+  // number this reads it too. Until then a line bought elsewhere, with the
+  // number to show for it, is read as done: it is booked, just not by Reach,
+  // and with the sign-offs gone there is no tab left to refuse it.
+  const tracker = bookingTracker(lines, live.map(r => ({
+    ...r, itinerary_item_id: r.itinerary_item_id ?? null,
+    status: gotElsewhere(r) ? 'confirmed' : String(r.status ?? ''),
+  })));
   const yours = tracker.items.filter(i => i.who === 'you' && !i.done);
   if (yours.length) {
     const line = yours[0].line;
@@ -559,7 +623,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     !gotElsewhere(r)
     && !(r.id && input.memberCount > 0 && (skipCount.get(r.id) ?? 0) >= input.memberCount));
   const claim = counted.length ? bookedClaim(counted) : null;
-  // What the Book tab still counts as to book, by the server's own count.
+  // What the Book tab still lists as to book.
   const leftOnTab = tracker.items.filter(i => !i.done);
   base.claim = claim;
   base.allBooked = claim === 'all_booked' && leftOnTab.length === 0;
@@ -578,39 +642,22 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       toCheckout('Open checkout →'));
   }
 
-  // The rows say nothing is left, and the Book tab still counts a line as
-  // to book. Offering "sign it off" here was a button the server refuses
-  // with "1 thing is still to book". Said as it stands instead.
+  // The rows say nothing is left, and the Book tab still lists a line as to
+  // book (a row everybody sits out, say). Not booked, so not said to be.
   if (leftOnTab.length) {
     const t = leftOnTab[0].line as NextLine;
     const row = live.find(r => r.itinerary_item_id && r.itinerary_item_id === t.id) ?? null;
     const name = t.venue_name?.trim() || t.title?.trim() || (row ? itemTitle(row) : 'One thing');
-    if (row && gotElsewhere(row)) {
-      const where = providerName(row);
-      return attention(`${name} was bought ${where ? `on ${where}` : 'elsewhere'}`,
-        "It has a confirmation number, and the Book tab only counts what Reach booked, so it won't sign off with this on it yet. Write to us with the number.",
-        write('Bought elsewhere, and the Book tab still counts it'));
-    }
     return attention(`${name} is still to book`,
-      "The Book tab won't sign off until it is booked or taken off the plan.",
+      "It stays on the Book tab's list until it is booked or taken off the plan.",
       { label: 'Open the Book tab →', ...nav('planDetail', 'bookings') });
-  }
-
-  // Everything that can be booked is. The owner's last check is the Book
-  // tab's sign-off, and only that makes it ready to go.
-  if (steps.bookings !== 'done') {
-    const tab = STEPS.find(s => steps[s] !== 'done') ?? 'bookings';
-    return say({
-      state: 'sign_off', title: base.allBooked ? "Everything's booked — check it over" : 'Nothing left to book — check it over',
-      body: tab === 'bookings' ? "Sign off the Book tab and it's ready to go." : `Sign off each tab, starting with the ${tab === 'overview' ? 'overview' : tab}, and it's ready to go.`,
-      cta: { label: 'Check it over →', ...nav('planDetail', tab) }, chip: base.allBooked ? 'Booked' : 'Planning',
-    });
   }
 
   return say({
     state: 'booked',
     title: base.allBooked ? bookedWording('all_booked').title : "You're all set",
-    body: base.allBooked ? 'Every booking is confirmed.' : 'Nothing on this one needs booking.',
+    body: base.allBooked ? 'Every booking is confirmed.'
+      : anythingToBook ? 'Everything on it is sorted.' : 'Nothing on this one needs booking.',
     cta: { label: 'See your trip →', ...nav('planDetail', 'bookings') },
     chip: base.allBooked ? '✓ Booked' : '✅ Ready to go',
   });

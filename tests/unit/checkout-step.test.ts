@@ -244,7 +244,8 @@ test('checkout books a funded plan, one run at a time, and never promises a foll
   // The money goes into the step.
   assert.match(screen, /checkoutState\(bookings\|\|\[\],\{ignoreBroken:skipBroken,funding\}\)/);
   // Book it runs approval, never a payment.
-  assert.match(screen, /if\(s==="book"\)return\(\s*<button disabled=\{busy\} onClick=\{\(\)=>approveAll\(false\)\}/);
+  // (The press is counted first — checkout_cta_tapped — and nothing else.)
+  assert.match(screen, /if\(s==="book"\)return\(\s*<button disabled=\{busy\} onClick=\{\(\)=>(?:\{tapped\(\);)?approveAll\(false\);?\}?\}/);
   // Guarded for the whole run.
   assert.match(screen, /if\(approvingRef\.current\)return;\s*approvingRef\.current=true;/);
   assert.match(screen, /finally\{\s*approvingRef\.current=false;\s*setBusy\(false\);/);

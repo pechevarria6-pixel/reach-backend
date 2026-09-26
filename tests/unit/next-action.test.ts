@@ -10,7 +10,6 @@ import {
 } from '../../lib/next-action.ts';
 import { BookingRow } from '../../lib/contracts/booking.ts';
 import { ItineraryItemRow, itemFromRow } from '../../lib/contracts/itinerary-item.ts';
-import { stepStates, cannotSign, bookingTracker, type Review } from '../../lib/plan-steps.ts';
 import { isSoloCount } from '../../lib/joining.ts';
 
 // ─── Fixtures, on the contract shapes ────────────────────────────────────
@@ -19,9 +18,6 @@ import { isSoloCount } from '../../lib/joining.ts';
 // never produces.
 
 const ME = 'u-me', SAM = 'u-sam', ALEX = 'u-alex';
-const signed = { at: '2026-09-24T20:00:00Z', by: ME };
-const ALL_SIGNED: Review = { overview: signed, budget: signed, bookings: signed };
-const TO_BUDGET: Review = { overview: signed, budget: signed };
 
 function booking(r: Partial<NextBooking> & { id: string }): NextBooking {
   const parsed = BookingRow.safeParse(r);
@@ -74,13 +70,13 @@ const detailsOf = (missing: Record<string, string[]>) => ({
 
 const FUNDED = { memberCount: 3, targetCents: 90000, collectedCents: 90000, funded: true, myPaidCents: 30000, myRemainingCents: 0 };
 
-/** A group trip of three that has been decided and planned. */
+/** A group trip of three that has been decided, planned and locked in. */
 function base(over: Partial<NextActionInput> = {}): NextActionInput {
   return {
     plan: { id: 'p1', groupId: 'g1', status: 'approved', type: 'trip', title: 'Moab', destStyle: 'fixed',
       hasOptions: false, createdBy: ME, itinerary: [HOTEL_LINE], ...(over.plan ?? {}) },
     bookings: [], funding: null, readiness: answers({ [ME]: true, [SAM]: true, [ALEX]: true }),
-    signoffs: TO_BUDGET, essentials: null, memberCount: 3, me: ME,
+    essentials: null, memberCount: 3, me: ME,
     now: new Date('2026-09-25T15:00:00Z'),
     ...over,
     ...(over.plan ? { plan: { id: 'p1', groupId: 'g1', status: 'approved', type: 'trip', title: 'Moab', destStyle: 'fixed', hasOptions: false, createdBy: ME, itinerary: [HOTEL_LINE], ...over.plan } } : {}),
@@ -90,21 +86,21 @@ function base(over: Partial<NextActionInput> = {}): NextActionInput {
 const FIXTURES: { name: string; state: NextState; input: NextActionInput }[] = [
   { name: 'I have not said what I want', state: 'needs_trip_input', input: base({
     plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] },
-    readiness: answers({ [ME]: false, [SAM]: true, [ALEX]: false }), signoffs: {} }) },
-  { name: 'nothing planned yet', state: 'needs_trip_input', input: base({ plan: { id: 'p1', itinerary: [] }, signoffs: {} }) },
+    readiness: answers({ [ME]: false, [SAM]: true, [ALEX]: false }) }) },
+  { name: 'nothing planned yet', state: 'needs_trip_input', input: base({ plan: { id: 'p1', status: 'planning', itinerary: [] } }) },
   { name: 'I answered, Sam and Alex have not', state: 'waiting_on_others', input: base({
     plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] },
-    readiness: answers({ [ME]: true, [SAM]: false, [ALEX]: false }), signoffs: {} }) },
+    readiness: answers({ [ME]: true, [SAM]: false, [ALEX]: false }) }) },
   { name: 'the vote is open and I have not voted', state: 'vote_open', input: base({
     plan: { id: 'p1', destStyle: 'undecided', status: 'voting', hasOptions: true, itinerary: [] },
-    vote: { decided: false, myVote: null, everyoneVoted: false, mayPick: true, stillToVote: ['you', 'Sam'] }, signoffs: {} }) },
+    vote: { decided: false, myVote: null, everyoneVoted: false, mayPick: true, stillToVote: ['you', 'Sam'] } }) },
   { name: 'I voted, Sam has not', state: 'waiting_on_others', input: base({
     plan: { id: 'p1', destStyle: 'undecided', status: 'voting', hasOptions: true, itinerary: [] },
-    vote: { decided: false, myVote: 'Moab', everyoneVoted: false, mayPick: true, stillToVote: ['Sam'] }, signoffs: {} }) },
-  { name: 'planned, not signed off, I organise', state: 'lock_in', input: base({ signoffs: {} }) },
-  { name: 'planned, not signed off, Sam organises', state: 'waiting_on_others', input: base({
-    plan: { id: 'p1', createdBy: SAM }, signoffs: {}, vote: { organiser: { name: 'Sam', isYou: false } } }) },
-  { name: 'signed off, nothing priced yet', state: 'lock_in', input: base() },
+    vote: { decided: false, myVote: 'Moab', everyoneVoted: false, mayPick: true, stillToVote: ['Sam'] } }) },
+  { name: 'planned, not locked in, I organise', state: 'lock_in', input: base({ plan: { id: 'p1', status: 'planning' } }) },
+  { name: 'planned, not locked in, Sam organises', state: 'waiting_on_others', input: base({
+    plan: { id: 'p1', status: 'planning', createdBy: SAM }, vote: { organiser: { name: 'Sam', isYou: false } } }) },
+  { name: 'locked in, nothing priced yet', state: 'pay_share', input: base() },
   { name: 'priced, my share unpaid', state: 'pay_share', input: base({
     bookings: [hotel('awaiting_approval')],
     funding: { memberCount: 3, targetCents: 60000, collectedCents: 0, funded: false, myPaidCents: 0, myRemainingCents: 20000 } }) },
@@ -131,19 +127,11 @@ const FIXTURES: { name: string; state: NextState; input: NextActionInput }[] = [
   { name: 'the hotel is held', state: 'needs_attention', input: base({
     plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE] },
     bookings: [flight('confirmed'), hotel('quoted')], funding: FUNDED }) },
-  { name: 'all booked, the Book tab not signed', state: 'sign_off', input: base({
+  { name: 'all booked', state: 'booked', input: base({
     bookings: [hotel('confirmed')], funding: FUNDED }) },
-  { name: 'all booked and signed off', state: 'booked', input: base({
-    bookings: [hotel('confirmed')], funding: FUNDED, signoffs: ALL_SIGNED }) },
-  { name: 'a walk-in night, signed off', state: 'booked', input: base({
-    plan: { id: 'p1', type: 'restaurant', itinerary: [WALK_IN] }, signoffs: ALL_SIGNED }) },
+  { name: 'a walk-in night, locked in', state: 'booked', input: base({
+    plan: { id: 'p1', type: 'restaurant', itinerary: [WALK_IN] } }) },
 ];
-
-/** The one fixture where the tab and the rows disagree, and the rows must win. */
-const STALE_SIGN_OFF = base({
-  plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE] },
-  bookings: [hotel('confirmed'), flight('failed')], funding: FUNDED, signoffs: ALL_SIGNED,
-});
 
 /** A fixture by the start of its name, so a new fixture never shifts another test's input. */
 const fx = (name: string) => {
@@ -199,7 +187,7 @@ test('this file and lib/joining.ts agree on what solo is', () => {
 // ─── Solo never waits on anybody ─────────────────────────────────────────
 
 test('a plan for one never returns waiting_on_others or waiting_on_payments', () => {
-  for (const f of [...FIXTURES, { name: 'stale', state: 'needs_attention' as NextState, input: STALE_SIGN_OFF }]) {
+  for (const f of FIXTURES) {
     const a = run(alone(f.input));
     assert.ok(a, f.name);
     assert.notEqual(a.state, 'waiting_on_others', f.name);
@@ -239,7 +227,7 @@ test('booked requires every counted row confirmed', () => {
 });
 
 test('a redirect nobody has confirmed is never booked; one they have is left out of the count', () => {
-  const signedAll = { funding: FUNDED, signoffs: ALL_SIGNED };
+  const signedAll = { funding: FUNDED };
   assert.equal(run(base({ ...signedAll, bookings: [hotel('confirmed'), table()] })).state, 'finish_elsewhere');
   const got = run(base({ ...signedAll, bookings: [hotel('confirmed'), table({ confirmation_number: 'RESY-4411' })] }));
   assert.equal(got.state, 'booked');
@@ -254,36 +242,30 @@ test('a redirect nobody has confirmed is never booked; one they have is left out
 
 test('a held row is never booked', () => {
   const a = run(base({ plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE] },
-    bookings: [flight('confirmed'), hotel('quoted')], funding: FUNDED, signoffs: ALL_SIGNED }));
+    bookings: [flight('confirmed'), hotel('quoted')], funding: FUNDED }));
   assert.notEqual(a.state, 'booked');
   assert.match(a.title, /on hold/);
 });
 
 test('a row I sit out is not mine to finish; one everybody sits out is not counted', () => {
-  const skipped = run(base({ bookings: [hotel('confirmed'), table()], funding: FUNDED, signoffs: ALL_SIGNED,
+  const skipped = run(base({ bookings: [hotel('confirmed'), table()], funding: FUNDED,
     skips: [{ ref: 'b-table', userId: ME }] }));
   assert.notEqual(skipped.state, 'finish_elsewhere');
   // A failed dinner everybody sits out is not a gap in the trip.
   const everyone = [ME, SAM, ALEX].map(userId => ({ ref: 'b-dinner', userId }));
   const failedDinner = booking({ id: 'b-dinner', vertical: 'restaurant', status: 'failed', mode: 'native', provider: 'resy' });
-  const a = run(base({ bookings: [hotel('confirmed'), failedDinner], funding: FUNDED, signoffs: ALL_SIGNED, skips: everyone }));
+  const a = run(base({ bookings: [hotel('confirmed'), failedDinner], funding: FUNDED, skips: everyone }));
   assert.equal(a.claim, 'all_booked');
 });
 
-test('booked agrees with the tabs\' "Ready to go" in every fixture', () => {
+test('nothing reaches booked before it is locked in', () => {
   for (const f of FIXTURES) {
     for (const input of [f.input, alone(f.input)]) {
-      const a = run(input);
-      const readyToGo = stepStates(input.signoffs).bookings === 'done';
-      assert.equal(a.state === 'booked', readyToGo, `${f.name} (${input.memberCount})`);
+      const open = run({ ...input, plan: { ...input.plan, status: 'planning' } });
+      if ((input.bookings ?? []).length || input.funding?.collectedCents) continue; // moving: past lock-in whatever the status says
+      assert.notEqual(open.state, 'booked', `${f.name} (${input.memberCount})`);
     }
   }
-});
-
-test('signed off, then something failed: the rows win and the screen says so', () => {
-  const a = run(STALE_SIGN_OFF);
-  assert.equal(a.state, 'needs_attention');
-  assert.match(a.body ?? '', /signed off before this happened/);
 });
 
 // ─── Rows in the shapes production writes ────────────────────────────────
@@ -317,9 +299,9 @@ const EXTRA: [string, NextActionInput][] = [
   ['a flight line skipped, as a member', flightUnrowed(ME, SAM)],
   ['a flight line skipped, as the organiser', flightUnrowed(SAM, SAM)],
   ['undecided, nobody asked yet', base({ plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] },
-    readiness: notAsked([ME, SAM, ALEX]), signoffs: {} })],
+    readiness: notAsked([ME, SAM, ALEX]) })],
   ['undecided, readiness unread', base({ plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] },
-    readiness: null, signoffs: {} })],
+    readiness: null })],
 ];
 const ex = (name: string) => EXTRA.find(([n]) => n.startsWith(name))![1];
 
@@ -343,40 +325,24 @@ test('a redirect somebody has got moves on, and never back to "isn\'t booked yet
   const a = run(ex('a Ticketmaster seat somebody got'));
   assert.notEqual(a.state, 'finish_elsewhere');
   assert.doesNotMatch(a.title, /isn't booked yet/);
-  const got = run(base({ funding: FUNDED, signoffs: ALL_SIGNED, bookings: [hotel('confirmed'), table({ confirmation_number: 'R-1' })] }));
+  const got = run(base({ funding: FUNDED, bookings: [hotel('confirmed'), table({ confirmation_number: 'R-1' })] }));
   assert.equal(got.state, 'booked');
 });
 
-/** What POST /api/plans/[id]/review would answer to a Book-tab sign-off for this input. */
-function serverRefuses(i: NextActionInput): string | null {
-  const t = bookingTracker(i.plan.itinerary ?? [], (i.bookings ?? []).map(b => ({ itinerary_item_id: b.itinerary_item_id ?? null, status: String(b.status ?? '') })));
-  return cannotSign('bookings', { ...i.signoffs, bookings: null }, t.total - t.done);
-}
-
-test('sign_off is only offered where the server would take the sign-off', () => {
-  const all = [...FIXTURES.map(f => [f.name, f.input] as [string, NextActionInput]), ...EXTRA];
-  let seen = 0;
-  for (const [name, input] of all) {
-    for (const i of [input, alone(input)]) {
-      const a = run(i);
-      if (a.state !== 'sign_off') continue;
-      seen++;
-      assert.equal(serverRefuses(i), null, `${name}: offered "${a.title}" and the server says no`);
-    }
-  }
-  assert.ok(seen > 0, 'some fixture reaches sign_off');
-});
-
-test('a flight bought on the airline\'s site, which the Book tab still counts, is not "Everything\'s booked"', () => {
-  const i = flightGotElsewhere();
-  assert.ok(serverRefuses(i), 'the server does refuse it');
-  const a = run(i);
-  assert.equal(a.state, 'needs_attention');
-  assert.equal(a.allBooked, false);
-  assert.doesNotMatch(`${a.title} ${a.body}`, /Everything's booked/);
-  assert.equal(a.cta?.kind, 'link');
+test('a flight bought on the airline\'s site, with the number to show for it, is booked', () => {
+  const a = run(flightGotElsewhere());
+  assert.equal(a.state, 'booked');
+  // The hotel is Reach's and confirmed; the flight is left out of the count
+  // and done on the Book list, so nothing is waiting and nothing is a gap.
+  assert.equal(a.claim, 'all_booked');
+  assert.equal(a.allBooked, true);
+  // Without the number it is still theirs to finish.
+  const open = run(base({ plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE] },
+    bookings: [hotel('confirmed'), handedFlight()], funding: FUNDED }));
+  assert.equal(open.state, 'finish_elsewhere');
+  assert.equal(open.allBooked, false);
   // The same for a ticket on a line Reach tracks.
-  assert.notEqual(run(ex('a Ticketmaster seat somebody got')).state, 'sign_off');
+  assert.equal(run(ex('a Ticketmaster seat somebody got')).state, 'booked');
 });
 
 test('a line Reach books with no row, after something is booked, is not sent back to lock in', () => {
@@ -396,7 +362,7 @@ test('"Everyone has answered" only when everyone has', () => {
     assert.equal(a.state, 'needs_trip_input', name);
     assert.doesNotMatch(`${a.title} ${a.body}`, /Everyone|each of you/, name);
   }
-  const all = run(base({ plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] }, signoffs: {} }));
+  const all = run(base({ plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] } }));
   assert.equal(all.title, 'Everyone has answered');
 });
 
@@ -406,15 +372,14 @@ const everyAction = () => FIXTURES.flatMap(f => [
   { name: f.name, solo: false, a: run(f.input) },
   { name: `${f.name} (solo)`, solo: true, a: run(alone(f.input)) },
 ]).concat([
-  { name: 'stale', solo: false, a: run(STALE_SIGN_OFF) },
   // Group-only sentences, reached only with more than one person: drawn so
   // check:solo-copy has claims about other people to hold to a guard.
   { name: 'a 402 on a group', solo: false, a: run({ ...fx('paid for, waiting'), outcome: { status: 402 } }) },
   { name: 'everyone voted, my pick', solo: false, a: run(base({
     plan: { id: 'p1', destStyle: 'undecided', status: 'voting', hasOptions: true, itinerary: [] },
-    vote: { decided: false, myVote: 'Moab', everyoneVoted: true, mayPick: true, stillToVote: [] }, signoffs: {} })) },
+    vote: { decided: false, myVote: 'Moab', everyoneVoted: true, mayPick: true, stillToVote: [] } })) },
   { name: 'everyone answered', solo: false, a: run(base({
-    plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] }, signoffs: {} })) },
+    plan: { id: 'p1', destStyle: 'undecided', status: 'planning', itinerary: [] } })) },
   ...EXTRA.flatMap(([name, input]) => [
     { name, solo: false, a: run(input) },
     { name: `${name} (solo)`, solo: true, a: run(alone(input)) },
@@ -516,4 +481,81 @@ test('the harness can fail: a sentence about others on a solo screen, and a butt
   const byName = Object.fromEntries(guards(planted).map(g => [g.name, g.status]));
   assert.equal(byName['check-solo-copy'], 1);
   assert.equal(byName['check-promises'], 1);
+});
+
+// ─── The rail (decision 1: it replaces the three sign-off tabs) ──────────
+
+const dots = (a: NextAction) => a.rail.map(d => d.key);
+const at = (a: NextAction) => a.rail.find(d => d.state === 'current')?.key ?? 'done';
+const allInputs = () => [
+  ...FIXTURES.map(f => [f.name, f.input] as [string, NextActionInput]),
+  ...EXTRA,
+].flatMap(([name, input]) => [[name, input], [`${name} (solo)`, alone(input)]] as [string, NextActionInput][]);
+
+test('the rail is read from the same answer: one dot is current, or all are done when booked', () => {
+  for (const [name, input] of allInputs()) {
+    const a = run(input);
+    const current = a.rail.filter(d => d.state === 'current');
+    if (a.state === 'booked') {
+      assert.ok(a.rail.every(d => d.state === 'done'), name);
+      continue;
+    }
+    assert.equal(current.length, 1, name);
+    // Done, then current, then to do: never a done dot after an open one.
+    const order = a.rail.map(d => d.state).join(',');
+    assert.match(order, /^(done,)*current(,todo)*$/, `${name}: ${order}`);
+    assert.equal(a.rail[0].key, 'plan', name);
+    assert.equal(a.rail[a.rail.length - 1].key, 'booked', name);
+  }
+});
+
+test('a night out with nothing to buy has no Pay dot', () => {
+  for (const input of [fx('a walk-in night'), ex('a Ticketmaster seat, as'), base({
+    plan: { id: 'p1', type: 'restaurant', itinerary: [DINNER_LINE] } })]) {
+    const a = run(input);
+    assert.ok(!dots(a).includes('pay'), `${input.plan.itinerary?.[0]?.title}: ${dots(a)}`);
+  }
+  // A trip with a hotel to buy does have one.
+  assert.ok(dots(run(fx('priced, my share unpaid'))).includes('pay'));
+  // Nothing booked, nothing to book: the last dot is not called Booked.
+  assert.equal(run(fx('a walk-in night')).rail.at(-1)?.label, 'All set');
+  assert.equal(run(fx('all booked')).rail.at(-1)?.label, 'Booked');
+});
+
+test('a vote dot only where there is a vote, and never on a plan for one', () => {
+  const voting = fx('the vote is open');
+  assert.deepEqual(dots(run(voting)), ['plan', 'vote', 'lock', 'booked']);
+  assert.equal(at(run(voting)), 'vote');
+  assert.ok(!dots(run(alone(voting))).includes('vote'));
+  assert.ok(!dots(run(fx('priced, my share unpaid'))).includes('vote'));
+});
+
+test('each state sits on the dot it belongs to', () => {
+  assert.equal(at(run(fx('nothing planned yet'))), 'plan');
+  assert.equal(at(run(fx('planned, not locked in, I organise'))), 'lock');
+  assert.equal(at(run(fx('planned, not locked in, Sam organises'))), 'lock');
+  assert.equal(at(run(fx('locked in, nothing priced yet'))), 'pay');
+  assert.equal(at(run(fx('priced, my share unpaid'))), 'pay');
+  assert.equal(at(run(fx('my share paid'))), 'pay');
+  assert.equal(at(run(fx('paid for, waiting to be booked'))), 'booked');
+  assert.equal(at(run(fx('the hotel is with the provider'))), 'booked');
+  assert.equal(at(run(fx('all booked'))), 'done');
+  // A night out with nothing to buy goes from Lock in straight to Booked.
+  const night = base({ plan: { id: 'p1', type: 'restaurant', itinerary: [DINNER_LINE] } });
+  assert.equal(at(run(night)), 'booked');
+  assert.equal(at(run({ ...night, plan: { ...night.plan, status: 'planning' } })), 'lock');
+  // Options put to the group on a plan whose place is set: the vote is open
+  // until it is locked in, and locking it in is what closes it.
+  const fixedVote = run(base({ plan: { id: 'p1', status: 'voting', hasOptions: true },
+    vote: { decided: true, myVote: 'Moab', organiser: { name: 'Pat', isYou: true } } }));
+  assert.equal(fixedVote.state, 'lock_in');
+  assert.equal(at(fixedVote), 'vote');
+});
+
+test('a group admin locks in a plan somebody else set up; a member waits on them', () => {
+  const sams = fx('planned, not locked in, Sam organises');
+  assert.equal(run(sams).state, 'waiting_on_others');
+  const asAdmin = run({ ...sams, plan: { ...sams.plan, organiserIsMe: true } });
+  assert.equal(asAdmin.state, 'lock_in');
+  assert.equal(asAdmin.cta?.label, 'Lock it in →');
 });
