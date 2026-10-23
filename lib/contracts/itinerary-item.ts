@@ -115,6 +115,29 @@ export const ITEM_COLUMNS = [
   'venue_image_link', 'sort_order',
 ].join(', ');
 
+/**
+ * What a line says about the place it names, and so what goes when the place
+ * does (a swap: PATCH /api/plans/[id]/itinerary/[itemId]).
+ *
+ * Each is either replaced from the new place's own row or cleared — never
+ * kept. The Raleigh dinner is the warning: a line about Vic's still carrying
+ * Vinny's tip, its "cash only", its website and its photo is four facts about
+ * one restaurant printed under another. `because` goes too: whose wish the
+ * old place answered is not a claim the new one has earned. The verifier's
+ * marks were about the old words.
+ *
+ * Kept: the line's id, its day and slot (scheduled_time), its order and its
+ * estimate (cost_cents) — the shape of the day, not the place in it.
+ */
+export const ABOUT_THE_PLACE = [
+  'title', 'subtitle', 'type', 'booking_mode', 'payment_note', 'because',
+  'venue_website', 'venue_name', 'venue_phone', 'venue_note', 'venue_note_credit',
+  'venue_image_url', 'venue_image_credit', 'venue_image_of', 'venue_image_link',
+  'confirmation_number', 'is_confirmed',
+  'verified_at', 'verified_status', 'verified_source',
+  'subtitle_unverified', 'subtitle_claims', 'title_claims', 'payment_note_unverified',
+] as const;
+
 /** A database row, as the screen wants it. The only place this is done. */
 export function itemFromRow(row: Record<string, unknown>): ItineraryItem {
   const r = ItineraryItemRow.parse(row);

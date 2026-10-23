@@ -61,6 +61,39 @@ export async function replaceItinerary(
   return { status: 'replaced', removed: oldIds.length };
 }
 
+// ─── One line, in place ──────────────────────────────────────────────────
+// A swap is not a save of the whole itinerary: the line keeps its id, so the
+// bookings on every other line, and the suggestions on this one, stay where
+// they are (a rewrite would have given every line a new id, and the
+// suggestions table cascades on delete).
+//
+// Two people changing the same line at once both read it and both write. The
+// write is taken only on the line as it was read — its title and venue
+// unchanged since — so the second is refused instead of silently undoing the
+// first.
+
+export type LineOutcome =
+  | { status: 'swapped'; row: Record<string, unknown> }
+  /** Changed by somebody else between the read and this write; nothing was written. */
+  | { status: 'changed' }
+  | { status: 'failed'; detail: string };
+
+export async function replaceLine(
+  db: SupabaseClient,
+  planId: string,
+  itemId: string,
+  asRead: { title: string | null; venue_name: string | null },
+  patch: Record<string, unknown>,
+): Promise<LineOutcome> {
+  let q = db.from('itinerary_items').update(patch).eq('id', itemId).eq('plan_id', planId);
+  q = asRead.title == null ? q.is('title', null) : q.eq('title', asRead.title);
+  q = asRead.venue_name == null ? q.is('venue_name', null) : q.eq('venue_name', asRead.venue_name);
+  const { data, error } = await q.select('*').maybeSingle();
+  if (error) return { status: 'failed', detail: error.message || 'update failed' };
+  if (!data) return { status: 'changed' };
+  return { status: 'swapped', row: data as Record<string, unknown> };
+}
+
 /** What to tell somebody, per outcome. Never "something went wrong". */
 export function outcomeMessage(outcome: ReplaceOutcome): string | null {
   switch (outcome.status) {

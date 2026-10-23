@@ -11,6 +11,12 @@
 //        again for a different headcount under money paid against it —
 //        the same rule /bookable and /api/bookings keep (lib/booking/reprice.ts).
 //
+// Who: anybody on the trip until it is locked in; after that only the
+// organiser, or whoever booked this line (decision 14, 2026-09-25) — 403
+// code 'locked_out', and GET answers changeable: false with the same why.
+// GET's options each carry deltaPerPersonCents — the difference to one
+// person's share against what is priced now — marked estimate: true.
+//
 // Choosing a different hotel or flight ({ key }) is allowed after a payment.
 // It is somebody deciding to change it, not the total moving on its own, and
 // checkout then shows what that means: more to pay, or money to take back.
@@ -36,6 +42,10 @@ import { airlineHandoff } from '@/lib/booking/duffel-map';
 import { pinQuoted } from '@/lib/booking/pin';
 import { nothingFound, nearbyAsk, nearbyDates, TRY_NEARBY_DATES } from '@/lib/booking/failures';
 import { today } from '@/lib/calendar';
+import { planState } from '@/lib/itinerary-change-server';
+import { track } from '@/lib/track';
+import { refusal } from '@/lib/itinerary-change';
+import { CANNOT_CANCEL } from '@/lib/itinerary-bookings';
 
 /**
  * The request sized for who is on this booking now, not who was when it was
@@ -67,7 +77,7 @@ const Choose = z.object({
 async function load(id: string) {
   const { data: booking, error } = await createServerClient()
     .from('bookings')
-    .select('id, plan_id, vertical, status, mode, provider, approved_at, updated_at, request_payload, response_payload, price_cents, detail')
+    .select('id, plan_id, vertical, status, mode, provider, approved_at, updated_at, request_payload, response_payload, price_cents, detail, booked_by')
     .eq('id', id).maybeSingle();
   if (error) {
     console.error('[options] could not read booking', { id, code: error.code });
@@ -82,6 +92,32 @@ async function load(id: string) {
   return { booking, ctx };
 }
 
+/**
+ * Who may change this one now (decision 14, 25 September). Before Lock it in,
+ * anybody on the trip may pick another hotel or flight, as before. After it,
+ * only the organiser, or whoever booked this line — the same rule a swap of
+ * any other line keeps (lib/itinerary-change.ts). Null when this person may.
+ */
+async function lockedOut(ctx: Parameters<typeof planState>[0], booking: { booked_by?: string | null }):
+  Promise<{ status: number; body: { code?: string; error: string } } | null> {
+  const st = await planState(ctx);
+  if ('fail' in st) {
+    console.error('[options] could not check whether this trip is locked in', { plan: ctx.plan.id });
+    return { status: 500, body: { error: 'Could not check this trip just now.' } };
+  }
+  const { solo, organiser, locked, organiserName } = st.state;
+  if (!locked || solo || organiser || booking.booked_by === ctx.user.id) return null;
+  return { status: 403, body: { code: 'locked_out', error: refusal('locked_out', organiserName) as string } };
+}
+
+/**
+ * Why a booked one cannot be swapped, said plainly. A room is the case that
+ * matters: Reach cannot cancel it, so "cancel it first" has to say where.
+ */
+function bookedRefusal(booking: { status?: unknown; vertical?: unknown }, refused: string): string {
+  return booking.status === 'confirmed' && booking.vertical === 'hotel' ? CANNOT_CANCEL.hotel : refused;
+}
+
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const got = await load(params.id);
   if (got.fail) return got.fail;
@@ -94,8 +130,25 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const current = { detail: booking.detail, priceCents: booking.price_cents, status: booking.status,
     raw: booking.response_payload ?? null };
   const refused = changeRefusal(booking);
-  if (refused) return NextResponse.json({ current, options: [], changeable: false, why: refused });
+  if (refused) return NextResponse.json({ current, options: [], changeable: false, why: bookedRefusal(booking, refused) });
+  // Locked in and not theirs to change: what it is now, and who changes it.
+  const out = await lockedOut(ctx, booking);
+  if (out?.body.code === 'locked_out') {
+    return NextResponse.json({ current, options: [], changeable: false, code: 'locked_out', why: out.body.error });
+  }
+  if (out) return NextResponse.json(out.body, { status: out.status });
   const found = booking.vertical === 'hotel' ? await hotelOptions(request) : await flightOptions(request);
+  // The difference each makes to one person's share, against what is priced
+  // now. An estimate: the list is a search, and the price stored is the one
+  // the provider gives when one is picked (POST below).
+  const going = await readParty(ctx.db, ctx.plan, booking.plan_id);
+  const heads = going ? expectedFor(going)(booking) : 0;
+  const options = found.options.map((o: { priceCents?: number | null }) => ({
+    ...o,
+    deltaPerPersonCents: heads > 0 && typeof o.priceCents === 'number' && typeof booking.price_cents === 'number'
+      ? Math.round((o.priceCents - booking.price_cents) / heads) : null,
+    estimate: true,
+  }));
   // Nothing else on sale for these dates is a dates problem, and the next
   // step is nearby dates — the same offer /bookable makes for a line that
   // found nothing (lib/booking/failures.ts). An offer to search, never a
@@ -103,7 +156,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const empty = !found.options.length && nothingFound(booking.vertical, found.error);
   const plan = ctx.plan as { start_date?: string | null; end_date?: string | null };
   return NextResponse.json({
-    current, options: found.options, changeable: true, why: found.error,
+    current, options, changeable: true, why: found.error, partySize: heads || null,
     ...(empty ? {
       reason: TRY_NEARBY_DATES,
       ask: nearbyAsk(booking.vertical),
@@ -119,7 +172,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const parsed = Choose.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: 'Which one?' }, { status: 400 });
   const refused = changeRefusal(booking);
-  if (refused) return NextResponse.json({ error: refused }, { status: 409 });
+  if (refused) return NextResponse.json({ error: bookedRefusal(booking, refused) }, { status: 409 });
+  const out = await lockedOut(ctx, booking);
+  if (out) return NextResponse.json(out.body, { status: out.status });
 
   if (!parsed.data.key) {
     // Priced again for a new headcount: never once anybody has paid, and a
@@ -223,6 +278,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     .update({ pending_price_cents: null }).eq('id', params.id).not('pending_price_cents', 'is', null);
   if (cleared && !(cleared.code === 'PGRST204' || cleared.code === '42703' || /pending_price_cents/.test(cleared.message ?? ''))) {
     console.error('[options] could not clear a price rise held for the old choice', { id: params.id, code: cleared.code });
+  }
+  // A different hotel or different flights is a swap of that line, and every
+  // swap is counted: which booking, which choice it was and is, who, and why
+  // (lib/track.ts). Pricing the same choice again is not a swap.
+  const before = booking.vertical === 'hotel'
+    ? (booking.request_payload as { hotel?: { hotelId?: string } } | null)?.hotel?.hotelId
+    : (booking.request_payload as { flight?: { offerKey?: string } } | null)?.flight?.offerKey;
+  if (parsed.data.key && parsed.data.key !== before) {
+    void track(ctx.db, 'itinerary_item_swapped', {
+      userId: ctx.user.id, groupId: ctx.plan.group_id, planId: booking.plan_id,
+      props: { booking_id: booking.id, kind: booking.vertical, from_ref: before ?? 'unpinned', to_ref: parsed.data.key, reason: 'booking_option' },
+    });
   }
   return NextResponse.json({ booking: updated, previousPriceCents: booking.price_cents });
 }

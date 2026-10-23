@@ -23,7 +23,11 @@ import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 /** What each lane can undo, and what to say when it cannot. */
 const CANNOT: Record<string, string> = {
   restaurant: 'That table was booked on the restaurant’s own site, so it is cancelled there. Their number and link are on the plan.',
-  hotel: 'Reach cannot cancel this room yet — the confirmation email from the hotel has the way to do it.',
+  // Plainly, because "yet" read as a promise that it soon would: Reach has no
+  // way to cancel a room, and whether it can be cancelled at all is the
+  // hotel's policy, not ours. The same sentence a swap of a booked room gets
+  // (CANNOT_CANCEL in lib/itinerary-bookings.ts).
+  hotel: "Reach can't cancel this room for you — the hotel's confirmation email says how, and whether its policy allows it.",
   activity: 'Reach cannot cancel this one yet — the booking page it came from can.',
   event: 'Tickets are refunded by whoever sold them, under their own policy.',
 };

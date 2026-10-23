@@ -52,3 +52,74 @@ export function reconcileBookings(
   }
   return { relink, retire };
 }
+
+// ─── One line changed in place ───────────────────────────────────────────
+// A swap (PATCH /api/plans/[id]/itinerary/[itemId]) keeps the line's id, so
+// every other booking on the plan stays exactly where it is — the whole
+// reason it is not a save of the whole itinerary. The line's own booking is
+// the one question: it was for the place that is going.
+//
+//   nothing on it               swap
+//   not made anywhere yet       swap, and the booking goes with the old place
+//                               (the same rule as UNMADE above); the line is
+//                               then booked again through the Book tab, the
+//                               ordinary path, for the new place
+//   at the provider right now   refused: somebody is booking it this minute
+//   made                        refused: a real reservation somewhere, which
+//                               Reach saying "changed" would not cancel. Where
+//                               Reach cannot cancel it, the answer says so,
+//                               and where it can be cancelled
+//   bought on the seller's site refused the same way: a confirmation number
+//   (a confirmation recorded)   means somebody holds a real one
+
+export interface LineBooking {
+  id: string;
+  status: string;
+  mode?: string | null;
+  vertical?: string | null;
+  approved_at?: string | null;
+  updated_at?: string | null;
+  confirmation_number?: string | null;
+  booked_by?: string | null;
+}
+
+export type SwapBooking =
+  | { action: 'none' }
+  | { action: 'retire'; bookingId: string }
+  | { action: 'refuse'; code: 'booking_now' | 'booked'; message: string };
+
+/**
+ * What cancelling a made booking means, by what it is. Reach cancels only a
+ * Duffel flight (POST /api/bookings/[id]/cancel); everything else is undone
+ * where it was made, and the sentence says where.
+ */
+export const CANNOT_CANCEL: Record<string, string> = {
+  hotel: "This room is already booked, and Reach can't cancel it for you — the hotel's confirmation email says how, if their policy allows it. Once it's cancelled there, you can pick another.",
+  restaurant: "This table is already booked on the restaurant's own site, and Reach can't cancel it for you — cancel it there first, then pick another.",
+  activity: "This is already booked, and Reach can't cancel it for you — the booking page it came from can. Cancel it there first, then pick another.",
+  event: 'These tickets are already bought. Whoever sold them refunds them, under their own policy — Reach can\'t cancel them for you.',
+  flight: 'These flights are already booked. Cancel them from the trip first — you will see what you would get back before anything changes — then pick others.',
+};
+const CANNOT_CANCEL_ELSE = "This is already booked, and Reach can't cancel it for you — cancel it where it was booked first, then pick another.";
+
+/** "Somebody is booking this right now" — mirrors midClaim in lib/booking/claim.ts. */
+function atProvider(b: LineBooking): boolean {
+  if (b.status === 'booking') return true;
+  if (b.status !== 'awaiting_approval' || !b.approved_at || !b.updated_at) return false;
+  return Date.parse(b.approved_at) === Date.parse(b.updated_at);
+}
+
+export function bookingOnSwap(booking: LineBooking | null | undefined): SwapBooking {
+  if (!booking || booking.status === 'failed' || booking.status === 'cancelled') return { action: 'none' };
+  if (atProvider(booking)) {
+    return { action: 'refuse', code: 'booking_now', message: 'Somebody is booking this right now — wait a moment, then try again.' };
+  }
+  const boughtElsewhere = !!String(booking.confirmation_number ?? '').trim();
+  const lane = String(booking.vertical ?? '');
+  if (booking.status === 'confirmed' || boughtElsewhere) {
+    return { action: 'refuse', code: 'booked', message: CANNOT_CANCEL[lane] ?? CANNOT_CANCEL_ELSE };
+  }
+  if (UNMADE.has(booking.status)) return { action: 'retire', bookingId: booking.id };
+  // A status this file has never heard of is not something to discard.
+  return { action: 'refuse', code: 'booked', message: 'This one cannot be changed right now.' };
+}
