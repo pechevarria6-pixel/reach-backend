@@ -1,4 +1,4 @@
-# STATUS — ground truth, 2026-09-21
+# STATUS — ground truth, updated 2026-10-23
 
 Verified against the code and against production. Nothing here is taken from
 a prior report; where a previous package called something done and it is not,
@@ -8,9 +8,36 @@ Legend: ✅ done · 🟡 partial · ❌ missing · 🔒 owner-blocked
 
 ---
 
-## 0. Owner to run — checkout migrations, 2026-09-25
+## Now — 2026-10-23
 
-Written, not run. Each file is safe to run twice. Run them in the Supabase
+Probed today (PostgREST GETs, `vercel env ls`, the GitHub Actions API).
+
+- **Code:** main `8eb4f7a`; `npm run verify` green, 1606 unit tests. No other
+  commits between 2026-09-25 and today. Vercel's live build was from 09-25.
+- **Every migration in `sql/` written before today has been run**, except two
+  held on purpose:
+  - `sql/one-active-plan-2026-09-25.sql` — wait until the "already planning"
+    screen ships, or the current client gets a refusal it cannot show.
+  - `sql/nudge-index-2026-09-25.sql` — optional; speeds nudges up as
+    `audit_logs` grows.
+- **The 8 checkout migrations of 2026-09-25** (section 0 below) were run by the
+  owner that day; each column and table answers 200, and the anon key gets
+  42501 on `v_trip_funnel`, `v_invite_loop` and `v_taste_signals` — the leak is
+  closed.
+- **Map data:** 586,844 live venues. The daily OSM ingest ran every day; 103 of
+  105 regions ok. `europe/italy/centro` and `russia/central-fed-district`
+  failed every run with "Unterminated string in JSON" — readline split a
+  record at a bare `\r`. Fixed in `8eb4f7a` (lib/discovery/feature-lines.ts);
+  confirm on the next daily run.
+- **Email is still dead:** `RESEND_API_KEY` in Vercel last changed 89 days ago.
+- **In progress:** checkout spec Stage 2 UI (the 5-dot rail replacing the
+  sign-off tabs, getNextAction on every chip, the one-active start screen) —
+  built and reviewed in `.claude/worktrees/wf_b319ed23-9c9-1`, fix pass
+  running. Stages 3–6 not started (plan: wf_0331f72d-1d7).
+
+## 0. Checkout migrations, 2026-09-25 — ✅ all eight run by the owner on 09-25
+
+Run, and verified the same day. Each file is safe to run twice. Run them in the Supabase
 SQL editor in this order; each line says what waits on it. Until a file runs,
 the code that needs it must fail soft on 42703 / PGRST205 and name the file.
 
@@ -65,13 +92,13 @@ answer, not the ledger's.
 | knowledge-layer (trip_playbooks) | ✅ | 11 rows, all `ready`, `locked_at` present |
 | discovery sources | ✅ | `discovery_venues.harvest_status` |
 | venue images | ✅ | `discovery_venues.image_url` |
-| **reservation-platform** | ❌ | `itinerary_items.reservation_platform` does not exist |
-| **plan photo** | ❌ | `plans.image_url` does not exist — destination photos cannot save |
-| booking idempotency | 🟡 | **column exists, unique index does not** — the route writes the key and nothing enforces it |
-| contribution idempotency | 🟡 | column exists (pre-existing); index not yet created |
+| reservation-platform | ✅ | the file adds `discovery_venues.reservation_platform` / `reservation_url` / `phone` — present. (This row used to probe `itinerary_items`, which the migration never touches) |
+| plan photo | ✅ | `plans.image_url` present |
+| booking idempotency | ✅ | `sql/finish-idempotency-2026-09-21.sql` run by the owner 2026-09-24 |
+| contribution idempotency | ✅ | same file, same day |
 
-The two 🟡 rows are the dangerous state: the code behaves as though it is
-protected and it is not.
+Both idempotency indexes were run on 2026-09-24 once MHW2Y3 was confirmed
+cancelled and refunded in Duffel.
 
 ## 2. Contract lockdown (T1–T4)
 
@@ -93,7 +120,7 @@ protected and it is not.
 | `@clerk/testing` | ✅ | `tests/auth.setup.ts`, races a 30s deadline, falls back to the jar |
 | rate limits | ✅ | 10 new trips/hour, 30 rebuilds/hour, separate counters, human copy on 429 |
 | Sentry | 🟡 | `lib/report.ts` posts to the ingest endpoint; inert until `SENTRY_DSN` is set (🔒) |
-| crons | 🟡 | four entries on a plan documenting two; all daily |
+| crons | ✅ | five `vercel.json` entries, all daily (Hobby allows daily only); the map load, pings and the like run in GitHub Actions instead |
 | itinerary replace | ✅ | insert-then-delete, in `lib/itinerary-replace.ts`, with a test that fails if reversed |
 | DELETE plan audit log | ✅ | `audit_logs` written on plan delete |
 
@@ -150,30 +177,20 @@ protected and it is not.
 
 Struck through is already done.
 
-1. **Run `sql/finish-idempotency-2026-09-21.sql`.** Decide first between
-   `MHW2Y3` and `SFYVFK` in Duffel — the same flight booked twice. Cancelling
-   a row here no longer means cancelling only a row: `POST
-   /api/bookings/[id]/cancel` now does it at the airline, two-step, showing
-   the refund before it acts.
-2. **Run `sql/plan-photo-2026-09-21.sql`** — destination photos cannot save
-   without it.
-3. **Run the reservation-platform migration** — the restaurant redirect flow
-   is built and inert.
+1. ~~Run `sql/finish-idempotency-2026-09-21.sql`~~ — done 2026-09-24; MHW2Y3
+   was cancelled and refunded in Duffel.
+2. ~~Run `sql/plan-photo-2026-09-21.sql`~~ — done.
+3. ~~Run the reservation-platform migration~~ — done.
 4. **Set `SENTRY_DSN`** so errors are caught.
 5. **Fix `RESEND_API_KEY`** (401) and send a test email.
 6. **Point `TEST_EMAIL` at a `+qa` account**, so the suite stops acting on
    real groups and plans.
-7. **Confirm Vercel → Settings → Build Command is `npm run build`.** If it is
-   `next build`, the gate proven in T3 is bypassed.
-8. **Decide the one-active-trip rule.** It is the last product gap and the
-   package that specifies it is gone. Which did you mean?
-   (a) a group may hold one plan in `planning`/`voting` at a time, and
-       starting a second is refused with an offer to open the first; or
-   (b) one plan is *featured* on Home at a time, and the rest stay in the
-       list — a display rule, nothing refused.
-   (a) blocks somebody mid-flow, so it is not a guess worth making: say
-   which and it goes in with a test.
-9. **Confirm the cron count.** Four entries on a plan documenting two; if the
-   venue sweep silently stops, destinations quietly stop gaining venues.
+7. ~~Confirm Vercel's Build Command~~ — not overridden, so Vercel runs
+   `npm run build`, which is `npm run verify && next build`.
+8. ~~Decide the one-active-trip rule~~ — the owner chose (a) on 2026-09-25:
+   one active trip and one active night out per group. The server rule is in
+   (`lib/one-active.ts`), off until the client says it can show it; then run
+   `sql/one-active-plan-2026-09-25.sql`.
+9. ~~Confirm the cron count~~ — five, all daily, all allowed on Hobby.
 10. ~~Switch Stripe to test mode~~ — done, confirmed `pk_test_`.
 11. ~~Run the knowledge-layer migration~~ — done; 11 playbooks `ready`.

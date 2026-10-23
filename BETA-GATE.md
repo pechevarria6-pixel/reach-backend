@@ -1,4 +1,4 @@
-# BETA GATE — 2026-09-22
+# BETA GATE — 2026-09-22, owner rows re-checked 2026-10-23
 
 The final checklist from REACH-FINISH-LINE. Agent checks the code rows, owner
 checks his. Nothing here is marked done because a previous document said so:
@@ -13,7 +13,7 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 
 | row | state | evidence |
 |---|---|---|
-| suite green (all e2e + unit) | ✅ | **unit 531 pass / 0 fail** under `npm run verify`, and **e2e 81 pass / 0 fail** in 4.1 min — `npx playwright test`, run against production today across chromium and iPhone 14. The e2e specs still sit outside the build gate on purpose: they need a live deployment and a session, so a build cannot be the thing that runs them |
+| suite green (all e2e + unit) | ✅ | 2026-10-23: unit **1606 pass / 0 fail**. 2026-09-22: **unit 531 pass / 0 fail** under `npm run verify`, and **e2e 81 pass / 0 fail** in 4.1 min — `npx playwright test`, run against production today across chromium and iPhone 14. The e2e specs still sit outside the build gate on purpose: they need a live deployment and a session, so a build cannot be the thing that runs them |
 | build gate proven | ✅ | `build: npm run verify && next build`. Proven once by planting a failing test: `exit=1` and `next build` never ran. 🔒 depends on the owner confirming Vercel's Build Command is `npm run build` |
 | contract tests ≥ 4 surfaces | ✅ | `lib/contracts/itinerary-item.ts` (API · mapper · client · PUT) and `lib/contracts/booking.ts` (route · duplicate path · checkout screen), each with a round-trip test proven by reverting a field |
 | money path e2e in test mode | 🟡 | Stripe confirmed **test mode** — `/api/config/stripe` serves `pk_test_51U4lDQ…`, checked immediately before touching anything. Walked as far as it goes today: a QA plan was created against production and `POST /api/plans/<id>/funding` **correctly refused** it — `{"error":"We're still pricing this — check back soon.","funding":{"targetCents":0,…}}`. That is the w5 **$0-checkout guard**, live and right: nothing priced means nothing to charge. Going further needs priced bookings, which means quoting against Duffel and the other live providers on the owner's real account, so it stops here. No contribution row was created; the table is unchanged at 6 |
@@ -24,20 +24,20 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 | Sentry live | 🔒 | `lib/report.ts` posts to the ingest endpoint and no-ops without a DSN. Deliberately not `@sentry/nextjs`: that package wraps the build, and the build broke twice on 09-21. Inert until the owner sets `SENTRY_DSN` |
 | events / metrics flowing | ✅ | **proven in production today, both ways.** `plan_created` had no call site at all; a plan created against prod now writes `{city, kind, solo, nights, voting, country, budget_cents}`. `plan_deleted` was structurally impossible (FK `23503`) and now writes `{plan, cancelled_quotes}` after a real delete. All four QA event rows swept; the table is back to its 5 genuine rows and no `QA-` plan remains |
 | rate limits on | ✅ | 10 new trips/hour, 30 rebuilds/hour, separate counters, human copy on 429 |
-| one-active-trip on | 🔒 | the package specifying it is in neither the repo nor Downloads, and the rule **refuses somebody a trip**. Question is in the STATUS.md runbook, item 8 |
+| one-active-trip on | 🟡 | owner chose (a) on 09-25: one active trip and one active night out per group. Server rule in `lib/one-active.ts`, off until the start screen ships; then `sql/one-active-plan-2026-09-25.sql` |
 
 ## OWNER (Peter)
 
 | row | state |
 |---|---|
-| 5 migrations run | 🟡 3 of 5. `reservation-platform` and `plans.image_url` re-probed today and still absent |
-| RESEND key live (send a test email) | 🔒 401; all outbound email dead |
-| APP_URL fixed | 🔒 |
+| migrations run | ✅ every file in `sql/` through 2026-09-25, except the two held on purpose (STATUS.md, Now) |
+| RESEND key live (send a test email) | 🔒 still dead on 2026-10-23 — the Vercel value was last changed 89 days ago |
+| APP_URL fixed | 🟡 `NEXT_PUBLIC_APP_URL` is set in Vercel; its value is not readable from here |
 | Supabase service key + Clerk secret rotated | 🔒 |
-| STRIPE_WEBHOOK_SECRET set | 🔒 the webhook route is written and signature-verifies; until the secret exists the honest-bridge verify path carries it |
+| STRIPE_WEBHOOK_SECRET set | 🟡 set in Vercel (89 days old); whether it matches the live endpoint's secret is not provable from here |
 | SENTRY_DSN set | 🔒 |
 | BNPL methods enabled | 🔒 |
-| Duffel orders confirmed test | 🔒 **blocks the idempotency migration.** `MHW2Y3` and `SFYVFK` are the same flight booked twice and both are real |
+| Duffel orders confirmed test | ✅ MHW2Y3 cancelled and refunded (owner, 2026-09-24); SFYVFK was Duffel's test carrier; both indexes run |
 | second test account created | 🔒 `TEST_EMAIL` points at the owner's real account, so e2e acts on real groups and plans |
 | flying details filled | 🔒 left empty on purpose; never stubbed |
 | backups / PITR confirmed | 🔒 |
