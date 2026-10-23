@@ -128,7 +128,7 @@ export function unpinnedHotel(request: Record<string, unknown> | null | undefine
   return !(typeof hotel?.hotelId === 'string' && hotel.hotelId);
 }
 
-export const PICK_THE_HOTEL = 'We didn\'t keep which hotel this was when it was priced, so it can\'t be priced again as the same hotel. Open the trip\'s itinerary and use "See the hotel · change it" to pick it. Nobody can pay towards the trip until it is.';
+export const PICK_THE_HOTEL = 'We didn\'t keep which hotel this was when it was priced, so it can\'t be priced again as the same hotel. Open the trip\'s Book tab and use "Change" on the hotel to pick it. Nobody can pay towards the trip until it is.';
 
 type Quote = {
   status?: string; error?: string; provider?: string; mode?: string; providerRef?: string;

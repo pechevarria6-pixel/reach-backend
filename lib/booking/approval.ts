@@ -235,15 +235,15 @@ export function onTheTrip<T extends { userId: string }>(
  * with a way forward that exists. "Price it again from checkout" named a
  * button nobody had built.
  *
- * Hotels and flights are priced again from the trip's itinerary, where each
- * has "See the hotel · change it" / "See the flights · change them" — the
- * options route, which now prices with the provider Reach books through. An
+ * Hotels and flights are priced again from the trip's Book tab, where each
+ * has "Change" — its sheet lists the options route's choices, priced with the
+ * provider Reach books through. An
  * activity has no such panel: approval sets the row aside as failed, and the
  * next open of checkout prices its line afresh.
  */
 export function repriceAdvice(vertical: string, fromItinerary: boolean): string {
-  if (vertical === 'hotel') return 'Open the trip\'s itinerary and use "See the hotel · change it" to price it again.';
-  if (vertical === 'flight') return 'Open the trip\'s itinerary and use "See the flights · change them" to price it again.';
+  if (vertical === 'hotel') return 'Open the trip\'s Book tab and use "Change" on the hotel to price it again.';
+  if (vertical === 'flight') return 'Open the trip\'s Book tab and use "Change" on the flights to price them again.';
   return fromItinerary
     ? 'It has been set aside, and opening checkout again prices it afresh.'
     : 'It has been set aside. Nobody has paid for it, and it can be booked directly with whoever runs it.';

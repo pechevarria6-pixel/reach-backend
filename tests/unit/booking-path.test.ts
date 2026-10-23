@@ -406,10 +406,12 @@ test('checkout branches on the code and waits longer than the server', () => {
 
 test('the reprice advice names buttons the app has', () => {
   const app = read('components/reach-app.jsx');
-  assert.ok(app.includes('"See the hotel · change it"'));
-  assert.ok(app.includes('"See the flights · change them"'));
-  assert.match(repriceAdvice('hotel', true), /See the hotel · change it/);
-  assert.match(repriceAdvice('flight', false), /See the flights · change them/);
+  // "Change" opens the line's sheet, and a hotel's or flight's sheet is its
+  // priced options (ChoicePanel inside ChangeSheet).
+  assert.match(app, /onClick=\{\(\)=>setChanging\(item\)\}[\s\S]{0,200}?\n\s*Change\n/);
+  assert.match(app, /priced&&booking\?\(\s*<ChoicePanel/);
+  assert.match(repriceAdvice('hotel', true), /Book tab and use "Change" on the hotel/);
+  assert.match(repriceAdvice('flight', false), /Book tab and use "Change" on the flights/);
   assert.match(repriceAdvice('activity', true), /opening checkout again/);
   assert.doesNotMatch(repriceAdvice('activity', false), /checkout/);
   assert.doesNotMatch(read('app/api/bookings/[id]/approve/route.ts'), /Price it again from checkout/);

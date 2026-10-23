@@ -246,7 +246,7 @@ test('a hotel that never kept which hotel it was is not priced again as whicheve
   const out = await writeRepriced(db, tables.bookings[0], restated(tables.bookings[0], 3),
     quote(90000, { vertical: 'hotel', provider: 'liteapi', raw: { hotelId: 'lpNEW', hotel: { name: 'Hotel Rio' } } }), unpaid);
   assert.equal(out.why, 'unpinned');
-  assert.match(out.error!, /See the hotel · change it/);
+  assert.match(out.error!, /use "Change" on the hotel/);
   assert.equal(writes.length, 0, 'the group is not shown a different hotel with no word about why');
   assert.equal(unpinnedHotel(restated(tables.bookings[0], 3)), true);
   assert.equal(unpinnedHotel(hotelReq(2)), false);

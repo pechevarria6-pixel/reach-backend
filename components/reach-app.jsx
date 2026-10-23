@@ -3,6 +3,7 @@ import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
 import { namesList } from "@/lib/group-answers";
 import { shownTitle, isOrganiser, waitingTripIn } from "@/lib/trip-vote";
+import { lockedIn } from "@/lib/itinerary-change";
 import { itemsFromRows, typeForKind, itemNote } from "@/lib/contracts/itinerary-item";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive, dayWhere } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
@@ -11,7 +12,8 @@ import { SURFACE } from "@/lib/brand";
 import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL, PRICE_CHECK_WORDS } from "@/lib/checkout";
 import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
-import { afterRebuild } from "@/lib/itinerary-rebuild";
+import { afterRebuild, afterAwayRebuild } from "@/lib/itinerary-rebuild";
+import { awayEstimate, awayLines, rowOf } from "@/lib/away-lines";
 import { ticketSources } from "@/lib/tickets";
 import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
@@ -441,30 +443,55 @@ function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);retu
 
 // The big fixed costs are events too: a flight is a thing that happens on a
 // day and has a price. Making them itinerary items means the budget screen
-// reads from one place, and they survive a reload — trip.costs lives only in
-// memory, because the plans table has no column for it.
-function fixedCostRows(trip){
-  const c=trip?.costs||{};
-  // Name the actual thing. This wrote "Flights", "Accommodation" and "Airport
-  // transfers" onto the itinerary while the real detail — the airline, the
-  // hotel — sat unused one field away, so three placeholder lines sat at the
-  // top of a plan that was otherwise specific throughout.
-  // Ground transport is not something Reach can book — there is no car
-  // provider connected — so it is never marked as one. It was: "Car rental
-  // full week" sat on Rincón as a thing Reach books, was skipped at checkout
-  // every time, and nothing booked the car. It is the traveller's, with the
-  // rental search opened at their airport once the flight is priced.
-  const row=(title,detail,cents,type)=>cents>0&&title?{
-    time:"Before you go",title,sub:detail||"",type,conf:null,filled:false,
-    cost_cents:Math.round(cents*100),booking_mode:type==="transport"?"ahead":"reach",
-    payment_note:type==="transport"?"You book this on your own card — the rental search opens at your airport and dates":"Paid through Reach when the group funds the trip",
-  }:null;
-  return [
-    row(c.flights?.details||"Round-trip flights",c.flights?.airlines,c.flights?.per_person,"flight"),
-    // example is the hotel or neighbourhood; details is "7 nights, hotel".
-    row(c.accommodation?.example||c.accommodation?.details,c.accommodation?.details,c.accommodation?.per_person,"hotel"),
-    row(c.ground_transport?.details||"Airport transfers",null,c.ground_transport?.per_person,"transport"),
-  ].filter(Boolean);
+// reads from one place, and they survive a reload.
+//
+// The server builds them now (lib/away-lines.ts awayLines, Task 6a): getting
+// there, the car from the airport when the town has none, and a bed for
+// every night — each labelled an estimate, and an unpriced one kept and said
+// rather than dropped. The client used to build its own from the costs with
+// `cents>0&&title`, so a model that wrote flights: 0 for a week in Lisbon
+// gave a plan with no way of getting to Lisbon.
+//
+// `fixed` is the server's (the days stage's `fixed`), used whenever it came
+// back. Without it — an idea whose days were written while they chose, so
+// nothing was asked of the server — the same function is run here on the
+// estimate the idea was saved with, which is exactly what the server's own
+// "kept" branch does. An idea saved before away lines existed has no
+// estimate; for one with nights it is worked out from its costs the way the
+// days stage does, and a day trip with none carries no lines it can't vouch
+// for.
+function awayRows(trip,{fixed,startDate,endDate,party=1,solo=false}={}){
+  if(Array.isArray(fixed))return fixed;
+  const nights=nightsBetween(startDate,endDate)||0;
+  const est=trip?.away&&typeof trip.away==="object"
+    ?trip.away
+    :(nights>=1?awayEstimate(trip||{},{nights}):null);
+  if(!est)return [];
+  return awayLines(est,{
+    town:String(trip?.city||trip?.destination||"the town").split(",")[0].trim()||"the town",
+    start:startDate||null,end:endDate||null,
+    party:Math.max(1,party||1),solo,
+  }).map(rowOf);
+}
+
+/** What the days stage is told about the option, so its away lines carry the tier. */
+function tripDataFor(trip,extra={}){
+  return {
+    destination:trip.destination,vibe:trip.vibe,costs:trip.costs,
+    city:trip.city||null,country_code:trip.country_code||null,
+    tier:trip.tier||null,total_per_person:trip.total_per_person??null,
+    away:trip.away||null,
+    ...extra,
+  };
+}
+
+/** How many a plan is for, as the client holds it. */
+function groupSizeOf(plan){return Math.max(1,(plan?.participants||[]).length||1);}
+
+/** The headline per-person estimate: the away estimate's when it has one. */
+function ideaPerPerson(trip){
+  const a=trip?.away;
+  return typeof a?.per_person==="number"&&a.per_person>0?a.per_person:(Number(trip?.total_per_person)||0);
 }
 
 // "1 people" and "1 travelers" both reached a screen somebody was about to
@@ -6051,6 +6078,65 @@ function PlaceClimate({city,country,lat=null,lng=null,startDate,endDate,hint=fal
   );
 }
 
+// ─── Getting there and somewhere to sleep, on an option card ─────────────
+// The server's estimate for an away option (lib/away-lines.ts awayEstimate):
+// the flight — or the flight to the nearest airport and a car from it, or
+// the road when it is a drive — and the stay with its nights and the area
+// to stay in. Every figure is an estimate and says so; a part nobody priced
+// is named as unpriced rather than left out of a total that then reads as
+// everything.
+const AWAY_UNPRICED={transport:"getting there",lodging:"the stay",car:"the rental car"};
+function livePriced(away){
+  const u=away?.unpriced||[];
+  const flight=u.includes("transport")&&away?.transport?.kind!=="ground";
+  const stay=u.includes("lodging");
+  return flight&&stay?"The flights and the stay are":flight?"The flights are":stay?"The stay is":null;
+}
+function AwayLinesCard({away}){
+  const t=away.transport||{};
+  const usd=n=>typeof n==="number"&&n>0?`$${Math.round(n).toLocaleString()}`:null;
+  const rows=[];
+  if(t.kind==="ground"){
+    rows.push({icon:"🚗",label:"Getting there and back",detail:t.label,cost:usd(t.per_person)});
+  }else{
+    rows.push({icon:"✈️",label:t.kind==="flight_and_car"&&t.airport?`Flights to ${t.airport.iata}`:"Round-trip flights",
+      detail:t.label,cost:usd(t.per_person)});
+    if(away.car)rows.push({icon:"🚗",label:`Rental car from ${away.car.from?.iata||"the airport"}`,
+      detail:away.car.from?`${away.car.from.name}, about ${away.car.from.miles} miles away as the crow flies — yours to book`:"Yours to book",
+      cost:usd(away.car.per_person)});
+  }
+  if(away.lodging){
+    const l=away.lodging;
+    rows.push({icon:"🏨",label:`Somewhere to stay · ${plural(l.nights,"night")}`,
+      detail:[l.label?String(l.label).split(" · ")[0]:null,l.area?`around ${l.area}`:null,
+        usd(l.per_night)?`about ${usd(l.per_night)} a night each`:null].filter(Boolean).join(", "),
+      cost:usd(l.per_person)});
+  }
+  const unpriced=(away.unpriced||[]).map(k=>AWAY_UNPRICED[k]).filter(Boolean);
+  return(
+    <>
+      {rows.map((c,j)=>(
+        <div key={j} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:8}}>
+          <span style={{fontSize:16,width:22,flexShrink:0,marginTop:1}}>{c.icon}</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,color:C.t1,fontWeight:500}}>{c.label}</div>
+            {c.detail&&<div style={{fontSize:11,color:C.t3,lineHeight:1.4}}>{c.detail}</div>}
+          </div>
+          <div style={{fontSize:c.cost?14:11.5,fontWeight:c.cost?600:400,color:c.cost?C.t1:C.t3,flexShrink:0}}>{c.cost||"Not estimated"}</div>
+        </div>
+      ))}
+      {unpriced.length>0&&(
+        <div style={{fontSize:11.5,color:C.amber,lineHeight:1.45,margin:"0 0 8px 32px"}}>
+          No estimate yet for {namesList(unpriced)}, so the total below leaves {unpriced.length===1?"it":"them"} out.
+          {/* Reach quotes only the flight and the stay; the road, the
+              car and transfers are the traveller's and never priced live. */}
+          {livePriced(away)?` ${livePriced(away)} priced live at Lock it in.`:""}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── One trip idea, as a card ─────────────────────────────────────────────
 // The same card everywhere an idea is chosen from: a solo trip's options, a
 // group's saved ideas on the trip screen, and the plan's Vote tab. What can
@@ -6058,6 +6144,9 @@ function PlaceClimate({city,country,lat=null,lng=null,startDate,endDate,hint=fal
 // that differs by who is looking and is decided on the server.
 function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,groupSize=1,enriching=0,noDaysNote,children}){
   const [allDays,setAllDays]=useState(false);
+  // Getting there and somewhere to sleep, from the server's estimate
+  // (lib/away-lines.ts awayEstimate). Never on a night out.
+  const away=!nightOut&&trip.away&&typeof trip.away==="object"?trip.away:null;
   const voted=highlight;
   const nights=startDate&&endDate?Math.round((new Date(endDate)-new Date(startDate))/86400000):0;
   return(
@@ -6095,7 +6184,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
             </div>
             <div style={{textAlign:"right",marginLeft:12}}>
               <div style={{fontFamily:"var(--font-display)",fontSize:28,color:voted?C.accentText:C.t1}}>
-                ${trip.total_per_person?.toLocaleString()}
+                ${ideaPerPerson(trip).toLocaleString()}
               </div>
               <div style={{fontSize:11,color:C.t3}}>per person, est.</div>
               <div style={{fontSize:11,color:C.t3}}>{nightOut?"one evening":plural(nights,"night")}</div>
@@ -6131,10 +6220,13 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
           <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
             Full cost breakdown per person
           </div>
+          {away&&<AwayLinesCard away={away}/>}
           {[
-            {icon:"✈️",label:"Flights",cost:trip.costs?.flights?.per_person,detail:trip.costs?.flights?.details},
-            {icon:"🏨",label:"Hotel",cost:trip.costs?.accommodation?.per_person,detail:trip.costs?.accommodation?.example},
-            {icon:"🚗",label:"Transport",cost:trip.costs?.ground_transport?.per_person,detail:trip.costs?.ground_transport?.details},
+            ...(away?[]:[
+              {icon:"✈️",label:"Flights",cost:trip.costs?.flights?.per_person,detail:trip.costs?.flights?.details},
+              {icon:"🏨",label:"Hotel",cost:trip.costs?.accommodation?.per_person,detail:trip.costs?.accommodation?.example},
+              {icon:"🚗",label:"Transport",cost:trip.costs?.ground_transport?.per_person,detail:trip.costs?.ground_transport?.details},
+            ]),
             {icon:"🍽️",label:"Food & drinks",cost:trip.costs?.food_drink?.per_person,detail:trip.costs?.food_drink?.details},
             {icon:"🎯",label:"Activities & events",cost:trip.costs?.activities?.per_person,detail:trip.costs?.activities?.details},
             {icon:"🛡️",label:"Insurance & misc",cost:trip.costs?.misc?.per_person,detail:trip.costs?.misc?.details},
@@ -6150,11 +6242,20 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
           ))}
           <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border,display:"flex",justifyContent:"space-between"}}>
             <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Total per person, est.</div>
-            <div style={{fontSize:16,fontWeight:700,color:voted?C.accentText:C.t1}}>${trip.total_per_person?.toLocaleString()}</div>
+            <div style={{fontSize:16,fontWeight:700,color:voted?C.accentText:C.t1}}>${ideaPerPerson(trip).toLocaleString()}</div>
           </div>
+          {/* Somebody driving, or already holding a seat, comes off the
+              flight — the figure for them, said once, beside the total it
+              is less than. Only when there is a flight to come off. */}
+          {away&&away.transport?.kind!=="ground"&&away.per_person_if_driving>0&&away.per_person_if_driving<ideaPerPerson(trip)&&(
+            <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+              <div style={{fontSize:12,color:C.t2}}>{groupSize>1?"Per person for anyone driving or with a flight already":"If you drive or already have a flight"}</div>
+              <div style={{fontSize:12.5,fontWeight:600,color:C.t2}}>${away.per_person_if_driving.toLocaleString()}</div>
+            </div>
+          )}
           {groupSize>1&&(
             <div style={{fontSize:12,color:C.t3,textAlign:"right",marginTop:2}}>
-              ${(trip.total_per_person*(groupSize||2))?.toLocaleString()} total for the group
+              ${(ideaPerPerson(trip)*(groupSize||2)).toLocaleString()} total for the group
             </div>
           )}
           {/* Said once, plainly. These are estimates: nobody has
@@ -6275,7 +6376,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
         title:trip.venueTitle||trip.destination,
         destination_city:trip.city||null,
         destination_country:trip.country_code||null,
-        budget_cents:Math.round((Number(trip.total_per_person)||0)*100),
+        budget_cents:Math.round(ideaPerPerson(trip)*100),
         why_chosen:(trip.used_suggestions||[]).length?trip.used_suggestions:null,
         // Clears "undecided" and closes the vote: back to planning, where the
         // three checks — overview, budget, book — say when it is ready.
@@ -6301,7 +6402,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
     status:saved.status||"planning",
     destinationCity:saved.destination_city??trip.city??null,
     destinationCountry:saved.destination_country??trip.country_code??null,
-    budget:Math.round((saved.budget_cents??0)/100)||trip.total_per_person||p.budget,
+    budget:Math.round((saved.budget_cents??0)/100)||ideaPerPerson(trip)||p.budget,
     destStyle:saved.destination_style??null,
     imageUrl:saved.image_url||p.imageUrl||null,
     imageCredit:saved.image_credit||p.imageCredit||null,
@@ -6314,7 +6415,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
     if(hasDays){
       rows=nightOut
         ?itineraryRows(trip.itinerary,true)
-        :[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
+        :[...awayRows(trip,{startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1}),...itineraryRows(trip.itinerary)];
       const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
       updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
     }else{
@@ -6323,7 +6424,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
         body:JSON.stringify({
           groupId,startDate,endDate,
           detailTripId:trip.id,planId,
-          tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs,city:trip.city,country_code:trip.country_code},
+          tripData:tripDataFor(trip),
           mode:nightOut?"night":"trip",
           // Empty: the server reads the evening's answers off the trip.
           nightPrefs:{},
@@ -6335,7 +6436,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
       if(r.ok&&(d.itinerary||[]).length){
         rows=nightOut
           ?itineraryRows(d.itinerary,true)
-          :[...fixedCostRows(trip),...itineraryRows(d.itinerary)];
+          :[...awayRows(trip,{fixed:d.fixed,startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1}),...itineraryRows(d.itinerary)];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows}:p)}));
       }else{
         console.error("[pick] itinerary for the pick failed",r.status,d);
@@ -6994,7 +7095,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       // One evening starts and ends on the same day. Leaving a return date on
       // it would put "5 nights" on a dinner.
       endDate:nightOut?(startDate||null):(endDate||null),
-      budget:trip.total_per_person,
+      budget:ideaPerPerson(trip),
       // The place in the two parts a provider can search on. "Moab, Utah,
       // USA" is for reading; a hotel API wants the city and the country.
       destinationCity:trip.city||null,
@@ -7051,7 +7152,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // deciding how long somebody's evening is.
         const rows=nightOut
           ?itineraryRows(trip.itinerary,true)
-          :[...fixedCostRows(trip),...itineraryRows(trip.itinerary)];
+          :[...awayRows(trip,{startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1}),...itineraryRows(trip.itinerary)];
         const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
         if(saveItineraryToServer)await saveItineraryToServer(realId,rows);
@@ -7066,7 +7167,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           groupId,
           startDate,endDate,
           detailTripId:trip.id,
-          tripData:{destination:trip.destination,vibe:trip.vibe,costs:trip.costs},
+          tripData:tripDataFor(trip),
           mode:nightOut?"night":"trip",
           nightPrefs:nightOut?nightAnswers:{},
           departureCity:departure?.city||null,
@@ -7082,7 +7183,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       if(refused())return;
       if(res.ok){
         const data=await res.json();
-        const itinerary=[...fixedCostRows(trip),...itineraryRows(data.itinerary)];
+        const itinerary=nightOut
+          ?itineraryRows(data.itinerary,true)
+          :[...awayRows(trip,{fixed:data.fixed,startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1}),...itineraryRows(data.itinerary)];
         if(itinerary.length){
           updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary}:p)}));
           if(saveItineraryToServer)await saveItineraryToServer(realId,itinerary);
@@ -8900,7 +9003,10 @@ function RealTrip({trip,startDate,endDate,seats}){
     setState({loading:true,data:null,error:null});
     try{
       const r=await fetchWithin("/api/trips/preview",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({city:trip.city,countryCode:trip.country_code,start:startDate,end:endDate,seats})},60000,"checking prices");
+        body:JSON.stringify({city:trip.city,countryCode:trip.country_code,start:startDate,end:endDate,seats,
+          // The tier's class of stay and flight timing rank what comes back
+          // (lib/away-lines.ts flightsForTier / hotelsForTier).
+          ...(trip.tier?{tier:trip.tier}:{})})},60000,"checking prices");
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"Couldn't check prices just now");
       setState({loading:false,data:d,error:null});
@@ -8993,9 +9099,25 @@ function LegLine({leg,label}){
     </div>
   );
 }
-function ChoicePanel({booking,vertical,toast,onChanged}){
+// Inside the Change sheet (ChangeSheet), for a hotel or a flight line, and
+// on checkout when a provider refused one. Not beside the line any more: a
+// link to the hotel's options next to a "Change" on the same line was two
+// doors into one room.
+//
+// Each other option says what it changes per person, as an estimate
+// (deltaPerPersonCents, /api/bookings/[id]/options). Once the trip is locked
+// in (`confirmFirst`) a change is the organiser's and is asked about before
+// it is made — "+$40 each — ok?" — because everybody's share moves with it.
+function deltaWords(cents,solo){
+  if(typeof cents!=="number"||!Number.isFinite(cents))return null;
+  const n=Math.round(Math.abs(cents)/100);
+  if(n===0)return "No change in price";
+  return `${cents>0?"+":"−"}$${n.toLocaleString()}${solo?"":" each"}`;
+}
+function ChoicePanel({booking,vertical,toast,onChanged,autoLoad=false,confirmFirst=false,solo=false}){
   const [state,setState]=useState({loading:false,options:null,why:null});
   const [choosing,setChoosing]=useState(null);
+  const [asking,setAsking]=useState(null);
   const raw=booking.response_payload||{};
   const hotel=raw.hotel, flight=raw.option;
   const usd=c=>"$"+((c||0)/100).toLocaleString(undefined,{maximumFractionDigits:0});
@@ -9006,14 +9128,18 @@ function ChoicePanel({booking,vertical,toast,onChanged}){
       const r=await fetchWithin(`/api/bookings/${booking.id}/options`,{},30000,"finding other options");
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"Couldn't look just now");
-      setState({loading:false,options:d.options||[],why:d.why||null});
+      // Refused by the server — booked already, or locked in and not this
+      // person's to change — says why, rather than offering a list.
+      setState({loading:false,options:d.changeable===false?[]:(d.options||[]),why:d.why||null});
     }catch(e){
       console.error("[choices] could not load options",{booking:booking.id},e);
       setState({loading:false,options:[],why:e.message});
     }
   };
+  useEffect(()=>{if(autoLoad&&changeable)load();},[booking.id]);
   const choose=async(key)=>{
     if(choosing)return;
+    setAsking(null);
     setChoosing(key);
     try{
       const r=await fetchWithin(`/api/bookings/${booking.id}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key})},30000,"switching");
@@ -9056,7 +9182,7 @@ function ChoicePanel({booking,vertical,toast,onChanged}){
       </div>
       {!changeable?(
         <div style={{fontSize:11.5,color:C.t3,marginTop:6,lineHeight:1.5}}>
-          {booking.status==="confirmed"?"Booked. To change it, it has to be cancelled first.":"This one can't be changed right now."}
+          {booking.status==="confirmed"?"Booked — this one stays on the plan as it is.":"This one can't be changed right now."}
         </div>
       ):state.options===null?(
         <button className="bs" style={{marginTop:10}} disabled={state.loading} onClick={load}>
@@ -9068,6 +9194,9 @@ function ChoicePanel({booking,vertical,toast,onChanged}){
           {state.options.map(o=>{
             const diff=(o.priceCents||0)-(booking.price_cents||0);
             const isCurrent=vertical==="hotel"?o.key===raw.hotelId:o.key===raw.offerKey;
+            // Per person where the server worked it out; the whole
+            // booking's difference otherwise, as it always was.
+            const each=deltaWords(o.deltaPerPersonCents,solo);
             return(
               <div key={o.key} style={{display:"flex",gap:10,alignItems:"center",padding:"9px 0",borderTop:`1px solid ${C.border}`}}>
                 {vertical==="hotel"&&o.photo&&<img src={o.photo} alt="" style={{width:52,height:52,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
@@ -9085,11 +9214,18 @@ function ChoicePanel({booking,vertical,toast,onChanged}){
                     </>
                   )}
                   <div style={{fontSize:11.5,color:C.t2,marginTop:2}}>
-                    {usd(o.priceCents)}{isCurrent?" · your current choice":diff===0?"":` · ${diff>0?"+":"−"}${usd(Math.abs(diff))}`}
+                    {usd(o.priceCents)}{isCurrent?" · your current choice":each?` · ${each}, estimate`:diff===0?"":` · ${diff>0?"+":"−"}${usd(Math.abs(diff))}`}
                   </div>
+                  {asking===o.key&&(
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:6}}>
+                      <span style={{fontSize:12.5,color:C.t1,fontWeight:600}}>{each||"The price changes"} — ok?</span>
+                      <button className="bsm bsm-p" disabled={!!choosing} onClick={()=>choose(o.key)}>{choosing===o.key?"…":"OK, change it"}</button>
+                      <button className="bsm bsm-g" disabled={!!choosing} onClick={()=>setAsking(null)}>Keep the current one</button>
+                    </div>
+                  )}
                 </div>
-                {!isCurrent&&(
-                  <button className="bsm" disabled={!!choosing} onClick={()=>choose(o.key)}>
+                {!isCurrent&&asking!==o.key&&(
+                  <button className="bsm" disabled={!!choosing} onClick={()=>confirmFirst?setAsking(o.key):choose(o.key)}>
                     {choosing===o.key?"…":"Choose"}
                   </button>
                 )}
@@ -9099,6 +9235,295 @@ function ChoicePanel({booking,vertical,toast,onChanged}){
           <div style={{fontSize:10.5,color:C.t3,marginTop:6}}>Prices checked again when you choose. Nothing is booked until you pay and press Book.</div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Change: one line of the plan, and what else could go there ─────────
+// The checkout spec's Task 7. Every line a menu or a provider can replace
+// gets one "Change", and it opens this sheet:
+//
+//   a place      three of the same kind from the verified menu, near the
+//                rest of the day and open then, each with one line on why
+//                (GET .../itinerary/:itemId/alternatives); and "Something
+//                else…", where they say what instead and the one stop is
+//                written again from the same menu (POST /api/trips/generate
+//                with `slot`) and read back before it is offered.
+//   a hotel or   the booking's own priced options (ChoicePanel), each with
+//   a flight     what it changes per person.
+//
+// What a tap does is the server's to say (`right`), never guessed here:
+// the organiser — or the one person on a trip for one — changes the line
+// (PATCH .../itinerary/:itemId), keeping its id and every other line's
+// booking. Before Lock it in anybody else suggests instead, and the group 👍s
+// it under the line; never on a trip for one, because there is nobody to
+// suggest to. After Lock it in only the organiser changes anything, and a
+// hotel or flight asks "+$40 each — ok?" first. "Skip this one" is not here:
+// sitting a line out is the participation list's, and it is a different
+// thing from changing what the line is.
+//
+// Prices stay estimates. No venue row holds a price, so swapping a dinner
+// says the line's estimate stays rather than inventing a difference.
+const CHANGEABLE_TYPES=new Set(["restaurant","activity","hotel","flight"]);
+const PRICED_TYPES=new Set(["hotel","flight"]);
+
+/** Which stop a line is, as the one-slot rewrite asks for it. */
+function slotOfLine(item,lines,nightOut){
+  const t=String(item?.time||"");
+  const NIGHT={"To start":"morning","The main event":"afternoon","After":"evening"};
+  if(nightOut&&NIGHT[t])return {day:1,part:NIGHT[t]};
+  if(t==="Earlier that day"||t==="Then"){
+    const index=(lines||[]).filter(l=>l.time==="Earlier that day"||l.time==="Then").indexOf(item);
+    return index>=0?{day:1,part:"daytime",index}:null;
+  }
+  const m=/^Day (\d+) · (Morning|Afternoon|Evening)\b/.exec(t);
+  return m?{day:Number(m[1]),part:m[2].toLowerCase()}:null;
+}
+/** That day's stops as the screen has them — context for the rewrite, never written back. */
+function daySlots(day,lines,nightOut){
+  const out={morning:null,afternoon:null,evening:null,daytime:[]};
+  for(const l of lines||[]){
+    const s=slotOfLine(l,lines,nightOut);
+    if(!s||s.day!==day||!l.title)continue;
+    if(s.part==="daytime")out.daytime.push({plan:l.title});
+    else if(!out[s.part])out[s.part]={plan:l.title};
+  }
+  return out;
+}
+
+/** "Sam suggests Vic's · 👍 2", under the line it is about. */
+function LineSuggestions({planId,item,list,canApply,toast,onList,onSwapped}){
+  const [busy,setBusy]=useState(null);
+  if(!list?.length)return null;
+  const act=async(s,action)=>{
+    if(busy)return;
+    setBusy(s.id+action);
+    try{
+      const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/suggestions`,{method:"POST",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({action,suggestionId:s.id})},20000,"saving that");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(Array.isArray(d.suggestions))onList(item.id,d.suggestions);
+      if(action==="apply"&&d.item){
+        onSwapped(d.item);
+        toast(d.notice||`Changed to ${s.candidate?.name||"that one"}`);
+      }
+    }catch(e){
+      console.error("[suggestions] could not save",{item:item.id,action},e);
+      toast(e.message);
+    }
+    setBusy(null);
+  };
+  return(
+    <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+      {list.map(s=>{
+        const name=s.candidate?.name||"somewhere else";
+        const who=s.mine?"You suggest":`${s.suggestedBy?.name||"Someone"} suggests`;
+        return(
+          <div key={s.id} style={{padding:"8px 10px",borderRadius:10,background:C.s2,border:`1px solid ${C.border}`}}>
+            <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>
+              {who} <b style={{fontWeight:600}}>{s.candidate?.title||name}</b> · 👍 {s.votes}
+            </div>
+            {s.candidate?.why&&<div style={{fontSize:11,color:C.t3,marginTop:2,lineHeight:1.4}}>{s.candidate.why}</div>}
+            {s.note&&<div style={{fontSize:11.5,color:C.t2,marginTop:2}}>“{s.note}”</div>}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
+              {s.mine
+                ?<button className="bsm bsm-g" disabled={!!busy} onClick={()=>act(s,"withdraw")}>{busy===s.id+"withdraw"?"…":"Take it back"}</button>
+                :<button className={`bsm ${s.votedByMe?"bsm-p":"bsm-g"}`} disabled={!!busy} aria-pressed={s.votedByMe}
+                  onClick={()=>act(s,s.votedByMe?"unvote":"vote")}>{busy===s.id+"vote"||busy===s.id+"unvote"?"…":"👍"}</button>}
+              {canApply&&(
+                <>
+                  <button className="bsm bsm-p" disabled={!!busy} onClick={()=>act(s,"apply")}>{busy===s.id+"apply"?"…":"Use it"}</button>
+                  <button className="bsm bsm-g" disabled={!!busy} onClick={()=>act(s,"dismiss")}>{busy===s.id+"dismiss"?"…":"Not this one"}</button>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose,onSwapped,onList,onBookingsChanged}){
+  const nightOut=plan?.type==="restaurant";
+  const priced=PRICED_TYPES.has(item.type);
+  const [alt,setAlt]=useState({loading:!priced||!booking,data:null,error:null});
+  const [busy,setBusy]=useState(null);
+  const [said,setSaid]=useState(null);
+  const [ask,setAsk]=useState("");
+  const [other,setOther]=useState({loading:false,data:null,error:null});
+  const slot=slotOfLine(item,plan?.itinerary||[],nightOut);
+
+  useEffect(()=>{
+    // A hotel or flight with a booking goes straight to its priced options.
+    if(priced&&booking)return;
+    let live=true;
+    (async()=>{
+      try{
+        const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/alternatives`,{},30000,"finding other places");
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok)throw new Error(d.error||"Couldn't look just now");
+        if(live)setAlt({loading:false,data:d,error:null});
+      }catch(e){
+        console.error("[change] could not read the alternatives",{item:item.id},e);
+        if(live)setAlt({loading:false,data:null,error:e.message});
+      }
+    })();
+    return()=>{live=false;};
+  },[item.id]);
+
+  const d=alt.data;
+  const right=d?.right||null;
+  const held=d?.held||null;
+  const mayApply=right==="apply"&&!held;
+  const maySuggest=!solo&&!!d?.canSuggest&&!held;
+
+  const apply=async(to,title)=>{
+    if(busy)return;
+    setBusy(to);setSaid(null);
+    try{
+      const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}`,{method:"PATCH",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify(title?{to,title}:{to})},30000,"changing that");
+      const out=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(out.error||"Couldn't change that — nothing was changed");
+      onSwapped(out.item);
+      if(out.retiredBookingId)await onBookingsChanged?.();
+      toast(out.notice||"Changed");
+      onClose();
+    }catch(e){
+      console.error("[change] could not swap",{item:item.id,to},e);
+      setSaid(e.message);
+    }
+    setBusy(null);
+  };
+  const suggest=async(to,title)=>{
+    if(busy)return;
+    setBusy(to);setSaid(null);
+    try{
+      const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/suggestions`,{method:"POST",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"suggest",to,...(title?{title}:{})})},20000,"suggesting that");
+      const out=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(out.error||"Couldn't suggest that — try again");
+      if(Array.isArray(out.suggestions))onList(item.id,out.suggestions);
+      toast(out.joined?"Somebody suggested that already — your 👍 is on it":"Suggested — the group can 👍 it");
+      onClose();
+    }catch(e){
+      console.error("[change] could not suggest",{item:item.id,to},e);
+      setSaid(e.message);
+    }
+    setBusy(null);
+  };
+  const somethingElse=async()=>{
+    if(other.loading||!slot)return;
+    setOther({loading:true,data:null,error:null});setSaid(null);
+    try{
+      const r=await fetchWithin("/api/trips/generate",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({
+          groupId,detailTripId:planId,
+          startDate:plan.startDate||null,endDate:nightOut?(plan.startDate||null):(plan.endDate||null),
+          mode:nightOut?"night":"trip",
+          tripData:{destination:plan.destinationCity||plan.title,city:plan.destinationCity||null,country_code:plan.destinationCountry||null},
+          slot:{...slot,ask:ask.trim()||null,current:daySlots(slot.day,plan.itinerary||[],nightOut)},
+        })},90000,"finding something else");
+      const out=await r.json().catch(()=>({}));
+      // 422 is the honest "nothing we have verified fits" — said as written.
+      if(!r.ok)throw new Error(out.error||"Couldn't find something else just now");
+      setOther({loading:false,data:out,error:null});
+    }catch(e){
+      console.error("[change] something else failed",{item:item.id},e);
+      setOther({loading:false,data:null,error:e.message});
+    }
+  };
+
+  const fresh=other.data?.slot||null;
+  const freshTo=other.data?.to||null;
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:60,display:"flex",alignItems:"flex-end"}}>
+      <div role="dialog" aria-label={`Change ${item.title}`} onClick={e=>e.stopPropagation()}
+        style={{width:"100%",maxHeight:"82vh",overflowY:"auto",background:C.s1,borderRadius:"20px 20px 0 0",padding:"18px 20px 28px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:17,fontWeight:700,color:C.t1}}>Change</div>
+            <div style={{fontSize:12.5,color:C.t2,marginTop:2,lineHeight:1.4}}>{item.title}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.t2,fontSize:14,cursor:"pointer",flexShrink:0}}>Done</button>
+        </div>
+
+        {priced&&booking?(
+          <ChoicePanel booking={booking} vertical={booking.vertical} toast={toast} autoLoad
+            confirmFirst={locked} solo={solo}
+            onChanged={async()=>{await onBookingsChanged?.();onClose();}}/>
+        ):alt.loading?(
+          <div style={{fontSize:12.5,color:C.t3,padding:"10px 0"}}>Looking at what else is near the rest of the day…</div>
+        ):alt.error?(
+          <div style={{fontSize:12.5,color:C.t2,padding:"10px 0"}}>{alt.error}</div>
+        ):(
+          <>
+            {/* Somebody holds a booking here: said before anybody picks. */}
+            {held&&<div style={{fontSize:12.5,color:C.amber,lineHeight:1.5,marginBottom:10}}>{held.why}</div>}
+            {right==="locked_out"&&d?.why&&<div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:10}}>{d.why}</div>}
+            {d?.status==="ok"&&(
+              <>
+                <div className="sl" style={{marginBottom:6}}>{mayApply?"Pick another":"Others like it"}</div>
+                {d.alternatives.map(a=>(
+                  <div key={a.ref} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:`1px solid ${C.border}`}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:13.5,color:C.t1,fontWeight:600}}>{a.name}</div>
+                      <div style={{fontSize:11.5,color:C.t2,marginTop:2,lineHeight:1.45}}>{a.why}</div>
+                      {a.url&&<a href={a.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11.5,color:C.accentText,textDecoration:"none",fontWeight:600}}>Their site →</a>}
+                    </div>
+                    {mayApply?(
+                      <button className="bsm bsm-p" disabled={!!busy} onClick={()=>apply(a.ref)}>{busy===a.ref?"…":"Use this"}</button>
+                    ):maySuggest?(
+                      <button className="bsm" disabled={!!busy} onClick={()=>suggest(a.ref)}>{busy===a.ref?"…":"Suggest"}</button>
+                    ):null}
+                  </div>
+                ))}
+                {/* Once, not on every row: no venue holds a price. */}
+                <div style={{fontSize:11,color:C.t3,marginTop:4,lineHeight:1.5}}>
+                  {d.alternatives[0]?.price?.note||"This line's estimate stays as it is."}
+                </div>
+              </>
+            )}
+            {(d?.status==="none"||d?.status==="booking_line")&&d.reason&&(
+              <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:8}}>{d.reason}</div>
+            )}
+            {d?.status==="not_a_place"&&(
+              <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:8}}>This line isn't a place from the map, so there's nothing to put in its place here.</div>
+            )}
+
+            {/* Something else: their words, one stop, from the same menu. */}
+            {!priced&&slot&&(mayApply||maySuggest)&&(
+              <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
+                <div className="sl" style={{marginBottom:6}}>Something else…</div>
+                <input className="inp" aria-label="What would you like there instead?" maxLength={200}
+                  placeholder="What would you like there instead?" value={ask} onChange={e=>setAsk(e.target.value)}
+                  style={{width:"100%",color:C.t1}}/>
+                <button className="bs" style={{marginTop:8}} disabled={other.loading} onClick={somethingElse}>
+                  {other.loading?"Looking…":"Find something else"}
+                </button>
+                {other.error&&<div style={{fontSize:12,color:C.t2,marginTop:8,lineHeight:1.5}}>{other.error}</div>}
+                {fresh&&(
+                  <div style={{marginTop:10,padding:"10px 12px",borderRadius:12,background:C.s2,border:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:13.5,color:C.t1,fontWeight:600,lineHeight:1.4}}>{fresh.plan}</div>
+                    {fresh.tip&&<div style={{fontSize:11.5,color:C.t2,marginTop:3,lineHeight:1.45}}>{String(fresh.tip).replace(/^\s*💡\s*/u,"")}</div>}
+                    {freshTo?(
+                      <button className="bsm bsm-p" style={{marginTop:8}} disabled={!!busy}
+                        onClick={()=>mayApply?apply(freshTo,fresh.plan):suggest(freshTo,fresh.plan)}>
+                        {busy===freshTo?"…":mayApply?"Use this":"Suggest"}
+                      </button>
+                    ):(
+                      <div style={{fontSize:11.5,color:C.t3,marginTop:6}}>This names no place we've verified, so it can't go on the line.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+        {said&&<div style={{fontSize:12.5,color:C.amber,marginTop:10,lineHeight:1.5}}>{said}</div>}
+      </div>
     </div>
   );
 }
@@ -9368,6 +9793,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [building,setBuilding]=useState(false);
   const [nudging,setNudging]=useState(false);
   const [emailing,setEmailing]=useState(false);
+  // The line whose Change sheet is open, and every open suggestion on the
+  // plan ("Sam suggests … · 👍 2"), each under the line it is about.
+  const [changing,setChanging]=useState(null);
+  const [suggestions,setSuggestions]=useState({list:[],canApply:false});
 
   // What this person is in for, and when the group can go. Both come from the
   // server, so the figure here is the figure checkout charges, and both stay
@@ -9408,7 +9837,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"That didn't save — try again");
       await loadShare();
-      toast(optOut?`You're sitting out ${item.title}`:`You're in for ${item.title}`);
+      if(item.vertical==="flight"){
+        // The flight's seats moved, so its row and the totals did too.
+        await refreshBookings();
+        toast(optOut?"You're off the flight":"You're back on the flight");
+      }else{
+        toast(optOut?`You're sitting out ${item.title}`:`You're in for ${item.title}`);
+      }
     }catch(e){
       console.error("[planDetail] could not change who's in",e);
       toast(e.message);
@@ -9629,7 +10064,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // it wholesale — so pressing "Plan my days for me" on an existing trip
       // deleted the three lines Reach can actually book and left only the
       // restaurants and walks, which it cannot. The generate path builds
-      // `[...fixedCostRows(trip), ...itineraryRows(...)]`; this path had the
+      // `[...awayRows(trip), ...itineraryRows(...)]`; this path had the
       // second half and not the first, and the two quietly disagreed.
       //
       // A real plan in the table shows the damage: Moab, thirteen nights,
@@ -9639,7 +10074,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // Rebuilding the days is not a reason to unbook the trip. These belong
       // to the trip, not to the day-by-day plan, so they are carried over
       // exactly as they were.
-      const rows=afterRebuild(plan.itinerary,itineraryRows(d.itinerary,oneEvening));
+      //
+      // An away plan is told which of getting there and its bed it has lost
+      // (`restore`, Task 6a), and only those go back — never a second flight.
+      const fresh=itineraryRows(d.itinerary,oneEvening);
+      const rows=d.away&&!oneEvening
+        ?afterAwayRebuild(plan.itinerary,fresh,d.restore||null,{
+          nights:d.away.nights||0,
+          byRoad:!(Array.isArray(d.fixed)?d.fixed:[]).some(l=>l?.type==="flight"),
+        })
+        :afterRebuild(plan.itinerary,fresh);
       // The day around the evening, offered rather than assumed.
       //
       // The generate path keeps these as `dayOffer` and shows "let's make a
@@ -9693,7 +10137,6 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [planBookings,setPlanBookings]=useState([]);
   // Whether planBookings is an answer or only the empty list it starts as.
   const [bookingsLoaded,setBookingsLoaded]=useState(false);
-  const [openChoice,setOpenChoice]=useState(null);
   // Where the vote stands for me, while there is one. The next action reads
   // it to know whether I have voted and whether the pick is mine.
   const [voteView,setVoteView]=useState(null);
@@ -9724,6 +10167,29 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       .catch(()=>{});
     return()=>{live=false;};
   },[planId]);
+
+  // Suggestions are a group's, before Lock it in; the server answers empty
+  // on a trip for one and once it is locked, and before its SQL is run.
+  const loadSuggestions=async()=>{
+    if(!planId||isTempId(planId)||(group?.memberIds||[]).length<=1)return;
+    try{
+      const r=await fetch(`/api/plans/${planId}/itinerary/suggestions`);
+      if(!r.ok)return;
+      const d=await r.json();
+      setSuggestions({list:Array.isArray(d.suggestions)?d.suggestions:[],canApply:!!d.canApply});
+    }catch(e){console.error("[planDetail] could not read the suggestions",e);}
+  };
+  useEffect(()=>{loadSuggestions();},[planId,(group?.memberIds||[]).length]);
+  const suggestionsFor=item=>suggestions.list.filter(x=>item?.id&&x.itemId===item.id);
+  const setLineSuggestions=(itemId,list)=>setSuggestions(prev=>({...prev,
+    list:[...prev.list.filter(x=>x.itemId!==itemId),...list.map(x=>({...x,itemId}))]}));
+  // A line changed on the server keeps its id: only that line is replaced.
+  const lineSwapped=(row)=>{
+    if(!row?.id)return;
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id!==planId?p:{...p,
+      itinerary:(p.itinerary||[]).map(i=>i.id===row.id?{...i,...row}:i)})}));
+    loadSuggestions();
+  };
 
   // Fetch latest plan data on mount
   useEffect(()=>{
@@ -9854,6 +10320,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // lib/plan-steps.ts. The Book step reads from this and nothing else.
   const tracker=bookingTracker(plan.itinerary||[],planBookings);
   const trackedOf=item=>tracker.items.find(t=>t.line===item)||null;
+
+  // Who may open Change on a line. The server decides what a tap does
+  // (`right`); this only keeps the button off where it could do nothing:
+  // after Lock it in, a line is the organiser's to change (decision 14), and
+  // a hotel or flight with nothing priced yet has nothing to compare with.
+  const lockedNow=lockedIn(plan.status,planBookings,funding?.collectedCents||0);
+  const organiserHere=!!me&&isOrganiser({role:group.role,createdBy:plan.createdBy||null,userId:me});
+  const mayChange=item=>!booked&&!!item?.id&&!isTempId(planId)&&CHANGEABLE_TYPES.has(item.type)
+    &&(soloTrip||!lockedNow||organiserHere)
+    &&(!PRICED_TYPES.has(item.type)||!!bookingFor(item,planBookings));
+  const ChangeLink=({item})=>mayChange(item)?(
+    <button onClick={()=>setChanging(item)}
+      style={{background:"none",border:"none",padding:"5px 0 0",color:C.accentText,fontSize:12,fontWeight:600,cursor:"pointer"}}>
+      Change
+    </button>
+  ):null;
 
   /**
    * Taking back "I reserved it" — plans change, and a tick you cannot undo is
@@ -9999,6 +10481,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   return(
     <div className="sc" style={{paddingBottom:0}}>
       {celebrating&&<Celebration {...celebrationFor(plan,group)} onDone={endCelebration}/>}
+      {changing&&(
+        <ChangeSheet plan={plan} planId={planId} groupId={groupId} item={changing}
+          booking={bookingFor(changing,planBookings)} solo={soloTrip} locked={lockedNow}
+          toast={toast} onClose={()=>setChanging(null)} onSwapped={lineSwapped}
+          onList={setLineSuggestions} onBookingsChanged={refreshBookings}/>
+      )}
       <div style={{background:`linear-gradient(145deg,#1a1060,${C.accent})`,padding:"18px 20px 22px",flexShrink:0}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
           <ScreenHeader onBack={onBack} overlay/>
@@ -10238,32 +10726,37 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
               </div>
             )}
-            {/* What you're in for. Getting there and somewhere to sleep are the
-                trip; a dinner or a day out is yours to sit out, and your share
-                moves to the people going. Set once anyone has paid, because
-                moving shares after money has moved leaves somebody overpaid. */}
+            {/* What you're in for. Somewhere to sleep is the trip; a dinner or
+                a day out is yours to sit out, and your share moves to the
+                people going. The flight too, for somebody driving or already
+                holding a seat (decision 8) — while it is only proposed. Set
+                once anyone has paid, because moving shares after money has
+                moved leaves somebody overpaid. */}
             {!soloTrip&&share?.ready&&share.items?.length>0&&(
               <div style={{padding:"0 20px 14px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
                   <div className="sl">What you're in for</div>
                   <div style={{fontSize:13,color:C.t1,fontWeight:600}}>Your trip: {usd(share.yourShare_cents)}</div>
                 </div>
-                {share.items.map(it=>(
+                {share.items.map(it=>{
+                  const flight=it.vertical==="flight";
+                  return(
                   <div key={it.ref} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
                     <span style={{fontSize:18}}>{tIc[it.vertical]||"🎟️"}</span>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:14,color:it.imIn?C.t1:C.t3,fontWeight:500}}>{it.title}</div>
                       <div style={{fontSize:12,color:C.t2}}>
-                        {it.imIn?`${usd(it.myCents)} for you`:"Sitting this one out"}{` · ${plural(it.inCount,"person","people")} going`}
+                        {it.imIn?`${usd(it.myCents)} for you`:flight?"You're driving or have a flight":"Sitting this one out"}{` · ${plural(it.inCount,"person","people")} ${flight?"flying":"going"}`}
                       </div>
                     </div>
-                    {!share.locked&&(
+                    {!share.locked&&it.open!==false&&(
                       <button className={`bsm ${it.imIn?"bsm-g":"bsm-p"}`} disabled={!!skipping} onClick={()=>setSkip(it,it.imIn)}>
-                        {skipping===it.ref?"…":it.imIn?"Skip this one":"I'm in"}
+                        {skipping===it.ref?"…":flight?(it.imIn?"I'll drive / already have a flight":"I'm flying"):(it.imIn?"Skip this one":"I'm in")}
                       </button>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 {share.locked&&(
                   <div style={{fontSize:11.5,color:C.t3,marginTop:8}}>Someone's already paid, so who's in for what is set now.</div>
                 )}
@@ -10323,19 +10816,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                             {t.who==="reach"&&(()=>{
                               const b=planBookings.find(b=>b.itinerary_item_id===item.id&&b.status!=="failed"&&b.status!=="cancelled");
                               if(!b||!b.detail)return null;
-                              const canSee=b.vertical==="hotel"||b.vertical==="flight";
                               return(
                                 <>
                                   <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.4}}>
                                     {b.detail}{b.price_cents>0?` · ${usd(b.price_cents)}${b.status==="confirmed"?"":b.status==="quoted"?" · held, not booking yet":" quoted"}`:""}
                                   </div>
-                                  {canSee&&(
-                                    <button onClick={()=>setOpenChoice(o=>o===b.id?null:b.id)}
-                                      style={{background:"none",border:"none",padding:"5px 0 0",color:C.accentText,fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                                      {openChoice===b.id?"Hide":b.status==="confirmed"?"See details":b.vertical==="hotel"?"See the hotel · change it":"See the flights · change them"}
-                                    </button>
-                                  )}
-                                  {openChoice===b.id&&<ChoicePanel booking={b} vertical={b.vertical} toast={toast} onChanged={refreshBookings}/>}
                                   <div><HoldToggle bookingId={b.id} status={b.status} toast={toast} onChanged={refreshBookings}/></div>
                                 </>
                               );
@@ -10346,6 +10831,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                                 item.cost_cents>0?`about $${Math.round(item.cost_cents/100)} a person, estimate`:null].filter(Boolean).join(" · ")}
                             </div>
                             {t.who==="you"&&!t.done&&<ItemActions item={item} markGot={markGot} tight city={plan?.destinationCity||plan?.destination}/>}
+                            {/* One Change per line on this tab: here for a line
+                                in the list to book, on the day below otherwise. */}
+                            {!t.done&&<ChangeLink item={item}/>}
+                            {!t.done&&<LineSuggestions planId={planId} item={item} list={suggestionsFor(item)} canApply={suggestions.canApply}
+                              toast={toast} onList={setLineSuggestions} onSwapped={lineSwapped}/>}
                             {t.who==="you"&&t.done&&(
                               <button onClick={()=>unmarkGot(item)}
                                 style={{background:"none",border:"none",padding:"4px 0 0",color:C.t3,fontSize:11.5,cursor:"pointer",textDecoration:"underline"}}>
@@ -10594,6 +11084,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           {trackedOf(item).done?"✓ Done":"In your list to book above ↑"}
                         </div>
                         :<ItemActions item={item} markGot={markGot} city={plan?.destinationCity||plan?.destination}/>}
+                      {!trackedOf(item)&&<ChangeLink item={item}/>}
+                      {!trackedOf(item)&&<LineSuggestions planId={planId} item={item} list={suggestionsFor(item)} canApply={suggestions.canApply}
+                        toast={toast} onList={setLineSuggestions} onSwapped={lineSwapped}/>}
                       {/* A real payment note runs to a sentence — "cards at the
                           restaurant, cash only for drinks and cover" — so it is
                           a line, not a pill. Cash-only gets the warm colour
