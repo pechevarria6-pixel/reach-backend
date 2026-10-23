@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  closeAsk, closeDay, isCloseScore, lastDayOf, nextOffer, settleFor, somethingHeld, startedFromClose,
+  closeAsk, closeDay, isCloseScore, lastDayOf, nextBlocker, nextOffer, settleFor, somethingHeld, startedFromClose,
   type ClosePlan,
 } from '../../lib/trip-close.ts';
 import type { PingBooking, PingLine } from '../../lib/pings.ts';
@@ -171,4 +171,22 @@ test('v_organizer_conversion counts plan_created alone, so a plan from the close
   // And the plan route writes one plan_created per plan.
   const route = readFileSync(new URL('../../app/api/plans/route.ts', import.meta.url), 'utf8');
   assert.equal(route.match(/track\(supabase, 'plan_created'/g)?.length, 1);
+});
+
+test('"Plan the next one?" is blocked only where POST /api/plans would refuse the new plan', () => {
+  const tokyo = { id: 'p2', title: 'Tokyo', type: 'trip', destination_style: 'decided', status: 'planning', start_date: '2027-03-01', end_date: '2027-03-08', created_at: '2026-10-01' };
+  const found = { live: tokyo, waiting: null };
+  // A group of one: Tokyo in March does not stop the next trip.
+  assert.equal(nextBlocker(found, { type: 'trip', solo: true }), null);
+  assert.equal(nextOffer(plan(), nextBlocker(found, { type: 'trip', solo: true })).blockedBy, null);
+  // A group: one trip at a time, so the card opens Tokyo.
+  assert.deepEqual(nextOffer(plan(), nextBlocker(found, { type: 'trip', solo: false })).blockedBy, { id: 'p2', title: 'Tokyo' });
+  assert.equal(nextBlocker({ live: null, waiting: null }, { type: 'trip', solo: false }), null);
+});
+
+test('the close route asks nextBlocker with the group\'s head count, never live on its own', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../../app/api/plans/[planId]/close/route.ts', import.meta.url), 'utf8');
+  assert.match(src, /nextOffer\(plan, nextBlocker\(active, \{ type, solo: soloGroup \}\)\)/);
+  assert.doesNotMatch(src, /active\.live \?\? active\.waiting/);
 });

@@ -31,7 +31,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { tripTiming } from './calendar.ts';
 import { validDay } from './ics.ts';
 import { localClock, reserved, type PingLine, type PingBooking } from './pings.ts';
-import { earliestToday, kindOf } from './one-active.ts';
+import { earliestToday, kindOf, refusalFor, type ActiveCandidate } from './one-active.ts';
 import type { SettleLine } from './money.ts';
 
 /** 1 = 😞, 2 = 😐, 3 = 🤩. */
@@ -150,6 +150,24 @@ export function nextOffer(plan: ClosePlan, blockedBy: { id: string; title?: stri
     fromClose: String(plan.id),
     blockedBy: blockedBy ? { id: String(blockedBy.id), title: blockedBy.title ?? null } : null,
   };
+}
+
+/**
+ * The plan "Plan the next one?" should open instead of starting one: the
+ * plan POST /api/plans would refuse the new one over, and only that. It asks
+ * refusalFor itself, so the card and the insert cannot disagree — a group of
+ * one is never blocked (Lisbon finished, Tokyo already in planning for March,
+ * and the next trip is still a new trip), which the card once missed by
+ * reading `live` on its own (review, 2026-10-23). `solo` is the group's own
+ * head count, as POST /api/plans counts it.
+ */
+export function nextBlocker(
+  found: { live: ActiveCandidate | null; waiting?: ActiveCandidate | null },
+  p: { type: string; solo: boolean },
+): ActiveCandidate | null {
+  const refused = refusalFor(found, { type: p.type, undecided: false, solo: p.solo, understands: true });
+  if (!refused) return null;
+  return [found.live, found.waiting].find(x => x && x.id === refused.planId) ?? null;
 }
 
 /** The plan's lines and bookings, as closeAsk reads them. Throws on a failed read. */

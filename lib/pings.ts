@@ -539,9 +539,16 @@ export function aeroLookup(key: string | undefined, f: typeof fetch = fetch): Ae
 // Whatever the plan's status: a trip called off after somebody paid the
 // deposit still has money on it that one member owes another.
 //
-// How long: while the trip is on or still to come, and for thirty days after
-// its last day. A plan with no dates cannot say when that is, and is not
-// reminded about. Past that, the ledger screen still says who owes what.
+// When: from the day after the trip's last day, on the trip's clock, for
+// thirty days. Never before or during it. Until then the group may still be
+// paying its own shares through Pay, and the ledger spreads each paid share
+// across everybody (planShares / apportion): Ana pays her own $100 of a $400
+// trip and the three who have not paid yet each read as owing her $25. A
+// reminder then would ask them to pay Ana money they do not owe, and then
+// their own share again (review, 2026-10-23). Once the trip is over nothing
+// is still being collected, and what the ledger says is what is left. A plan
+// with no dates cannot say when that is, and is not reminded about. Past the
+// thirty days, the ledger screen still says who owes what.
 //
 // What it says: who is waiting and for how much, from the ledger, and what
 // to do — pay, then mark it paid, which the ledger screen can do
@@ -599,6 +606,8 @@ export function dueSettleUps(input: SettleInput, now: Date = new Date()): Planne
   if (!inWindow('settle_up', clock.hour)) return [];
   const last = lastDayOfPlan(plan);
   if (!last) return [];
+  // Only once the trip is over: before, shares may still be coming in.
+  if (clock.day <= last) return skip('settle_up_trip_not_over');
   const until = shiftDay(last, SETTLE_FOR_DAYS_AFTER);
   if (!until || clock.day > until) return [];
 

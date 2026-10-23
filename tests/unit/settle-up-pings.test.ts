@@ -102,6 +102,26 @@ test('only in the trip\'s daytime', () => {
   assert.equal(dueSettleUps(input(), nyc('2026-11-12', 21)).length, 0);
 });
 
+test('never before or during the trip: shares may still be coming in through Pay', () => {
+  // Four on a $400 trip still in Pay. Ana has paid her own $100; the ledger
+  // spreads it, so Ben, Cy and Di each read as owing her $25. They do not.
+  const spread: SettleLine[] = ['ben', 'cy', 'di'].map(from => ({ from, to: 'ana', amountCents: 2500, pending: null }));
+  const collecting = (now: Date) => input({
+    memberIds: ['ana', 'ben', 'cy', 'di'],
+    ledger: { solo: false, settlementsAvailable: true, lines: spread },
+    lastChange: daysBefore(now, 4),
+  });
+  const why: string[] = [];
+  const before = nyc('2026-10-30', 11);
+  assert.deepEqual(dueSettleUps({ ...collecting(before), onSkip: w => why.push(w) }, before), []);
+  assert.deepEqual(why, ['settle_up_trip_not_over']);
+  // Its first day, and its last day on its own clock, late in the window.
+  assert.deepEqual(dueSettleUps(collecting(nyc('2026-11-06', 11)), nyc('2026-11-06', 11)), []);
+  assert.deepEqual(dueSettleUps(collecting(nyc('2026-11-08', 20)), nyc('2026-11-08', 20)), []);
+  // The morning after, it is what is left.
+  assert.equal(dueSettleUps(collecting(nyc('2026-11-09', 10)), nyc('2026-11-09', 10)).length, 3);
+});
+
 test('thirty days after the last day the reminders stop', () => {
   const late = nyc('2026-12-08', 11);
   assert.equal(dueSettleUps(input({ lastChange: daysBefore(late, 10) }), late).length, 1);

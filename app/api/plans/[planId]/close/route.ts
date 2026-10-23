@@ -29,7 +29,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { loadLedger } from '@/lib/ledger';
 import { readActive } from '@/lib/one-active';
-import { closeAsk, isCloseScore, loadHeld, nextOffer, settleFor, type ClosePlan, type CloseSettle } from '@/lib/trip-close';
+import { closeAsk, isCloseScore, loadHeld, nextBlocker, nextOffer, settleFor, type ClosePlan, type CloseSettle } from '@/lib/trip-close';
 
 const missingTable = (e: { code?: string; message?: string } | null | undefined) =>
   !!e && (e.code === '42P01' || e.code === 'PGRST205' || /trip_reviews/.test(e.message || '') && /schema cache|does not exist/i.test(e.message || ''));
@@ -95,8 +95,15 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
 
   let next = null;
   if (show) {
-    const active = await readActive(ctx.db, plan.group_id, { type: String(plan.type ?? 'trip'), except: plan.id });
-    next = nextOffer(plan, active.live ?? active.waiting);
+    const type = String(plan.type ?? 'trip');
+    // Counted as POST /api/plans counts it: a count that fails is not solo.
+    const [active, head] = await Promise.all([
+      readActive(ctx.db, plan.group_id, { type, except: plan.id }),
+      ctx.db.from('group_members').select('user_id', { count: 'exact', head: true }).eq('group_id', plan.group_id),
+    ]);
+    if (head.error) console.error('[close] could not count the group — not treating it as solo', { planId: plan.id, code: head.error.code });
+    const soloGroup = !head.error && (head.count ?? 0) <= 1;
+    next = nextOffer(plan, nextBlocker(active, { type, solo: soloGroup }));
   }
 
   return NextResponse.json({
