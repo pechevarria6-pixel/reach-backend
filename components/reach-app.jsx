@@ -36,6 +36,8 @@ import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { bookingTracker } from "@/lib/plan-steps";
 import { getNextAction } from "@/lib/next-action";
+import { buildIcs } from "@/lib/ics";
+import { inTimeOrder, bookingFor, referenceLine, whereOf, calendarEvents, calendarFileName, moneyLines, celebrationTitle, claimWasFirst, celebratedKey } from "@/lib/booked-trip";
 import { kindOf as planKind } from "@/lib/one-active";
 import { bringAlongNote, tripHolds, notOnSentence } from "@/lib/joining";
 
@@ -1157,7 +1159,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
         {alsoComing.map(plan=>(
           <PhotoFrame key={plan.id} src={plan.imageUrl&&plan.imageCredit?plan.imageUrl:null}
             alt={photoAlt(plan.destinationCity,plan.title)}>{({ok:hasPhoto,img})=>(
-          <div {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id})}
+          <div {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id,...(nexts[plan.id]?.allBooked?{initialTab:"bookings"}:{})})}
             style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
               // A picture of the place they are actually going. The gradient
               // stays underneath, so a photo that fails to load leaves the
@@ -1194,6 +1196,12 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
                 </div>
               )}
               <AvCluster ids={plan.participants} um={um} max={4}/>
+              {/* Booked: the card opens on the trip itself, and says so. The
+                  card is the one way in — this is its label, not a second
+                  button beside it. */}
+              {nexts[plan.id]?.allBooked&&(
+                <div style={{fontSize:12,fontWeight:700,color:"white",marginTop:10}}>See your trip →</div>
+              )}
               {/* Whose photograph it is. A picture is somebody's work, and
                   the licence it is free under asks for the credit — so it
                   travels with the picture or the picture is not shown. */}
@@ -2951,7 +2959,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <span style={{fontSize:11.5,color:C.t3}}>{plural(section.plans.length,"plan")}</span>
             </div>
           {section.plans.map(plan=>(
-            <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId})}>
+            <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId,...(nexts[plan.id]?.allBooked?{initialTab:"bookings"}:{})})}>
               <div style={{padding:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                   <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{plan.title}</div>
@@ -2993,7 +3001,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                 )}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <AvCluster ids={plan.participants} um={um} max={4}/>
-                  <div style={{fontSize:12,color:C.accentText,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>View <span style={{fontSize:16}}>→</span></div>
+                  <div style={{fontSize:12,color:C.accentText,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{nexts[plan.id]?.allBooked?"See your trip":"View"} <span style={{fontSize:16}}>→</span></div>
                 </div>
               </div>
             </div>
@@ -8583,6 +8591,20 @@ function useNextShown(na,{planId,groupId,screen}){
 }
 
 /**
+ * "I've got it": a booking somebody finished on the seller's own site, with
+ * the confirmation number they were given, if any. POST
+ * /api/bookings/[id]/confirmation answers { booking, kept }. Throws the
+ * server's own sentence when it refuses.
+ */
+async function saySorted(bookingId,number){
+  const r=await fetchWithin(`/api/bookings/${bookingId}/confirmation`,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({confirmationNumber:number||null})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+  return d;
+}
+
+/**
  * Doing what a CTA says. `local` goes first, for a screen that can do the
  * thing itself rather than open another one (the plan screen locking the
  * plan in, the checkout paying). Resolves true when something changed, so
@@ -8619,28 +8641,101 @@ async function runNextCta(cta,{na,screen,planId,groupId,push,toast,goToProfileSe
   }
   if(cta.kind==="confirm"&&cta.bookingId){
     // "I've got it" on a row somebody bought on the seller's own site. The
-    // number goes on the booking (bookings.confirmation_number) where that
-    // route exists; before it does, the row is marked confirmed the way the
-    // checkout's own "I got it" always has, and the number is not lost
-    // quietly: they are told to keep it.
+    // number goes on the booking (bookings.confirmation_number), through the
+    // one route that records something booked elsewhere. `kept` is false only
+    // before that column exists: the booking is still marked done, and the
+    // number is not lost quietly — they are told to keep it.
     const number=String(cta.confirmation||"").trim();
     try{
-      const r=await fetch(`/api/bookings/${cta.bookingId}/confirmation`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirmationNumber:number||null})});
-      if(r.status===404||r.status===405){
-        const p=await fetch(`/api/bookings/${cta.bookingId}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"confirmed"})});
-        const d=await p.json().catch(()=>({}));
-        if(!p.ok)throw new Error(d.error||"Couldn't save that — try again");
-        toast(number?"Marked as got — keep that number somewhere handy":"Marked as got");
-      }else{
-        const d=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
-        toast("Marked as got");
-      }
+      const d=await saySorted(cta.bookingId,number);
+      toast(number&&!d.kept?"Marked as got — keep that number somewhere handy":number?`Marked as got · you entered ${number}`:"Marked as got");
       forgetNext(planId);
       return true;
     }catch(e){console.error("[next] could not record it as got",{bookingId:cta.bookingId},e);toast(e.message);return false;}
   }
   return false;
+}
+
+// ─── The moment it is all booked ──────────────────────────────────────────
+// Owner, 25 September: celebrate only when every booking that is not opted
+// out is confirmed — getNextAction's `allBooked`, nothing looser — and once
+// per plan per person. "Once" is the server's to say (POST
+// /api/plans/[planId]/celebrated, a claim that answers { first: true } the
+// one time it is new), so it does not come back after a refresh or on a
+// second phone. A server without that route yet answers 404 as a page, not
+// JSON; then this device remembers it in localStorage, which is the best
+// that can be done until the route is there.
+//
+// Asked at most once per plan per tab, from whichever screen sees it first:
+// the checkout that just finished it, or the plan screen opened later.
+const CELEBRATION_ASKED=new Set();
+function useCelebration(planId,allBooked,{groupId,screen}){
+  const [show,setShow]=useState(false);
+  useEffect(()=>{
+    if(!allBooked||!planId||isTempId(planId)||CELEBRATION_ASKED.has(planId))return;
+    CELEBRATION_ASKED.add(planId);
+    const seenHere=()=>{try{return !!localStorage.getItem(celebratedKey(planId));}catch{return false;}};
+    const remember=()=>{try{localStorage.setItem(celebratedKey(planId),"1");}catch{}};
+    (async()=>{
+      let first=false;
+      try{
+        const r=await fetch(`/api/plans/${planId}/celebrated`,{method:"POST"});
+        const json=/json/.test(r.headers.get("content-type")||"");
+        if(!json&&(r.status===404||r.status===405))first=!seenHere();
+        else if(r.ok)first=claimWasFirst(await r.json().catch(()=>null));
+        else console.error("[celebration] the claim was refused",{planId,status:r.status});
+      }catch(e){
+        // Unsure is not shown. A celebration twice is worse than none.
+        console.error("[celebration] could not ask whether this is new",{planId},e);
+      }
+      remember();
+      if(first){setShow(true);trackEvent("celebration_shown",{screen},{planId,groupId});}
+    })();
+  },[planId,allBooked]);
+  return [show,()=>setShow(false)];
+}
+
+/**
+ * Full screen, about two and a half seconds, gone at a tap or Escape.
+ * Someone who has asked their system for less movement gets the same card
+ * standing still — no confetti, no pop.
+ */
+function Celebration({title,sub,onDone}){
+  const reduced=typeof window!=="undefined"&&!!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const done=useRef(onDone);done.current=onDone;
+  useEffect(()=>{
+    const t=setTimeout(()=>done.current(),2500);
+    const key=e=>{if(e.key==="Escape")done.current();};
+    window.addEventListener("keydown",key);
+    return()=>{clearTimeout(t);window.removeEventListener("keydown",key);};
+  },[]);
+  const bits=reduced?[]:Array.from({length:40},(_,i)=>i);
+  return(
+    <div role="dialog" aria-modal="true" aria-label={title} onClick={()=>done.current()}
+      style={{position:"fixed",inset:0,zIndex:1000,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+        padding:"28px",textAlign:"center",overflow:"hidden",cursor:"pointer",
+        background:`linear-gradient(160deg,#064E3B,${C.green})`}}>
+      {!reduced&&<style dangerouslySetInnerHTML={{__html:`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}@keyframes rpop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.08);opacity:1}100%{transform:scale(1)}}`}}/>}
+      {bits.map(i=>(<span key={i} aria-hidden="true" style={{position:"absolute",left:(i*137)%100+"%",top:-12,width:8,height:12,borderRadius:2,
+        background:[C.accent,"#FFFFFF",C.blue,"#F472B6"][i%4],animation:`rfall ${1.8+(i%5)*.3}s ${(i%7)*.12}s ease-in forwards`}}/>))}
+      <div aria-hidden="true" style={{width:84,height:84,borderRadius:"50%",background:"rgba(255,255,255,.16)",display:"flex",alignItems:"center",
+        justifyContent:"center",fontSize:40,color:"white",marginBottom:20,animation:reduced?"none":"rpop .5s ease-out both"}}>✓</div>
+      <div style={{fontFamily:"var(--font-display)",fontSize:32,lineHeight:1.15,color:"white",maxWidth:340}}>{title}</div>
+      {sub&&<div style={{fontSize:14.5,color:"rgba(255,255,255,.8)",marginTop:10,maxWidth:320,lineHeight:1.5}}>{sub}</div>}
+      <button onClick={e=>{e.stopPropagation();done.current();}}
+        style={{position:"absolute",bottom:"max(28px, env(safe-area-inset-bottom))",background:"rgba(255,255,255,.16)",border:"none",color:"white",
+          fontSize:13,fontWeight:700,padding:"10px 22px",borderRadius:999,cursor:"pointer",minHeight:44}}>Skip</button>
+    </div>
+  );
+}
+
+/** The celebration's words for one plan. */
+function celebrationFor(plan,group){
+  return {
+    title:celebrationTitle({city:plan?.destinationCity||null,title:plan?.title||null,
+      night:planKind(plan?.type)==="night",solo:(group?.memberIds||[]).length<=1}),
+    sub:[plan?.startDate?plan.dates:null,"Every booking is confirmed."].filter(Boolean).join(" · "),
+  };
 }
 
 /**
@@ -9112,6 +9207,73 @@ function ItemActions({item,markGot,tight,city}){
 // where things are. The sign-off route and plans.review are still there,
 // read by nothing.
 const TAB_LABEL={overview:"Overview",budget:"Budget",bookings:"Book",vote:"Vote"};
+
+// ─── The Book tab, once everything is booked ──────────────────────────────
+// Not a second itinerary screen: the same days, in time order, with what was
+// booked written on each row (lib/booked-trip.ts). This is the part that
+// sits above them, once — what it cost and the calendar file.
+const dollars=c=>"$"+((c||0)/100).toLocaleString(undefined,{minimumFractionDigits:(c||0)%100?2:0,maximumFractionDigits:2});
+
+/** "Add to calendar": every row of the plan in one .ics file, made here from what the screen holds. */
+function downloadTripCalendar(plan,bookings,toast){
+  const events=calendarEvents({id:plan.id,title:plan.title,startDate:plan.startDate,
+    city:plan.destinationCity||plan.destination||null},plan.itinerary||[],bookings);
+  if(!events.length){toast("None of these days has a date yet, so there's nothing to put in a calendar");return;}
+  try{
+    const file=buildIcs(events,{name:plan.title||"Trip"});
+    const url=URL.createObjectURL(new Blob([file],{type:"text/calendar;charset=utf-8"}));
+    const a=document.createElement("a");
+    a.href=url;a.download=calendarFileName(plan.title);
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    toast(`Calendar file saved · ${events.length} ${events.length===1?"event":"events"}`);
+  }catch(e){
+    console.error("[trip] could not make the calendar file",{planId:plan.id},e);
+    toast("Couldn't make the calendar file — try again");
+  }
+}
+
+function BookedTripHead({plan,funding,bookings,solo,toast}){
+  const lines=moneyLines(funding,solo);
+  return(
+    <div style={{padding:"4px 20px 14px"}}>
+      {lines.length>0&&(
+        <div role="group" aria-label="What this trip cost" style={{display:"flex",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",marginBottom:10}}>
+          {lines.map((l,i)=>(
+            <div key={l.key} style={{flex:1,padding:"11px 8px",textAlign:"center",borderLeft:i?`1px solid ${C.border}`:"none",minWidth:0}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:19,color:C.t1}}>{dollars(l.cents)}</div>
+              <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:".05em",marginTop:2}}>{l.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <button className="bs" onClick={()=>downloadTripCalendar(plan,bookings,toast)}>📅 Add to calendar</button>
+    </div>
+  );
+}
+
+/**
+ * What was booked, on the row it was booked for: whose reference it is, and
+ * where it is. One line where the "how to book it" pills and buttons were.
+ */
+function BookedRowFacts({item,booking,tracked,city}){
+  const ref=referenceLine(item,booking);
+  const where=whereOf(item,booking,city);
+  const done=ref||(tracked?.done?(tracked.who==="reach"?"Booked by Reach":item.type==="restaurant"?"Table reserved":"Sorted"):null);
+  if(!done&&!where)return null;
+  return(
+    <div style={{display:"flex",flexWrap:"wrap",alignItems:"baseline",gap:"4px 14px",marginTop:6,fontSize:12,lineHeight:1.45}}>
+      {done&&<span style={{color:C.green,fontWeight:600}}>✓ {done}</span>}
+      {where&&(
+        <a href={where.url} target="_blank" rel="noopener noreferrer"
+          aria-label={`Open ${where.query} in maps`}
+          style={{color:C.accentText,fontWeight:600,textDecoration:"none"}}>
+          📍 {where.address||"Map"} →
+        </a>
+      )}
+    </div>
+  );
+}
 
 // ─── "Where is this?" for a plan that never said ──────────────────────────
 // Plans made before the create flow asked where have no place, and their
@@ -9603,6 +9765,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const na=nextFor(plan,group,me,bookingsLoaded&&funding?{bookings:planBookings,funding,readiness,vote:voteView}:null);
   useNextShown(na,{planId,groupId,screen:"plan"});
   const [acting,setActing]=useState(false);
+  // Everything on the plan is booked: the Book tab becomes the trip itself
+  // rather than a list of things to book, and the first time this person
+  // sees it, the celebration.
+  const booked=!!na?.allBooked;
+  const [celebrating,endCelebration]=useCelebration(planId,booked,{groupId,screen:"plan"});
 
   if(!plan||!group)return <NotLoaded what={group?"This plan":"This group"} onBack={onBack}/>;
   // Travelling alone means there is nobody to ask. Every voting affordance is
@@ -9779,6 +9946,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   return(
     <div className="sc" style={{paddingBottom:0}}>
+      {celebrating&&<Celebration {...celebrationFor(plan,group)} onDone={endCelebration}/>}
       <div style={{background:`linear-gradient(145deg,#1a1060,${C.accent})`,padding:"18px 20px 22px",flexShrink:0}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
           <ScreenHeader onBack={onBack} overlay/>
@@ -9788,13 +9956,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         <div style={{fontSize:13,color:"rgba(255,255,255,.65)",marginBottom:12}}>{plan.dates} · {group.name}</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {na&&<span className={`pill ${nextTone(na)}`}>{na.chip}</span>}
-          <span className="pill" style={{background:"rgba(255,255,255,.15)",color:"white"}}>${plan.budget}/person</span>
+          {/* The budget is what somebody hoped to spend. Once it is all
+              booked, what it cost is on the trip itself, and a second money
+              figure up here that is not that one would be a wrong number. */}
+          {!booked&&<span className="pill" style={{background:"rgba(255,255,255,.15)",color:"white"}}>${plan.budget}/person</span>}
         </div>
       </div>
       <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,background:C.s1,flexShrink:0}}>
         {tabs.map(t=>(
           <button key={t} onClick={()=>setAtab(t)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:`2px solid ${atab===t?C.accentText:"transparent"}`,color:atab===t?C.accentText:C.t2,fontSize:12,fontWeight:600,cursor:"pointer"}}>
-            {TAB_LABEL[t]||t}
+            {t==="bookings"&&booked?"Your trip":(TAB_LABEL[t]||t)}
           </button>
         ))}
       </div>
@@ -10066,11 +10237,17 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         )}
         {atab==="bookings"&&(
           <div style={{padding:"12px 0"}}>
+            {/* Booked: this tab is the trip, not a list of things to book.
+                The "To book" list, the booking button and the "how to book
+                it" pills under each row all go — every one of them would be
+                telling somebody to do what is done. What it cost and the
+                calendar file take their place, once, at the top. */}
+            {booked&&<BookedTripHead plan={plan} funding={funding} bookings={planBookings} solo={soloTrip} toast={toast}/>}
             {/* Everything that has to be booked for this trip, in one list,
                 each with where it stands. Reach's lines are ticked when their
                 booking is confirmed; yours when you say so, and you can take
                 that back. Nothing else on this page offers the same buttons. */}
-            {tracker.total>0&&(
+            {tracker.total>0&&!booked&&(
               <div style={{padding:"4px 20px 14px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
                   <div className="sl">To book</div>
@@ -10147,7 +10324,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     :"This trip has finished."}
                 </div>
               )}
-              {plan.status==="approved"&&timing!=="over"&&!nothingToBuy&&(
+              {plan.status==="approved"&&timing!=="over"&&!nothingToBuy&&!booked&&(
                 <>
                   <button className="bp" style={{marginBottom:6}} onClick={()=>push("checkout",{planId,groupId})}>
                     {/* The server's figure is this person's share, not a
@@ -10240,7 +10417,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       {day.dateLabel&&<div style={{fontSize:12,color:C.t3}}>{day.dateLabel}</div>}
                       {day.isToday&&<span className="pill pill-a" style={{fontSize:10}}>Today</span>}
                     </div>
-                {day.items.map((item,i)=>(
+                {/* In the order the day happens, once it is the trip. */}
+                {(booked?inTimeOrder(day.items):day.items).map((item,i)=>(
                   <div key={i} className="it-item">
                     <div className="it-time">{(item.time||"").replace(/^Day \d+ · /,"")}</div>
                     <div className="it-lc">
@@ -10281,7 +10459,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                               do — the button underneath is what to do, and
                               "Reserve ahead" above a ticket link is two
                               instructions for one action. */}
-                          {item.type==="event"&&item.venue_website
+                          {booked?null:item.type==="event"&&item.venue_website
                             ?<span className="pill pill-a">Ticketed — buy from the seller</span>
                             :<>
                           {item.booking_mode==="reach"&&(
@@ -10356,7 +10534,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           of them; it renders this now, so the two cannot
                           drift apart the way hand-written field lists in this
                           file have three times. */}
-                      {trackedOf(item)
+                      {booked&&!(trackedOf(item)&&!trackedOf(item).done)
+                        ?<BookedRowFacts item={item} booking={bookingFor(item,planBookings)} tracked={trackedOf(item)}
+                          city={plan?.destinationCity||plan?.destination}/>
+                        :trackedOf(item)&&!booked
                         ?<div style={{fontSize:11.5,marginTop:6,fontWeight:600,color:trackedOf(item).done?C.green:C.accentText}}>
                           {trackedOf(item).done?"✓ Done":"In your list to book above ↑"}
                         </div>
@@ -10383,7 +10564,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           <span>{item.because}</span>
                         </div>
                       )}
-                      {item.conf&&<div className="it-cf">✓ Confirmed · {item.conf}</div>}
+                      {item.conf&&!booked&&<div className="it-cf">✓ Confirmed · {item.conf}</div>}
                     </div>
                   </div>
                 ))}
@@ -10947,6 +11128,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // ask how it went without nagging about rows they have not touched.
   const [handedOver,setHandedOver]=useState({});
   const [capturing,setCapturing]=useState(null);
+  // The confirmation number each of those came back with, as typed.
+  const [capturedRef,setCapturedRef]=useState({});
 
   // Only the member knows whether there was a table. Reach never books it
   // for them — that is the point, their card's benefits only apply to a
@@ -10958,6 +11141,17 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     if(!id||isTempId(id)||capturing)return;
     setCapturing(id);
     try{
+      if(status==="confirmed"){
+        // "Booked it" is "I've got it": the same route as the rail's button,
+        // with the number the seller gave them, so the trip can show it.
+        const number=String(capturedRef[id]||"").trim();
+        const d=await saySorted(id,number);
+        setBookings(bs=>(bs||[]).map(b=>b.id===id?{...b,status,...(d.booking||{}),...(number&&d.kept?{confirmation_number:number}:{})}:b));
+        toast(number&&!d.kept?"Nice — that's on the trip. Keep that number somewhere handy":"Nice — that's on the trip");
+        forgetNext(planId);
+        setCapturing(null);
+        return;
+      }
       const r=await fetchWithin(`/api/bookings/${id}`,{
         method:"PATCH",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({status}),
@@ -10967,7 +11161,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         throw new Error(d.error||"Couldn't save that");
       }
       setBookings(bs=>(bs||[]).map(b=>b.id===id?{...b,status}:b));
-      toast(status==="confirmed"?"Nice — that's on the trip":"Noted — we'll leave it open");
+      toast("Noted — we'll leave it open");
     }catch(e){
       console.error("[checkout] could not record the reservation",e);
       toast(e.message);
@@ -11384,6 +11578,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // rows again (refresh), so the answer moves on where the person is.
   const na=phase==="review"?nextFor(plan,group,me,{bookings:bookings||[],funding,readiness:ckReadiness}):null;
   useNextShown(na,{planId,groupId,screen:"checkout"});
+  // Once it has all gone through: whether everything on the plan is now
+  // booked, from the same answer, and the celebration if this is the first
+  // time this person has seen it. Partly booked is the plain done screen.
+  const doneNa=phase==="done"?nextFor(plan,group,me,{bookings:bookings||[],funding,readiness:ckReadiness}):null;
+  const [celebrating,endCelebration]=useCelebration(planId,!!doneNa?.allBooked,{groupId,screen:"checkout"});
   const tapped=()=>trackEvent("checkout_cta_tapped",{state:na?.state||"none",cta:ctaId(na?.cta),screen:"checkout"},{planId,groupId});
   // What this person has paid in, net of refunds, and how much of that is
   // beyond their share of what is still being bought — the money a refund
@@ -11663,15 +11862,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   }
 
   if(phase==="done"){
-    // A party only for something to celebrate. Confetti over "Nothing was
-    // booked" is the screen laughing at somebody who has just paid.
+    // Green when something was booked; the party is only for everything
+    // (owner, 25 September), and it is the full-screen celebration, once per
+    // plan — not confetti here every time this screen is reached.
     const celebrate=claim==="all_booked"||claim==="partly_booked";
-    const confetti=celebrate?Array.from({length:36},(_,i)=>i):[];
     const failedRows=checkout.rows.filter(r=>r.status==="failed");
     return(<div className="sc" style={{paddingBottom:40,position:"relative",overflow:"hidden"}}>
-      <style dangerouslySetInnerHTML={{__html:`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}`}}/>
-      {confetti.map(i=>(<span key={i} style={{position:"absolute",left:(i*137)%100+"%",top:-10,width:8,height:12,borderRadius:2,
-        background:[C.accent,C.green,C.blue,"#F472B6"][i%4],animation:`rfall ${2.2+(i%5)*.4}s ${(i%7)*.18}s ease-in forwards`,zIndex:5}}/>))}
+      {celebrating&&<Celebration {...celebrationFor(plan,group)} onDone={endCelebration}/>}
       <div style={{background:celebrate?`linear-gradient(145deg,#064E3B,${C.green})`:`linear-gradient(145deg,#3B2F0B,#7C5A12)`,padding:"48px 28px 36px",textAlign:"center"}}>
         <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px",color:"white"}}>{celebrate?"✓":"!"}</div>
         {/* Nothing in the app books an itinerary yet, so when no booking rows
@@ -11920,6 +12117,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
           <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:10}}>
             Did you get the table?
           </div>
+          <input className="inp" aria-label={`Confirmation number for ${it.l}`} placeholder="Confirmation number (optional)"
+            value={capturedRef[it.id]||""} onChange={e=>{const v=e.target.value;setCapturedRef(m=>({...m,[it.id]:v}));}}
+            style={{marginBottom:8}}/>
           <div style={{display:"flex",gap:8}}>
             <button className="bs" style={{flex:1,color:C.green,borderColor:C.green}}
               disabled={capturing===it.id} onClick={()=>captureBooking(it.id,"confirmed")}>
@@ -12294,7 +12494,121 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
 // Sections with nothing behind them were removed rather than rebuilt: Reach
 // has no PIN, no Face ID enrolment, no SMS second factor and no spending
 // limits, so showing them as configured was the worst kind of placeholder.
-function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityChange,openSection}){
+// ─── Your map ─────────────────────────────────────────────────────────────
+// Where you're going and where you've been, from GET /api/me/trips-map: a
+// point for each plan whose place we found, upcoming in gold, past muted.
+// "Past" there means over by its dates and with a confirmed booking — a trip
+// we can say you went on, not one you looked at once. Tap a pin to open
+// that plan. Profile only, not Home: it is a record of you, and Home is
+// about what is next.
+//
+// Leaflet is an npm dependency, loaded only when this mounts (it reaches for
+// `window` the moment it is imported). Carto's dark tiles, credited as
+// their licence asks. The map is always dark whatever the app's theme, so
+// the two pin colours are fixed rather than theme tokens: they are chosen
+// against those tiles, which do not change.
+const MAP_PIN={upcoming:"#E2C35E",past:"#8E99A4"};
+//
+// Carto's basemaps take a key on every tile now (carto.com/basemaps/apikey;
+// free, no account). Without one every tile is a grey square reading "API
+// KEY REQUIRED" — checked 2026-10-23, from any referrer. So the key comes
+// from NEXT_PUBLIC_CARTO_KEY, and until it is set the map draws
+// OpenStreetMap's own tiles, darkened in CSS to sit in the same place, with
+// OpenStreetMap's credit. A light, per-person map of a few pins is the
+// modest use the OSM tile policy allows.
+const CARTO_KEY=process.env.NEXT_PUBLIC_CARTO_KEY||"";
+const MAP_TILES=CARTO_KEY
+  ?{url:`https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(CARTO_KEY)}`,subdomains:"abcd",dim:false,
+    credit:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'}
+  :{url:"https://tile.openstreetmap.org/{z}/{x}/{y}.png",subdomains:"",dim:true,
+    credit:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'};
+
+function TripMap({groups,push,toast}){
+  const box=useRef(null);
+  const [pins,setPins]=useState(null);
+  const [failed,setFailed]=useState(false);
+  const groupsRef=useRef(groups);groupsRef.current=groups;
+  useEffect(()=>{
+    let live=true;
+    fetch("/api/me/trips-map")
+      .then(r=>r.ok?r.json():Promise.reject(new Error(`trips-map ${r.status}`)))
+      .then(d=>{if(live)setPins({upcoming:Array.isArray(d?.upcoming)?d.upcoming:[],past:Array.isArray(d?.past)?d.past:[]});})
+      .catch(e=>{console.error("[map] could not load your trips",e);if(live)setFailed(true);});
+    return()=>{live=false;};
+  },[]);
+  const all=pins?[...pins.past.map(p=>({...p,when:"past"})),...pins.upcoming.map(p=>({...p,when:"upcoming"}))]:[];
+  const empty=!!pins&&all.length===0;
+  useEffect(()=>{
+    if(!pins||!box.current)return;
+    let map=null,gone=false;
+    (async()=>{
+      try{
+        const [mod]=await Promise.all([import("leaflet"),import("leaflet/dist/leaflet.css")]);
+        const L=mod.default||mod;
+        if(gone||!box.current)return;
+        map=L.map(box.current,{zoomControl:false,attributionControl:true,worldCopyJump:true,
+          // Nothing to explore on an empty map; it is the background to one sentence.
+          dragging:!empty,scrollWheelZoom:false,doubleClickZoom:!empty,touchZoom:!empty,keyboard:!empty});
+        L.tileLayer(MAP_TILES.url,{attribution:MAP_TILES.credit,maxZoom:19,
+          ...(MAP_TILES.subdomains?{subdomains:MAP_TILES.subdomains}:{}),
+          ...(MAP_TILES.dim?{className:"trip-map-dim"}:{})}).addTo(map);
+        if(empty){map.setView([25,0],1);return;}
+        const open=pin=>{
+          const g=(groupsRef.current||[]).find(gr=>(gr.plans||[]).some(p=>p.id===pin.planId));
+          if(!g){toast("That plan isn't loaded yet — try again in a moment");return;}
+          push("planDetail",{planId:pin.planId,groupId:g.id});
+        };
+        // The view first: Leaflet draws a marker's shape only on a map that
+        // already has one.
+        const placed=all.filter(p=>Number.isFinite(p.lat)&&Number.isFinite(p.lng));
+        if(placed.length===1)map.setView([placed[0].lat,placed[0].lng],5);
+        else if(placed.length>1)map.fitBounds(placed.map(p=>[p.lat,p.lng]),{padding:[28,28],maxZoom:6});
+        else map.setView([25,0],1);
+        // Past first, so where you're going sits on top where two overlap.
+        for(const pin of placed){
+          const upcoming=pin.when==="upcoming";
+          const m=L.circleMarker([pin.lat,pin.lng],{radius:upcoming?9:7,weight:2,color:upcoming?"#FFF3C4":"#C9D1D9",
+            fillColor:MAP_PIN[pin.when],fillOpacity:upcoming?1:.75,bubblingMouseEvents:false}).addTo(map);
+          m.bindTooltip(String(pin.label||"Trip"),{direction:"top",offset:[0,-6]});
+          m.on("click",()=>open(pin));
+          // A finger is bigger than the dot: an unseen 44px target over it.
+          L.circleMarker([pin.lat,pin.lng],{radius:22,stroke:false,fillOpacity:0,bubblingMouseEvents:false,className:"trip-pin-hit"})
+            .addTo(map).on("click",()=>open(pin));
+        }
+      }catch(e){console.error("[map] could not draw the map",e);if(!gone)setFailed(true);}
+    })();
+    return()=>{gone=true;if(map)map.remove();};
+  },[pins]);
+
+  if(failed)return null;
+  const count=(n,one,many)=>`${n} ${n===1?one:many}`;
+  return(
+    <div style={{padding:"0 20px 16px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
+        <span className="sl">Your map</span>
+        {pins&&!empty&&(
+          <span style={{fontSize:11.5,color:C.t3,display:"flex",gap:10}}>
+            {pins.upcoming.length>0&&<span><span aria-hidden="true" style={{color:MAP_PIN.upcoming}}>●</span> {count(pins.upcoming.length,"upcoming","upcoming")}</span>}
+            {pins.past.length>0&&<span><span aria-hidden="true" style={{color:MAP_PIN.past}}>●</span> {count(pins.past.length,"past","past")}</span>}
+          </span>
+        )}
+      </div>
+      {MAP_TILES.dim&&<style dangerouslySetInnerHTML={{__html:`.trip-map-dim{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.3);}`}}/>}
+      <div style={{position:"relative",height:200,borderRadius:16,overflow:"hidden",border:`1px solid ${C.border}`,background:"#0E1116",isolation:"isolate"}}>
+        <div ref={box} role="region" aria-label={empty?"Map, no trips on it yet":`Map of your trips: ${all.map(p=>p.label).join(", ")}`} style={{position:"absolute",inset:0}}/>
+        {empty&&(
+          <div style={{position:"absolute",inset:0,zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",
+            background:"rgba(14,17,22,.45)"}}>
+            <div style={{color:"#F2F2F2",fontFamily:"var(--font-display)",fontSize:20}}>Your first trip goes here</div>
+          </div>
+        )}
+        {!pins&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12.5,color:"#B8C0C8"}}>Loading your map…</div>}
+      </div>
+    </div>
+  );
+}
+
+function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityChange,openSection,groups}){
   // Openable at a section, so something that needs a detail can send somebody
   // to the exact page that takes it rather than to a menu with seven rows on
   // it. Checkout uses this: "we need the name the room is under" is a real
@@ -12882,6 +13196,8 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           ))}
         </div>
       </div>
+
+      <TripMap groups={groups} push={push} toast={toast}/>
 
       {loadErr&&(
         <div style={{margin:"0 20px 14px",background:C.redDim,border:`1px solid ${C.red}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t1}}>
@@ -13980,7 +14296,7 @@ export default function ReachApp({realUser,onSignOut}={}){
                   {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab} userLocation={userLocation} goToProfileSection={goToProfileSection}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure} setPlaceOverride={setPlaceOverride} onQuizChange={syncUser}/>}
                   {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading} onDeleteGroup={deleteGroupFromList}/>}
-                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push} openSection={profileSection}/>}
+                  {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push} openSection={profileSection} groups={groups}/>}
                 </div>
               )}
               {!cur&&!quizRequired&&(
