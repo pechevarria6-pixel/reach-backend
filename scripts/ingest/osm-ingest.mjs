@@ -36,13 +36,13 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, openSync, readSync, closeSync, rmSync } from 'node:fs';
-import { createInterface } from 'node:readline';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { credentials, rest, getAll } from './rest.mjs';
 import { ingestRegion, osmiumFilters, looksLikePbf } from '../../lib/discovery/ingest.ts';
 import { knownRegions, geofabrikUrl, regionList, legacyRegions } from '../../lib/discovery/regions.ts';
+import { linesOf, featureRecords, tooManyUnreadable } from '../../lib/discovery/feature-lines.ts';
 import { GeofabrikMap, countriesAt } from '../../lib/discovery/geofabrik.ts';
 import { dueRegions, planBatches } from '../../lib/discovery/ingest-schedule.ts';
 
@@ -265,15 +265,17 @@ async function filtered(pbf) {
   return `${base}.named.pbf`;
 }
 
-/** GeoJSON features, one per line, from a geojsonseq stream. */
+/**
+ * GeoJSON features, one per line, from a geojsonseq stream. Split on "\n"
+ * only — readline also broke lines at a bare "\r", which cut a record in two
+ * and stopped Italy's centre and Russia's central district every day
+ * (lib/discovery/feature-lines.ts). What cannot be read is counted in
+ * `unreadable` and judged after the run.
+ */
+const unreadable = { count: 0, sample: null };
+let recordsRead = 0;
 async function* featuresFrom(input) {
-  const lines = createInterface({ input, crlfDelay: Infinity });
-  for await (const raw of lines) {
-    // geojsonseq may open each record with an ASCII record separator.
-    const line = raw.replace(/^\x1e/, '').trim();
-    if (!line) continue;
-    yield JSON.parse(line);
-  }
+  for await (const f of featureRecords(linesOf(input), unreadable)) { recordsRead++; yield f; }
 }
 
 /** osmium export, streamed: the features never sit in memory as one string. */
@@ -362,5 +364,9 @@ if (report.problems.length) {
   for (const p of report.problems.slice(0, 50)) console.log(`    ${p}`);
   if (report.problems.length > 50) console.log(`    … and ${report.problems.length - 50} more`);
 }
+if (unreadable.count) {
+  console.log(`  unreadable records skipped: ${unreadable.count} of ${recordsRead + unreadable.count} — first: ${unreadable.sample}`);
+}
+if (tooManyUnreadable(unreadable, recordsRead)) die(`${region}: ${unreadable.count} records could not be read — the export looks broken, not one stray character`);
 if (!report.ok) die(`${region} did not load cleanly`);
 console.log('  ok');
