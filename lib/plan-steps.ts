@@ -58,9 +58,13 @@ export interface Tracked<T> { line: T; who: 'reach' | 'you'; done: boolean }
  * Reach's lines are done when their booking is confirmed — the itinerary
  * line itself is never written back, so the booking is the only place that
  * knows. Everything else somebody arranges (a table to book ahead, a ticket
- * from the seller) is done when they have said so. Walk-ins and lines with
- * no booking mode need nothing and are not counted: a checklist that can
- * never reach the end is not a checklist.
+ * from the seller) is done when they have said so — on the line ("I've
+ * sorted it", `filled`), or on its booking row, which is where "I've got it"
+ * on a table or ticket bought on the seller's site writes (POST
+ * /api/bookings/[id]/confirmation). Reading only `filled` left a dinner
+ * somebody had confirmed, number and all, as "Book it" on the rail for
+ * ever. Walk-ins and lines with no booking mode need nothing and are not
+ * counted: a checklist that can never reach the end is not a checklist.
  */
 export function bookingTracker<T extends TrackLine>(lines: T[], bookings: TrackBooking[] = []): {
   items: Tracked<T>[]; done: number; total: number;
@@ -71,7 +75,7 @@ export function bookingTracker<T extends TrackLine>(lines: T[], bookings: TrackB
     if (line.booking_mode === 'reach') {
       items.push({ line, who: 'reach', done: !!line.id && confirmed.has(line.id) });
     } else if (line.booking_mode === 'ahead' || (line.type === 'event' && line.venue_website)) {
-      items.push({ line, who: 'you', done: !!line.filled });
+      items.push({ line, who: 'you', done: !!line.filled || (!!line.id && confirmed.has(line.id)) });
     }
   }
   return { items, done: items.filter(i => i.done).length, total: items.length };

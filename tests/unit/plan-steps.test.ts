@@ -47,6 +47,15 @@ test("Reach's lines are done when their booking is confirmed, not before", () =>
   assert.deepEqual(t.items.map(i => [i.who, i.done]), [['reach', true], ['reach', false]]);
 });
 
+test("a table booked on the seller's site is done once its booking row says so, not before", () => {
+  const lines = [{ id: 'd', type: 'restaurant', booking_mode: 'ahead', filled: false }];
+  assert.equal(bookingTracker(lines, [{ itinerary_item_id: 'd', status: 'awaiting_approval' }]).done, 0);
+  // "I've got it" writes the row, not the line.
+  assert.equal(bookingTracker(lines, [{ itinerary_item_id: 'd', status: 'confirmed' }]).done, 1);
+  // Another line's confirmation is not this one's.
+  assert.equal(bookingTracker(lines, [{ itinerary_item_id: 'x', status: 'confirmed' }]).done, 0);
+});
+
 test('a ticket from the seller counts until somebody says they have it', () => {
   const t = bookingTracker([{ id: 'e', type: 'event', venue_website: 'https://example.com/t', booking_mode: null }]);
   assert.equal(t.total, 1);
