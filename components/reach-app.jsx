@@ -36,6 +36,7 @@ import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { bookingTracker } from "@/lib/plan-steps";
 import { getNextAction } from "@/lib/next-action";
+import { kindOf as planKind } from "@/lib/one-active";
 import { bringAlongNote, tripHolds, notOnSentence } from "@/lib/joining";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
@@ -3932,6 +3933,8 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refre
         throw new Error(d.error||"Couldn't save that");
       }
       toast("Thanks — that's you in");
+      // What's next for it has changed: Home and the group must not answer from the cached reads.
+      forgetNext(planId);
       // A trip still waiting for its destination goes to the wait, where
       // this person can see who else it is waiting on — or, if they were
       // the last, find the trips.
@@ -6402,6 +6405,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({option:o.title})});
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"Your vote didn't save — try again");
+      forgetNext(planId);
       toast(v.myVote?`Changed your vote to ${show(o.title)}`:`Voted for ${show(o.title)}`);
     }catch(e){console.error("[tripIdeas] vote failed",e);toast(e.message);}
     await load();
@@ -6414,6 +6418,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({veto:o.title,on})});
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"That veto didn't save — try again");
+      forgetNext(planId);
     }catch(e){console.error("[tripIdeas] veto failed",e);toast(e.message);}
     await load();
     setBusy(null);
@@ -6422,6 +6427,7 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
     if(picking)return;
     setPicking(o.id);
     const ok=await pickTripIdea(o,{planId,groupId,plan,departure,updateGroup,refreshGroup,saveItineraryToServer,toast});
+    if(ok)forgetNext(planId);
     setPicking(null);
     if(ok&&onPicked)onPicked();
     else if(!ok)load();
@@ -6558,7 +6564,7 @@ function CallOffPlan({plan,group,me,um,updatePlanOnServer,updateGroup,toast,onDo
   if(!plan||!group||isTempId(plan.id))return null;
   if(plan.status!=="planning"&&plan.status!=="voting")return null;
   const solo=(group.memberIds||[]).length<=1;
-  const kind=plan.type==="restaurant"?"night out":"trip";
+  const kind=planKind(plan.type)==="night"?"night out":"trip";
   const named=plan.title&&plan.title!=="Where next?"?plan.title:`this ${kind}`;
   if(!solo&&!isOrganiser({role:group.role,createdBy:plan.createdBy,userId:me})){
     // Said only where a plan can be stuck: still deciding where it goes —
@@ -7134,6 +7140,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({summary:goal||null,answers:stored}),
       });
+      if(r.ok)forgetNext(realId);
       if(!r.ok){
         console.error("[groupTrip] organiser answers not saved",r.status);
         toast("Your answers didn't save — answer again from the next screen");
@@ -7885,9 +7892,12 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   // made on this phone, so a second plan is never created and then taken
   // back. A night out is never held up by a trip, nor a trip by a night out.
   const [already,setAlready]=useState(null);
-  const kindOf=t=>t==="restaurant"?"night":"trip";
-  const activeIn=(g,type,ignore)=>(g?.plans||[]).find(p=>p.id!==ignore&&!isTempId(p.id)
-    &&kindOf(p.type)===kindOf(type)&&(p.status==="planning"||p.status==="voting")&&isLive(p,today()))||null;
+  // Which slot a type takes is lib/one-active.ts kindOf, the same one the
+  // server and the index read: a concert is a night out, not a trip. And
+  // never for a group of one — the server exempts it (refusalFor), because
+  // Lisbon in December must not stop the same person planning Tokyo in March.
+  const activeIn=(g,type,ignore)=>((g?.memberIds?.length??1)<=1)?null:(g?.plans||[]).find(p=>p.id!==ignore&&!isTempId(p.id)
+    &&planKind(p.type||"trip")===planKind(type)&&(p.status==="planning"||p.status==="voting")&&isLive(p,today()))||null;
   const finish=({ignore=null}={})=>{
     if(!gid||finishing)return;
     const live=activeIn(selGroup,planType||"trip",ignore);
@@ -7932,8 +7942,10 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       options:voting?vopts.filter(Boolean):[],
     };
     updateGroup(gid,g=>({...g,plans:[...g.plans,np]}));
-    toast("Plan created! 🎉");
-    clearDraft();
+    // "Plan created" and the draft cleared only once the server has not
+    // refused it as a second of its kind: a refusal opens the one that
+    // exists instead, with its own word, and keeps what they filled in.
+    const created=()=>{toast("Plan created! 🎉");clearDraft();};
     // Finishing a plan used to put you back on the list you came from, with
     // the thing you just spent six screens on somewhere in it. The plan opens
     // instead, where the next step — build the days — is waiting. Replace
@@ -7946,9 +7958,9 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       // Refused because another device started one first: that one opens.
       let other=null;
       Promise.resolve(savePlanToServer(gid,np,{onOneActive:id=>{other=id;}}))
-        .then(id=>land(other||id)).catch(()=>land(np.id));
+        .then(id=>{if(!other)created();land(other||id);}).catch(()=>{created();land(np.id);});
     }else{
-      land(np.id);
+      created();land(np.id);
     }
     setTimeout(()=>setFinishing(false),1500);
   };
@@ -7985,7 +7997,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                   :`You're already planning ${already.title||"one"} with ${selGroup?.name||"this group"}`}
               </div>
               <div style={{fontSize:13.5,color:C.t2,lineHeight:1.55,marginBottom:16}}>
-                {`One ${already.type==="restaurant"?"night out":"trip"} is planned at a time${isSoloGroup?"":" in a group"}, so nothing is asked twice. A ${already.type==="restaurant"?"trip":"night out"} can still be planned alongside it.`}
+                {`One ${planKind(already.type)==="night"?"night out":"trip"} is planned at a time in a group, so nothing is asked twice. A ${planKind(already.type)==="night"?"trip":"night out"} can still be planned alongside it.`}
               </div>
               <button className="bp" onClick={()=>{const id=already.id;setAlready(null);clearDraft();(replace||push)("planDetail",{planId:id,groupId:gid});}}>Open it</button>
               <CallOffPlan plan={already} group={selGroup} me={me} um={um} updatePlanOnServer={updatePlanOnServer}
@@ -8438,6 +8450,7 @@ function nextInput(plan,group,me,{bookings,funding,readiness,vote,outcome}={}){
     readiness:readiness?.preferences||null,
     essentials:Array.isArray(readiness?.travelers)?{travelers:readiness.travelers}:null,
     memberCount:(group?.memberIds||[]).length,me:me||null,vote:vote||null,outcome:outcome||null,
+    bookableSkipped:BOOKABLE_SKIPS.get(plan.id)??null,
   };
 }
 
@@ -8457,6 +8470,11 @@ function nextFor(plan,group,me,got){
 // short while, so Home and the group tab opening one after the other ask
 // once. forgetNext drops a plan's after anything changes it.
 const NEXT_READS=new Map();
+// What POST /bookable said it skipped, by plan, this session: the checkout
+// writes it on the way in. Without it a line with no row reads as "not
+// priced yet" — and "Checkout prices it" on a line checkout already could
+// not price sends them round in a loop.
+const BOOKABLE_SKIPS=new Map();
 function readNextInputs(plan){
   const hit=NEXT_READS.get(plan.id);
   if(hit&&Date.now()-hit.at<30000)return hit.p;
@@ -8572,37 +8590,51 @@ async function runNextCta(cta,{na,screen,planId,groupId,push,toast,goToProfileSe
   return false;
 }
 
-/** Plan → Vote → Lock in → Pay → Booked. A dot already done opens what it was about. */
+/**
+ * Plan → Vote → Lock in → Pay → Booked. A dot already done opens what it was about.
+ *
+ * Read aloud as well as drawn: the step the plan is on differs from the
+ * others only by fill, ring and weight, so each item says its state in
+ * words and the current one carries aria-current="step". A done dot is a
+ * button at least 44px tall, the whole column, not the 14px dot.
+ */
 function ProgressRail({rail,onDot}){
   if(!rail?.length)return null;
+  const SAID={done:"done",current:"current step",todo:"to do"};
   return(
-    <div role="list" aria-label="Where this plan is up to" style={{display:"flex",alignItems:"flex-start",padding:"14px 12px 0"}}>
+    <ol aria-label="Where this plan is up to" style={{display:"flex",alignItems:"flex-start",padding:"14px 12px 0",margin:0,listStyle:"none"}}>
       {rail.map((d,i)=>{
         const done=d.state==="done", now=d.state==="current";
         const dot=(
-          <div style={{width:14,height:14,borderRadius:"50%",margin:"0 auto",
+          <div aria-hidden="true" style={{width:14,height:14,borderRadius:"50%",margin:"0 auto",
             background:done?C.accentText:now?C.s1:C.s3,
             border:`2px solid ${done||now?C.accentText:C.s3}`,
             boxShadow:now?`0 0 0 3px ${C.accentDim}`:"none",boxSizing:"border-box"}}/>
         );
+        const label=(
+          <div style={{fontSize:10.5,marginTop:6,textAlign:"center",letterSpacing:".02em",
+            color:done||now?C.accentText:C.t3,fontWeight:now?700:done?600:500}}>
+            {d.label}<span style={SR_ONLY}>{`, ${SAID[d.state]||d.state}`}</span>
+          </div>
+        );
         return(
-          <div key={d.key} role="listitem" style={{flex:1,position:"relative",minWidth:0}}>
-            {i>0&&<div style={{position:"absolute",top:6,right:"50%",width:"100%",height:2,
+          <li key={d.key} aria-current={now?"step":undefined} style={{flex:1,position:"relative",minWidth:0}}>
+            {i>0&&<div aria-hidden="true" style={{position:"absolute",top:6,right:"50%",width:"100%",height:2,
               background:done||now?C.accentText:C.s3,zIndex:0}}/>}
             <div style={{position:"relative",zIndex:1}}>
               {done&&onDot
                 ?<button onClick={()=>onDot(d.key)} aria-label={`${d.label}, done — open it`}
-                  style={{background:"none",border:"none",padding:0,width:"100%",cursor:"pointer"}}>{dot}</button>
-                :dot}
+                  style={{background:"none",border:"none",padding:0,width:"100%",minHeight:44,cursor:"pointer",display:"block",color:"inherit",font:"inherit"}}>{dot}{label}</button>
+                :<>{dot}{label}</>}
             </div>
-            <div style={{fontSize:10.5,marginTop:6,textAlign:"center",letterSpacing:".02em",
-              color:done||now?C.accentText:C.t3,fontWeight:now?700:done?600:500}}>{d.label}</div>
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }
+/** Visually hidden, still read aloud. */
+const SR_ONLY={position:"absolute",width:1,height:1,padding:0,margin:-1,overflow:"hidden",clip:"rect(0,0,0,0)",whiteSpace:"nowrap",border:0};
 
 /**
  * The rail and the one thing to do now, as one card. `busy` while its own
@@ -10935,6 +10967,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
       // Not waited on: a failed read means nobody is asked for anything.
       if(!isTempId(planId))fetch(`/api/plans/${planId}/readiness`).then(r=>r.ok?r.json():null)
         .then(d=>setCkReadiness(d)).catch(()=>{});
+      if(bridge)BOOKABLE_SKIPS.set(planId,(bridge.skipped||[]).map(x=>x?.title).filter(Boolean));
       forgetNext(planId);
       const f=fRes.ok?await fRes.json():null;
       const bJson=bRes.ok?await bRes.json():null;
@@ -12098,7 +12131,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
               color:off?C.t3:C.onAccent,
               fontWeight:700,fontSize:16,
               cursor:off?"not-allowed":"pointer"}}>
-            {busy?"One sec…":s==="top_up"?`Pay ${fmt(myShareCents)} more`:s==="pay"&&na?.state==="pay_share"&&checkout.canPay?na.title:"Looks good"}</button>
+            {busy?"One sec…":s==="top_up"?`Pay ${fmt(myShareCents)} more`:s==="pay"&&na?.state==="pay_share"&&na.checkoutStep==="pay"&&checkout.canPay?na.title:"Looks good"}</button>
         );
       })()}
       <div style={{textAlign:"center",fontSize:12,color:C.t2,marginTop:10}}>
@@ -13612,6 +13645,11 @@ export default function ReachApp({realUser,onSignOut}={}){
           trip_answers:plan.tripAnswers||null,
           why_chosen:plan.aiData?.used_suggestions||null,
           solo_mode:plan.soloMode===true,
+          // The server answers `one_active` only to a caller that says it
+          // opens the plan named (lib/one-active.ts refusalFor). Said where
+          // the caller does — CreatePlanFlow and GroupTripScreen — so the
+          // rule holds across two phones whose group lists are both stale.
+          ...(onOneActive?{accepts_one_active:true}:{}),
         }),
       });
       if(res.ok){
@@ -13640,7 +13678,8 @@ export default function ReachApp({realUser,onSignOut}={}){
         const plans=await refreshGroup(groupId);
         const there=(plans||[]).find(p=>p.id===err.planId)||groups.find(g=>g.id===groupId)?.plans?.find(p=>p.id===err.planId)||null;
         const gName=groups.find(g=>g.id===groupId)?.name||null;
-        const kind=(err.kind||there?.type)==="restaurant"||err.kind==="night_out"?"night out":"trip";
+        // The server's kind is lib/one-active.ts PlanKind: 'night' or 'trip'.
+        const kind=(err.kind?err.kind==="night":planKind(there?.type||plan.type)==="night")?"night out":"trip";
         showToast(there?.title
           ?`You're already planning ${there.title}${gName?` with ${gName}`:""} — here it is`
           :`There's already a ${kind} being planned${gName?` with ${gName}`:""} — here it is`);
@@ -13683,6 +13722,8 @@ export default function ReachApp({realUser,onSignOut}={}){
         showToast(err.error||"That change didn't save — try again");
         return false;
       }
+      // What's next for it has changed: Home and the group must not answer from the cached reads.
+      forgetNext(planId);
       const plan=groups.flatMap(g=>g.plans.map(p=>({...p,groupName:g.name}))).find(p=>p.id===planId);
       if(plan&&updates.status){
         const msgs={
@@ -13721,6 +13762,8 @@ export default function ReachApp({realUser,onSignOut}={}){
         showToast(err.error||"Your vote didn't save — try again");
         return false;
       }
+      // What's next for it has changed: Home and the group must not answer from the cached reads.
+      forgetNext(planId);
       const plan=groups.flatMap(g=>g.plans.map(p=>({...p,groupName:g.name}))).find(p=>p.id===planId);
       if(plan)notifyGroupUpdate(plan.groupName,`${firstNameOf(user,"Someone")} voted for ${option}`);
       return true;
@@ -13748,6 +13791,9 @@ export default function ReachApp({realUser,onSignOut}={}){
       }
       const plan=groups.flatMap(g=>g.plans.map(p=>({...p,groupName:g.name}))).find(p=>p.id===planId);
       if(plan)notifyGroupUpdate(plan.groupName,`${firstNameOf(user,"Someone")} updated the itinerary for ${plan.title}`);
+      // New lines have not been put to /bookable yet, so what it skipped last
+      // time no longer says anything about them.
+      BOOKABLE_SKIPS.delete(planId);forgetNext(planId);
       return true;
     }catch(e){
       console.error("[itinerary] save failed",e);

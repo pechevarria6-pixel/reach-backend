@@ -193,3 +193,29 @@ test('the index stays on hold while the client cannot act on one_active', () => 
   const wired = /accepts_one_active\s*:\s*true/.test(app) && /["']one_active["']/.test(app);
   if (!wired) assert.match(sql.split('\n')[1] ?? '', /HOLD — do not run yet/);
 });
+
+// ─── The client asks the same question the server does ───────────────────
+test('the create flow sorts by the same kindOf, exempts a group of one, and opts in to one_active', () => {
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  assert.match(app, /import \{ kindOf as planKind \} from "@\/lib\/one-active"/);
+  // No hand-written restaurant-only kind left anywhere in the client.
+  assert.doesNotMatch(app, /const kindOf=t=>t==="restaurant"/);
+  const flow = app.slice(app.indexOf('const activeIn=(g,type,ignore)=>'), app.indexOf('const activeIn=(g,type,ignore)=>') + 400);
+  assert.match(flow, /memberIds\?\.length\?\?1\)<=1\)\?null/);
+  assert.match(flow, /planKind\(p\.type\|\|"trip"\)===planKind\(type\)/);
+  const call = app.slice(app.indexOf('function CallOffPlan('), app.indexOf('function CallOffPlan(') + 800);
+  assert.match(call, /planKind\(plan\.type\)==="night"/);
+  // Sent only by a caller that opens the plan a refusal names.
+  assert.match(app, /\.\.\.\(onOneActive\?\{accepts_one_active:true\}:\{\}\)/);
+  // The server's kind is 'night', never 'night_out'.
+  assert.doesNotMatch(app, /err\.kind==="night_out"/);
+  assert.match(app, /err\.kind==="night"/);
+  // "Plan created" only once the server has not refused it.
+  assert.match(app, /\.then\(id=>\{if\(!other\)created\(\);land\(other\|\|id\);\}\)/);
+});
+
+test('a concert takes the night slot, as the client is now told', () => {
+  assert.equal(kindOf('concert'), 'night');
+  assert.equal(kindOf('restaurant'), 'night');
+  assert.equal(kindOf('weekend'), 'trip');
+});

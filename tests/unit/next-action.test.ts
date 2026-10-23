@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -558,4 +558,100 @@ test('a group admin locks in a plan somebody else set up; a member waits on them
   const asAdmin = run({ ...sams, plan: { ...sams.plan, organiserIsMe: true } });
   assert.equal(asAdmin.state, 'lock_in');
   assert.equal(asAdmin.cta?.label, 'Lock it in →');
+});
+
+// ─── A vote on a set place: the route's `decided` says nothing about it ──
+// GET /vote answers `decided: destination_style !== 'undecided'`, true from
+// the start for options sent round on a plan whose place is set. Read as
+// "the vote is over", it sent every member to "Waiting on Pat to lock it in"
+// with nobody's vote in, and Home dropped the plan.
+test('options on a set place: a member who has not voted is asked to vote', () => {
+  const sams = { id: 'p1', status: 'voting', hasOptions: true, createdBy: SAM };
+  const notVoted = run(base({ plan: sams,
+    vote: { decided: true, myVote: null, everyoneVoted: false, mayPick: false, stillToVote: ['you', 'Alex'], organiser: { name: 'Pat', isYou: false } } }));
+  assert.equal(notVoted.state, 'vote_open');
+  assert.equal(notVoted.cta?.label, 'Vote →');
+  assert.equal(at(notVoted), 'vote');
+  // Voted, Alex has not: the wait names Alex, not the organiser.
+  const voted = run(base({ plan: sams,
+    vote: { decided: true, myVote: 'A', everyoneVoted: false, mayPick: false, stillToVote: ['Alex'], organiser: { name: 'Pat', isYou: false } } }));
+  assert.equal(voted.state, 'waiting_on_others');
+  assert.deepEqual(voted.waitingOn, ['Alex']);
+  // The organiser is asked to vote too, and is not offered Lock it in with
+  // nobody's vote in.
+  const organiser = run(base({ plan: { id: 'p1', status: 'voting', hasOptions: true },
+    vote: { decided: true, myVote: null, everyoneVoted: false, mayPick: true, stillToVote: ['you', 'Sam', 'Alex'], organiser: { name: 'Pat', isYou: true } } }));
+  assert.equal(organiser.state, 'vote_open');
+  const organiserVoted = run(base({ plan: { id: 'p1', status: 'voting', hasOptions: true },
+    vote: { decided: true, myVote: 'A', everyoneVoted: false, mayPick: true, stillToVote: ['Sam', 'Alex'], organiser: { name: 'Pat', isYou: true } } }));
+  assert.equal(organiserVoted.state, 'waiting_on_others');
+  assert.deepEqual(organiserVoted.waitingOn, ['Sam', 'Alex']);
+  // Everyone in: the organiser locks it in, a member waits on them — both still on the Vote dot.
+  const allIn = { decided: true, myVote: 'A', everyoneVoted: true, mayPick: true, stillToVote: [] };
+  const lock = run(base({ plan: { id: 'p1', status: 'voting', hasOptions: true }, vote: { ...allIn, organiser: { name: 'Pat', isYou: true } } }));
+  assert.equal(lock.state, 'lock_in');
+  assert.equal(at(lock), 'vote');
+  const member = run(base({ plan: sams, vote: { ...allIn, mayPick: false, organiser: { name: 'Pat', isYou: false } } }));
+  assert.equal(member.state, 'waiting_on_others');
+  assert.match(member.title, /Pat to lock it in/);
+  // A vote on WHERE is still closed by its pick landing.
+  const picked = run(base({ plan: { id: 'p1', destStyle: 'undecided', status: 'voting', hasOptions: true, itinerary: [] },
+    vote: { decided: true, myVote: null, everyoneVoted: false, mayPick: true, stillToVote: ['you'] } }));
+  assert.notEqual(picked.state, 'vote_open');
+});
+
+// ─── A line /bookable skipped is not "priced at checkout" ────────────────
+const BREWERY = line({ id: 'l-brew', title: 'Brewery tour', type: 'activity', booking_mode: 'reach' });
+
+test('a line /bookable skipped, beside a priced row, is not "See what it costs"', () => {
+  const a = run(base({ plan: { id: 'p1', itinerary: [HOTEL_LINE, BREWERY] },
+    bookings: [hotel('awaiting_approval')],
+    funding: { memberCount: 3, targetCents: 60000, collectedCents: 0, funded: false, myPaidCents: 0, myRemainingCents: 20000 } }));
+  assert.equal(a.state, 'pay_share');
+  assert.notEqual(a.title, 'See what it costs');
+  assert.equal(a.checkoutStep, 'pay');
+  assert.doesNotMatch(a.body ?? '', /Checkout prices/);
+  assert.match(a.body ?? '', /Brewery tour isn't priced/);
+});
+
+test('every line skipped and no rows: says it has no price, never "Checkout prices it"', () => {
+  const skipped = run(base({ plan: { id: 'p1', itinerary: [BREWERY] }, bookableSkipped: ['Brewery tour'] }));
+  assert.equal(skipped.state, 'needs_attention');
+  assert.equal(skipped.title, 'Brewery tour has no price yet');
+  assert.match(skipped.body ?? '', /couldn't price it/);
+  assert.equal(at(skipped), 'pay');
+  // Nobody has asked /bookable yet: checkout is where it is priced.
+  const unasked = run(base({ plan: { id: 'p1', itinerary: [BREWERY] } }));
+  assert.equal(unasked.state, 'pay_share');
+  assert.equal(unasked.title, 'See what it costs');
+  assert.equal(unasked.checkoutStep, null);
+});
+
+test('the checkout button reads the answer as a label only on its own pay step', () => {
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  assert.match(app, /na\?\.state==="pay_share"&&na\.checkoutStep==="pay"&&checkout\.canPay\?na\.title/);
+  assert.match(app, /BOOKABLE_SKIPS\.set\(planId,/);
+  assert.match(app, /bookableSkipped:BOOKABLE_SKIPS\.get\(plan\.id\)/);
+});
+
+// ─── The cached reads are dropped by every write that moves the answer ──
+test('voting, answering, picking and a plan change each drop the cached next-action reads', () => {
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  const body = (start: RegExp, len = 1800) => { const i = app.search(start); assert.ok(i >= 0, String(start)); return app.slice(i, i + len); };
+  assert.match(body(/const castVoteOnServer=async/), /forgetNext\(planId\)/);
+  assert.match(body(/const updatePlanOnServer=async/), /forgetNext\(planId\)/);
+  assert.match(body(/body:JSON\.stringify\(\{option:o\.title\}\)/, 300), /forgetNext\(planId\)/);
+  assert.match(body(/body:JSON\.stringify\(\{veto:o\.title,on\}\)/, 300), /forgetNext\(planId\)/);
+  assert.match(body(/const ok=await pickTripIdea\(o,/, 300), /if\(ok\)forgetNext\(planId\)/);
+  assert.match(body(/toast\("Thanks — that's you in"\)/, 300), /forgetNext\(planId\)/);
+});
+
+// ─── The rail, read aloud ────────────────────────────────────────────────
+test('the rail says which step is current, and a done dot is a 44px target', () => {
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  const rail = app.slice(app.indexOf('function ProgressRail('), app.indexOf('function NextStepCard('));
+  assert.match(rail, /aria-current=\{now\?"step":undefined\}/);
+  assert.match(rail, /current:"current step"/);
+  assert.match(rail, /todo:"to do"/);
+  assert.match(rail, /minHeight:44/);
 });

@@ -209,6 +209,12 @@ export interface NextActionInput {
   vote?: VoteView | null;
   /** item_optouts: booking ids somebody sits out (lib/participation.ts). */
   skips?: { ref: string; userId: string }[] | null;
+  /**
+   * The titles POST /plans/[id]/bookable said it skipped, where the caller
+   * holds that answer (the checkout, this session). Null when nobody has
+   * asked it: a line with no row may then just not have been priced yet.
+   */
+  bookableSkipped?: string[] | null;
   /** What the last press answered, where it refused: 402 short of money, 409 a price rise. */
   outcome?: { status: number; priceChangeCents?: number | null } | null;
   now?: Date;
@@ -349,7 +355,13 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     }
 
     const undecided = plan.destStyle === 'undecided';
-    const voting = !solo && plan.status === 'voting' && plan.hasOptions === true && input.vote?.decided !== true;
+    // The vote route's `decided` is `destination_style !== 'undecided'`, so on
+    // options put to the group for a plan whose place is already set it is
+    // true from the start and says nothing about the vote. It only closes a
+    // vote on WHERE (an undecided plan whose pick has landed); a vote on a
+    // set place is open while the status is 'voting'.
+    const voting = !solo && plan.status === 'voting' && plan.hasOptions === true
+      && !(undecided && input.vote?.decided === true);
 
     if (undecided && !voting && answers && answers.waitingOn.length) {
       const w = waitOn(answers.waitingOn, `Waiting on ${list(answers.waitingOn)}`,
@@ -371,19 +383,24 @@ export function getNextAction(input: NextActionInput): NextAction | null {
         return say({ state: 'vote_open', title: 'Pick the one you want', body: `The vote on ${called(plan)} is open.`,
           cta: { label: 'Vote →', ...nav('planDetail', 'vote') }, chip: 'Voting' });
       }
-      if (v.everyoneVoted && v.mayPick) {
-        return say({ state: 'vote_open', title: 'Everyone has voted', body: 'The pick is yours.',
-          cta: { label: 'Pick →', ...nav('planDetail', 'vote') }, chip: 'Voting' });
-      }
       if (!v.everyoneVoted) {
         const still = (v.stillToVote ?? []).filter(n => n !== 'you');
         const w = waitOn(still, `Waiting on ${list(still)}`, `You've voted. The vote on ${called(plan)} is still open.`,
           remind(still, 'vote'));
         if (w) return w;
       }
-      const w = waitOn([organiserName ?? 'the organiser'], `Waiting on ${organiserName ?? 'the organiser'} to pick`,
-        'Everyone has voted.', { label: 'See the votes →', ...nav('planDetail', 'vote') });
-      if (w) return w;
+      // A vote on WHERE ends in a pick. A vote on a set place has no pick of
+      // its own: locking the plan in is what closes it, so once everyone has
+      // voted it goes on to lock in below, still on the Vote dot.
+      if (undecided) {
+        if (v.mayPick) {
+          return say({ state: 'vote_open', title: 'Everyone has voted', body: 'The pick is yours.',
+            cta: { label: 'Pick →', ...nav('planDetail', 'vote') }, chip: 'Voting' });
+        }
+        const w = waitOn([organiserName ?? 'the organiser'], `Waiting on ${organiserName ?? 'the organiser'} to pick`,
+          'Everyone has voted.', { label: 'See the votes →', ...nav('planDetail', 'vote') });
+        if (w) return w;
+      }
     }
 
     if (undecided) {
@@ -436,13 +453,37 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   stage = 'pay';
   const rowed = new Set(live.map(r => r.itinerary_item_id).filter(Boolean));
   const unrowed = lines.filter(l => l.booking_mode === 'reach' && !!l.id && !rowed.has(l.id));
-  if (!moving && unrowed.length) {
+  // Whether /bookable has been asked about these lines. It makes a row for
+  // every line it can price on the same visit, so once there are rows, or
+  // the checkout holds its answer, a line still without one was skipped —
+  // and "Checkout prices it" would send them to a checkout that already
+  // couldn't, round and round.
+  const reported = new Set((input.bookableSkipped ?? []).map(t => String(t ?? '').trim().toLowerCase()).filter(Boolean));
+  const asked = rows.length > 0 || input.bookableSkipped != null;
+  const unpricedName = (): string | null => {
+    const first = unrowed[0] as NextLine | undefined;
+    return first?.venue_name?.trim() || first?.title?.trim() || null;
+  };
+  const noPrice = (): NextAction => {
+    const name = unpricedName();
+    const known = unrowed.every(l => reported.has(String(l.title ?? '').trim().toLowerCase()));
+    // Said directly: `attention` is declared further down.
+    return say({ state: 'needs_attention', chip: 'Needs you', cta: toCheckout('See why →'), title:
+      unrowed.length === 1 ? `${name ?? 'One thing'} has no price yet` : `${unrowed.length} things have no price yet`,
+      body: known
+        ? `Reach couldn't price ${unrowed.length === 1 ? 'it' : 'them'}, so ${unrowed.length === 1 ? "it isn't" : "they aren't"} booked. Checkout says why.`
+        : `${unrowed.length === 1 ? "It isn't" : "They aren't"} priced, so ${unrowed.length === 1 ? "it isn't" : "they aren't"} booked. Checkout says why.` });
+  };
+  if (!moving && unrowed.length && !asked) {
     return say({
       state: 'pay_share', title: 'See what it costs',
       body: `${unrowed.length === 1 ? '1 thing' : `${unrowed.length} things`} for Reach to book. Checkout prices ${unrowed.length === 1 ? 'it' : 'them'}, and nothing is charged until you pay.`,
       cta: toCheckout('See the prices →'), chip: 'Locked in',
     });
   }
+  // Asked, and nothing came back with a price: nothing to pay for, and
+  // saying "See what it costs" again is the loop.
+  if (!moving && unrowed.length && !rows.length) return noPrice();
 
   // ── The checkout: what the money and the rows allow ──
   const myDetails = input.essentials?.travelers.find(t => t.userId === me) ?? null;
@@ -513,7 +554,8 @@ export function getNextAction(input: NextActionInput): NextAction | null {
         title: owe ? (solo ? `Pay ${usd(owe)}` : `Chip in ${usd(owe)}`) : (solo ? 'Pay for it' : 'Chip in your share'),
         body: cs.step === 'top_up'
           ? `You've paid ${usd(paid)}. This is what was added or went up since.`
-          : solo ? 'What Reach books for this trip. It books once it is paid for.' : 'Your share of what Reach books. It books once the trip is paid for.',
+          : `${solo ? 'What Reach books for this trip. It books once it is paid for.' : 'Your share of what Reach books. It books once the trip is paid for.'}${
+            unrowed.length ? ` ${unrowed.length === 1 ? `${unpricedName() ?? 'One thing'} isn't` : `${unrowed.length} things aren't`} priced and ${unrowed.length === 1 ? "isn't" : "aren't"} in this — checkout says why.` : ''}`,
         cta: toCheckout('Pay →'), chip: 'Paying',
       });
     }
@@ -601,14 +643,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   // anybody back to "Lock it in" loops — the budget is signed and the same
   // skip happens again — and "Nothing is booked until then" is untrue once
   // something is. Checkout lists what /bookable skipped and why.
-  if (unrowed.length) {
-    const first = unrowed[0] as NextLine;
-    const name = first.venue_name?.trim() || first.title?.trim() || null;
-    return attention(
-      unrowed.length === 1 ? `${name ?? 'One thing'} has no price yet` : `${unrowed.length} things have no price yet`,
-      `Reach couldn't price ${unrowed.length === 1 ? 'it' : 'them'}, so ${unrowed.length === 1 ? "it isn't" : "they aren't"} booked. Checkout says why.`,
-      toCheckout('See why →'));
-  }
+  if (unrowed.length) return noPrice();
 
   const held = live.filter(r => r.status === 'quoted' && reachBuys(r));
   if (held.length) {
