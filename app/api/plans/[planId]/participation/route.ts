@@ -6,7 +6,9 @@
 // GET  → the optional bookings, how many are going to each, and what that
 //        leaves you paying — the same figure checkout charges, from the same
 //        function.
-// POST { itemRef, optOut } → sit one out, or come back in.
+// POST { itemRef, optOut } → sit one out, or come back in. A flight is one
+//        too: "I'll drive / already have a flight" takes that person off it
+//        while it is only proposed (lib/participation.ts optOutRefusal).
 //
 // Shares lock the moment anybody on the plan pays. Moving them after money has
 // moved leaves one person overpaid and another short, and Reach does not hold
@@ -16,8 +18,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
-import { canSkip, evenSplit, planShares } from '@/lib/money';
-import { readSkips } from '@/lib/participation';
+import { evenSplit, planShares } from '@/lib/money';
+import { readSkips, canOptOut, optOutRefusal, lastOneOut } from '@/lib/participation';
 
 const Schema = z.object({ itemRef: z.string().uuid(), optOut: z.boolean() });
 
@@ -75,7 +77,7 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
     const shares = planShares(bookings, Number(ctx.plan.budget_cents) || 0, memberIds, skips);
 
     const items = bookings
-      .filter(b => canSkip(b.vertical) && (b.price_cents || 0) > 0)
+      .filter(b => canOptOut(b.vertical) && (b.price_cents || 0) > 0)
       .map(b => {
         const ref = String(b.id);
         const out = new Set(skips.filter(s => s.ref === ref).map(s => s.userId));
@@ -85,6 +87,8 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
           ref,
           title: titleOf(b),
           vertical: b.vertical,
+          // A flight's seats can only be given up while nobody holds them.
+          open: b.vertical !== 'flight' || b.status === 'awaiting_approval',
           priceCents: b.price_cents || 0,
           inCount: going.length,
           imIn: mine >= 0,
@@ -125,12 +129,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({ error: "That isn't part of this plan" }, { status: 404 });
   }
   // Enforced here, not only by which buttons the screen shows.
-  if (!canSkip(booking.vertical)) {
-    return NextResponse.json({ error: "Everyone's in for getting there and somewhere to stay." }, { status: 400 });
-  }
-  if (await anyonePaid(ctx.db, params.planId)) {
-    return NextResponse.json({ error: "Someone has already paid, so who's in for what is set now." }, { status: 409 });
-  }
+  const refused = optOutRefusal({
+    vertical: booking.vertical, status: booking.status,
+    anyonePaid: await anyonePaid(ctx.db, params.planId),
+  });
+  if (refused) return NextResponse.json({ error: refused.error }, { status: refused.status });
 
   try {
     if (optOut) {
@@ -149,7 +152,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
       const out = new Set(skips.filter(s => s.ref === itemRef).map(s => s.userId));
       out.add(me);
       if (memberIds.every(id => out.has(id))) {
-        return NextResponse.json({ error: 'Someone has to be in for this one.' }, { status: 409 });
+        return NextResponse.json({ error: lastOneOut(booking.vertical) }, { status: 409 });
       }
       const { error } = await ctx.db.from('item_optouts').upsert(
         { plan_id: params.planId, item_ref: itemRef, user_id: me },

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  alternativesFor, placeRef, placeByRef, dateOfLine, swappedTitle, swappedLine, whyLine, slotWindow, eveningSlot, type PlanLine,
+  alternativesFor, placeRef, placeByRef, dateOfLine, swappedTitle, swappedLine, titleNaming, whyLine, slotWindow, eveningSlot, type PlanLine,
 } from '../../lib/itinerary-alternatives.ts';
 import { ABOUT_THE_PLACE } from '../../lib/contracts/itinerary-item.ts';
 import type { RealPlace } from '../../lib/discovery/real-places.ts';
@@ -171,4 +171,31 @@ test('the part of the day is read off the slot: a clock time first, then its wor
   assert.equal(slotWindow('Day 2', false), 'day', 'nothing said is the whole day');
   assert.equal(eveningSlot('Day 2 · 9:30 PM', false), true);
   assert.equal(eveningSlot('Day 2 · Morning', false), false);
+});
+
+// ─── "Something else…" lands on one line ────────────────────────────────
+test('something else may be any menu type, and is still held to near, open and not already on the plan', () => {
+  const MUSEUM2 = P({ name: 'Octagon Museum', kind: 'museum', street: '1799 New York Ave NW', lat: 38.8960, lng: -77.0410 });
+  const FAR_MUSEUM = P({ name: 'Far Museum', kind: 'museum', street: 'Somewhere far', lat: 39.40, lng: -77.40 });
+  const places = [...MENU, MUSEUM2, FAR_MUSEUM];
+  const strict = alternativesFor({ line: dinner, lines: LINES, places, nightOut: false, startDate: '2026-10-23', count: 50 });
+  const free = alternativesFor({ line: dinner, lines: LINES, places, nightOut: false, startDate: '2026-10-23', count: 50, anyType: true });
+  assert.equal(strict.status, 'ok');
+  assert.equal(free.status, 'ok');
+  if (strict.status !== 'ok' || free.status !== 'ok') return;
+  assert.ok(!strict.alternatives.some(a => a.name === 'Octagon Museum'), 'Change keeps a dinner a dinner');
+  const names = free.alternatives.map(a => a.name);
+  assert.ok(names.includes('Octagon Museum'), 'something else can be a different kind of stop');
+  assert.ok(!names.includes('Renwick Gallery') && !names.includes('SPIN'), 'never what is already on the plan');
+  assert.ok(!names.includes('Far Museum'), 'still near the rest of the day');
+});
+
+test('the title something else wrote is kept only while it names the place the line points at', () => {
+  const kept = swappedLine(dinner, PUB, MUSEUM, 'A slow hour at the Renwick Gallery');
+  assert.equal(kept.title, 'A slow hour at the Renwick Gallery');
+  // A title about somewhere else is not trusted: the lead-in rule decides.
+  const other = swappedLine(dinner, PUB, MUSEUM, 'Cocktails at Top of the Gate');
+  assert.equal(other.title, 'Dinner at Renwick Gallery');
+  assert.equal(titleNaming('', MUSEUM), null);
+  assert.equal(titleNaming('x'.repeat(201) + ' Renwick Gallery', MUSEUM), null);
 });

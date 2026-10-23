@@ -209,6 +209,14 @@ export interface AlternativesInput {
   countryCode?: string | null;
   /** How many to offer. The spec says three. */
   count?: number;
+  /**
+   * "Something else…": the one-slot rewrite (app/api/trips/generate, `slot`)
+   * may name any menu place, not only one of the line's own type — asking
+   * for a museum instead of a bar is the point of it. Everything else still
+   * holds: on the menu, near the rest of the day, open then, not already on
+   * the plan.
+   */
+  anyType?: boolean;
 }
 
 const PRICE_NOTE = "We hold no price for this place, so this line's estimate stays as it is.";
@@ -292,7 +300,8 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
 
   const pool = places.filter(p => {
     if (onPlan.has(placeRef(p))) return false;
-    if (typeForKind(p.kind) !== lineType) return false;
+    const kindType = typeForKind(p.kind);
+    if (input.anyType ? !MENU_TYPES.has(String(kindType)) : kindType !== lineType) return false;
     const km = kmToNearest(p, anchors);
     if (km !== null && km > limitKm) return false;
     // Shut on that day, in that part of it, by the map's hours. No date (an
@@ -362,6 +371,19 @@ export function swappedTitle(oldTitle: unknown, oldName: string | null | undefin
 }
 
 /**
+ * The title "Something else…" wrote, when it is about this place. The
+ * rewrite was read back on the server that wrote it; the line it lands on is
+ * held to one thing more, here: the title names the place the line now
+ * points at, by the menu's own spelling, so no title can arrive naming
+ * somewhere the line is not. Anything else falls back to swappedTitle.
+ */
+export function titleNaming(title: unknown, place: RealPlace): string | null {
+  const t = typeof title === 'string' ? title.replace(/\s+/g, ' ').trim() : '';
+  if (!t || t.length > 200) return null;
+  return namedPlace(t, [place]) ? t : null;
+}
+
+/**
  * Everything a line says about its place, rewritten for a new one.
  *
  * Every key of ABOUT_THE_PLACE is set — from the new row, or to null — and
@@ -371,14 +393,14 @@ export function swappedTitle(oldTitle: unknown, oldName: string | null | undefin
  * photo with its credit), so a swapped line is no thinner than a generated
  * one.
  */
-export function swappedLine(line: PlanLine, oldPlace: RealPlace | null, place: RealPlace): Record<string, unknown> {
+export function swappedLine(line: PlanLine, oldPlace: RealPlace | null, place: RealPlace, title?: string | null): Record<string, unknown> {
   const type = typeForKind(place.kind) ?? (line.type && MENU_TYPES.has(String(line.type)) ? String(line.type) : 'activity');
   const mode = honestMode(type, bookingFor(String(line.booking_mode || 'walk_in'), place));
   const site = mode === 'ahead' && place.reserveUrl ? place.reserveUrl : place.url ?? null;
   const photo = place.photo && /^https:\/\//.test(place.photo.url) && place.photo.credit ? place.photo : null;
   const out: Record<string, unknown> = Object.fromEntries(ABOUT_THE_PLACE.map(k => [k, null]));
   Object.assign(out, {
-    title: swappedTitle(line.title, oldPlace?.name ?? line.venue_name ?? null, place.name),
+    title: titleNaming(title, place) ?? swappedTitle(line.title, oldPlace?.name ?? line.venue_name ?? null, place.name),
     type,
     booking_mode: mode,
     venue_name: place.name,

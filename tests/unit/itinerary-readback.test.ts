@@ -113,5 +113,9 @@ test('the route answers a slot request with that slot and nothing else, after th
   assert.match(branch, /\$\{menu\}/, 'from the same verified menu');
   assert.match(branch, /oneSlotReadBack\(/, 'read back like the full generator');
   assert.doesNotMatch(branch, /attachDays|saveIdeas|itinerary_items|replaceItinerary/, 'nothing is saved here');
-  assert.match(branch, /NextResponse\.json\(\{ slot: out\.slot,/, 'the answer is the read-back slot');
+  assert.match(branch, /NextResponse\.json\(\{\s*slot: out\.slot,/, 'the answer is the read-back slot');
+  // And the place it names, by the stable ref the per-item PATCH takes, so
+  // the screen applies it to one line — taken from the read-back slot.
+  assert.match(branch, /const named = placeOf\(out\.slot, realPlaces\);/);
+  assert.match(branch, /to: named \? placeRef\(named\) : null/);
 });

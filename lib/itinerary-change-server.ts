@@ -153,7 +153,7 @@ export type SwapReason = 'organiser' | 'booker' | 'solo' | 'suggestion';
  */
 export async function swapLine(
   ctx: PlanCtx, lc: LineContext, places: RealPlace[], place: RealPlace,
-  reason: SwapReason, extra: { suggestionId?: string } = {},
+  reason: SwapReason, extra: { suggestionId?: string; title?: string | null } = {},
 ): Promise<NextResponse> {
   const { db } = ctx;
   const itemId = String(lc.item.id);
@@ -180,7 +180,7 @@ export async function swapLine(
   const asLine: PlanLine = { id: itemId, type: lc.item.type, title: lc.item.title, scheduled_time: lc.item.time,
     venue_name: lc.item.venue_name, booking_mode: lc.item.booking_mode };
   const oldPlace = placeOfLine(asLine, places);
-  const patch = swappedLine(asLine, oldPlace, place);
+  const patch = swappedLine(asLine, oldPlace, place, extra.title ?? null);
   let out = await replaceLine(db, lc.plan.id, itemId, lc.asRead, patch);
   if (out.status === 'failed' && missingColumn(out.detail)) {
     console.error('[itinerary item] verifier columns missing — swapping without clearing them; run sql/itinerary-verification-2026-09-20.sql');
@@ -206,6 +206,7 @@ export async function swapLine(
       from_ref: oldPlace ? placeRef(oldPlace) : 'unlisted',
       to_ref: placeRef(place),
       reason,
+      ...(extra.title ? { something_else: true } : {}),
       locked: lc.locked,
       booking_retired: !!retired,
       ...(extra.suggestionId ? { suggestion_id: extra.suggestionId } : {}),
@@ -233,13 +234,13 @@ export async function swapLine(
  * swap and a suggestion are both held to, so neither can name a place the
  * Change sheet would never have offered.
  */
-export function candidateFor(lc: LineContext, places: RealPlace[], ref: unknown): RealPlace | null {
+export function candidateFor(lc: LineContext, places: RealPlace[], ref: unknown, opts: { anyType?: boolean } = {}): RealPlace | null {
   const got = alternativesFor({
     line: { id: String(lc.item.id), type: lc.item.type, title: lc.item.title, scheduled_time: lc.item.time,
       venue_name: lc.item.venue_name, booking_mode: lc.item.booking_mode },
     lines: lc.lines, places, nightOut: lc.nightOut,
     startDate: lc.plan.start_date ?? null, countryCode: lc.plan.destination_country ?? null,
-    count: Infinity,
+    count: Infinity, anyType: !!opts.anyType,
   });
   if (got.status !== 'ok' || !got.alternatives.some(a => a.ref === ref)) return null;
   return placeByRef(ref, places);

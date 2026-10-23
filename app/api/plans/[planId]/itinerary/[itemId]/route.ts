@@ -17,6 +17,12 @@
 //
 // Hotels and flights are not picked from a menu: they are changed through
 // /api/bookings/[id]/options, which prices them (409 'use_options').
+//
+// { to, title } is "Something else…": the one-slot rewrite from
+// POST /api/trips/generate (`slot`) answers with the ref of the menu place
+// it named (`to`) and its own line (`slot.plan`). The place may be of any
+// menu type, held to everything else an alternative is; the title is kept
+// only while it names that place (titleNaming).
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requirePlanMember, isFail } from '@/lib/auth';
@@ -26,7 +32,7 @@ import { BOOKING_TYPES } from '@/lib/itinerary-alternatives';
 
 export const dynamic = 'force-dynamic';
 
-const Swap = z.object({ to: z.string().regex(/^v:[0-9a-f]{8}$/) });
+const Swap = z.object({ to: z.string().regex(/^v:[0-9a-f]{8}$/), title: z.string().trim().min(1).max(200).nullish() });
 
 export async function PATCH(req: NextRequest, { params }: { params: { planId: string; itemId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -50,7 +56,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   }
 
   const places = await menuFor(ctx.db, lc.plan);
-  const place = candidateFor(lc, places, parsed.data.to);
+  const title = parsed.data.title ?? null;
+  const place = candidateFor(lc, places, parsed.data.to, { anyType: !!title });
   if (!place) {
     return NextResponse.json({
       code: 'not_offered',
@@ -59,7 +66,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   }
 
   const reason: SwapReason = lc.solo ? 'solo' : lc.organiser ? 'organiser' : 'booker';
-  const swapped = await swapLine(ctx, lc, places, place, reason);
+  const swapped = await swapLine(ctx, lc, places, place, reason, { title });
   if (swapped.ok && !lc.solo) {
     // Somebody had suggested exactly this: it is now what the line says, so
     // the card under it is marked applied rather than left asking for 👍.

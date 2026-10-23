@@ -34,7 +34,8 @@ import { ideasFrom, findDecision, isOrganiser, daysDecision, ideasReadyCopy, typ
 import { readSavedIdeas, saveIdeas, attachDays, clearVotes, membersOf, organiserOf, organisersOf, firstName } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
-import { placesFor, placeMenu, scenesFrom, cleanRef, type RealPlace } from '@/lib/discovery/real-places';
+import { placesFor, placeMenu, scenesFrom, cleanRef, placeOf, type RealPlace } from '@/lib/discovery/real-places';
+import { placeRef } from '@/lib/itinerary-alternatives';
 import { track, isEventName } from '@/lib/track';
 import { away, farEnough } from '@/lib/away';
 import { isNear, awayPromptBlock, awayGaps, awayCorrection, awayEstimate, awayLines, rowOf, type AwayEstimate } from '@/lib/away-lines';
@@ -1136,7 +1137,14 @@ Return one slot.`;
             unchanged: true, why: out.refused, ...(out.refused === 'nothing_fits' || out.refused === 'same_place' ? { nothingFits: true } : {}),
           }, { status: 422 });
         }
-        return NextResponse.json({ slot: out.slot, day: slotAsk.day, part, ...(index !== null ? { index } : {}), label: LABEL[part] });
+        // `to`: the menu place the new stop names, by the stable ref the
+        // per-item PATCH and a suggestion take (lib/itinerary-alternatives
+        // placeRef) — so it lands on that one line, not by rewriting the plan.
+        const named = placeOf(out.slot, realPlaces);
+        return NextResponse.json({
+          slot: out.slot, day: slotAsk.day, part, ...(index !== null ? { index } : {}), label: LABEL[part],
+          to: named ? placeRef(named) : null,
+        });
       } catch (e: any) {
         report(e, { where: 'trips/generate slot', extra: { destination, status: e?.status } });
         console.error('[trips slot] failed', { destination, status: e?.status, message: e?.message });

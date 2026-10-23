@@ -6,7 +6,8 @@
 //        be one of this line's alternatives (the verified menu, same kind,
 //        near the day, open then). The same place suggested twice for one
 //        line is one suggestion with two 👍 — the open-suggestion unique
-//        index makes a double-tap the same.
+//        index makes a double-tap the same. With `title`, it is a member's
+//        "Something else…": any menu type, the title kept with it.
 // POST { action: 'vote' | 'unvote', suggestionId }   any member, one 👍 each.
 // POST { action: 'withdraw', suggestionId }           whoever suggested it.
 // POST { action: 'apply' | 'dismiss', suggestionId }  the organiser. Apply
@@ -22,12 +23,12 @@ import {
   readLine, menuFor, swapLine, candidateFor, readSuggestions, suggestionsMissing, SUGGESTIONS_SQL,
 } from '@/lib/itinerary-change-server';
 import { suggestionsClosed } from '@/lib/itinerary-change';
-import { whyLine, BOOKING_TYPES } from '@/lib/itinerary-alternatives';
+import { whyLine, titleNaming, BOOKING_TYPES } from '@/lib/itinerary-alternatives';
 
 export const dynamic = 'force-dynamic';
 
 const Body = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('suggest'), to: z.string().regex(/^v:[0-9a-f]{8}$/), note: z.string().trim().max(280).nullish() }),
+  z.object({ action: z.literal('suggest'), to: z.string().regex(/^v:[0-9a-f]{8}$/), title: z.string().trim().min(1).max(200).nullish(), note: z.string().trim().max(280).nullish() }),
   z.object({ action: z.enum(['vote', 'unvote', 'withdraw', 'apply', 'dismiss']), suggestionId: z.string().uuid() }),
 ]);
 
@@ -79,15 +80,18 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   if (body.action === 'suggest') {
     const places = await menuFor(db, lc.plan);
-    const place = candidateFor(lc, places, body.to);
+    const free = !!body.title;
+    const place = candidateFor(lc, places, body.to, { anyType: free });
     if (!place) {
       return NextResponse.json({ code: 'not_offered', error: "That place isn't one we can put on this line — reopen Change to see what is." }, { status: 409 });
     }
+    const title = free ? titleNaming(body.title, place) : null;
     // A snapshot for the card. candidate_ref is the identity; this is what
     // the menu said about it when it was suggested, every word from the row.
     const candidate = {
       name: place.name, kind: place.kind, street: place.street ?? null, url: place.url ?? null,
       why: whyLine(place, null, lc.nightOut ? 'your evening' : 'the day'),
+      ...(free ? { free: true, title } : {}),
     };
     const { data: made, error } = await db.from('itinerary_item_suggestions').insert({
       plan_id: lc.plan.id, item_id: params.itemId, suggested_by: me,
@@ -124,7 +128,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   // Everything else acts on one open suggestion for this line.
   const { data: s, error: sErr } = await db.from('itinerary_item_suggestions')
-    .select('id, item_id, suggested_by, candidate_ref, status').eq('id', body.suggestionId).maybeSingle();
+    .select('id, item_id, suggested_by, candidate_ref, candidate, status').eq('id', body.suggestionId).maybeSingle();
   if (sErr && suggestionsMissing(sErr)) return notReady();
   if (sErr) {
     console.error('[suggestions] could not read it', { suggestion: body.suggestionId, code: sErr.code });
@@ -183,14 +187,17 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // shut that day, or left the map, is not put on the plan on the strength
   // of a suggestion made last week.
   const places = await menuFor(db, lc.plan);
-  const place = candidateFor(lc, places, s.candidate_ref);
+  const snap = (s.candidate && typeof s.candidate === 'object' ? s.candidate : {}) as { free?: unknown; title?: unknown };
+  const place = candidateFor(lc, places, s.candidate_ref, { anyType: snap.free === true });
   if (!place) {
     return NextResponse.json({
       code: 'not_offered',
       error: "That place can't go on this line any more — it may not be open then, or it is already on the plan. Nothing was changed.",
     }, { status: 409 });
   }
-  const swapped = await swapLine(ctx, lc, places, place, 'suggestion', { suggestionId: String(s.id) });
+  const swapped = await swapLine(ctx, lc, places, place, 'suggestion', {
+    suggestionId: String(s.id), title: typeof snap.title === 'string' ? snap.title : null,
+  });
   if (!swapped.ok) return swapped;
   // The line has changed; the suggestion is marked after it, so a failure
   // here leaves an applied place under an open card rather than a card

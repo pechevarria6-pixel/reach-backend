@@ -2,7 +2,7 @@
 // Read by every route that says what somebody owes — funding, participation,
 // the reminder email and the ledger — so none of them can quietly forget it.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Skip } from './money.ts';
+import { canSkip, type Skip } from './money.ts';
 import { isSoloPlan } from './booking/approval.ts';
 
 /** PostgREST's code for a table that does not exist: the migration has not run. */
@@ -52,4 +52,57 @@ export async function partySize(
   // cleared after a join priced for one while funding split between two.
   if (isSoloPlan(plan, count ?? 1)) return 1;
   return Math.max(1, count ?? 1);
+}
+
+// ─── "I'll drive / already have a flight" ────────────────────────────────
+// Owner decision 8 (2026-09-25): somebody driving, or already holding a
+// seat, comes off the group's flight — never the flight off the plan. It is
+// an item_optouts row on the flight booking, the same row a skipped dinner
+// is, so partyFor (lib/booking/resize.ts) prices the flight again for the
+// people still on it and sharesWithSkips splits that fare among them only.
+// The generator counts it too (drivingCount: "N flying, M driving").
+//
+// Somewhere to stay is still the trip: a room is shared, and one person
+// leaving does not make it cheaper for anybody else.
+//
+// Like every opt-out it closes the moment anybody pays — and a seat that is
+// held or bought is somebody's seat, so only a proposed flight can lose one.
+
+/** What somebody can come off: a dinner, a show, a day out — or the flight. */
+export function canOptOut(vertical: unknown): boolean {
+  return canSkip(vertical) || vertical === 'flight';
+}
+
+/** A flight still only proposed: nobody holds or has bought a seat on it. */
+const FLIGHT_OPEN = new Set(['awaiting_approval']);
+
+export interface OptOutAsk {
+  vertical: unknown;
+  status: unknown;
+  anyonePaid: boolean;
+}
+
+/**
+ * Why sitting this out (or coming back in) is refused, or null when it may
+ * go ahead. The last person off a booking is the route's to check, since it
+ * needs the group.
+ */
+export function optOutRefusal(a: OptOutAsk): { status: number; error: string } | null {
+  if (!canOptOut(a.vertical)) {
+    return { status: 400, error: "Everyone's in for somewhere to stay." };
+  }
+  if (a.anyonePaid) {
+    return { status: 409, error: "Someone has already paid, so who's in for what is set now." };
+  }
+  if (a.vertical === 'flight' && !FLIGHT_OPEN.has(String(a.status))) {
+    return { status: 409, error: 'The seats on this flight are already held, so who is flying is set now.' };
+  }
+  return null;
+}
+
+/** Said when the last person tries to leave a booking. */
+export function lastOneOut(vertical: unknown): string {
+  return vertical === 'flight'
+    ? "Someone has to be on this flight, so the last person on it can't come off."
+    : 'Someone has to be in for this one.';
 }
