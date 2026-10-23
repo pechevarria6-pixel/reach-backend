@@ -4,11 +4,13 @@
 // its members' answers, the towns they already have plans for, what they
 // said "not for me" to, and where they are starting from.
 //
-// Read-only. Nothing here writes.
+// Read-only. Nothing here writes. The taste profile it reads stays inside
+// the ranking (see Person.profile).
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { latestPerItem, type Feedback, type Verdict } from '../recommendation-memory.ts';
 import { locate } from '../discovery/geocode.ts';
 import { today } from '../calendar.ts';
+import { readProfile } from '../taste-profile.ts';
 import { homeTownOf, milesBetween, plannedKeys, startingAirport, type Candidate, type Person, type Taste } from './trip-picks.ts';
 
 /** The quiz columns a member's answers are read from. Never returned to anybody. */
@@ -111,6 +113,13 @@ export async function personFor(
     if (home) from = homeCity;
   }
 
+  // What the daily distill learned about them (lib/taste-profile.ts). Only
+  // when they have not turned personalised recommendations off — an absent
+  // answer is on, as Profile shows it — and null on any failure, which is
+  // the ranking Home had before the profile existed. Never returned to
+  // anybody: pickTrips reads it to order towns and puts none of it on a card.
+  const profile = row.consent_personalized === false ? null : await readProfile(db, userId);
+
   // Their country is the nearest town we know's, which is enough to tell a
   // flight abroad from one at home.
   const nearest = home
@@ -128,6 +137,7 @@ export async function personFor(
       group,
       planned: plannedKeys(plans, today()),
       dismissed,
+      profile,
     },
     from,
   };

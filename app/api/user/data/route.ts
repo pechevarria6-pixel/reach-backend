@@ -3,6 +3,7 @@ import { requireUser, isFail } from '@/lib/auth';
 import { stripe } from '@/lib/stripe';
 import { sendDeletionConfirmation } from '@/lib/email';
 import { refreshProfile } from '@/lib/quiz-store';
+import { purgeProfile } from '@/lib/taste-profile';
 
 // GET — download all user data (GDPR Article 20)
 export async function GET() {
@@ -90,6 +91,12 @@ export async function DELETE(req: NextRequest) {
     console.error('[user/data] deletion requested but the account was not marked', { user: user.id, code: marked.code });
     return NextResponse.json({ error: "We couldn't schedule that — please try again" }, { status: 500 });
   }
+
+  // The inferred taste profile goes now, not in thirty days: it is something
+  // we worked out about them, not something they gave us to keep. A failure
+  // is logged inside and swept by the next daily distill; it does not undo a
+  // deletion that has already been recorded.
+  await purgeProfile(supabase, user.id, 'user/data');
 
   if (user.stripe_customer_id) {
     // Said out loud rather than swallowed: a customer record left behind at

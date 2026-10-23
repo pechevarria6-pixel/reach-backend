@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Webhook } from 'svix';
 import { createServerClient } from '@/lib/supabase';
 import { stripe } from '@/lib/stripe';
+import { purgeProfile } from '@/lib/taste-profile';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -119,6 +120,9 @@ export async function POST(req: NextRequest) {
       // record here is never scheduled for removal and nothing will come
       // back to ask — so Stripe's retry is worth provoking.
       if (scheduled) console.error('[webhooks/clerk] account deleted at Clerk but not scheduled here', { user: user.id, code: scheduled.code });
+      // The inferred taste profile goes now, as it does from Profile's own
+      // delete (app/api/user/data). Logged inside if it fails.
+      await purgeProfile(supabase, user.id, 'webhooks/clerk');
       if (user.stripe_customer_id) {
         try { await stripe.customers.del(user.stripe_customer_id); }
         catch (e) { console.error('[webhooks/clerk] could not delete the Stripe customer', { user: user.id, error: e instanceof Error ? e.message : 'unknown' }); }

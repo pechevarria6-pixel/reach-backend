@@ -12,7 +12,7 @@ export default function PrivacyPage() {
   return (
     <main>
       <h1>Privacy</h1>
-      <p className="lg-meta">Last updated 12 September 2026 · Reach (alcanzar.io)</p>
+      <p className="lg-meta">Last updated 23 October 2026 · Reach (alcanzar.io)</p>
 
       <p>
         Reach helps a group plan and pay for a trip together. This page describes exactly what
@@ -25,6 +25,7 @@ export default function PrivacyPage() {
         <li><strong>What you plan.</strong> Groups you belong to, plans, dates, budgets, votes, itineraries and invitations you send.</li>
         <li><strong>Travel documents, if you add them.</strong> Passport number, TSA PreCheck (KTN) and Global Entry number, along with loyalty programme membership numbers. These are optional and the app works without them.</li>
         <li><strong>Payments.</strong> Amounts, status and dates. Card numbers are handled entirely by Stripe and never reach Reach&rsquo;s servers or database.</li>
+        <li><strong>What you do in the app.</strong> What you mark as done or not for you, the answers you give for each trip, the dates you offer and what gets booked are used for your personalised recommendations. It is never shown to other members, it stops when you turn personalised recommendations off, and it is deleted as soon as you ask for your account to be deleted.</li>
         <li><strong>Approximate location, only if you allow it.</strong> Used to show nearby events and prefill a departure city. It is requested by your browser and you can refuse; the app degrades to generic suggestions.</li>
       </ul>
 

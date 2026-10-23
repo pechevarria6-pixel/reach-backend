@@ -16,6 +16,9 @@
 // six months of bad itineraries. The prompt says so, and the answer is read
 // back and refused if it names anything (lib/playbooks.ts → namedThings).
 //
+// The same daily run also distils each person's taste profile
+// (lib/taste-profile.ts) — database work only, reported under `taste`.
+//
 // Runs on a schedule (see vercel.json). Can also be triggered by hand with
 // the same secret, which is how you check what it is producing:
 //
@@ -28,6 +31,7 @@ import {
   PlaybookSchema, PLAYBOOK_JSON_SCHEMA, researchPrompt, nameCorrection,
   namedThings, normaliseAllocation, expiresAt, startOfLocalDay, positiveInt,
 } from '@/lib/playbooks';
+import { distillAll } from '@/lib/taste-profile';
 
 export const dynamic = 'force-dynamic';
 // A handful of model calls back to back. Generous, but bounded: a stuck run
@@ -51,6 +55,10 @@ const MAX_TOKENS = 4000;
 // leaves its rows marked as being worked on, and with eleven rows in the
 // table one stranded row is a kind of trip that never gets written at all.
 const STALE_CLAIM_MS = 30 * 60_000;
+
+// The taste distill's share of the run (see below). A minute is far more
+// than today's few dozen signal rows need, and the playbooks keep the rest.
+const TASTE_BUDGET_MS = 60_000;
 
 function authorised(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -77,10 +85,20 @@ export async function GET(req: NextRequest) {
   const dailyCap = positiveInt(process.env.KNOWLEDGE_DAILY_CAP, CAP_DEFAULT);
   const report: Outcome[] = [];
 
+  // ── Taste profiles ───────────────────────────────────────────────────
+  // Folded in here rather than given a cron of its own: Hobby runs each
+  // vercel.json entry once a day and there is no room for another. It is
+  // database work only — no model call, no spend — so it runs first, inside
+  // a budget that leaves the playbooks the rest of the run, and it never
+  // throws: a bad distill is a line in this report, not a missing playbook.
+  const taste = await distillAll(db, { budgetMs: TASTE_BUDGET_MS });
+  console.log('[cron/knowledge] taste', JSON.stringify(taste));
+
   const answer = (
-    body: Record<string, unknown>,
+    reply: Record<string, unknown>,
     status = 200,
   ) => {
+    const body = { ...reply, taste };
     if (!asText) return NextResponse.json(body, { status });
     const rows = report.map(r => `${r.kind.padEnd(22)} ${r.status.padEnd(10)} ${r.detail ?? ''}`.trimEnd());
     return new NextResponse([...rows, rows.length ? '' : null, JSON.stringify(body)].filter(v => v !== null).join('\n'), {

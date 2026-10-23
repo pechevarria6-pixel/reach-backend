@@ -28,6 +28,7 @@ import { vetoBreach } from '../vetoes.ts';
 import { tasteFrom, type Profile } from '../discovery/taste.ts';
 import { nameKey } from '../discovery/regions.ts';
 import { DIALS, INTEREST_ARCHETYPE, publicProfile, type ArchetypeKey, type DialKey } from '../traveler-profile.ts';
+import type { TasteProfile } from '../taste-profile.ts';
 
 // ─── The shapes ─────────────────────────────────────────────────────────
 
@@ -112,6 +113,12 @@ export interface Person {
   planned: Planned;
   /** Candidate keys they said "not for me" to. */
   dismissed: Set<string>;
+  /**
+   * Their distilled taste profile (lib/taste-profile.ts), when one exists and
+   * they have not turned personalisation off. It only reorders: nothing on a
+   * card is ever drawn from it (see inferredOf).
+   */
+  profile?: TasteProfile | null;
 }
 
 export interface TripPick {
@@ -979,6 +986,38 @@ export function interestsOf(person: Pick<Person, 'me' | 'group'>, vetoes: string
   return { mine, theirs };
 }
 
+/**
+ * What the taste profile changes about the ranking, and nothing else.
+ *
+ * `boost`: kinds of place the profile learned they like that the quiz never
+ * said — the pottery studio they marked "done", the dinners every night out
+ * asked for. They lift a town that holds them, and are never named on the
+ * card: the card's "matches your …" line is only ever what they told the
+ * quiz (matchedLine), and the profile is never shown to anybody.
+ *
+ * `damp`: kinds they said "not for me" to. An explicit avoid beats a
+ * positive, so a quiz answer the profile has an avoid for counts half. It is
+ * not dropped — what they said in the quiz is still true of them, and the
+ * card may still say it matched.
+ */
+export interface Inferred { boost: Map<string, number>; damp: Set<string> }
+
+const MAX_INFERRED = 6;
+
+export function inferredOf(profile: TasteProfile | null | undefined, mine: string[], theirs: string[], vetoes: string[]): Inferred | null {
+  if (!profile) return null;
+  const said = new Set([...mine, ...theirs]);
+  const avoid = profile.avoid ?? {};
+  const boost = new Map<string, number>();
+  for (const [i, v] of Object.entries(profile.interests ?? {})) {
+    if (boost.size >= MAX_INFERRED) break;
+    if (said.has(i) || avoid[i] != null || !(v > 0) || vetoBreach(i, vetoes)) continue;
+    boost.set(i, Math.min(1, v));
+  }
+  const damp = new Set(Object.keys(avoid));
+  return boost.size || damp.size ? { boost, damp } : null;
+}
+
 interface Scored {
   c: Candidate; band: Band; miles: number; t: Tally; h: Holdings; score: number; matched: string[];
   /** The town the card names: the candidate, or the folded town they live in. */
@@ -1022,24 +1061,31 @@ function crowdAverse(lean: Leaning, vetoes: string[]): Leaning {
  * kind is drawn to. The log is deliberate: a city with two thousand
  * restaurants is not a hundred times the dinner of a town with twenty.
  */
-export function scoreOf(t: Tally, c: Candidate, band: Band, miles: number, mine: string[], theirs: string[], lean: Leaning): { score: number; matched: string[] } {
+export function scoreOf(t: Tally, c: Candidate, band: Band, miles: number, mine: string[], theirs: string[], lean: Leaning, inferred: Inferred | null = null): { score: number; matched: string[] } {
   // What each shared interest added, so the card can lead with the ones
   // that did most to choose the town rather than whichever was ticked first.
   const adds: Array<{ i: string; w: number }> = [];
   let score = 0;
+  const damped = (i: string) => (inferred?.damp.has(i) ? 0.5 : 1);
   mine.forEach((i, idx) => {
     const n = t.byInterest.get(i) ?? 0;
     if (!n) return;
-    const w = Math.max(0.5, 1 - idx * 0.06) * Math.log2(1 + n);
+    const w = damped(i) * Math.max(0.5, 1 - idx * 0.06) * Math.log2(1 + n);
     adds.push({ i, w });
     score += w;
   });
   for (const i of theirs) {
     const n = t.byInterest.get(i) ?? 0;
     if (!n) continue;
-    const w = 0.5 * Math.log2(1 + n);
+    const w = damped(i) * 0.5 * Math.log2(1 + n);
     adds.push({ i, w });
     score += w;
+  }
+  // What the profile learned: weighted below anything they said, and kept
+  // out of `adds`, so it can choose a town but never be named on its card.
+  for (const [i, v] of inferred?.boost ?? []) {
+    const n = t.byInterest.get(i) ?? 0;
+    if (n) score += 0.4 * v * Math.log2(1 + n);
   }
   const matched = adds.map((a, k) => ({ ...a, k })).sort((a, b) => b.w - a.w || a.k - b.k).map(a => a.i);
   const drawn = (a: Archetype | null, w: number) => {
@@ -1096,6 +1142,7 @@ export function pickTrips(
   const vetoes = vetoesOf(person);
   const sober = anyoneSober(person);
   const { mine, theirs } = interestsOf(person, vetoes);
+  const inferred = inferredOf(person.profile, mine, theirs, vetoes);
   const lean = crowdAverse(leaningOf(person.me), vetoes);
   const longHaulOut = refusesLongFlights(vetoes);
   const tier = partyTier(person);
@@ -1123,7 +1170,7 @@ export function pickTrips(
     // this town's name or any town folded into it.
     const list = person.planned[band === 'night' ? 'nights' : 'trips'];
     if (placesOf(c).some(pl => isPlanned(list, pl, c.country))) continue;
-    const { score, matched } = scoreOf(t, c, band, miles, mine, theirs, lean);
+    const { score, matched } = scoreOf(t, c, band, miles, mine, theirs, lean, inferred);
     const shown = shownPlace(c, person.home);
     scored.push({ c, band, miles, t, h, score, matched, shown, shownMiles: milesBetween(person.home, shown) });
   }
