@@ -200,8 +200,10 @@ test('the create flow sorts by the same kindOf, exempts a group of one, and opts
   assert.match(app, /import \{ kindOf as planKind \} from "@\/lib\/one-active"/);
   // No hand-written restaurant-only kind left anywhere in the client.
   assert.doesNotMatch(app, /const kindOf=t=>t==="restaurant"/);
-  const flow = app.slice(app.indexOf('const activeIn=(g,type,ignore)=>'), app.indexOf('const activeIn=(g,type,ignore)=>') + 400);
-  assert.match(flow, /memberIds\?\.length\?\?1\)<=1\)\?null/);
+  // One shared reading for every path that makes a plan (activePlanIn).
+  assert.match(app, /const activeIn=activePlanIn;/);
+  const flow = app.slice(app.indexOf('function activePlanIn('), app.indexOf('function activePlanIn(') + 400);
+  assert.match(flow, /memberIds\?\.length\?\?1\)<=1\)return null/);
   assert.match(flow, /planKind\(p\.type\|\|"trip"\)===planKind\(type\)/);
   const call = app.slice(app.indexOf('function CallOffPlan('), app.indexOf('function CallOffPlan(') + 800);
   assert.match(call, /planKind\(plan\.type\)==="night"/);
@@ -218,4 +220,16 @@ test('a concert takes the night slot, as the client is now told', () => {
   assert.equal(kindOf('concert'), 'night');
   assert.equal(kindOf('restaurant'), 'night');
   assert.equal(kindOf('weekend'), 'trip');
+});
+
+test('every path that makes a plan asks first and can be refused', () => {
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  const calls = app.match(/savePlanToServer\([^)]*\)/g) || [];
+  assert.ok(calls.length >= 5, `found ${calls.length} calls`);
+  for (const c of calls) {
+    if (/^savePlanToServer\(groupId,plan/.test(c)) continue; // the definition
+    assert.match(c, /onOneActive/, `this call cannot hear a one_active refusal: ${c}`);
+  }
+  // And each asks before anything is made on the phone.
+  assert.ok((app.match(/activePlanIn\(group,np\.type\)/g) || []).length >= 3);
 });

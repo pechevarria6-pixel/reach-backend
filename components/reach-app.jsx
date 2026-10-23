@@ -930,6 +930,21 @@ function TripPicks({push,userLocation,toast,groups}){
   );
 }
 
+// ─── One active trip and one active night out per group ──────────────────
+// The owner's rule (a), 2026-09-25. Every path that makes a plan asks this
+// first, so nothing is created on the phone only to be refused by the
+// server. Same reading as the server (lib/one-active.ts): a concert is a
+// night out, a group of one is never held up, a plan past its dates does not
+// count. The server still answers 409 one_active for a group read stale.
+function activePlanIn(g,type,ignore){
+  if((g?.memberIds?.length??1)<=1)return null;
+  return (g?.plans||[]).find(p=>p.id!==ignore&&!isTempId(p.id)
+    &&planKind(p.type||"trip")===planKind(type)&&(p.status==="planning"||p.status==="voting")&&isLive(p,today()))||null;
+}
+function alreadyPlanningLine(p,g){
+  return `You're already planning ${p.title||"one"} with ${g?.name||"this group"} — here it is`;
+}
+
 function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToProfileSection}){
   // The server has no idea what time it is where you are. Anything that reads
   // the clock waits for the browser rather than guessing and being corrected.
@@ -2156,12 +2171,23 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
       fromDiscover:true,
       expData:exp,
     };
+    const live=activePlanIn(group,np.type);
+    if(live){
+      setSaving(false);setPlanPicker(false);
+      toast(alreadyPlanningLine(live,group));
+      push("planDetail",{planId:live.id,groupId:group.id});
+      return;
+    }
     updateGroup(group.id,g=>({...g,plans:[...g.plans,np]}));
-    const _sp1=savePlanToServer?savePlanToServer(group.id,np):Promise.resolve(null);
+    let other=null;
+    const _sp1=savePlanToServer?savePlanToServer(group.id,np,{onOneActive:id=>{other=id;}}):Promise.resolve(null);
     setSaving(false);
     setPlanPicker(false);
-    toast(exp.title+" added to "+group.name+" 🎉");
-    _sp1.then(_rid=>push("planDetail",{planId:_rid||np.id,groupId:group.id})).catch(()=>push("planDetail",{planId:np.id,groupId:group.id}));
+    _sp1.then(_rid=>{
+      if(other){push("planDetail",{planId:other,groupId:group.id});return;}
+      toast(exp.title+" added to "+group.name+" 🎉");
+      push("planDetail",{planId:_rid||np.id,groupId:group.id});
+    }).catch(()=>push("planDetail",{planId:np.id,groupId:group.id}));
   };
 
   // "Confirm Booking Request" used to call setBookStep(2) and a toast. That
@@ -2197,10 +2223,21 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
       }],
       votes:{},options:[],fromDiscover:true,expData:exp,
     };
+    const live=activePlanIn(group,np.type);
+    if(live){
+      setSubmitting(false);
+      toast(alreadyPlanningLine(live,group));
+      push("planDetail",{planId:live.id,groupId:group.id});
+      return;
+    }
     updateGroup(group.id,g=>({...g,plans:[...g.plans,np]}));
     let planId=np.id;
+    let other=null;
     try{
-      planId=(savePlanToServer?await savePlanToServer(group.id,np):null)||np.id;
+      planId=(savePlanToServer?await savePlanToServer(group.id,np,{onOneActive:id=>{other=id;}}):null)||np.id;
+      // Refused: this group is already planning one. savePlanToServer took the
+      // copy off and said so; open theirs, and ask no venue for a table.
+      if(other){setSubmitting(false);push("planDetail",{planId:other,groupId:group.id});return;}
       if(!isTempId(planId)){
         const r=await fetch("/api/bookings",{
           method:"POST",headers:{"Content-Type":"application/json"},
@@ -6970,9 +7007,24 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       soloMode:(group.memberIds||[]).length<=1,
       aiGenerated:true,aiData:trip,
     };
+    const live=activePlanIn(group,np.type);
+    if(live){
+      toast(alreadyPlanningLine(live,group));
+      push("planDetail",{planId:live.id,groupId});
+      return;
+    }
     updateGroup(groupId,g=>({...g,plans:[...g.plans,np]}));
     toast(trip.destination+" saved! Building itinerary… ✨");
-    const _sp2=savePlanToServer?savePlanToServer(groupId,np):Promise.resolve(null);
+    // Refused by the server (the group read here was stale): open theirs and
+    // stop, rather than building days onto a copy that was taken off.
+    let other=null;
+    const _sp2=savePlanToServer?savePlanToServer(groupId,np,{onOneActive:id=>{other=id;}}):Promise.resolve(null);
+    const refused=()=>{
+      if(!other)return false;
+      setBuildingItinerary(null);
+      push("planDetail",{planId:other,groupId});
+      return true;
+    };
 
     // Fetch full itinerary in background
     setBuildingItinerary(trip.id);
@@ -6983,6 +7035,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       // instant rather than another half-minute of waiting.
       if(trip.itinerary?.length){
         realId=await _sp2.catch(()=>null)||np.id;
+        if(refused())return;
         // No airfare and no hotel on an evening out.
         // The evening is the plan. The day around it is an offer, kept off
         // the itinerary until somebody asks for it — "let's make a day of
@@ -7018,6 +7071,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       // replaced — so the itinerary belonged to a plan that no longer existed
       // and was never saved anywhere.
       realId=await _sp2.catch(()=>null)||np.id;
+      if(refused())return;
       if(res.ok){
         const data=await res.json();
         const itinerary=[...fixedCostRows(trip),...itineraryRows(data.itinerary)];
@@ -7896,8 +7950,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   // server and the index read: a concert is a night out, not a trip. And
   // never for a group of one — the server exempts it (refusalFor), because
   // Lisbon in December must not stop the same person planning Tokyo in March.
-  const activeIn=(g,type,ignore)=>((g?.memberIds?.length??1)<=1)?null:(g?.plans||[]).find(p=>p.id!==ignore&&!isTempId(p.id)
-    &&planKind(p.type||"trip")===planKind(type)&&(p.status==="planning"||p.status==="voting")&&isLive(p,today()))||null;
+  const activeIn=activePlanIn;
   const finish=({ignore=null}={})=>{
     if(!gid||finishing)return;
     const live=activeIn(selGroup,planType||"trip",ignore);
