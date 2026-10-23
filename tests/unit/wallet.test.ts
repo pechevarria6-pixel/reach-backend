@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildWallet, confirmationsOf, flightOf, hotelOf, liveFromAero, localDate, worthAsking,
-  celebrationDue, itineraryEvents, type WalletBookingRow, type CelebrationInput,
+  celebrationDue, itineraryEvents, boughtElsewhere, type WalletBookingRow, type CelebrationInput,
 } from '../../lib/wallet.ts';
 import { getNextAction, type NextActionInput, type NextBooking } from '../../lib/next-action.ts';
 import { itemFromRow } from '../../lib/contracts/itinerary-item.ts';
@@ -218,4 +218,63 @@ test('calendar events carry a confirmation only from a confirmed booking or a ty
   const ics = buildIcs(events, { name: 'Lisbon', now: new Date('2026-10-23T12:00:00Z') });
   assert.match(ics, /DTSTART:20261104T203000/, 'Day 3 at 8:30 PM is the fourth, floating, never the UTC day');
   assert.doesNotMatch(ics, /Sintra/);
+});
+
+// ─── Rows as the real paths write them ──────────────────────────────────
+// tableReservations.book (lib/booking/providers/rest.ts) writes a table
+// hand-off as status 'redirected', mode 'redirect' and provider_ref
+// `RES-<timestamp>` — Reach's own handle, a number no restaurant issued.
+// "I've got it" (POST /api/bookings/[id]/confirmation) then writes status
+// 'confirmed' and the typed number in the same update.
+const resyHandedOff: WalletBookingRow = {
+  id: 'b-resy-real', vertical: 'restaurant', status: 'redirected', mode: 'redirect', provider: 'resy',
+  provider_ref: 'RES-LX3K9A', detail: 'Ramiro · 8:30 PM · 4', itinerary_item_id: 'l-dinner',
+};
+const resyGotIt: WalletBookingRow = { ...resyHandedOff, status: 'confirmed', confirmation_number: 'R-77' };
+const resyWalkIn: WalletBookingRow = { ...resyHandedOff, status: 'confirmed', confirmation_number: null };
+const ticketsGotIt: WalletBookingRow = {
+  id: 'b-tm', vertical: 'event', status: 'confirmed', mode: 'redirect', provider: 'ticketmaster',
+  confirmation_number: 'TM-4411', detail: 'J. Cole', itinerary_item_id: 'l-show',
+};
+
+test('a hand-off\'s provider_ref is never offered as the seller\'s confirmation', () => {
+  assert.deepEqual(confirmationsOf(resyGotIt), [{ label: 'Confirmation number', value: 'R-77', source: 'entered' }]);
+  assert.deepEqual(confirmationsOf(resyWalkIn), [], 'walk-in with no number: no number at all, least of all RES-…');
+  // Reach's own booking of a tour is still the provider's answer.
+  assert.deepEqual(confirmationsOf({ id: 't', vertical: 'activity', status: 'confirmed', mode: 'native', provider: 'viator', provider_ref: 'V-1' }),
+    [{ label: 'Confirmation', value: 'V-1', source: 'provider' }]);
+
+  const events = itineraryEvents({
+    startDate: '2026-11-02',
+    items: [{ id: 'l-dinner', title: 'Dinner at Ramiro', scheduled_time: 'Day 3 · 8:30 PM' }],
+    bookings: [resyGotIt],
+  });
+  assert.equal(events[0].description, 'Confirmation number (typed in on Reach): R-77');
+  assert.doesNotMatch(JSON.stringify(events), /RES-/);
+});
+
+test('a booking finished on the seller\'s site is flagged so once "I\'ve got it" confirms it', () => {
+  for (const r of [resyGotIt, resyWalkIn, ticketsGotIt]) assert.equal(boughtElsewhere(r), true, r.id);
+  assert.equal(boughtElsewhere(duffelConfirmed), false);
+  assert.equal(boughtElsewhere(liteConfirmed), false);
+  const w = buildWallet({ planId: 'p1', bookings: [duffelConfirmed, resyGotIt, ticketsGotIt] });
+  const by = Object.fromEntries(w.entries.map(e => [e.bookingId, e]));
+  assert.equal(by['b-flight'].bookedElsewhere, false);
+  assert.equal(by['b-resy-real'].bookedElsewhere, true);
+  assert.equal(by['b-tm'].bookedElsewhere, true);
+  assert.deepEqual(by['b-tm'].confirmations, [{ label: 'Confirmation number', value: 'TM-4411', source: 'entered' }]);
+});
+
+test('a 💡 day tip on the wrong line is not that event\'s description (f979c880)', () => {
+  const events = itineraryEvents({
+    startDate: '2026-11-02',
+    items: [
+      { id: 'l-spin', title: 'SPIN', scheduled_time: 'Day 1 · 9:00 PM', subtitle: '💡 Get up early and walk between the monuments before the crowds' },
+      { id: 'l-lunch', title: 'Lunch', scheduled_time: 'Day 1 · 1:00 PM', subtitle: 'Ask for the half-smoke' },
+    ],
+    bookings: [],
+  });
+  const by = Object.fromEntries(events.map(e => [e.uid, e]));
+  assert.equal(by['l-spin'].description, null);
+  assert.equal(by['l-lunch'].description, 'Ask for the half-smoke', 'the slot\'s own tip still goes in');
 });

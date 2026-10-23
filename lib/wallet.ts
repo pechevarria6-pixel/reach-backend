@@ -30,6 +30,7 @@
 import { dedupe, bookedClaim, itemTitle, type CheckoutRow } from './checkout.ts';
 import { bookingTracker, type TrackLine } from './plan-steps.ts';
 import { isOrderId } from './booking/duffel-map.ts';
+import { itemNote } from './contracts/itinerary-item.ts';
 import { clockOf, rowWhen, type IcsEvent } from './ics.ts';
 
 export interface WalletBookingRow {
@@ -138,6 +139,17 @@ const handedOff = (r: WalletBookingRow) => (r.mode === 'redirect' || r.status ==
 /** Bought on the seller's site, with the number to show for it. */
 export const gotElsewhere = (r: WalletBookingRow) => handedOff(r) && !!str(r.confirmation_number);
 
+/**
+ * Whether the row was finished on the seller's own site, whatever its status
+ * now. gotElsewhere is the open hand-off with a number (the rule
+ * lib/next-action.ts counts by); this is the wallet's flag. "I've got it"
+ * (POST /api/bookings/[id]/confirmation) writes status 'confirmed' and the
+ * number in one go, so a finished redirect is a confirmed row whose mode is
+ * 'redirect' — Reach did not book it, and the card must not read as if it had.
+ */
+export const boughtElsewhere = (r: WalletBookingRow) =>
+  r.mode === 'redirect' || r.status === 'redirected' || gotElsewhere(r);
+
 /** Whether a row belongs in the wallet at all: confirmed, or bought elsewhere and said so. */
 export function inWallet(r: WalletBookingRow): boolean {
   return r.status === 'confirmed' || gotElsewhere(r);
@@ -151,7 +163,11 @@ export function confirmationsOf(r: WalletBookingRow): WalletConfirmation[] {
   };
   const p = obj(r.response_payload);
   const ref = str(r.provider_ref);
-  if (r.status === 'confirmed') {
+  // A hand-off's provider_ref is Reach's own handle, never the seller's
+  // answer: tableReservations.book writes `RES-<timestamp>` on every table
+  // hand-off, a number no restaurant issued. Reach heard nothing from the
+  // seller on a redirect, so the only number it holds is the one typed in.
+  if (r.status === 'confirmed' && !boughtElsewhere(r)) {
     if (r.vertical === 'flight') {
       add('Booking reference', str(p.bookingReference) ?? str(p.booking_reference), 'provider');
       if (ref && !isOrderId(ref)) add('Booking reference', ref, 'provider');
@@ -237,7 +253,7 @@ export function buildWallet(input: {
       vertical,
       title: itemTitle({ ...r, vertical } as CheckoutRow, fallback),
       provider: str(r.provider),
-      bookedElsewhere: gotElsewhere(r),
+      bookedElsewhere: boughtElsewhere(r),
       confirmations: confirmationsOf(r),
       flight: vertical === 'flight' ? flightOf(r) : null,
       hotel: vertical === 'hotel' ? hotelOf(r) : null,
@@ -370,7 +386,10 @@ export function itineraryEvents(input: {
     if (!when) continue;
     const held = rows.find(inWallet);
     const notes: string[] = [];
-    const sub = str(item.subtitle);
+    // itemNote drops the 💡 day tip older rows carry on the evening line —
+    // the same rule the screen keeps (f979c880: SPIN captioned with a walk
+    // between the monuments).
+    const sub = str(itemNote(item.subtitle));
     if (sub) notes.push(sub);
     const typed = str(item.confirmation_number);
     if (held) {
