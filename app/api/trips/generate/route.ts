@@ -4,9 +4,11 @@ import { datedDays } from '@/lib/calendar';
 import { report } from '@/lib/report';
 import { requireGroupMember, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
+import type { z } from 'zod';
 import {
-  TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA, parseTrips,
+  ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA, parseTrips,
   parseModelJSON, textOf, normalizeTrips, dropFillerDays,
+  type ItineraryDaySchema, type SlotSchema,
 } from '@/lib/trip-schema';
 import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
 import { withoutVetoed, tripBreach } from '@/lib/vetoes';
@@ -23,7 +25,7 @@ import {
 } from '@/lib/group-answers';
 import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
 import { placeFromGoal, nightCityFor, partyFromGoal } from '@/lib/goal';
-import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
+import { actWords, eventFromCache, eventFromProvider, eventFacts, type RealEvent } from '@/lib/discovery/find-event';
 import { realPlacesAmong } from '@/lib/discovery/is-place';
 import { within } from '@/lib/deadline';
 import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
@@ -36,7 +38,7 @@ import { ideasFrom, findDecision, isOrganiser, daysDecision, ideasReadyCopy, typ
 import { readSavedIdeas, saveIdeas, attachDays, clearVotes, membersOf, organiserOf, organisersOf, firstName } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
-import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, readBackCoherence, type RealPlace } from '@/lib/discovery/real-places';
+import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, readBackCoherence, type RealPlace, type CoherenceNote } from '@/lib/discovery/real-places';
 import { track, isEventName } from '@/lib/track';
 
 /** Logged when a stop is dropped for being nowhere near the rest of its day. */
@@ -854,6 +856,39 @@ export async function POST(req: NextRequest) {
       ...foodGap.map(w => `We hold no verified ${w} place here. Do not describe any stop as ${w} food or promise ${w} anywhere.`),
     ].join('\n');
     if (foodGap.length) console.error('[trips itinerary] no verified place for the food asked for', { destination, city: tripCity || nightCity, wanted: foodGap });
+
+    // ── Nothing goes out that we cannot stand behind ────────────────
+    // The prompt asks the model to name only verified places, and whatever
+    // comes back is read back against the same list (readBackDays). The
+    // town's own name, and a real ticketed venue from a listing, are real
+    // without being on a map-built menu, so they are allowed through by
+    // name.
+    // For an evening, the option's title is the model's own earlier words —
+    // "Greek Dinner & Jazz at The Pit" — and letting it vouch for itself is
+    // how a place nobody verified reached a plan's name. The city does the
+    // vouching instead. For a trip the destination IS the town, and stays.
+    const baseVouchers = (): string[] => [
+      isNightPlan ? nightCity : destination, tripCity, fixedPlace, realEvent?.venue, realEvent?.city, realEvent?.title,
+      // What is on at a verified venue, read off its own page, is as
+      // verified as the venue: "R&B Rewind Millennial Edition" was being
+      // softened into "a local spot" though it came from the menu itself.
+      ...realPlaces.flatMap(p => (p.whatsOn ?? []).map(w => w.split(' — ')[0])),
+    ].filter((v): v is string => typeof v === 'string' && v.length > 0);
+    const readBackEnv = (vouchers: string[], quiet = false): ReadBackEnv => ({
+      realPlaces, vouchers, destination, isNightPlan, realEvent, nightPrefs,
+      vetoes: allVetoesHere, planForLog: detailTripId ? String(detailTripId) : groupPlan?.id ?? null, quiet,
+      onDroppedLocation: (note) => {
+        // Added to EVENT_NAMES in lib/track.ts by its own change; until
+        // that lands this writes nothing rather than a name the table
+        // would refuse. The log line is the record either way.
+        if (isEventName(DROPPED_LOCATION)) {
+          void track(supabase, DROPPED_LOCATION, {
+            userId: ctx.user.id, groupId: String(groupId), planId: groupPlan?.id ?? null,
+            props: { day: note.day, slot: note.slot, km: note.km, reason: note.reason, night: isNightPlan },
+          });
+        }
+      },
+    });
     // The calendar, not just a count: weekly nights have a weekday, and the
     // model was being asked to honour one it had never been told.
     // The shape of this kind of plan, from the playbooks that were written
@@ -1099,365 +1134,23 @@ you have made up; a day that is simply a good day is allowed to be one.`;
           returned: parsed?.itinerary?.length, kept: days.length,
         });
       }
-      // ── Nothing goes out that we cannot stand behind ────────────────
-      // The prompt asks the model to name only verified places. Asking has
-      // a good success rate, and a good success rate is not the standard:
-      // one invented restaurant in fifty is still somebody standing outside
-      // a laundrette at eight in the evening.
-      //
-      // So the output is read back against the same list the prompt was
-      // given. A name nothing vouches for is softened to what we can
-      // actually support — the claim goes, the shape of the evening stays.
-      // The town's own name, and a real ticketed venue from a listing, are
-      // real without being on a map-built menu, so they are allowed through
-      // by name.
-      // For an evening, the option's title is the model's own earlier words —
-      // "Greek Dinner & Jazz at The Pit" — and letting it vouch for itself is
-      // how a place nobody verified reached a plan's name. The city does the
-      // vouching instead. For a trip the destination IS the town, and stays.
-      const vouchers: string[] = [
-        isNightPlan ? nightCity : destination, tripCity, fixedPlace, realEvent?.venue, realEvent?.city, realEvent?.title,
-        // What is on at a verified venue, read off its own page, is as
-        // verified as the venue: "R&B Rewind Millennial Edition" was being
-        // softened into "a local spot" though it came from the menu itself.
-        ...realPlaces.flatMap(p => (p.whatsOn ?? []).map(w => w.split(' — ')[0])),
-      ].filter((v): v is string => typeof v === 'string' && v.length > 0);
+      const vouchers = baseVouchers();
       // ── The ticket, carried through to something you can press ───────
-      // The listing gave us a venue, a date and the page that sells the
-      // tickets, and until now only the first two survived: the URL was
-      // read as a boolean and thrown away. So the evening said "See The
-      // Milk Carton Kids live at 9:30 CLUB" above a button reading "Reserve
-      // ahead", which is not a thing anybody can do. Reach cannot sell a
-      // ticket; it can hand somebody straight to the page that does, and
-      // that is a complete answer rather than a dead end.
-      //
-      // Attached to the slot that actually names the event rather than to a
-      // fixed position, because which slot holds it is the model's choice.
-      // A picture is attached below from a row or a listing, never taken
-      // from the model: whatever it wrote into these is cleared first.
-      for (const day of days) {
-        for (const slot of [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])]) {
-          if (slot) { slot.place_photo = null; slot.place_photo_credit = null; slot.place_photo_of = null; slot.place_photo_link = null; }
-        }
-      }
-      if (realEvent?.url) {
-        const marks = [realEvent.venue, realEvent.title].filter(Boolean).map(v => normalise(String(v)));
-        let attached = false;
-        for (const day of days) {
-          for (const slot of [day.evening, day.afternoon, day.morning, ...(day.daytime ?? [])]) {
-            if (!slot || attached) continue;
-            const here = normalise(slot.plan);
-            if (!marks.some(m => m && here.includes(m))) continue;
-            slot.ticket_url = realEvent.url;
-            slot.venue = realEvent.venue ?? null;
-            // The act's picture, from the same listing that sold the ticket.
-            // And what it is of: the line names the venue, the picture is
-            // usually the band.
-            if (realEvent.photo) { slot.place_photo = realEvent.photo.url; slot.place_photo_credit = realEvent.photo.credit; slot.place_photo_of = realEvent.photo.of ?? null; }
-            attached = true;
-          }
-        }
-        if (!attached) {
-          console.error('[trips itinerary] a real event was found but no slot names it', {
-            title: realEvent.title, venue: realEvent.venue,
-          });
-        }
-      }
-
-      // ── Geography is real even when we hold no record of it ─────────
-      // A beach, a river and a neighbourhood are not businesses, so they are
-      // never in a venue table built from business tags. Softening them
-      // turned "Sunset from Playa Los Muertos" into "Sunset from a local
-      // spot", which is not an improvement on anything.
-      //
-      // The same map that lists the restaurants lists the beach, so the
-      // names nothing else vouches for are asked about before they are
-      // softened. Strictly time-boxed: Overpass taught this lesson at
-      // seventy-two seconds, and a check that cannot answer in time must
-      // cost the traveller nothing. Falling back means softening, which is
-      // what happened before this existed.
-      const candidates = [...new Set(days.flatMap(day =>
-        [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])]
-          .filter(Boolean)
-          .flatMap(slot => [...unverifiedNames(slot!.plan, realPlaces, vouchers), ...unverifiedNames(slot!.tip ?? '', realPlaces, vouchers)]),
-      ))];
-      let geography = new Set<string>();
-      if (candidates.length) {
-        const at = await locate(tripCity || destination, tripCountry ?? null).catch(() => null);
-        if (at) {
-          // Scaled to the plan. Ten names in eight seconds is enough for an
-          // evening and not for a fortnight: a thirteen-day Moab itinerary
-          // ran out of budget and a street name was softened to "a local
-          // spot", leaving "walk the length of a local spot" on the screen.
-          // Still bounded — a check that cannot answer in time costs the
-          // traveller nothing and the fallback is what we did before.
-          const room = Math.min(40, Math.max(10, days.length * 3));
-          geography = await within(
-            realPlacesAmong(candidates.slice(0, room), { lat: at.lat, lng: at.lng }),
-            Math.min(25000, 6000 + room * 700), 'checking the landmarks',
-          ).catch(() => new Set<string>());
-        }
-        console.log('[trips itinerary] names nothing held vouched for', {
-          asked: candidates.length, real_places: [...geography],
+      // See attachTicket. A picture is attached from a row or a listing,
+      // never taken from the model: whatever it wrote into these is
+      // cleared first.
+      clearPhotos(days);
+      if (realEvent?.url && !attachTicket(days, realEvent)) {
+        console.error('[trips itinerary] a real event was found but no slot names it', {
+          title: realEvent.title, venue: realEvent.venue,
         });
       }
-      vouchers.push(...geography);
+      vouchers.push(...await vouchedGeography(days, realPlaces, vouchers, { place: tripCity || destination, country: tripCountry ?? null }));
 
-      let softened = 0;
-      // Nothing generated here books a bed. A slot is a plan, a cost, a
-      // booking mode and a payment note — there is no accommodation in the
-      // schema at all, and the accommodation figure on a trip option is a
-      // budget line, a number to plan against, not a reservation. So the rule
-      // needs no condition: a generated day may never write somebody into a
-      // room, because at this point nobody has one.
-      const invented = new Set<string>();
-      const stripped = new Set<string>();
-      for (const day of days) {
-        const slots = [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])];
-        for (const slot of slots) {
-          if (!slot) continue;
-          // What this slot actually points at, if anything we handed over.
-          const cited = citedPlace(slot.place_ref, realPlaces);
-
-          // "Reach will book this" has to be something Reach can do. The
-          // prompt forbids claiming it for a table and the screen guessed
-          // from the slot's type; a resolved place answers it outright.
-          // hasTicket is about THIS slot, not the plan.
-          //
-          // It was `!!realEvent?.url`, so once a plan had a real gig in it
-          // every slot claiming "reach" kept the claim — and "Reach will
-          // book this" appeared over a restaurant table, which is the exact
-          // promise the whole check exists to stop. The ticket is attached
-          // above, so the slot can simply be asked.
-          // The place's own site, so somebody can actually go and book it.
-          //
-          // Every one of the 386 verified venues carries a website and not
-          // one of them reached a screen: a trip's itinerary named real
-          // restaurants and gave no way to reserve any of them. The row we
-          // matched has the address; it just was never passed on.
-          if (cited?.url && !slot.ticket_url) {
-            slot.place_url = cited.url;
-            slot.venue = slot.venue ?? cited.name;
-          }
-          // A picture of the place this line names — from the row it cited,
-          // with its credit, and only that row. A slot that cites nothing
-          // gets no picture, however confidently it names somewhere.
-          if (cited?.photo && !slot.ticket_url) {
-            slot.place_photo = cited.photo.url;
-            slot.place_photo_credit = cited.photo.credit;
-            slot.place_photo_of = cited.name ?? null;
-            slot.place_photo_link = cited.photo.link ?? null;
-          }
-          // What is on there, read off the venue's own page. Carried on the
-          // slot rather than left to the model to mention, because it is the
-          // most useful thing we hold about a place and it must not depend
-          // on whether the sentence happened to include it. If we do not
-          // tell somebody there is a quiz on Wednesday, they do not know.
-          if (cited?.whatsOn?.length) slot.whats_on = cited.whatsOn.slice(0, 2).join(' · ');
-
-          const honest = bookingFor(slot.booking, cited, !!slot.ticket_url);
-          // A table to book gets the way to book it: the venue's own booking
-          // page when it names one, and its number either way. Both were
-          // held and neither reached the line (audit #50).
-          if (cited && honest === 'ahead' && !slot.ticket_url) {
-            if (cited.reserveUrl) { slot.place_url = cited.reserveUrl; slot.venue = slot.venue ?? cited.name; }
-            if (cited.phone) slot.place_phone = cited.phone;
-          }
-          if (honest !== slot.booking) {
-            console.error('[trips itinerary] downgraded a booking claim we cannot keep', {
-              destination, claimed: slot.booking, kept: honest, place: cited?.name ?? null,
-            });
-            slot.booking = honest;
-          }
-
-          // Nobody is written into a room nobody booked. The prompt says so
-          // now; this is the half that does not depend on the prompt being
-          // obeyed. A whole Moab plan shipped opening with "check into the
-          // hotel" on a trip with no hotel item and no hotel booking.
-          // A line that describes the slot instead of filling it. Two of
-          // these reached real plans — "This is the slot for the thing Peter
-          // already has in mind" — sitting where the gig should be. Unlike a
-          // stay claim there is nothing in it to rescue: it is about the
-          // form all the way through, and writing the evening ourselves is
-          // the thing we do not do. The slot goes.
-          if (isFiller(slot.plan)) {
-            console.error('[trips itinerary] dropped a slot that described itself', {
-              destination, phrase: fillerClaim(slot.plan), slot: String(slot.plan).slice(0, 80),
-            });
-            invented.add(String(fillerClaim(slot.plan)));
-            slot.plan = '';
-          }
-
-          const stay = withoutStayClaim(String(slot.plan ?? ''));
-          if (stay.removed) {
-            console.error('[trips itinerary] removed a stay nobody booked', {
-              destination, claim: stay.removed, kept: stay.text === null ? '(whole slot)' : 'clause',
-            });
-            invented.add(stay.removed);
-            // Null means nothing true was left. Rather than invent a
-            // replacement — which is how the hotel got here in the first
-            // place — the slot loses the sentence that was not true.
-            slot.plan = stay.text ?? '';
-          }
-
-          const clean = withoutUnverified(slot.plan, realPlaces, vouchers);
-          if (clean.removed.length) {
-            softened++;
-            clean.removed.forEach(n => stripped.add(n));
-            // Softening works when the name is the object of the sentence,
-            // not its subject: "Dusk session at Wine & Design…" became "a
-            // local spot at Dusk session at Wine & Design…" on a real row.
-            // The tip already had this check; the line itself did not. A
-            // line that would read as nonsense goes, like a filler slot.
-            if (wouldMangle(slot.plan, clean.removed)) {
-              console.error('[trips itinerary] dropped a line softening would have mangled', {
-                destination, removed: clean.removed.slice(0, 3), slot: String(slot.plan).slice(0, 80),
-              });
-              slot.plan = '';
-            } else {
-              slot.plan = clean.text;
-            }
-            // A reference to a place we just removed is not a reference.
-            slot.place_ref = null;
-          }
-          // Text that came back broken — "…near the pub.morplinsert1" —
-          // is cut back to its last whole sentence, or dropped.
-          if (slot.plan) {
-            const whole = beforeCorruption(String(slot.plan));
-            if (whole !== slot.plan) {
-              console.error('[trips itinerary] cut a line that came back broken', {
-                destination, at: corruptionAt(slot.plan), slot: String(slot.plan).slice(0, 80),
-              });
-              slot.plan = whole ?? '';
-            }
-          }
-          // A live run returned "http://null" here. It resolves to nothing,
-          // so it was harmless, and it is still not a citation — it must not
-          // travel on as though it might be one.
-          if (slot.place_ref && !cleanRef(slot.place_ref)) {
-            console.error('[trips itinerary] discarded a place_ref that is not one', { got: String(slot.place_ref).slice(0, 40) });
-            slot.place_ref = null;
-          }
-          // The slot's own tip, read back like its line. A slot whose line
-          // went has nothing for a tip to be about, so the tip goes too.
-          if (!slot.plan) slot.tip = '';
-          const tip = withoutUnverified(String(slot.tip ?? ''), realPlaces, vouchers);
-          if (tip.removed.length) {
-            tip.removed.forEach(n => stripped.add(n));
-            // Softening works when the name is the object of the sentence.
-            // When it is the subject it does not: a live run produced "a local
-            // spot stays lively after evening shows let out", which is not a
-            // sentence anybody wrote. A tip is flavour, so it is dropped rather
-            // than mangled — and a tip naming a business was already against
-            // the rule that a tip describes a place, not what a business does.
-            slot.tip = wouldMangle(String(slot.tip ?? ''), tip.removed) ? '' : tip.text;
-          }
-          // A tip is flavour: broken, it goes.
-          if (slot.tip && corruptionAt(slot.tip) >= 0) {
-            console.error('[trips itinerary] dropped a tip that came back broken', {
-              destination, tip: String(slot.tip).slice(0, 80),
-            });
-            slot.tip = '';
-          }
-        }
-      }
-
-      // ── Does each line describe the place it names, where it is ─────
-      // The names above are all real by now; this reads what the lines say
-      // ABOUT them. Plan f979c880 named SPIN, a cocktail bar on F Street,
-      // and said it was good for dancing, under a tip about the monuments
-      // on the Mall — every name vouched for, and the evening described a
-      // different place. See readBackCoherence (lib/discovery/real-places).
-      // "Make a day of it" is for an evening somebody might stretch. The prompt
-      // says a person who only wanted a drink is never shown it; this is the
-      // half that does not depend on the prompt being obeyed. Cleared before
-      // the read-back below, so offers about to be thrown away have no say in
-      // which of the evening's own stops survive.
-      if (isNightPlan) {
-        const kinds = ((nightPrefs.kind || []) as unknown[]).map(k => String(k).toLowerCase());
-        const drinksOnly = kinds.length > 0 && kinds.every(k => /drink|bar|pub|cocktail|wine|beer/.test(k));
-        const quiet = /chill|low|quiet|easy|mellow/i.test(String(nightPrefs.energy || ''));
-        if (drinksOnly || quiet) for (const d of days) (d as { daytime?: unknown[] }).daytime = [];
-      }
-      // The listing vouches for the gig: the slot holding it (ticket_url,
-      // attached above) is read against the event as well as the row, keeps
-      // the act if it is rewritten, and anchors the evening's geography.
-      const coherence = readBackCoherence(days, realPlaces, {
-        night: isNightPlan,
-        event: realEvent?.url ? { title: realEvent.title, venue: realEvent.venue } : null,
-      });
-      for (const note of coherence) {
-        if (note.what === 'dropped_location') {
-          console.error('[trips itinerary] dropped a stop nowhere near the rest', {
-            destination, plan: groupPlan?.id ?? null, day: note.day, slot: note.slot,
-            place: note.place, km: note.km, reason: note.reason,
-          });
-          // Added to EVENT_NAMES in lib/track.ts by its own change; until
-          // that lands this writes nothing rather than a name the table
-          // would refuse. The log line above is the record either way.
-          if (isEventName(DROPPED_LOCATION)) {
-            void track(supabase, DROPPED_LOCATION, {
-              userId: ctx.user.id, groupId: String(groupId), planId: groupPlan?.id ?? null,
-              props: { day: note.day, slot: note.slot, km: note.km, reason: note.reason, night: isNightPlan },
-            });
-          }
-        } else {
-          console.error(note.what === 'rewritten'
-            ? '[trips itinerary] replaced a line that described another kind of place'
-            : '[trips itinerary] dropped a tip about another kind of place', {
-            destination, day: note.day, slot: note.slot, place: note.place, topics: note.topics,
-          });
-        }
-      }
-      if (softened || stripped.size) {
-        // Worth shouting about. A high count here means the menu was thin or
-        // the rule is not landing, and both are fixable — but only if the
-        // log says so rather than the traveller finding out.
-        console.error('[trips itinerary] removed names nothing vouches for', {
-          destination, slots: softened, verified_places: realPlaces.length,
-          names: [...stripped].slice(0, 12),
-        });
-      }
-
-      if (invented.size) {
-        // Separate from the venue count above, because it is a different
-        // failure with a different fix. A stripped venue name means the menu
-        // was thin. This means the model was told, in the prompt, not to put
-        // anybody in a room, and did it anyway — so if this keeps appearing,
-        // the instruction is the thing to change, not the venue table.
-        console.error('[trips itinerary] removed stays nobody booked', {
-          destination, claims: [...invented].slice(0, 8),
-        });
-      }
-
-      // One sit-down meal an evening. The prompt says so; this is the half
-      // that does not depend on it being obeyed (lib/generation-rules.ts).
-      if (isNightPlan) {
-        for (let i = 0; i < days.length; i++) {
-          const { day, dropped } = oneMealPerEvening(days[i]);
-          if (dropped.length) {
-            console.error('[trips itinerary] dropped a second meal in one evening', {
-              destination, plan: detailTripId ?? null, dropped: dropped.map(d => d.slice(0, 60)),
-            });
-            days[i] = day;
-          }
-        }
-      }
-      // A veto is absolute, and the prompt saying so is only half of it
-      // (lib/vetoes.ts): whatever came back is read against what anybody
-      // going said they will not do, and a line that breaks it goes.
-      if (allVetoesHere.length) {
-        for (let i = 0; i < days.length; i++) {
-          const { day, dropped } = withoutVetoed(days[i] as Parameters<typeof withoutVetoed>[0], allVetoesHere);
-          if (dropped.length) {
-            console.error('[trips itinerary] dropped lines that broke a veto', {
-              destination, plan: detailTripId ?? null, dropped: dropped.map(d => `${d.veto}: ${d.text.slice(0, 60)}`),
-            });
-            days[i] = day as typeof days[number];
-          }
-        }
-      }
-
+      // ── Nothing goes out that we cannot stand behind ────────────────
+      // readBackDays — the same read-back "Something else…" puts a single
+      // slot through.
+      days.splice(0, days.length, ...readBackDays(days, readBackEnv(vouchers)));
       if (!days.length) {
         console.error('[trips itinerary] no itinerary in response', {
           destination, nights, stop_reason: res.stop_reason,
@@ -2008,4 +1701,382 @@ async function tellTheGroup(
   }
   const results = await Promise.all(sends);
   if (results.some(r => !r.stored)) console.error('[generate] the group was not told about the ideas in the app', { planId });
+}
+
+// ─── Reading generated days back against the menu ────────────────────────
+// One read-back, used by the whole itinerary and by "Something else…" on a
+// single slot, so a slot rewritten on its own is held to exactly what the
+// full generator is held to. Lifted out of the itinerary branch unchanged
+// in what it does; the comments that explain each rule stayed with it.
+
+type GenDay = z.infer<typeof ItineraryDaySchema>;
+type GenSlot = z.infer<typeof SlotSchema>;
+
+function slotsOf(day: GenDay): GenSlot[] {
+  return [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])].filter(Boolean) as GenSlot[];
+}
+
+/** A picture is attached from a row or a listing, never taken from the model. */
+function clearPhotos(days: GenDay[]): void {
+  for (const day of days) {
+    for (const slot of slotsOf(day)) {
+      if (slot) { slot.place_photo = null; slot.place_photo_credit = null; slot.place_photo_of = null; slot.place_photo_link = null; }
+    }
+  }
+}
+
+/**
+ * The ticket, carried through to something you can press.
+ *
+ * The listing gave us a venue, a date and the page that sells the tickets,
+ * and until now only the first two survived: the URL was read as a boolean
+ * and thrown away. So the evening said "See The Milk Carton Kids live at
+ * 9:30 CLUB" above a button reading "Reserve ahead", which is not a thing
+ * anybody can do. Reach cannot sell a ticket; it can hand somebody straight
+ * to the page that does, and that is a complete answer rather than a dead
+ * end.
+ *
+ * Attached to the slot that actually names the event rather than to a fixed
+ * position, because which slot holds it is the model's choice.
+ */
+function attachTicket(days: GenDay[], realEvent: RealEvent | null): boolean {
+  if (!realEvent?.url) return false;
+  const marks = [realEvent.venue, realEvent.title].filter(Boolean).map(v => normalise(String(v)));
+  let attached = false;
+  for (const day of days) {
+    for (const slot of [day.evening, day.afternoon, day.morning, ...(day.daytime ?? [])]) {
+      if (!slot || attached) continue;
+      const here = normalise(slot.plan);
+      if (!marks.some(m => m && here.includes(m))) continue;
+      slot.ticket_url = realEvent.url;
+      slot.venue = realEvent.venue ?? null;
+      // The act's picture, from the same listing that sold the ticket.
+      // And what it is of: the line names the venue, the picture is
+      // usually the band.
+      if (realEvent.photo) { slot.place_photo = realEvent.photo.url; slot.place_photo_credit = realEvent.photo.credit; slot.place_photo_of = realEvent.photo.of ?? null; }
+      attached = true;
+    }
+  }
+  return attached;
+}
+
+/**
+ * Geography is real even when we hold no record of it.
+ *
+ * A beach, a river and a neighbourhood are not businesses, so they are
+ * never in a venue table built from business tags. Softening them turned
+ * "Sunset from Playa Los Muertos" into "Sunset from a local spot", which is
+ * not an improvement on anything.
+ *
+ * The same map that lists the restaurants lists the beach, so the names
+ * nothing else vouches for are asked about before they are softened.
+ * Strictly time-boxed: Overpass taught this lesson at seventy-two seconds,
+ * and a check that cannot answer in time must cost the traveller nothing.
+ * Falling back means softening, which is what happened before this existed.
+ */
+async function vouchedGeography(
+  days: GenDay[], realPlaces: RealPlace[], vouchers: string[],
+  where: { place: string; country: string | null },
+): Promise<string[]> {
+  const candidates = [...new Set(days.flatMap(day => slotsOf(day)
+    .flatMap(slot => [...unverifiedNames(slot.plan, realPlaces, vouchers), ...unverifiedNames(slot.tip ?? '', realPlaces, vouchers)])))];
+  if (!candidates.length) return [];
+  let geography = new Set<string>();
+  const at = await locate(where.place, where.country).catch(() => null);
+  if (at) {
+    // Scaled to the plan. Ten names in eight seconds is enough for an
+    // evening and not for a fortnight: a thirteen-day Moab itinerary ran
+    // out of budget and a street name was softened to "a local spot",
+    // leaving "walk the length of a local spot" on the screen. Still
+    // bounded — a check that cannot answer in time costs the traveller
+    // nothing and the fallback is what we did before.
+    const room = Math.min(40, Math.max(10, days.length * 3));
+    geography = await within(
+      realPlacesAmong(candidates.slice(0, room), { lat: at.lat, lng: at.lng }),
+      Math.min(25000, 6000 + room * 700), 'checking the landmarks',
+    ).catch(() => new Set<string>());
+  }
+  console.log('[trips itinerary] names nothing held vouched for', {
+    asked: candidates.length, real_places: [...geography],
+  });
+  return [...geography];
+}
+
+interface ReadBackEnv {
+  realPlaces: RealPlace[];
+  /** Names that are real without being on the menu, geography included. */
+  vouchers: string[];
+  destination: unknown;
+  isNightPlan: boolean;
+  realEvent: RealEvent | null;
+  nightPrefs: Record<string, any>;
+  vetoes: string[];
+  planForLog: string | null;
+  /** A dry run: the same rules, nothing logged or tracked. */
+  quiet?: boolean;
+  onDroppedLocation?: (note: Extract<CoherenceNote, { what: 'dropped_location' }>) => void;
+}
+
+/**
+ * Nothing goes out that we cannot stand behind.
+ *
+ * The prompt asks the model to name only verified places. Asking has a good
+ * success rate, and a good success rate is not the standard: one invented
+ * restaurant in fifty is still somebody standing outside a laundrette at
+ * eight in the evening.
+ *
+ * So the output is read back against the same list the prompt was given. A
+ * name nothing vouches for is softened to what we can actually support —
+ * the claim goes, the shape of the evening stays. Returns the days, some of
+ * which are replaced rather than edited in place (a dropped meal, a veto).
+ */
+function readBackDays(input: GenDay[], env: ReadBackEnv): GenDay[] {
+  const days = input;
+  const { realPlaces, vouchers, destination, isNightPlan, realEvent, nightPrefs } = env;
+  const log: (...a: unknown[]) => void = env.quiet ? () => {} : (...a) => console.error(...a);
+  let softened = 0;
+  // Nothing generated here books a bed. A slot is a plan, a cost, a
+  // booking mode and a payment note — there is no accommodation in the
+  // schema at all, and the accommodation figure on a trip option is a
+  // budget line, a number to plan against, not a reservation. So the rule
+  // needs no condition: a generated day may never write somebody into a
+  // room, because at this point nobody has one.
+  const invented = new Set<string>();
+  const stripped = new Set<string>();
+  for (const day of days) {
+    for (const slot of slotsOf(day)) {
+      // What this slot actually points at, if anything we handed over.
+      const cited = citedPlace(slot.place_ref, realPlaces);
+
+      // "Reach will book this" has to be something Reach can do. The
+      // prompt forbids claiming it for a table and the screen guessed
+      // from the slot's type; a resolved place answers it outright.
+      // hasTicket is about THIS slot, not the plan.
+      //
+      // It was `!!realEvent?.url`, so once a plan had a real gig in it
+      // every slot claiming "reach" kept the claim — and "Reach will
+      // book this" appeared over a restaurant table, which is the exact
+      // promise the whole check exists to stop. The ticket is attached
+      // above, so the slot can simply be asked.
+      // The place's own site, so somebody can actually go and book it.
+      //
+      // Every one of the 386 verified venues carries a website and not
+      // one of them reached a screen: a trip's itinerary named real
+      // restaurants and gave no way to reserve any of them. The row we
+      // matched has the address; it just was never passed on.
+      if (cited?.url && !slot.ticket_url) {
+        slot.place_url = cited.url;
+        slot.venue = slot.venue ?? cited.name;
+      }
+      // A picture of the place this line names — from the row it cited,
+      // with its credit, and only that row. A slot that cites nothing
+      // gets no picture, however confidently it names somewhere.
+      if (cited?.photo && !slot.ticket_url) {
+        slot.place_photo = cited.photo.url;
+        slot.place_photo_credit = cited.photo.credit;
+        slot.place_photo_of = cited.name ?? null;
+        slot.place_photo_link = cited.photo.link ?? null;
+      }
+      // What is on there, read off the venue's own page. Carried on the
+      // slot rather than left to the model to mention, because it is the
+      // most useful thing we hold about a place and it must not depend
+      // on whether the sentence happened to include it. If we do not
+      // tell somebody there is a quiz on Wednesday, they do not know.
+      if (cited?.whatsOn?.length) slot.whats_on = cited.whatsOn.slice(0, 2).join(' · ');
+
+      const honest = bookingFor(slot.booking, cited, !!slot.ticket_url);
+      // A table to book gets the way to book it: the venue's own booking
+      // page when it names one, and its number either way. Both were
+      // held and neither reached the line (audit #50).
+      if (cited && honest === 'ahead' && !slot.ticket_url) {
+        if (cited.reserveUrl) { slot.place_url = cited.reserveUrl; slot.venue = slot.venue ?? cited.name; }
+        if (cited.phone) slot.place_phone = cited.phone;
+      }
+      if (honest !== slot.booking) {
+        log('[trips itinerary] downgraded a booking claim we cannot keep', {
+          destination, claimed: slot.booking, kept: honest, place: cited?.name ?? null,
+        });
+        slot.booking = honest;
+      }
+
+      // Nobody is written into a room nobody booked. The prompt says so
+      // now; this is the half that does not depend on the prompt being
+      // obeyed. A whole Moab plan shipped opening with "check into the
+      // hotel" on a trip with no hotel item and no hotel booking.
+      // A line that describes the slot instead of filling it. Two of
+      // these reached real plans — "This is the slot for the thing Peter
+      // already has in mind" — sitting where the gig should be. Unlike a
+      // stay claim there is nothing in it to rescue: it is about the
+      // form all the way through, and writing the evening ourselves is
+      // the thing we do not do. The slot goes.
+      if (isFiller(slot.plan)) {
+        log('[trips itinerary] dropped a slot that described itself', {
+          destination, phrase: fillerClaim(slot.plan), slot: String(slot.plan).slice(0, 80),
+        });
+        invented.add(String(fillerClaim(slot.plan)));
+        slot.plan = '';
+      }
+
+      const stay = withoutStayClaim(String(slot.plan ?? ''));
+      if (stay.removed) {
+        log('[trips itinerary] removed a stay nobody booked', {
+          destination, claim: stay.removed, kept: stay.text === null ? '(whole slot)' : 'clause',
+        });
+        invented.add(stay.removed);
+        // Null means nothing true was left. Rather than invent a
+        // replacement — which is how the hotel got here in the first
+        // place — the slot loses the sentence that was not true.
+        slot.plan = stay.text ?? '';
+      }
+
+      const clean = withoutUnverified(slot.plan, realPlaces, vouchers);
+      if (clean.removed.length) {
+        softened++;
+        clean.removed.forEach(n => stripped.add(n));
+        // Softening works when the name is the object of the sentence,
+        // not its subject: "Dusk session at Wine & Design…" became "a
+        // local spot at Dusk session at Wine & Design…" on a real row.
+        // The tip already had this check; the line itself did not. A
+        // line that would read as nonsense goes, like a filler slot.
+        if (wouldMangle(slot.plan, clean.removed)) {
+          log('[trips itinerary] dropped a line softening would have mangled', {
+            destination, removed: clean.removed.slice(0, 3), slot: String(slot.plan).slice(0, 80),
+          });
+          slot.plan = '';
+        } else {
+          slot.plan = clean.text;
+        }
+        // A reference to a place we just removed is not a reference.
+        slot.place_ref = null;
+      }
+      // Text that came back broken — "…near the pub.morplinsert1" —
+      // is cut back to its last whole sentence, or dropped.
+      if (slot.plan) {
+        const whole = beforeCorruption(String(slot.plan));
+        if (whole !== slot.plan) {
+          log('[trips itinerary] cut a line that came back broken', {
+            destination, at: corruptionAt(slot.plan), slot: String(slot.plan).slice(0, 80),
+          });
+          slot.plan = whole ?? '';
+        }
+      }
+      // A live run returned "http://null" here. It resolves to nothing,
+      // so it was harmless, and it is still not a citation — it must not
+      // travel on as though it might be one.
+      if (slot.place_ref && !cleanRef(slot.place_ref)) {
+        log('[trips itinerary] discarded a place_ref that is not one', { got: String(slot.place_ref).slice(0, 40) });
+        slot.place_ref = null;
+      }
+      // The slot's own tip, read back like its line. A slot whose line
+      // went has nothing for a tip to be about, so the tip goes too.
+      if (!slot.plan) slot.tip = '';
+      const tip = withoutUnverified(String(slot.tip ?? ''), realPlaces, vouchers);
+      if (tip.removed.length) {
+        tip.removed.forEach(n => stripped.add(n));
+        // Softening works when the name is the object of the sentence.
+        // When it is the subject it does not: a live run produced "a local
+        // spot stays lively after evening shows let out", which is not a
+        // sentence anybody wrote. A tip is flavour, so it is dropped rather
+        // than mangled — and a tip naming a business was already against
+        // the rule that a tip describes a place, not what a business does.
+        slot.tip = wouldMangle(String(slot.tip ?? ''), tip.removed) ? '' : tip.text;
+      }
+      // A tip is flavour: broken, it goes.
+      if (slot.tip && corruptionAt(slot.tip) >= 0) {
+        log('[trips itinerary] dropped a tip that came back broken', {
+          destination, tip: String(slot.tip).slice(0, 80),
+        });
+        slot.tip = '';
+      }
+    }
+  }
+
+  // ── Does each line describe the place it names, where it is ─────
+  // The names above are all real by now; this reads what the lines say
+  // ABOUT them. Plan f979c880 named SPIN, a cocktail bar on F Street,
+  // and said it was good for dancing, under a tip about the monuments
+  // on the Mall — every name vouched for, and the evening described a
+  // different place. See readBackCoherence (lib/discovery/real-places).
+  // "Make a day of it" is for an evening somebody might stretch. The prompt
+  // says a person who only wanted a drink is never shown it; this is the
+  // half that does not depend on the prompt being obeyed. Cleared before
+  // the read-back below, so offers about to be thrown away have no say in
+  // which of the evening's own stops survive.
+  if (isNightPlan) {
+    const kinds = ((nightPrefs.kind || []) as unknown[]).map(k => String(k).toLowerCase());
+    const drinksOnly = kinds.length > 0 && kinds.every(k => /drink|bar|pub|cocktail|wine|beer/.test(k));
+    const quiet = /chill|low|quiet|easy|mellow/i.test(String(nightPrefs.energy || ''));
+    if (drinksOnly || quiet) for (const d of days) (d as { daytime?: unknown[] }).daytime = [];
+  }
+  // The listing vouches for the gig: the slot holding it (ticket_url,
+  // attached above) is read against the event as well as the row, keeps
+  // the act if it is rewritten, and anchors the evening's geography.
+  const coherence = readBackCoherence(days, realPlaces, {
+    night: isNightPlan,
+    event: realEvent?.url ? { title: realEvent.title, venue: realEvent.venue } : null,
+  });
+  for (const note of coherence) {
+    if (note.what === 'dropped_location') {
+      log('[trips itinerary] dropped a stop nowhere near the rest', {
+        destination, plan: env.planForLog, day: note.day, slot: note.slot,
+        place: note.place, km: note.km, reason: note.reason,
+      });
+      if (!env.quiet) env.onDroppedLocation?.(note);
+    } else {
+      log(note.what === 'rewritten'
+        ? '[trips itinerary] replaced a line that described another kind of place'
+        : '[trips itinerary] dropped a tip about another kind of place', {
+        destination, day: note.day, slot: note.slot, place: note.place, topics: note.topics,
+      });
+    }
+  }
+  if (softened || stripped.size) {
+    // Worth shouting about. A high count here means the menu was thin or
+    // the rule is not landing, and both are fixable — but only if the
+    // log says so rather than the traveller finding out.
+    log('[trips itinerary] removed names nothing vouches for', {
+      destination, slots: softened, verified_places: realPlaces.length,
+      names: [...stripped].slice(0, 12),
+    });
+  }
+
+  if (invented.size) {
+    // Separate from the venue count above, because it is a different
+    // failure with a different fix. A stripped venue name means the menu
+    // was thin. This means the model was told, in the prompt, not to put
+    // anybody in a room, and did it anyway — so if this keeps appearing,
+    // the instruction is the thing to change, not the venue table.
+    log('[trips itinerary] removed stays nobody booked', {
+      destination, claims: [...invented].slice(0, 8),
+    });
+  }
+
+  // One sit-down meal an evening. The prompt says so; this is the half
+  // that does not depend on it being obeyed (lib/generation-rules.ts).
+  if (isNightPlan) {
+    for (let i = 0; i < days.length; i++) {
+      const { day, dropped } = oneMealPerEvening(days[i]);
+      if (dropped.length) {
+        log('[trips itinerary] dropped a second meal in one evening', {
+          destination, plan: env.planForLog, dropped: dropped.map(d => d.slice(0, 60)),
+        });
+        days[i] = day;
+      }
+    }
+  }
+  // A veto is absolute, and the prompt saying so is only half of it
+  // (lib/vetoes.ts): whatever came back is read against what anybody
+  // going said they will not do, and a line that breaks it goes.
+  if (env.vetoes.length) {
+    for (let i = 0; i < days.length; i++) {
+      const { day, dropped } = withoutVetoed(days[i] as Parameters<typeof withoutVetoed>[0], env.vetoes);
+      if (dropped.length) {
+        log('[trips itinerary] dropped lines that broke a veto', {
+          destination, plan: env.planForLog, dropped: dropped.map(d => `${d.veto}: ${d.text.slice(0, 60)}`),
+        });
+        days[i] = day as typeof days[number];
+      }
+    }
+  }
+  return days;
 }
