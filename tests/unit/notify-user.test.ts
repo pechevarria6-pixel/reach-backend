@@ -47,3 +47,43 @@ test('before the migration the bell is reported as not stored, not as delivered'
   assert.equal(d.stored, false);
   assert.equal(d.inApp, 0);
 });
+
+// plan_notification_mutes: "stop pinging me about this trip".
+function mutingDb(muted: string[], opts: { noTable?: boolean } = {}) {
+  const inserted: unknown[] = [];
+  const from = (table: string) => ({
+    insert: async (rows: unknown) => { inserted.push(rows); return { error: null }; },
+    select: () => ({
+      in: async () => ({ data: [], error: null }),
+      eq: () => ({
+        in: async (_c: string, ids: string[]) => table === 'plan_notification_mutes' && opts.noTable
+          ? { data: null, error: { code: 'PGRST205', message: 'Could not find the table' } }
+          : { data: muted.filter(m => ids.includes(m)).map(user_id => ({ user_id })), error: null },
+      }),
+    }),
+    update: () => ({ eq: async () => ({ error: null }) }),
+  });
+  return { db: { from } as never, inserted };
+}
+
+test('somebody who muted the plan gets nothing — no bell, no phone, and is not on the email list', async () => {
+  const { db, inserted } = mutingDb(['sam']);
+  const d = await notifyUsers(db, ['marco', 'sam'], { ...note, planId: 'p1' }, async () => ({ ok: true }));
+  assert.deepEqual(d.muted, ['sam']);
+  assert.deepEqual(d.unreached, ['marco']);
+  assert.deepEqual((inserted[0] as { user_id: string }[]).map(r => r.user_id), ['marco']);
+});
+
+test('everybody muted: nothing is written at all', async () => {
+  const { db, inserted } = mutingDb(['sam']);
+  const d = await notifyUsers(db, ['sam'], { ...note, planId: 'p1' }, null);
+  assert.equal(inserted.length, 0);
+  assert.deepEqual(d.unreached, []);
+});
+
+test('before the mutes table exists, nobody has muted anything', async () => {
+  const { db } = mutingDb(['sam'], { noTable: true });
+  const d = await notifyUsers(db, ['sam'], { ...note, planId: 'p1' }, null);
+  assert.deepEqual(d.muted, []);
+  assert.equal(d.inApp, 1);
+});

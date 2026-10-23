@@ -1,0 +1,65 @@
+# The countdown pings (app/api/cron/pings, lib/pings.ts), every hour.
+#
+# Not a vercel.json cron: this account is on Hobby, which runs a cron once a
+# day, and a sub-daily schedule there silently rejects the deployment. The
+# "Tonight" ping has to land in the evening of whatever zone the trip is in,
+# so it is asked every hour; the ping_log claim makes every run after the
+# first one on a day send nothing.
+#
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   CRON_SECRET   the same value as the deployment's CRON_SECRET
+#   APP_URL       the deployment's address, e.g. https://alcanzar.io
+#
+# The repository is public, so: the secrets reach the step only through
+# `env:`, nothing prints them, the endpoint answers with counts only, and the
+# workflow can read the repository and nothing more.
+name: Pings
+
+on:
+  schedule:
+    # Seven minutes past, off the top of the hour everybody else picks.
+    - cron: '7 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: 'Work out what is due and send nothing'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# One at a time. Two overlapping runs would still send each ping once (the
+# claim is a unique index), but there is no reason to make them race.
+concurrency:
+  group: pings
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Send what is due
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Call the pings endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ secrets.APP_URL }}
+          DRY: ${{ github.event.inputs.dry }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_URL" ]; then
+            echo "::error::CRON_SECRET and APP_URL must both be set as repository secrets"
+            exit 1
+          fi
+          query=""
+          if [ "$DRY" = "true" ]; then query="?dry=1"; fi
+          status=$(curl -sS -o body.json -w '%{http_code}' --max-time 300 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "${APP_URL%/}/api/cron/pings${query}")
+          # Counts only — the endpoint never names a plan or a person.
+          cat body.json; echo
+          if [ "$status" != "200" ]; then
+            echo "::error::pings answered $status"
+            exit 1
+          fi
