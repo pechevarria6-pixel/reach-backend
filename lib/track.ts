@@ -108,7 +108,11 @@ export const BROWSER_EVENT_NAMES: readonly EventName[] = [
   'slot_unfilled',
   'itinerary_item_dropped_location',
   'itinerary_item_swapped',
-  'next_trip_started_from_close',
+  // Not next_trip_started_from_close. It was here (the checkout spec added
+  // every new name to both lists), but a trip "started" from the close card
+  // is a plan that exists, and only POST /api/plans knows that: a screen
+  // sending it too would count the tap and the plan, twice for one trip, and
+  // a tap that ended in a refusal as a trip. The server's own, since 2026-10-23.
   // Opening Venmo happens in the browser and nowhere else — nothing on the
   // server can see a person leave for their own app.
   'settle_up_link_opened',

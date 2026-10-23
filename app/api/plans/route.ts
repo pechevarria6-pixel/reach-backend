@@ -9,6 +9,7 @@ import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
 import { readActive, closeStale, refusalBody, refusalFor } from '@/lib/one-active';
 import { pinPlan } from '@/lib/trip-map';
+import { startedFromClose } from '@/lib/trip-close';
 
 const CreatePlanSchema = z.object({
   group_id: z.string().uuid(),
@@ -43,6 +44,11 @@ const CreatePlanSchema = z.object({
   // its own copy. Until it says so it is only refused under the older rule
   // (lib/one-active.ts refusalFor). Never stored.
   accepts_one_active: z.boolean().nullish(),
+  // "Plan the next one?" on a trip's close card: the plan whose card this
+  // came from (GET /api/plans/[planId]/close → next.fromClose). Counted as
+  // next_trip_started_from_close once this plan exists, and only when that
+  // plan is in the same group and is one the card is shown for. Never stored.
+  from_close: z.string().uuid().nullish(),
 });
 
 // POST /api/plans — create a new plan
@@ -262,6 +268,28 @@ export async function POST(req: NextRequest) {
       budget_cents: Number(body.budget_cents || 0),
     },
   });
+
+  // The close card's "Plan the next one?", counted here because this is the
+  // one place that knows a plan was actually made — a tap that ends in a
+  // refusal or a closed sheet is not a next trip. It is its own name beside
+  // the plan_created above, not a second plan_created, so
+  // v_organizer_conversion (which counts plan_created) sees this plan once.
+  if (body.from_close) {
+    const from = await within(
+      startedFromClose(supabase, { sourceId: body.from_close, groupId: String(body.group_id) }),
+      2000, 'checking the close card this came from',
+    ).catch(() => ({ ok: false as const, why: 'timeout' }));
+    if (from.ok === true) {
+      void track(supabase, 'next_trip_started_from_close', {
+        userId: user.id,
+        groupId: String(body.group_id),
+        planId: String(plan.id),
+        props: { source_plan: body.from_close, source_kind: from.sourceType, kind: String(body.type ?? 'trip') },
+      });
+    } else if (from.ok === false) {
+      console.error('[plans POST] from_close not counted', { plan: plan.id, why: from.why });
+    }
+  }
 
   const pinned = await pinning;
   if (pinned.outcome === 'write_failed' || pinned.outcome === 'failed') {

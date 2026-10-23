@@ -1,7 +1,9 @@
 // ─── /api/cron/pings — the countdown pings, hourly ──────────────────────
 // T-7 packing list, T-1 flight check-in, the morning-of flight status and
-// "Tonight: <line>, <time>". What each one needs behind it, and why a second
-// run sends nothing, is in lib/pings.ts.
+// "Tonight: <line>, <time>", and the settle-up reminder to whoever still owes
+// money on a trip's ledger ("Sam is still waiting on $42", at most once every
+// three days, never on a trip of one). What each one needs behind it, and why
+// a second run sends nothing, is in lib/pings.ts.
 //
 // Run by GitHub Actions (.github/workflows/pings.yml), not vercel.json: this
 // account is on Hobby, where a cron runs once a day and a sub-daily schedule

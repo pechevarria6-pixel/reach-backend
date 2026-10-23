@@ -103,9 +103,16 @@ test('the props bag still refuses anything about a person', () => {
 const CHECKOUT_EVENTS = [
   'checkout_state_shown', 'checkout_cta_tapped', 'slot_unfilled',
   'itinerary_item_dropped_location', 'itinerary_item_swapped',
-  'next_trip_started_from_close', 'settle_up_link_opened',
+  'settle_up_link_opened',
   'settle_up_marked_paid', 'celebration_shown',
 ];
+
+// A next trip from the close card is a plan that exists, which only the plan
+// route knows. From a browser it would be counted per tap as well as per plan.
+test('next_trip_started_from_close is a name the server alone records', () => {
+  assert.equal(isEventName('next_trip_started_from_close'), true);
+  assert.equal(BROWSER_EVENT_NAMES.includes('next_trip_started_from_close' as never), false);
+});
 
 test('every checkout event is a name and may come from a browser', () => {
   const browser = new Set<string>(BROWSER_EVENT_NAMES);

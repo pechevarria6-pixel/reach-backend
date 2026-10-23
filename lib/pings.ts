@@ -15,6 +15,11 @@
 //                   on it that has a clock time: "Tonight: Vic's, 7:30 PM".
 //                   A line nobody reserved is the plan, not a reservation,
 //                   and is not announced as one.
+//   settle_up       money still owed on the trip's ledger, three days after
+//                   the ledger last moved: "Sam is still waiting on $42", to
+//                   the person who owes it and nobody else, and then at most
+//                   once every three days. Never on a trip of one. See
+//                   dueSettleUps below.
 //
 // ── Once ──
 //
@@ -65,8 +70,10 @@ import { nightsBetween } from './away.ts';
 import { packingList, packingLine, type PackLine } from './packing.ts';
 import { isSoloPlan } from './booking/approval.ts';
 import { isOrderId } from './booking/duffel-map.ts';
+import { loadLedger, settleNote, type Ledger } from './ledger.ts';
+import type { SettleLine } from './money.ts';
 
-export const PING_KINDS = ['packing', 'flight_checkin', 'flight_day', 'tonight'] as const;
+export const PING_KINDS = ['packing', 'flight_checkin', 'flight_day', 'tonight', 'settle_up'] as const;
 export type PingKind = typeof PING_KINDS[number];
 
 // ── The trip's clock ─────────────────────────────────────────────────────
@@ -155,6 +162,7 @@ export const WINDOWS: Record<PingKind, { from: number; to: number }> = {
   flight_checkin: { from: 10, to: 21 },
   flight_day: { from: 5, to: 12 },
   tonight: { from: 15, to: 22 },
+  settle_up: { from: 10, to: 21 },
 };
 const inWindow = (kind: PingKind, hour: number) => hour >= WINDOWS[kind].from && hour < WINDOWS[kind].to;
 
@@ -507,6 +515,133 @@ export function aeroLookup(key: string | undefined, f: typeof fetch = fetch): Ae
   };
 }
 
+// ── Settling up ──────────────────────────────────────────────────────────
+// Reach never moves money between members (lib/money.ts). What it can do is
+// remind the one person who owes it, from the ledger's own lines, that
+// somebody is waiting. The lines are recomputed on every read and carry no
+// age of their own, so "older than three days" is read off the ledger
+// itself: nothing on it — no expense, no contribution, no booking, no
+// payment marked or withdrawn — has changed for three days. A line that
+// just appeared, or just shrank because somebody paid part of it, is left
+// alone until it has stood unchanged that long.
+//
+// Who: the payer on each line, and nobody else. Never the payee, never the
+// rest of the group. Never on a trip of one, which has nobody to settle with.
+//
+// How often: at most once every three days per person per plan. The claim
+// is the ping_log row for (plan, user, 'settle_up', local_day), so two runs
+// on one day cannot both send; the three-day spacing reads the last claim.
+// That read cannot race, because the window is the trip's daytime (10:00 to
+// 21:00) and an hourly run lasts minutes: two runs that could each miss the
+// other's claim would both have to sit either side of the trip's local
+// midnight at the same moment, and nothing is sent at midnight.
+//
+// Whatever the plan's status: a trip called off after somebody paid the
+// deposit still has money on it that one member owes another.
+//
+// How long: while the trip is on or still to come, and for thirty days after
+// its last day. A plan with no dates cannot say when that is, and is not
+// reminded about. Past that, the ledger screen still says who owes what.
+//
+// What it says: who is waiting and for how much, from the ledger, and what
+// to do — pay, then mark it paid, which the ledger screen can do
+// (POST /api/plans/[id]/settlements). Before sql/settle-up-2026-09-25.sql
+// nothing can be marked paid, so nothing is sent.
+
+export const SETTLE_EVERY_DAYS = 3;
+/** The ledger must have stood unchanged this long before anybody is reminded. */
+export const SETTLE_QUIET_MS = 3 * 86_400_000;
+/** Days after the trip's last day that reminders keep going. */
+export const SETTLE_FOR_DAYS_AFTER = 30;
+
+export interface SettlePlan extends PingPlan {
+  destination_city?: string | null;
+}
+
+export interface SettleInput {
+  plan: SettlePlan;
+  memberIds: string[];
+  ledger: Pick<Ledger, 'solo' | 'settlementsAvailable' | 'lines'>;
+  /** The newest timestamp on anything that moves the ledger, ISO. Null: nothing to go on. */
+  lastChange: string | null;
+  /** users.id → first name, for the people being waited on. */
+  names: Map<string, string>;
+  /** payer id → the local_day of their last settle_up ping on this plan. */
+  lastSent: Map<string, string>;
+  onSkip?: (why: string) => void;
+}
+
+/** "$42" or "$42.50". */
+export function money(cents: number): string {
+  const c = Math.max(0, Math.round(cents));
+  return c % 100 === 0 ? `$${c / 100}` : `$${Math.floor(c / 100)}.${String(c % 100).padStart(2, '0')}`;
+}
+
+/** The trip's last day: its end, or its start when the end is missing or earlier. */
+function lastDayOfPlan(plan: PingPlan): string | null {
+  const start = validDay(plan.start_date);
+  if (!start) return null;
+  const end = validDay(plan.end_date);
+  return end && end >= start ? end : start;
+}
+
+/** Every settle-up reminder due on this plan at `now`, one per payer at most. Pure. */
+export function dueSettleUps(input: SettleInput, now: Date = new Date()): PlannedPing[] {
+  const { plan, ledger } = input;
+  const skip = (why: string) => { input.onSkip?.(why); return [] as PlannedPing[]; };
+  if (!plan?.id) return [];
+  if (ledger.solo) return [];
+  const members = [...new Set(input.memberIds.filter(Boolean).map(String))];
+  if (audience(plan, members).solo) return [];
+
+  const clock = localClock(plan.destination_lng, now);
+  if (!clock) return [];
+  if (!inWindow('settle_up', clock.hour)) return [];
+  const last = lastDayOfPlan(plan);
+  if (!last) return [];
+  const until = shiftDay(last, SETTLE_FOR_DAYS_AFTER);
+  if (!until || clock.day > until) return [];
+
+  const owing = (ledger.lines ?? []).filter((l: SettleLine) =>
+    l.amountCents > 0 && l.from !== l.to && members.includes(l.from) && members.includes(l.to));
+  if (!owing.length) return [];
+  if (!ledger.settlementsAvailable) return skip('settle_up_no_settlements_table');
+
+  const changed = input.lastChange ? Date.parse(input.lastChange) : NaN;
+  // Money is owed and nothing says since when: not three days we can show.
+  if (!Number.isFinite(changed)) return skip('settle_up_no_age');
+  if (now.getTime() - changed < SETTLE_QUIET_MS) return skip('settle_up_too_new');
+
+  const byPayer = new Map<string, SettleLine[]>();
+  for (const l of owing) byPayer.set(l.from, [...(byPayer.get(l.from) ?? []), l]);
+
+  const note = settleNote(plan as unknown as Record<string, unknown>);
+  const url = planUrl(plan);
+  const out: PlannedPing[] = [];
+  const quietSince = shiftDay(clock.day, -(SETTLE_EVERY_DAYS - 1)) as string;
+  for (const [payer, theirs] of byPayer) {
+    const sent = input.lastSent.get(payer);
+    if (sent && sent >= quietSince) { input.onSkip?.('settle_up_recent'); continue; }
+    const lines = [...theirs].sort((a, b) => b.amountCents - a.amountCents || a.to.localeCompare(b.to));
+    const [first, ...rest] = lines;
+    const who = (id: string) => clean(input.names.get(id)) || null;
+    const firstName = who(first.to);
+    const title = firstName
+      ? `${firstName} is still waiting on ${money(first.amountCents)}`
+      : `You still owe ${money(first.amountCents)} from ${note}`;
+    const others = rest.map(l => (who(l.to) ? `${who(l.to)}, ${money(l.amountCents)}` : money(l.amountCents)));
+    const body = [
+      firstName ? `From ${note}.` : null,
+      others.length ? `Also still to pay: ${others.join('; ')}.` : null,
+      lines.some(l => l.pending)
+        ? 'If it has gone, mark it paid so the trip squares up.'
+        : 'Once you have paid, mark it paid so the trip squares up.',
+    ].filter(Boolean).join(' ');
+    out.push({ kind: 'settle_up', userId: payer, localDay: clock.day, note: { kind: 'settle_up', title, body, url, planId: plan.id } });
+  }
+  return out;
+}
+
 // ── Claiming and sending ─────────────────────────────────────────────────
 
 export interface PingReport {
@@ -516,6 +651,8 @@ export interface PingReport {
   muted: number;
   skipped: Record<string, number>;
   failed: number;
+  /** Plans the settle-up pass read a ledger for. */
+  settlePlans?: number;
   /** Set when the run stopped before sending anything. */
   stopped?: string;
 }
@@ -525,13 +662,215 @@ const missingTable = (e: { code?: string; message?: string } | null | undefined)
 
 const PLAN_COLUMNS = 'id, group_id, title, type, status, start_date, end_date, solo_mode, created_by, destination_lng';
 
+export type PingOpts = {
+  now?: Date; send: Sender | null; aero: AeroLookup | null; dry?: boolean;
+  /** The ledger reader; lib/ledger.ts loadLedger unless a test passes its own. */
+  ledger?: (db: SupabaseClient, plan: { id: string; group_id: string }) => Promise<Pick<Ledger, 'solo' | 'settlementsAvailable' | 'lines'>>;
+};
+
 /**
- * One run: every plan near enough to have a ping due, every ping due, each
+ * Claim one ping, then send it. The insert is the check: the unique index on
+ * (plan, user, kind, local_day) is the only thing that can tell two
+ * simultaneous runs apart. 'missing' means there is no ping_log at all, and
+ * the run must stop.
+ */
+async function claimAndSend(
+  db: SupabaseClient, planId: string, ping: PlannedPing, note: Note, send: Sender | null, report: PingReport,
+): Promise<'ok' | 'missing'> {
+  const { data: claimed, error: claimErr } = await db.from('ping_log')
+    .insert({ plan_id: planId, user_id: ping.userId, kind: ping.kind, local_day: ping.localDay })
+    .select('id').single();
+  if (claimErr) {
+    if (claimErr.code === '23505') { report.already++; return 'ok'; }
+    if (missingTable(claimErr)) {
+      console.error('[pings] no ping_log — run sql/pings-2026-09-25.sql; sending nothing, since nothing could stop a second send');
+      return 'missing';
+    }
+    console.error('[pings] could not claim', { kind: ping.kind, code: claimErr.code });
+    report.failed++;
+    return 'ok';
+  }
+
+  const d = await notifyUsers(db, [ping.userId], note, send);
+  const channels = [d.stored && d.inApp ? 'bell' : null, d.pushed.length ? 'push' : null].filter((c): c is string => !!c);
+  if (!channels.length) {
+    report.failed++;
+  } else {
+    report.sent[ping.kind] = (report.sent[ping.kind] ?? 0) + 1;
+  }
+  const { error: markErr } = await db.from('ping_log')
+    .update({ channels, sent_at: channels.length ? new Date().toISOString() : null })
+    .eq('id', (claimed as { id: string }).id);
+  if (markErr) console.error('[pings] sent, and could not note it', { kind: ping.kind, code: markErr.code });
+  return 'ok';
+}
+
+/**
+ * One run: the countdown pings, then the settle-up reminders, each ping
  * claimed then sent. `dry` works out what is due and claims and sends nothing.
  */
-export async function runPings(db: SupabaseClient, opts: {
-  now?: Date; send: Sender | null; aero: AeroLookup | null; dry?: boolean;
-}): Promise<PingReport> {
+export async function runPings(db: SupabaseClient, opts: PingOpts): Promise<PingReport> {
+  const report = await runCountdown(db, opts);
+  // Without ping_log nothing can be sent once, settle-ups included.
+  if (report.stopped === 'ping_log_missing') return report;
+  return runSettleUps(db, opts, report);
+}
+
+/** The newest of these timestamps, ISO, or null. */
+export function newest(...stamps: unknown[]): string | null {
+  let best = -Infinity;
+  for (const s of stamps) {
+    const t = typeof s === 'string' ? Date.parse(s) : NaN;
+    if (Number.isFinite(t) && t > best) best = t;
+  }
+  return Number.isFinite(best) ? new Date(best).toISOString() : null;
+}
+
+/** The settle-up pass. Adds to `report`; sets `stopped` only when nothing could be sent once. */
+export async function runSettleUps(db: SupabaseClient, opts: PingOpts, report: PingReport): Promise<PingReport> {
+  const now = opts.now ?? new Date();
+  const skip = (why: string) => { report.skipped[why] = (report.skipped[why] ?? 0) + 1; };
+  const readLedger = opts.ledger ?? loadLedger;
+
+  // Every plan whose last day is no more than thirty days gone, anywhere —
+  // and the one or two days either side of every zone's today.
+  const utc = now.toISOString().slice(0, 10);
+  const lo = shiftDay(utc, -(SETTLE_FOR_DAYS_AFTER + 2)) as string;
+  const { data: plans, error: pErr } = await db.from('plans')
+    .select(`${PLAN_COLUMNS}, destination_city, budget_cents`)
+    .or(`end_date.gte.${lo},start_date.gte.${lo}`)
+    .limit(500);
+  if (pErr) {
+    console.error('[pings] settle-up could not read plans', { code: pErr.code });
+    skip('settle_up_plans_unreadable');
+    return report;
+  }
+  const placed = ((plans ?? []) as SettlePlan[]).filter(p => localClock(p.destination_lng, now) !== null);
+  if (!placed.length) return report;
+  const ids = placed.map(p => p.id);
+
+  // Which of them have money on them at all, and when it last moved.
+  const [expenses, contributions, bookings, settlements] = await Promise.all([
+    db.from('expenses').select('plan_id, created_at').in('plan_id', ids),
+    db.from('contributions').select('plan_id, status, created_at, updated_at').in('plan_id', ids),
+    db.from('bookings').select('plan_id, created_at, updated_at').in('plan_id', ids),
+    db.from('settlements').select('plan_id, created_at, updated_at, paid_at').in('plan_id', ids),
+  ]);
+  // A ledger whose age cannot be read is not three days old as far as we
+  // can say. A missing settlements table is a ledger nobody can mark paid,
+  // which dueSettleUps answers on its own.
+  for (const [name, r] of [['expenses', expenses], ['contributions', contributions], ['bookings', bookings]] as const) {
+    if (r.error) {
+      console.error('[pings] settle-up could not read', { table: name, code: r.error.code });
+      skip('settle_up_ledger_unreadable');
+      return report;
+    }
+  }
+  if (settlements.error && !missingTable(settlements.error) && !/^(PGRST204|42703)$/.test(String(settlements.error.code ?? ''))) {
+    console.error('[pings] settle-up could not read settlements', { code: settlements.error.code });
+    skip('settle_up_ledger_unreadable');
+    return report;
+  }
+
+  const stamps = new Map<string, unknown[]>();
+  const stamp = (planId: unknown, ...ts: unknown[]) => {
+    const k = String(planId);
+    stamps.set(k, [...(stamps.get(k) ?? []), ...ts]);
+  };
+  const withMoney = new Set<string>();
+  for (const e of (expenses.data ?? []) as Record<string, unknown>[]) { withMoney.add(String(e.plan_id)); stamp(e.plan_id, e.created_at); }
+  for (const c of (contributions.data ?? []) as Record<string, unknown>[]) {
+    if (c.status === 'succeeded') withMoney.add(String(c.plan_id));
+    stamp(c.plan_id, c.created_at, c.updated_at);
+  }
+  for (const b of (bookings.data ?? []) as Record<string, unknown>[]) stamp(b.plan_id, b.created_at, b.updated_at);
+  for (const s of ((settlements.error ? [] : settlements.data) ?? []) as Record<string, unknown>[]) stamp(s.plan_id, s.created_at, s.updated_at, s.paid_at);
+
+  const candidates = placed.filter(p => withMoney.has(String(p.id)));
+  if (!candidates.length) return report;
+
+  const groups = [...new Set(candidates.map(p => String(p.group_id)))];
+  const candidateIds = candidates.map(p => p.id);
+  const [members, sentRows] = await Promise.all([
+    db.from('group_members').select('group_id, user_id').in('group_id', groups),
+    db.from('ping_log').select('plan_id, user_id, local_day')
+      .eq('kind', 'settle_up').in('plan_id', candidateIds).gte('local_day', shiftDay(utc, -(SETTLE_EVERY_DAYS + 2)) as string),
+  ]);
+  if (members.error) {
+    console.error('[pings] settle-up could not read members', { code: members.error.code });
+    skip('settle_up_members_unreadable');
+    return report;
+  }
+  if (sentRows.error) {
+    if (missingTable(sentRows.error)) {
+      console.error('[pings] no ping_log — run sql/pings-2026-09-25.sql');
+      return { ...report, stopped: 'ping_log_missing' };
+    }
+    // Without the last send, "once every three days" is a guess. Next hour.
+    console.error('[pings] settle-up could not read when it last reminded anybody', { code: sentRows.error.code });
+    skip('settle_up_log_unreadable');
+    return report;
+  }
+  const lastSent = new Map<string, Map<string, string>>();
+  for (const r of (sentRows.data ?? []) as Record<string, unknown>[]) {
+    const m = lastSent.get(String(r.plan_id)) ?? new Map<string, string>();
+    const day = String(r.local_day).slice(0, 10);
+    const u = String(r.user_id);
+    if (!m.has(u) || day > (m.get(u) as string)) m.set(u, day);
+    lastSent.set(String(r.plan_id), m);
+  }
+  const membersOf = new Map<string, string[]>();
+  for (const m of (members.data ?? []) as Record<string, unknown>[]) {
+    membersOf.set(String(m.group_id), [...(membersOf.get(String(m.group_id)) ?? []), String(m.user_id)]);
+  }
+
+  const names = new Map<string, string>();
+  const named = async (ids: string[]) => {
+    const want = ids.filter(id => !names.has(id));
+    if (!want.length) return;
+    const { data, error } = await db.from('users').select('id, first_name, name').in('id', want);
+    if (error) { console.error('[pings] settle-up could not read names', { code: error.code }); return; }
+    for (const u of (data ?? []) as Record<string, unknown>[]) {
+      const first = clean(u.first_name) || clean(u.name).split(' ')[0] || '';
+      if (first) names.set(String(u.id), first);
+    }
+  };
+
+  report.settlePlans = 0;
+  for (const plan of candidates) {
+    let ledger: Pick<Ledger, 'solo' | 'settlementsAvailable' | 'lines'>;
+    try {
+      ledger = await readLedger(db, plan as unknown as { id: string; group_id: string });
+    } catch {
+      skip('settle_up_ledger_unreadable');
+      continue;
+    }
+    report.settlePlans++;
+    await named([...new Set((ledger.lines ?? []).filter(l => l.amountCents > 0).map(l => l.to))]);
+    const due = dueSettleUps({
+      plan,
+      memberIds: membersOf.get(String(plan.group_id)) ?? [],
+      ledger,
+      lastChange: newest(...(stamps.get(String(plan.id)) ?? [])),
+      names,
+      lastSent: lastSent.get(String(plan.id)) ?? new Map(),
+      onSkip: skip,
+    }, now);
+    if (!due.length) continue;
+
+    const mutes = await mutedFor(db, plan.id, due.map(d => d.userId));
+    if (!mutes.ok) { skip('mutes_unreadable'); continue; }
+    for (const ping of due) {
+      if (mutes.muted.has(ping.userId)) { report.muted++; continue; }
+      if (opts.dry) { report.sent[ping.kind] = (report.sent[ping.kind] ?? 0) + 1; continue; }
+      const claimed = await claimAndSend(db, plan.id, ping, ping.note, opts.send, report);
+      if (claimed === 'missing') return { ...report, stopped: 'ping_log_missing' };
+    }
+  }
+  return report;
+}
+
+async function runCountdown(db: SupabaseClient, opts: PingOpts): Promise<PingReport> {
   const now = opts.now ?? new Date();
   const report: PingReport = { plans: 0, sent: {}, already: 0, muted: 0, skipped: {}, failed: 0 };
   const skip = (why: string) => { report.skipped[why] = (report.skipped[why] ?? 0) + 1; };
@@ -630,33 +969,8 @@ export async function runPings(db: SupabaseClient, opts: {
 
       if (opts.dry) { report.sent[ping.kind] = (report.sent[ping.kind] ?? 0) + 1; continue; }
 
-      // The claim. Insert first: the unique index is the only thing that
-      // can tell two simultaneous runs apart.
-      const { data: claimed, error: claimErr } = await db.from('ping_log')
-        .insert({ plan_id: plan.id, user_id: ping.userId, kind: ping.kind, local_day: ping.localDay })
-        .select('id').single();
-      if (claimErr) {
-        if (claimErr.code === '23505') { report.already++; continue; }
-        if (missingTable(claimErr)) {
-          console.error('[pings] no ping_log — run sql/pings-2026-09-25.sql; sending nothing, since nothing could stop a second send');
-          return { ...report, stopped: 'ping_log_missing' };
-        }
-        console.error('[pings] could not claim', { kind: ping.kind, code: claimErr.code });
-        report.failed++;
-        continue;
-      }
-
-      const d = await notifyUsers(db, [ping.userId], note, opts.send);
-      const channels = [d.stored && d.inApp ? 'bell' : null, d.pushed.length ? 'push' : null].filter((c): c is string => !!c);
-      if (!channels.length) {
-        report.failed++;
-      } else {
-        report.sent[ping.kind] = (report.sent[ping.kind] ?? 0) + 1;
-      }
-      const { error: markErr } = await db.from('ping_log')
-        .update({ channels, sent_at: channels.length ? new Date().toISOString() : null })
-        .eq('id', (claimed as { id: string }).id);
-      if (markErr) console.error('[pings] sent, and could not note it', { kind: ping.kind, code: markErr.code });
+      const claimed = await claimAndSend(db, plan.id, ping, note, opts.send, report);
+      if (claimed === 'missing') return { ...report, stopped: 'ping_log_missing' };
     }
   }
   return report;
