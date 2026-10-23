@@ -430,7 +430,9 @@ test('an itinerary line\'s alt text says what the picture is of, not which venue
   assert.equal(item.venue_image_of, 'The Milk Carton Kids');
   assert.equal(rowFromItem(item as unknown as Record<string, unknown>, 0).venue_image_of, 'The Milk Carton Kids');
   assert.equal(itemFromRow({ title: 'x', venue_image_of: 'A band' }).venue_image_of, null, 'nothing to describe without a picture');
-  const src = read('app/api/trips/generate/route.ts');
+  // The generator's read-back lives in lib/itinerary-readback.ts, shared by
+  // the whole itinerary and by "Something else…" on one slot.
+  const src = read('app/api/trips/generate/route.ts') + read('lib/itinerary-readback.ts');
   assert.match(src, /slot\.place_photo_of = realEvent\.photo\.of/, 'the act, from the listing');
   assert.match(src, /slot\.place_photo_of = cited\.name/, 'the place, from the row it cited');
   assert.match(src, /slot\.place_photo_of = null; slot\.place_photo_link = null; \}/, "whatever the model wrote is cleared");
@@ -453,7 +455,7 @@ test('a photo credit is shown whole, and can be followed wherever we hold its pa
   assert.ok(uses.length >= 5);
   for (const u of uses) assert.match(u, /link=\{/, `a credit with no way to its source: ${u}`);
   assert.ok(app.includes('venue_image_link:sl.place_photo_link||null'), 'slotRow carries the page');
-  const src = read('app/api/trips/generate/route.ts');
+  const src = read('app/api/trips/generate/route.ts') + read('lib/itinerary-readback.ts');
   assert.match(src, /slot\.place_photo_link = cited\.photo\.link/);
   assert.match(read('app/api/nearby/route.ts'), /image_link: e\.image && e\.imageCredit \? \(e\.imageLink/);
   const row = { title: 'Museum morning', venue_image_url: 'https://upload.wikimedia.org/a.jpg', venue_image_credit: 'J / Wikimedia Commons, CC BY-SA 4.0',
@@ -519,7 +521,7 @@ test('an itinerary line keeps its venue photo through a save and a reload, credi
 });
 
 test('the generator attaches a line\'s photo only from the row it cited or the listing that sold the ticket', () => {
-  const src = read('app/api/trips/generate/route.ts');
+  const src = read('app/api/trips/generate/route.ts') + read('lib/itinerary-readback.ts');
   assert.match(src, /slot\.place_photo = null; slot\.place_photo_credit = null;/, 'whatever the model wrote is cleared');
   assert.match(src, /if \(cited\?\.photo && !slot\.ticket_url\) \{\s*slot\.place_photo = cited\.photo\.url;/);
   assert.match(src, /if \(realEvent\.photo\) \{ slot\.place_photo = realEvent\.photo\.url;/);

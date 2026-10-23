@@ -50,3 +50,42 @@ export function carriedOverOnRebuild<T extends RebuildItem>(items: T[] | null | 
 export function afterRebuild<T extends RebuildItem>(existing: T[] | null | undefined, freshDays: T[]): T[] {
   return [...carriedOverOnRebuild(existing), ...(freshDays ?? [])];
 }
+
+// ─── An away plan rebuilt keeps getting there and a bed ──────────────────
+// Carrying the lines over only keeps what was there. Moab was already
+// missing its flights and its stay when it was rebuilt, and a rebuild that
+// faithfully carried over nothing left it with nothing. An away plan
+// (lib/away.ts) always has a way there and somewhere to sleep every night
+// (lib/away-lines.ts), so a rebuild of one that has lost either puts the
+// missing line back — never twice, and never over one somebody has.
+
+/** Which of the two an away plan's existing lines are missing. */
+export function awayMissing(existing: RebuildItem[] | null | undefined, opts: { nights: number }): Array<'transport' | 'lodging'> {
+  const kept = carriedOverOnRebuild(existing);
+  const missing: Array<'transport' | 'lodging'> = [];
+  if (!kept.some(i => i.type === 'flight')) missing.push('transport');
+  if (opts.nights >= 1 && !kept.some(i => i.type === 'hotel')) missing.push('lodging');
+  return missing;
+}
+
+/**
+ * The rebuilt itinerary of an away plan: what it already had, the line for
+ * anything it was missing — from `restore`, the server's away lines
+ * (`restore` on the generate response, already client rows) — then the new
+ * days. A plan that has both is exactly afterRebuild.
+ */
+export function afterAwayRebuild<T extends RebuildItem>(
+  existing: T[] | null | undefined, freshDays: T[], restore: T[] | null | undefined, opts: { nights: number },
+): T[] {
+  const kept = carriedOverOnRebuild(existing);
+  const missing = new Set(awayMissing(existing, opts));
+  const hasCar = kept.some(i => i.type === 'transport');
+  const back = (restore ?? []).filter(l =>
+    l?.time === 'Before you go' && (
+      (missing.has('transport') && l.type === 'flight')
+      // The car from the airport goes with the flight it meets — unless the
+      // plan kept one of its own.
+      || (missing.has('transport') && l.type === 'transport' && !hasCar)
+      || (missing.has('lodging') && l.type === 'hotel')));
+  return [...kept, ...back, ...(freshDays ?? [])];
+}

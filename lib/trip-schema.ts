@@ -68,7 +68,25 @@ export const TripsSchema = z.object({ trips: z.array(TripSchema) });
  *   climate  NASA POWER averages for the idea's dates (lib/climate.ts
  *            ideaClimate), and whether a weather no-go was checked.
  */
-export const TripAttachments = z.object({ climate: IdeaClimateShape.nullish() });
+//   away     Getting there and somewhere to sleep, for an away trip
+//            (lib/away-lines.ts awayEstimate): the transport and lodging
+//            lines the card shows, each an estimate, the tier's class of
+//            stay and flight timing, the figure for somebody who drives,
+//            and what carries no figure yet. Null on a night out.
+export const TripAttachments = z.object({
+  climate: IdeaClimateShape.nullish(),
+  away: z.object({
+    away: z.literal(true),
+    nights: z.number(),
+    estimate: z.literal(true),
+    tier: z.enum(['saver', 'on_budget', 'stretch']).nullable(),
+    transport: z.object({ kind: z.enum(['flight', 'flight_and_car']), per_person: z.number().nullable(), label: z.string() }).passthrough(),
+    lodging: z.object({ per_person: z.number().nullable(), nights: z.number(), label: z.string() }).passthrough().nullable(),
+    per_person: z.number(),
+    per_person_if_driving: z.number(),
+    unpriced: z.array(z.string()),
+  }).passthrough().nullish(),
+});
 export const ATTACHED_TRIP_FIELDS = Object.keys(TripAttachments.shape) as Array<keyof typeof TripAttachments.shape>;
 
 // Each slot carries how you get in and what they take, not just what it is.
@@ -297,6 +315,47 @@ export const ITINERARY_JSON_SCHEMA = {
   required: ['itinerary'],
   additionalProperties: false,
 } as const;
+
+// ─── "Something else…": one slot, rewritten ──────────────────────────────
+// Somebody looks at one line of a plan and wants something else there —
+// "somewhere with live music". Rebuilding the whole itinerary to answer that
+// would move every other line under them, so the model is asked for one
+// slot and nothing else, in the same slot shape, and the route reads it
+// back against the same verified menu as the full generator before it goes
+// anywhere. The other slots are context, never output: there is nowhere in
+// this answer to put them.
+export const SLOT_PARTS = ['morning', 'afternoon', 'evening', 'daytime'] as const;
+export type SlotPart = typeof SLOT_PARTS[number];
+
+export const OneSlotSchema = z.object({ slot: SlotSchema });
+
+export const ONE_SLOT_JSON_SCHEMA = {
+  type: 'object',
+  properties: { slot },
+  required: ['slot'],
+  additionalProperties: false,
+} as const;
+
+/** What a request for one slot names: which day, which part, and what instead. */
+export const SlotAskSchema = z.object({
+  /** The day's own number, as the itinerary numbers it (1-based). */
+  day: z.number().int().min(1).max(60),
+  part: z.enum(SLOT_PARTS),
+  /** Which daytime offer, when part is 'daytime'. */
+  index: z.number().int().min(0).max(5).nullish(),
+  /** In their words: "somewhere with live music". Optional — "something else" is an ask too. */
+  ask: z.string().max(200).nullish(),
+  /**
+   * The day as the screen has it, for context only — where the rest of the
+   * day is, so the new stop is near it and not a repeat of it. Never
+   * written back.
+   */
+  current: z.object({
+    morning: z.unknown(), afternoon: z.unknown(),
+    evening: z.unknown(), daytime: z.array(z.unknown()).nullish(),
+  }).nullish(),
+});
+export type SlotAsk = z.infer<typeof SlotAskSchema>;
 
 // Generation is schema-constrained, so this should never fail — but a hard
 // rule says every parse of model output is guarded and logs a tail, and a

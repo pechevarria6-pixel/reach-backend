@@ -3,8 +3,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TripsSchema, ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA,
-  parseModelJSON,
+  parseModelJSON, OneSlotSchema, ONE_SLOT_JSON_SCHEMA, SlotAskSchema, SlotSchema,
 } from '../../lib/trip-schema.ts';
+
+// "Something else…" on one slot asks for exactly one slot, in exactly the
+// shape a day's slots are asked for — so a stop rewritten on its own can
+// never carry a field the full generator's would not, or miss one.
+test('one slot is asked for in the same shape as a day\'s slots', () => {
+  const day = (ITINERARY_JSON_SCHEMA as any).properties.itinerary.items;
+  assert.deepEqual((ONE_SLOT_JSON_SCHEMA as any).properties.slot, day.properties.morning);
+  assert.deepEqual(Object.keys((ONE_SLOT_JSON_SCHEMA as any).properties), ['slot'], 'nowhere to put another slot');
+  assert.equal(OneSlotSchema.shape.slot, SlotSchema);
+});
+
+test('a slot request names a day and a part, and the ask is theirs to leave out', () => {
+  assert.ok(SlotAskSchema.safeParse({ day: 2, part: 'evening', ask: 'somewhere with live music' }).success);
+  assert.ok(SlotAskSchema.safeParse({ day: 1, part: 'afternoon', ask: null, current: null }).success);
+  assert.ok(!SlotAskSchema.safeParse({ day: 0, part: 'evening' }).success);
+  assert.ok(!SlotAskSchema.safeParse({ day: 1, part: 'lunch' }).success);
+  assert.ok(!SlotAskSchema.safeParse({ day: 1, part: 'evening', ask: 'x'.repeat(201) }).success);
+});
 
 // The JSON Schema constrains what the model generates; the zod schema
 // validates what comes back. They are written by hand, so the real risk is

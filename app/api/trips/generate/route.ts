@@ -4,14 +4,13 @@ import { datedDays } from '@/lib/calendar';
 import { report } from '@/lib/report';
 import { requireGroupMember, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
-import type { z } from 'zod';
 import {
   ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA, parseTrips,
   parseModelJSON, textOf, normalizeTrips, dropFillerDays,
-  type ItineraryDaySchema, type SlotSchema,
+  OneSlotSchema, ONE_SLOT_JSON_SCHEMA, SlotAskSchema, type SlotAsk,
 } from '@/lib/trip-schema';
-import { applyRules, correctionNote, oneMealPerEvening } from '@/lib/generation-rules';
-import { withoutVetoed, tripBreach } from '@/lib/vetoes';
+import { applyRules, correctionNote } from '@/lib/generation-rules';
+import { tripBreach } from '@/lib/vetoes';
 import { splitVetoes, weatherLine } from '@/lib/weather-no-go';
 import { planReadiness, wentAheadWith, type ReadinessReport } from '@/lib/plan-readiness';
 import { howIsIt, climatePromptBlock, climateVetoes, COLD_HIGH_C, HOT_HIGH_C } from '@/lib/climate';
@@ -25,21 +24,24 @@ import {
 } from '@/lib/group-answers';
 import { allowance, tooOften, rebuiltTooOften, PER_HOUR, REBUILDS_PER_HOUR } from '@/lib/rate-limit';
 import { placeFromGoal, nightCityFor, partyFromGoal } from '@/lib/goal';
-import { actWords, eventFromCache, eventFromProvider, eventFacts, type RealEvent } from '@/lib/discovery/find-event';
-import { realPlacesAmong } from '@/lib/discovery/is-place';
+import { actWords, eventFromCache, eventFromProvider, eventFacts } from '@/lib/discovery/find-event';
 import { within } from '@/lib/deadline';
 import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { locate } from '@/lib/discovery/geocode';
 import { normalise } from '@/lib/discovery/verify';
-import { withoutStayClaim } from '@/lib/stay-claims';
-import { isFiller, fillerClaim, corruptionAt, beforeCorruption } from '@/lib/filler';
 import { randomUUID } from 'node:crypto';
 import { ideasFrom, findDecision, isOrganiser, daysDecision, ideasReadyCopy, type SavedIdeas, type TripIdea } from '@/lib/trip-vote';
 import { readSavedIdeas, saveIdeas, attachDays, clearVotes, membersOf, organiserOf, organisersOf, firstName } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
-import { placesFor, placeMenu, withoutUnverified, unverifiedNames, scenesFrom, citedPlace, cleanRef, bookingFor, wouldMangle, readBackCoherence, type RealPlace, type CoherenceNote } from '@/lib/discovery/real-places';
+import { placesFor, placeMenu, scenesFrom, cleanRef, type RealPlace } from '@/lib/discovery/real-places';
 import { track, isEventName } from '@/lib/track';
+import { away } from '@/lib/away';
+import { awayPromptBlock, awayGaps, awayCorrection, awayEstimate, awayLines, rowOf, type AwayEstimate } from '@/lib/away-lines';
+import { arrivalFor } from '@/lib/booking/arrival';
+import { awayMissing, afterAwayRebuild } from '@/lib/itinerary-rebuild';
+import { readSkips } from '@/lib/participation';
+import { readBackDays, clearPhotos, attachTicket, vouchedGeography, asGenSlot, oneSlotReadBack, type ReadBackEnv, type GenDay, type GenSlot } from '@/lib/itinerary-readback';
 
 /** Logged when a stop is dropped for being nowhere near the rest of its day. */
 const DROPPED_LOCATION: string = 'itinerary_item_dropped_location';
@@ -125,6 +127,35 @@ async function withSchemaFallback(
   return res;
 }
 
+// ─── Two rules every slot prompt carries, word for word ─────────────────
+// Shared by the evening, the trip and the single-slot prompts so that a
+// slot rewritten on its own is told exactly what the full generator is.
+const TABLES_ARE_THEIRS = `Never "reach" for a restaurant, a bar or anything with a table. Reach does
+not take tables: the member books their own, on their own account and their
+own card, because that is where their card's dining benefits live — Amex
+opens doors on Resy, Chase on OpenTable, and a reservation made by us on our
+card throws all of that away. A place that takes bookings is "ahead"; one
+that does not is "walk_in". Only a flight, a hotel or a ticketed tour is
+"reach".`;
+
+const NO_VENUE_FACTS = `Each slot's "tip" is about that slot and nothing else — never another stop,
+never the day as a whole. Weather, crowds, terrain, light, parking, how long
+getting there takes, what to bring — all good, and being wrong about them
+costs an hour. A tip on a slot that names a place is about getting there or
+the time of day, not about what is inside. Nothing true to say is an empty
+string.
+
+Never state a named business's opening hours, prices, cover charge, payment,
+booking policy, or what it will do for you. "Milt's is cash-only and has no
+ATM inside", "Woody's charges a cover after 9pm", "go right at open (5pm)" —
+those read as fact, and being wrong about them costs somebody their evening.
+You have not rung these places and neither have we. Write about the desert,
+the queue and the light instead, or leave it empty.
+The same rule covers the plan line itself. Name the place, describe the
+outing, do not slip in a policy: "no cover if you sit at the bar",
+"no reservations needed", "Sabaku's sister spot" — each asserts something
+about a business that would have to be checked, and none of them was.`;
+
 // A missing key disables this lane with a clean message rather than a crash.
 function anthropicOrNull() {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -183,6 +214,18 @@ export async function POST(req: NextRequest) {
   const ctx = await requireGroupMember(groupId);
   if (isFail(ctx)) return ctx.error;
   const supabase = ctx.db;
+
+  // "Something else…" on one stop: which day, which part, and what instead.
+  // Only on a plan or an option that already has days — there is no stop to
+  // change on one that has none.
+  const slotParsed = body.slot != null ? SlotAskSchema.safeParse(body.slot) : null;
+  if (slotParsed && !slotParsed.success) {
+    return NextResponse.json({ error: 'Say which stop to change — the day, and which part of it.' }, { status: 400 });
+  }
+  const slotAsk: SlotAsk | null = slotParsed?.success ? slotParsed.data : null;
+  if (slotAsk && !detailTripId) {
+    return NextResponse.json({ error: 'A stop can only be changed on a plan that has its days.' }, { status: 400 });
+  }
 
   // ── A group trip waits for everybody ───────────────────────────────
   // The owner's rule: group trip quizzes wait on each other, so every option
@@ -457,7 +500,7 @@ export async function POST(req: NextRequest) {
   // successes is a limit a failing loop walks straight through.
   const { error: counted } = await supabase.from('audit_logs').insert({
     user_id: ctx.user.id, action, resource: 'groups', resource_id: groupId, success: true,
-    metadata: { mode, nights: null, plan: detailTripId ?? groupPlan?.id ?? null },
+    metadata: { mode, nights: null, plan: detailTripId ?? groupPlan?.id ?? null, ...(slotAsk ? { slot: `${slotAsk.day}:${slotAsk.part}` } : {}) },
   });
   if (counted) console.error(`[audit] could not record ${action} — this one is not counted`, { code: counted.code });
 
@@ -643,12 +686,73 @@ export async function POST(req: NextRequest) {
       // An idea whose days are written is everybody's copy. Anyone but the
       // organiser asking again is handed those days — no model call, and
       // nothing the group is voting on changes under them.
-      if (ideaForDays && daysDecision({ idea: ideaForDays, organiser }) === 'keep') {
+      // A single stop is a suggestion, not the group's copy of the days,
+      // so anybody may ask for one; it is never saved here.
+      if (!slotAsk && ideaForDays && daysDecision({ idea: ideaForDays, organiser }) === 'keep') {
         const kept = typeof ideaForDays.venueTitle === 'string' ? ideaForDays.venueTitle : null;
-        return NextResponse.json({ itinerary: ideaForDays.itinerary, savedToIdeas: true, kept: true, ...(kept ? { title: kept } : {}) });
+        // The idea's own away lines, from the estimate saved on it — the
+        // same lines whoever wrote the days was given.
+        const est = ideaForDays.away && typeof ideaForDays.away === 'object' && !isNightPlan ? ideaForDays.away as AwayEstimate : null;
+        const fixed = est ? awayLines(est, {
+          town: String(ideaForDays.city || ideaForDays.destination || 'the town'),
+          start: startDate ? String(startDate) : null, end: endDate ? String(endDate) : null, party: groupSize, solo,
+        }).map(rowOf) : undefined;
+        return NextResponse.json({
+          itinerary: ideaForDays.itinerary, savedToIdeas: true, kept: true, ...(kept ? { title: kept } : {}),
+          ...(est ? { away: est, fixed } : {}),
+        });
       }
     }
-    const { destination, vibe, costs, city: tripCity, country_code: tripCountry } = (ideaForDays ?? body.tripData ?? {}) as Record<string, any>;
+    const tripSource = (ideaForDays ?? body.tripData ?? {}) as Record<string, any>;
+    const { destination, vibe, costs, city: tripCity, country_code: tripCountry } = tripSource;
+
+    // ── An away plan's lines: getting there, and a bed every night ─────
+    // Task 6a. Built here from the option's own estimates and the tier's
+    // class of stay and flight timing (lib/away-lines.ts), so the days and
+    // the lines arrive together and neither can be dropped for having no
+    // price. A rebuild of a saved plan is told which of the two it has
+    // lost (`restore`), so putting them back never doubles one. Somebody
+    // driving, or already holding a flight, is off the flight — never the
+    // flight off the plan (lib/participation.ts, decision 8).
+    const awayForDays = async (): Promise<Record<string, unknown>> => {
+      if (isNightPlan) return {};
+      const town = String(tripCity || fixedPlace || destination || '').trim();
+      const known = tripSource.away && typeof tripSource.away === 'object' ? tripSource.away as Partial<AwayEstimate> : null;
+      let isAway: boolean | null = nights >= 1 ? true : known?.away === true ? true : null;
+      if (isAway === null && departureCity && town) {
+        const [home, there] = await Promise.all([
+          within(locate(String(departureCity)), 5000, 'placing home').catch(() => null),
+          within(locate(town, tripCountry ?? null), 5000, 'placing the trip').catch(() => null),
+        ]);
+        isAway = away({ mode: 'trip', startDate, endDate, home, destination: there }).away;
+      }
+      if (isAway !== true) return { away: null };
+      const gateway = known?.transport?.airport
+        ?? (town ? (await within(arrivalFor({ city: town, countryCode: tripCountry ?? null }), 6000, 'the arrival airport').catch(() => null))?.gateway ?? null : null);
+      const est = awayEstimate({ ...tripSource, costs: costs ?? {} }, { nights: Math.max(0, nights), gateway });
+      const driving = detailIsPlan ? await drivingCount(supabase, String(detailTripId)) : 0;
+      const lines = awayLines(est, {
+        town: town || 'the town', start: startDate ? String(startDate) : null, end: endDate ? String(endDate) : null,
+        party: groupSize, driving, solo,
+      });
+      const fixed = lines.map(rowOf);
+      if (!detailIsPlan) return { away: est, fixed };
+      // What the saved plan already holds before its days, so a rebuild
+      // puts back only what it lost.
+      const { data: held, error: heldErr } = await supabase
+        .from('itinerary_items').select('scheduled_time, type').eq('plan_id', String(detailTripId));
+      if (heldErr) {
+        // Not knowing what is there, nothing is offered to put back: a
+        // second flight line is its own kind of wrong.
+        console.error('[trips itinerary] could not read the plan\'s own lines', { plan: detailTripId, code: heldErr.code });
+        return { away: est, fixed, restore: null };
+      }
+      const missing = awayMissing((held ?? []).map(r => ({ time: r.scheduled_time, type: r.type })), { nights: est.nights });
+      if (missing.length) console.error('[trips itinerary] an away plan had lost getting there or its bed — offering them back', { plan: detailTripId, missing });
+      const restore = afterAwayRebuild((held ?? []).map(r => ({ time: r.scheduled_time, type: r.type })), [], fixed, { nights: est.nights })
+        .filter(r => (fixed as unknown[]).includes(r));
+      return { away: est, fixed, restore, missing };
+    };
 
     // What this group asked for, for THIS trip.
     //
@@ -910,6 +1014,127 @@ export async function POST(req: NextRequest) {
     const whenLine = calendarDays.length
       ? (isNightPlan ? `THE EVENING: ${calendarDays[0].replace(/^Day 1 — /, '')}.` : `THE DAYS:\n${calendarDays.join('\n')}\nPut anything that only happens on certain weekdays on the right day.`)
       : 'The dates are not fixed yet. Do not tie anything to a weekday or a season.';
+    // ── "Something else…": one stop, rewritten ─────────────────────────
+    // Task 7a. Somebody wants something else in one slot — "somewhere with
+    // live music" — and rebuilding the itinerary to answer that would move
+    // every other line under them. So the model is asked for one slot, from
+    // the same verified menu the full generator was given, and the answer
+    // goes through the same read-back (readBackDays). The rest of the day is
+    // context and never output: nothing here can write to another slot.
+    //
+    // Nothing is saved. The new slot goes back to the screen, which applies
+    // it to that one line (or offers it as a suggestion, after Lock it in,
+    // where swaps are the organiser's — owner decision 14).
+    if (slotAsk) {
+      const client = anthropicOrNull();
+      if (!client) {
+        console.error('[trips slot] ANTHROPIC_API_KEY is not set');
+        return NextResponse.json({ error: 'Changing a stop is switched off for this deployment.' }, { status: 503 });
+      }
+      // The day as it stands: the saved idea's own copy where there is one,
+      // otherwise what the screen sent.
+      const savedDays = Array.isArray(ideaForDays?.itinerary) ? ideaForDays!.itinerary as unknown[] : [];
+      const savedDay = savedDays.find(d => Number((d as { day?: unknown })?.day) === slotAsk.day) as Record<string, unknown> | undefined;
+      const source = (savedDay ?? slotAsk.current ?? {}) as Record<string, unknown>;
+      const contextDay: GenDay = {
+        day: slotAsk.day, title: typeof source.title === 'string' ? source.title : '',
+        morning: asGenSlot(source.morning), afternoon: asGenSlot(source.afternoon), evening: asGenSlot(source.evening),
+        cost_today: 0,
+        daytime: Array.isArray(source.daytime) ? (source.daytime as unknown[]).map(asGenSlot) : [],
+      };
+      const part = slotAsk.part;
+      const index = part === 'daytime' ? (slotAsk.index ?? 0) : null;
+      if (part === 'daytime' && (index === null || !contextDay.daytime[index])) {
+        return NextResponse.json({ error: 'That stop is not on this day.' }, { status: 400 });
+      }
+      const current: GenSlot = part === 'daytime' ? contextDay.daytime[index!] : contextDay[part];
+      const LABEL: Record<string, string> = isNightPlan
+        ? { morning: 'To start', afternoon: 'The main event', evening: 'After', daytime: 'Earlier that day' }
+        : { morning: 'Morning', afternoon: 'Afternoon', evening: 'Evening', daytime: 'Earlier that day' };
+      const others: Array<[string, GenSlot]> = [
+        ...(['morning', 'afternoon', 'evening'] as const).filter(k => k !== part).map(k => [LABEL[k], contextDay[k]] as [string, GenSlot]),
+        ...contextDay.daytime.filter((_, i) => !(part === 'daytime' && i === index)).map(s => [LABEL.daytime, s] as [string, GenSlot]),
+      ].filter(([, s]) => !!s?.plan);
+      const ask = typeof slotAsk.ask === 'string' && slotAsk.ask.trim() ? slotAsk.ask.trim().replace(/\s+/g, ' ').slice(0, 200) : null;
+      const dayDate = calendarDays[slotAsk.day - 1]?.replace(/^Day \d+ — /, '') ?? null;
+
+      const slotPrompt = `Change ONE stop of ${isNightPlan ? 'an evening out' : 'a trip'} in ${tripCity || (isNightPlan ? nightCity : destination) || destination}.
+${dayDate ? `${isNightPlan ? 'The evening' : `Day ${slotAsk.day}`}: ${dayDate}.` : 'The dates are not fixed yet. Do not tie anything to a weekday or a season.'}${climateBlock}
+${solo ? 'One person, on their own.' : partyLine ?? `${groupSize} people together.`}
+
+THE STOP TO CHANGE: ${LABEL[part]}${isNightPlan ? '' : ` of day ${slotAsk.day}`}. It is now: "${current?.plan || 'nothing yet'}".
+${ask
+  ? `What they want there instead, in their own words: "${ask}". That is a wish, not a fact about any place — only the menu says what a place is or what is on there.`
+  : 'They want something different there.'}
+
+THE REST OF THAT DAY STAYS EXACTLY AS IT IS. Do not repeat any of it, and keep the new stop close to it:
+${others.length ? others.map(([l, s]) => `- ${l}: ${s.plan}`).join('\n') : '- (nothing else that day)'}
+
+${menu}
+
+${isNightPlan ? `This is part of an evening: nothing before late afternoon, and exactly one sit-down meal across the evening — if another stop above is a meal, this one is not.
+Food tonight: ${nightFood || cuisines.slice(0, 4).join(', ') || 'varied'}
+${foodLine}` : `Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}`}
+Dietary (must accommodate ALL): ${dietaryNeeds.join(', ') || 'none'}
+${allVetoesHere.length ? `Never include: ${allVetoesHere.join(', ')}` : ''}${weatherHere}
+No slot may reference the stay: no checking in, no "back at the hotel", no room, no pool.
+
+Name only a place on the menu above, and put its [ref] in place_ref. If nothing on the menu fits what they asked for, return an empty "plan" — they are told nothing we have verified fits, which is a true answer; a place that does not fit is not. Never say a place has live music, a DJ, a quiz or anything else on unless its menu line says so.
+
+"cost" is what one person spends at this stop, in whole dollars. 0 means free.
+- "booking": "ahead" if it must be booked direct, "walk_in" if you just turn up.
+${TABLES_ARE_THEIRS}
+- "payment": an empty string unless you know it for this exact place.
+
+${NO_VENUE_FACTS}
+
+"because": an empty string.
+
+Return one slot.`;
+
+      try {
+        const res = await withSchemaFallback(client, QUALITY_MODEL, 4000, slotPrompt, ONE_SLOT_JSON_SCHEMA, 'trips slot', QUALITY_EFFORT);
+        const parsed = parseModelJSON(textOf(res), OneSlotSchema, 'trips slot');
+        if (!parsed) {
+          console.error('[trips slot] no slot in the response', { plan: detailTripId, stop_reason: res.stop_reason });
+          return NextResponse.json({ error: 'Could not find something else for that stop — please try again.' }, { status: 502 });
+        }
+        const fresh = parsed.slot;
+        // Geography for the new stop only: the rest was read when it was written.
+        const vouchers = baseVouchers();
+        const lone: GenDay = { ...contextDay, morning: fresh, afternoon: asGenSlot(null), evening: asGenSlot(null), daytime: [] };
+        vouchers.push(...await vouchedGeography([lone], realPlaces, vouchers, { place: tripCity || destination, country: tripCountry ?? null }));
+
+        const out = oneSlotReadBack({ day: contextDay, part, index, fresh, env: readBackEnv(vouchers) });
+        if ('refused' in out) {
+          console.error('[trips slot] not offered', {
+            plan: detailTripId, day: slotAsk.day, part, why: out.refused, ask, verified_places: realPlaces.length,
+            offered: String(fresh.plan).slice(0, 80),
+          });
+          return NextResponse.json({
+            error: out.refused === 'moved_another' || out.refused === 'clashes'
+              // A second dinner that would cost the real one its place, a
+              // stop that would pull the day across town: the rest of the
+              // day is not this request's to change.
+              ? 'That one would not sit with the rest of the day, so the stop stays as it is. Try asking for something else.'
+              : ask
+                ? `Nothing we have verified there fits "${ask}", so that stop stays as it is.`
+                : 'Nothing else we have verified there fits, so that stop stays as it is.',
+            unchanged: true, why: out.refused, ...(out.refused === 'nothing_fits' || out.refused === 'same_place' ? { nothingFits: true } : {}),
+          }, { status: 422 });
+        }
+        return NextResponse.json({ slot: out.slot, day: slotAsk.day, part, ...(index !== null ? { index } : {}), label: LABEL[part] });
+      } catch (e: any) {
+        report(e, { where: 'trips/generate slot', extra: { destination, status: e?.status } });
+        console.error('[trips slot] failed', { destination, status: e?.status, message: e?.message });
+        const status = e?.status === 429 ? 429 : 502;
+        return NextResponse.json(
+          { error: status === 429 ? 'Reach is busy right now — try again in a moment.' : 'Could not find something else for that stop — please try again.' },
+          { status },
+        );
+      }
+    }
+
     const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}.
 ${whenLine}${climateBlock}${shapeBlock} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
 
@@ -968,13 +1193,7 @@ Every slot needs its practical details, because the point is that nobody turns
 up and finds out the hard way:
 - "booking": "reach" if it takes reservations, "ahead" if it must be booked
   direct, "walk_in" if you just turn up.
-Never "reach" for a restaurant, a bar or anything with a table. Reach does
-not take tables: the member books their own, on their own account and their
-own card, because that is where their card's dining benefits live — Amex
-opens doors on Resy, Chase on OpenTable, and a reservation made by us on our
-card throws all of that away. A place that takes bookings is "ahead"; one
-that does not is "walk_in". Only a flight, a hotel or a ticketed tour is
-"reach".
+${TABLES_ARE_THEIRS}
 - "payment": leave this an empty string unless you know it for this exact
   place. Not what places like it usually take — this one. We check payment
   against sources that record it, so an empty string costs nobody anything
@@ -982,23 +1201,7 @@ that does not is "walk_in". Only a flight, a hotel or a ticketed tour is
 
 Never write "placeholder", "TBD" or any other filler.
 
-Each slot's "tip" is about that slot and nothing else — never another stop,
-never the day as a whole. Weather, crowds, terrain, light, parking, how long
-getting there takes, what to bring — all good, and being wrong about them
-costs an hour. A tip on a slot that names a place is about getting there or
-the time of day, not about what is inside. Nothing true to say is an empty
-string.
-
-Never state a named business's opening hours, prices, cover charge, payment,
-booking policy, or what it will do for you. "Milt's is cash-only and has no
-ATM inside", "Woody's charges a cover after 9pm", "go right at open (5pm)" —
-those read as fact, and being wrong about them costs somebody their evening.
-You have not rung these places and neither have we. Write about the desert,
-the queue and the light instead, or leave it empty.
-The same rule covers the plan line itself. Name the place, describe the
-outing, do not slip in a policy: "no cover if you sit at the bar",
-"no reservations needed", "Sabaku's sister spot" — each asserts something
-about a business that would have to be checked, and none of them was.` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
+${NO_VENUE_FACTS}` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
 ${whenLine}${climateBlock}${shapeBlock}
 
 ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
@@ -1049,23 +1252,7 @@ not exist is not.
 Use the verified list above for every venue you name. Neighbourhoods,
 distances and the shape of the day are yours; the names are not.
 
-Each slot's "tip" is about that slot and nothing else — never another stop,
-never the day as a whole. Weather, crowds, terrain, light, parking, how long
-getting there takes, what to bring — all good, and being wrong about them
-costs an hour. A tip on a slot that names a place is about getting there or
-the time of day, not about what is inside. Nothing true to say is an empty
-string.
-
-Never state a named business's opening hours, prices, cover charge, payment,
-booking policy, or what it will do for you. "Milt's is cash-only and has no
-ATM inside", "Woody's charges a cover after 9pm", "go right at open (5pm)" —
-those read as fact, and being wrong about them costs somebody their evening.
-You have not rung these places and neither have we. Write about the desert,
-the queue and the light instead, or leave it empty.
-The same rule covers the plan line itself. Name the place, describe the
-outing, do not slip in a policy: "no cover if you sit at the bar",
-"no reservations needed", "Sabaku's sister spot" — each asserts something
-about a business that would have to be checked, and none of them was.
+${NO_VENUE_FACTS}
 
 Every slot needs its practical details, because the point of this is that
 nobody arrives somewhere and finds out the hard way:
@@ -1073,13 +1260,7 @@ nobody arrives somewhere and finds out the hard way:
   outright; "ahead" if it needs reserving but the person does it themselves —
   a table, a tasting menu, a permit, a timed entry; "walk_in" if you just turn
   up.
-Never "reach" for a restaurant, a bar or anything with a table. Reach does
-not take tables: the member books their own, on their own account and their
-own card, because that is where their card's dining benefits live — Amex
-opens doors on Resy, Chase on OpenTable, and a reservation made by us on our
-card throws all of that away. A place that takes bookings is "ahead"; one
-that does not is "walk_in". Only a flight, a hotel or a ticketed tour is
-"reach".
+${TABLES_ARE_THEIRS}
 - "payment": leave this as an empty string unless you know it for this exact
   place, from that place — not from what restaurants of its kind usually do.
   An empty string is the right answer almost every time, and it costs the
@@ -1177,7 +1358,14 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       const savedToIdeas = ideaForDays && groupPlan
         ? await attachDays(supabase, groupPlan.id, ideaForDays.id, days, { organiser, venueTitle: title })
         : false;
-      return NextResponse.json({ itinerary: days, savedToIdeas, ...(title ? { title } : {}), ...(isNightPlan && foodGap.length ? { foodGap } : {}) });
+      // Getting there and a bed, as lines the screen saves with the days —
+      // never left to be rebuilt from costs on the client, where an
+      // unpriced one used to vanish.
+      const awayPart = await awayForDays();
+      return NextResponse.json({
+        itinerary: days, savedToIdeas, ...(title ? { title } : {}), ...(isNightPlan && foodGap.length ? { foodGap } : {}),
+        ...awayPart,
+      });
     } catch (e: any) {
       report(e, { where: 'trips/generate', extra: { destination, nights, status: e?.status } });
       console.error('[trips itinerary] generation failed', {
@@ -1299,6 +1487,7 @@ budget came back clustered at 70%, 89% and 95%, which is not a choice:
 - "stretch":   total_per_person about $${Math.round(effectiveBudget * 1.15)}
 
 Each total must land within 10% of the figure above for its tier.
+${nights >= 1 ? awayPromptBlock({ nights, from: `${departure} (${departureCode})` }) : ''}
 
 ${fixedPlace ? `ALL THREE OPTIONS MUST BE AT ${fixedPlace.toUpperCase()}. This is not a
 suggestion and not one of three ideas — they have chosen where they are going.
@@ -1327,7 +1516,8 @@ sentence tied to their actual food, music and activity preferences. Keep
 food_scene and music_scene to one short line each — they are REPLACED by
 counts from our verified venue table, so claim nothing in them. tagline is at most ten
 words. emoji is a single emoji for the destination. accommodation.example
-names a specific hotel or neighbourhood.
+names the neighbourhood or area to stay in — never a named hotel, which
+nobody has checked.
 
 ${solo ? `
 Travelling alone, so plan for one — not for a smaller group. Somewhere safe to
@@ -1359,7 +1549,7 @@ Return JSON only, shaped exactly like this:
   ? '"Somewhere with snow for a birthday — this is a ski town"'
   : '"Somewhere your sister can see snow — this is a ski town"'}],
 "costs":{"flights":{"per_person":400,"details":"..."},
-"accommodation":{"per_person":500,"details":"...","example":"Hotel or area"},
+"accommodation":{"per_person":500,"details":"...","example":"Neighbourhood or area"},
 "ground_transport":{"per_person":100,"details":"..."},
 "food_drink":{"per_person":350,"details":"..."},
 "activities":{"per_person":200,"details":"..."},
@@ -1437,6 +1627,32 @@ Return JSON only, shaped exactly like this:
                 : "We hit a snag building your options — try again?" },
             { status: 502 },
           );
+        }
+      }
+    }
+    // ── Getting there and a bed, on every away option ─────────────────
+    // A trip with a night in it is away (lib/away.ts), and an away option
+    // that prices no flight or no stay is a plan with a hole in it that
+    // reads as a cheap one. Asked again once, naming exactly what was left
+    // out. Whatever is still missing after that is not dropped: the card
+    // says it is not estimated yet (lib/away-lines.ts awayEstimate).
+    if (trips?.length && !isNightPlan && nights >= 1) {
+      const gaps = awayGaps(trips, nights);
+      if (gaps.length) {
+        console.error('[trips generate] an away option left out getting there or a bed — asking again', { groupId, gaps });
+        const again = await withSchemaFallback(
+          client, FAST_MODEL, 16000,
+          `${prompt}\n\n${awayCorrection(gaps, nights)}`,
+          TRIPS_JSON_SCHEMA, 'trips generate away retry',
+        ).catch((e: any) => { console.error('[trips generate] the away retry failed', { message: e?.message }); return null; });
+        const reparsed = again ? parseTrips(textOf(again), 'trips generate away retry') : null;
+        const second = reparsed ? applyRules(normalizeTrips(reparsed, samePlaceIsFine), rule) : null;
+        // Taken only if it is better and still right about the place.
+        if (second && !second.fatal.length && second.trips.length >= trips.length
+          && awayGaps(second.trips, nights).length < gaps.length) {
+          trips = second.trips;
+        } else {
+          console.error('[trips generate] still missing after asking again — shown as not estimated', { groupId, gaps: awayGaps(trips, nights) });
         }
       }
     }
@@ -1547,7 +1763,30 @@ Return JSON only, shaped exactly like this:
     // the venues we have verified in it. Counted, it cannot be wrong. Where
     // we hold nothing the line says so, which is a fair thing to tell
     // somebody choosing between three places.
+    // Home, placed once, for a day trip: with no night in it, whether it is
+    // away is the distance (lib/away.ts), and that needs both ends.
+    const homeAt = !isNightPlan && nights < 1 && departureCity
+      ? within(locate(String(departureCity)), 5000, 'placing home').catch(() => null) : null;
     await Promise.all(trips.map(async (trip) => {
+      // ── Getting there and a bed, said on the card ──────────────────
+      // Where it lands: the town's own airport, or the nearest that has
+      // one and a rental car from there (lib/booking/arrival.ts). Finding
+      // the airport is not a price — no flight is searched for — and a
+      // lookup that cannot answer in time leaves the card at "flights",
+      // never at nothing.
+      if (!isNightPlan) {
+        const place = String(trip.city || trip.destination || '');
+        const landing = within(arrivalFor({ city: place, countryCode: trip.country_code ?? null }), 6000, 'the arrival airport').catch(() => null);
+        let isAway: boolean | null = nights >= 1 ? true : null;
+        if (isAway === null && homeAt) {
+          const [home, there] = await Promise.all([homeAt, within(locate(place, trip.country_code ?? null), 5000, 'placing the option').catch(() => null)]);
+          isAway = away({ mode: 'trip', startDate, endDate, home, destination: there }).away;
+        }
+        const landed = await landing;
+        (trip as Record<string, unknown>).away = isAway === true
+          ? awayEstimate(trip, { nights: Math.max(0, nights), gateway: landed?.gateway ?? null })
+          : null;
+      }
       // A picture of the place the idea goes to, kept per destination so
       // the same town is asked about once (lib/discovery/destination-photo).
       // Alongside the count, never in front of it, and on a short leash: an
@@ -1703,380 +1942,30 @@ async function tellTheGroup(
   if (results.some(r => !r.stored)) console.error('[generate] the group was not told about the ideas in the app', { planId });
 }
 
-// ─── Reading generated days back against the menu ────────────────────────
-// One read-back, used by the whole itinerary and by "Something else…" on a
-// single slot, so a slot rewritten on its own is held to exactly what the
-// full generator is held to. Lifted out of the itinerary branch unchanged
-// in what it does; the comments that explain each rule stayed with it.
-
-type GenDay = z.infer<typeof ItineraryDaySchema>;
-type GenSlot = z.infer<typeof SlotSchema>;
-
-function slotsOf(day: GenDay): GenSlot[] {
-  return [day.morning, day.afternoon, day.evening, ...(day.daytime ?? [])].filter(Boolean) as GenSlot[];
-}
-
-/** A picture is attached from a row or a listing, never taken from the model. */
-function clearPhotos(days: GenDay[]): void {
-  for (const day of days) {
-    for (const slot of slotsOf(day)) {
-      if (slot) { slot.place_photo = null; slot.place_photo_credit = null; slot.place_photo_of = null; slot.place_photo_link = null; }
-    }
-  }
-}
-
 /**
- * The ticket, carried through to something you can press.
- *
- * The listing gave us a venue, a date and the page that sells the tickets,
- * and until now only the first two survived: the URL was read as a boolean
- * and thrown away. So the evening said "See The Milk Carton Kids live at
- * 9:30 CLUB" above a button reading "Reserve ahead", which is not a thing
- * anybody can do. Reach cannot sell a ticket; it can hand somebody straight
- * to the page that does, and that is a complete answer rather than a dead
- * end.
- *
- * Attached to the slot that actually names the event rather than to a fixed
- * position, because which slot holds it is the model's choice.
+ * How many on a saved plan are off every flight on it — driving, or
+ * holding a flight of their own (item_optouts on the flight bookings; the
+ * opt-out itself is lib/participation.ts's and the participation route's).
+ * Flights are one booking per departure airport, so somebody is driving
+ * only when they sit out every one of them. Zero when there are no flight
+ * bookings yet, or the opt-outs cannot be read: the flight line then says
+ * nothing about who is driving rather than guessing.
  */
-function attachTicket(days: GenDay[], realEvent: RealEvent | null): boolean {
-  if (!realEvent?.url) return false;
-  const marks = [realEvent.venue, realEvent.title].filter(Boolean).map(v => normalise(String(v)));
-  let attached = false;
-  for (const day of days) {
-    for (const slot of [day.evening, day.afternoon, day.morning, ...(day.daytime ?? [])]) {
-      if (!slot || attached) continue;
-      const here = normalise(slot.plan);
-      if (!marks.some(m => m && here.includes(m))) continue;
-      slot.ticket_url = realEvent.url;
-      slot.venue = realEvent.venue ?? null;
-      // The act's picture, from the same listing that sold the ticket.
-      // And what it is of: the line names the venue, the picture is
-      // usually the band.
-      if (realEvent.photo) { slot.place_photo = realEvent.photo.url; slot.place_photo_credit = realEvent.photo.credit; slot.place_photo_of = realEvent.photo.of ?? null; }
-      attached = true;
-    }
+async function drivingCount(db: import('@supabase/supabase-js').SupabaseClient, planId: string): Promise<number> {
+  const { data: flights, error } = await db.from('bookings')
+    .select('id').eq('plan_id', planId).eq('vertical', 'flight').not('status', 'in', '("failed","cancelled")');
+  if (error) {
+    console.error('[trips itinerary] could not read the plan\'s flights', { plan: planId, code: error.code });
+    return 0;
   }
-  return attached;
-}
-
-/**
- * Geography is real even when we hold no record of it.
- *
- * A beach, a river and a neighbourhood are not businesses, so they are
- * never in a venue table built from business tags. Softening them turned
- * "Sunset from Playa Los Muertos" into "Sunset from a local spot", which is
- * not an improvement on anything.
- *
- * The same map that lists the restaurants lists the beach, so the names
- * nothing else vouches for are asked about before they are softened.
- * Strictly time-boxed: Overpass taught this lesson at seventy-two seconds,
- * and a check that cannot answer in time must cost the traveller nothing.
- * Falling back means softening, which is what happened before this existed.
- */
-async function vouchedGeography(
-  days: GenDay[], realPlaces: RealPlace[], vouchers: string[],
-  where: { place: string; country: string | null },
-): Promise<string[]> {
-  const candidates = [...new Set(days.flatMap(day => slotsOf(day)
-    .flatMap(slot => [...unverifiedNames(slot.plan, realPlaces, vouchers), ...unverifiedNames(slot.tip ?? '', realPlaces, vouchers)])))];
-  if (!candidates.length) return [];
-  let geography = new Set<string>();
-  const at = await locate(where.place, where.country).catch(() => null);
-  if (at) {
-    // Scaled to the plan. Ten names in eight seconds is enough for an
-    // evening and not for a fortnight: a thirteen-day Moab itinerary ran
-    // out of budget and a street name was softened to "a local spot",
-    // leaving "walk the length of a local spot" on the screen. Still
-    // bounded — a check that cannot answer in time costs the traveller
-    // nothing and the fallback is what we did before.
-    const room = Math.min(40, Math.max(10, days.length * 3));
-    geography = await within(
-      realPlacesAmong(candidates.slice(0, room), { lat: at.lat, lng: at.lng }),
-      Math.min(25000, 6000 + room * 700), 'checking the landmarks',
-    ).catch(() => new Set<string>());
+  const ids = new Set((flights ?? []).map(f => String(f.id)));
+  if (!ids.size) return 0;
+  const skips = await readSkips(db, planId).then(r => r.skips).catch(() => []);
+  const out = new Map<string, Set<string>>();
+  for (const s of skips) {
+    if (!ids.has(s.ref)) continue;
+    if (!out.has(s.userId)) out.set(s.userId, new Set());
+    out.get(s.userId)!.add(s.ref);
   }
-  console.log('[trips itinerary] names nothing held vouched for', {
-    asked: candidates.length, real_places: [...geography],
-  });
-  return [...geography];
-}
-
-interface ReadBackEnv {
-  realPlaces: RealPlace[];
-  /** Names that are real without being on the menu, geography included. */
-  vouchers: string[];
-  destination: unknown;
-  isNightPlan: boolean;
-  realEvent: RealEvent | null;
-  nightPrefs: Record<string, any>;
-  vetoes: string[];
-  planForLog: string | null;
-  /** A dry run: the same rules, nothing logged or tracked. */
-  quiet?: boolean;
-  onDroppedLocation?: (note: Extract<CoherenceNote, { what: 'dropped_location' }>) => void;
-}
-
-/**
- * Nothing goes out that we cannot stand behind.
- *
- * The prompt asks the model to name only verified places. Asking has a good
- * success rate, and a good success rate is not the standard: one invented
- * restaurant in fifty is still somebody standing outside a laundrette at
- * eight in the evening.
- *
- * So the output is read back against the same list the prompt was given. A
- * name nothing vouches for is softened to what we can actually support —
- * the claim goes, the shape of the evening stays. Returns the days, some of
- * which are replaced rather than edited in place (a dropped meal, a veto).
- */
-function readBackDays(input: GenDay[], env: ReadBackEnv): GenDay[] {
-  const days = input;
-  const { realPlaces, vouchers, destination, isNightPlan, realEvent, nightPrefs } = env;
-  const log: (...a: unknown[]) => void = env.quiet ? () => {} : (...a) => console.error(...a);
-  let softened = 0;
-  // Nothing generated here books a bed. A slot is a plan, a cost, a
-  // booking mode and a payment note — there is no accommodation in the
-  // schema at all, and the accommodation figure on a trip option is a
-  // budget line, a number to plan against, not a reservation. So the rule
-  // needs no condition: a generated day may never write somebody into a
-  // room, because at this point nobody has one.
-  const invented = new Set<string>();
-  const stripped = new Set<string>();
-  for (const day of days) {
-    for (const slot of slotsOf(day)) {
-      // What this slot actually points at, if anything we handed over.
-      const cited = citedPlace(slot.place_ref, realPlaces);
-
-      // "Reach will book this" has to be something Reach can do. The
-      // prompt forbids claiming it for a table and the screen guessed
-      // from the slot's type; a resolved place answers it outright.
-      // hasTicket is about THIS slot, not the plan.
-      //
-      // It was `!!realEvent?.url`, so once a plan had a real gig in it
-      // every slot claiming "reach" kept the claim — and "Reach will
-      // book this" appeared over a restaurant table, which is the exact
-      // promise the whole check exists to stop. The ticket is attached
-      // above, so the slot can simply be asked.
-      // The place's own site, so somebody can actually go and book it.
-      //
-      // Every one of the 386 verified venues carries a website and not
-      // one of them reached a screen: a trip's itinerary named real
-      // restaurants and gave no way to reserve any of them. The row we
-      // matched has the address; it just was never passed on.
-      if (cited?.url && !slot.ticket_url) {
-        slot.place_url = cited.url;
-        slot.venue = slot.venue ?? cited.name;
-      }
-      // A picture of the place this line names — from the row it cited,
-      // with its credit, and only that row. A slot that cites nothing
-      // gets no picture, however confidently it names somewhere.
-      if (cited?.photo && !slot.ticket_url) {
-        slot.place_photo = cited.photo.url;
-        slot.place_photo_credit = cited.photo.credit;
-        slot.place_photo_of = cited.name ?? null;
-        slot.place_photo_link = cited.photo.link ?? null;
-      }
-      // What is on there, read off the venue's own page. Carried on the
-      // slot rather than left to the model to mention, because it is the
-      // most useful thing we hold about a place and it must not depend
-      // on whether the sentence happened to include it. If we do not
-      // tell somebody there is a quiz on Wednesday, they do not know.
-      if (cited?.whatsOn?.length) slot.whats_on = cited.whatsOn.slice(0, 2).join(' · ');
-
-      const honest = bookingFor(slot.booking, cited, !!slot.ticket_url);
-      // A table to book gets the way to book it: the venue's own booking
-      // page when it names one, and its number either way. Both were
-      // held and neither reached the line (audit #50).
-      if (cited && honest === 'ahead' && !slot.ticket_url) {
-        if (cited.reserveUrl) { slot.place_url = cited.reserveUrl; slot.venue = slot.venue ?? cited.name; }
-        if (cited.phone) slot.place_phone = cited.phone;
-      }
-      if (honest !== slot.booking) {
-        log('[trips itinerary] downgraded a booking claim we cannot keep', {
-          destination, claimed: slot.booking, kept: honest, place: cited?.name ?? null,
-        });
-        slot.booking = honest;
-      }
-
-      // Nobody is written into a room nobody booked. The prompt says so
-      // now; this is the half that does not depend on the prompt being
-      // obeyed. A whole Moab plan shipped opening with "check into the
-      // hotel" on a trip with no hotel item and no hotel booking.
-      // A line that describes the slot instead of filling it. Two of
-      // these reached real plans — "This is the slot for the thing Peter
-      // already has in mind" — sitting where the gig should be. Unlike a
-      // stay claim there is nothing in it to rescue: it is about the
-      // form all the way through, and writing the evening ourselves is
-      // the thing we do not do. The slot goes.
-      if (isFiller(slot.plan)) {
-        log('[trips itinerary] dropped a slot that described itself', {
-          destination, phrase: fillerClaim(slot.plan), slot: String(slot.plan).slice(0, 80),
-        });
-        invented.add(String(fillerClaim(slot.plan)));
-        slot.plan = '';
-      }
-
-      const stay = withoutStayClaim(String(slot.plan ?? ''));
-      if (stay.removed) {
-        log('[trips itinerary] removed a stay nobody booked', {
-          destination, claim: stay.removed, kept: stay.text === null ? '(whole slot)' : 'clause',
-        });
-        invented.add(stay.removed);
-        // Null means nothing true was left. Rather than invent a
-        // replacement — which is how the hotel got here in the first
-        // place — the slot loses the sentence that was not true.
-        slot.plan = stay.text ?? '';
-      }
-
-      const clean = withoutUnverified(slot.plan, realPlaces, vouchers);
-      if (clean.removed.length) {
-        softened++;
-        clean.removed.forEach(n => stripped.add(n));
-        // Softening works when the name is the object of the sentence,
-        // not its subject: "Dusk session at Wine & Design…" became "a
-        // local spot at Dusk session at Wine & Design…" on a real row.
-        // The tip already had this check; the line itself did not. A
-        // line that would read as nonsense goes, like a filler slot.
-        if (wouldMangle(slot.plan, clean.removed)) {
-          log('[trips itinerary] dropped a line softening would have mangled', {
-            destination, removed: clean.removed.slice(0, 3), slot: String(slot.plan).slice(0, 80),
-          });
-          slot.plan = '';
-        } else {
-          slot.plan = clean.text;
-        }
-        // A reference to a place we just removed is not a reference.
-        slot.place_ref = null;
-      }
-      // Text that came back broken — "…near the pub.morplinsert1" —
-      // is cut back to its last whole sentence, or dropped.
-      if (slot.plan) {
-        const whole = beforeCorruption(String(slot.plan));
-        if (whole !== slot.plan) {
-          log('[trips itinerary] cut a line that came back broken', {
-            destination, at: corruptionAt(slot.plan), slot: String(slot.plan).slice(0, 80),
-          });
-          slot.plan = whole ?? '';
-        }
-      }
-      // A live run returned "http://null" here. It resolves to nothing,
-      // so it was harmless, and it is still not a citation — it must not
-      // travel on as though it might be one.
-      if (slot.place_ref && !cleanRef(slot.place_ref)) {
-        log('[trips itinerary] discarded a place_ref that is not one', { got: String(slot.place_ref).slice(0, 40) });
-        slot.place_ref = null;
-      }
-      // The slot's own tip, read back like its line. A slot whose line
-      // went has nothing for a tip to be about, so the tip goes too.
-      if (!slot.plan) slot.tip = '';
-      const tip = withoutUnverified(String(slot.tip ?? ''), realPlaces, vouchers);
-      if (tip.removed.length) {
-        tip.removed.forEach(n => stripped.add(n));
-        // Softening works when the name is the object of the sentence.
-        // When it is the subject it does not: a live run produced "a local
-        // spot stays lively after evening shows let out", which is not a
-        // sentence anybody wrote. A tip is flavour, so it is dropped rather
-        // than mangled — and a tip naming a business was already against
-        // the rule that a tip describes a place, not what a business does.
-        slot.tip = wouldMangle(String(slot.tip ?? ''), tip.removed) ? '' : tip.text;
-      }
-      // A tip is flavour: broken, it goes.
-      if (slot.tip && corruptionAt(slot.tip) >= 0) {
-        log('[trips itinerary] dropped a tip that came back broken', {
-          destination, tip: String(slot.tip).slice(0, 80),
-        });
-        slot.tip = '';
-      }
-    }
-  }
-
-  // ── Does each line describe the place it names, where it is ─────
-  // The names above are all real by now; this reads what the lines say
-  // ABOUT them. Plan f979c880 named SPIN, a cocktail bar on F Street,
-  // and said it was good for dancing, under a tip about the monuments
-  // on the Mall — every name vouched for, and the evening described a
-  // different place. See readBackCoherence (lib/discovery/real-places).
-  // "Make a day of it" is for an evening somebody might stretch. The prompt
-  // says a person who only wanted a drink is never shown it; this is the
-  // half that does not depend on the prompt being obeyed. Cleared before
-  // the read-back below, so offers about to be thrown away have no say in
-  // which of the evening's own stops survive.
-  if (isNightPlan) {
-    const kinds = ((nightPrefs.kind || []) as unknown[]).map(k => String(k).toLowerCase());
-    const drinksOnly = kinds.length > 0 && kinds.every(k => /drink|bar|pub|cocktail|wine|beer/.test(k));
-    const quiet = /chill|low|quiet|easy|mellow/i.test(String(nightPrefs.energy || ''));
-    if (drinksOnly || quiet) for (const d of days) (d as { daytime?: unknown[] }).daytime = [];
-  }
-  // The listing vouches for the gig: the slot holding it (ticket_url,
-  // attached above) is read against the event as well as the row, keeps
-  // the act if it is rewritten, and anchors the evening's geography.
-  const coherence = readBackCoherence(days, realPlaces, {
-    night: isNightPlan,
-    event: realEvent?.url ? { title: realEvent.title, venue: realEvent.venue } : null,
-  });
-  for (const note of coherence) {
-    if (note.what === 'dropped_location') {
-      log('[trips itinerary] dropped a stop nowhere near the rest', {
-        destination, plan: env.planForLog, day: note.day, slot: note.slot,
-        place: note.place, km: note.km, reason: note.reason,
-      });
-      if (!env.quiet) env.onDroppedLocation?.(note);
-    } else {
-      log(note.what === 'rewritten'
-        ? '[trips itinerary] replaced a line that described another kind of place'
-        : '[trips itinerary] dropped a tip about another kind of place', {
-        destination, day: note.day, slot: note.slot, place: note.place, topics: note.topics,
-      });
-    }
-  }
-  if (softened || stripped.size) {
-    // Worth shouting about. A high count here means the menu was thin or
-    // the rule is not landing, and both are fixable — but only if the
-    // log says so rather than the traveller finding out.
-    log('[trips itinerary] removed names nothing vouches for', {
-      destination, slots: softened, verified_places: realPlaces.length,
-      names: [...stripped].slice(0, 12),
-    });
-  }
-
-  if (invented.size) {
-    // Separate from the venue count above, because it is a different
-    // failure with a different fix. A stripped venue name means the menu
-    // was thin. This means the model was told, in the prompt, not to put
-    // anybody in a room, and did it anyway — so if this keeps appearing,
-    // the instruction is the thing to change, not the venue table.
-    log('[trips itinerary] removed stays nobody booked', {
-      destination, claims: [...invented].slice(0, 8),
-    });
-  }
-
-  // One sit-down meal an evening. The prompt says so; this is the half
-  // that does not depend on it being obeyed (lib/generation-rules.ts).
-  if (isNightPlan) {
-    for (let i = 0; i < days.length; i++) {
-      const { day, dropped } = oneMealPerEvening(days[i]);
-      if (dropped.length) {
-        log('[trips itinerary] dropped a second meal in one evening', {
-          destination, plan: env.planForLog, dropped: dropped.map(d => d.slice(0, 60)),
-        });
-        days[i] = day;
-      }
-    }
-  }
-  // A veto is absolute, and the prompt saying so is only half of it
-  // (lib/vetoes.ts): whatever came back is read against what anybody
-  // going said they will not do, and a line that breaks it goes.
-  if (env.vetoes.length) {
-    for (let i = 0; i < days.length; i++) {
-      const { day, dropped } = withoutVetoed(days[i] as Parameters<typeof withoutVetoed>[0], env.vetoes);
-      if (dropped.length) {
-        log('[trips itinerary] dropped lines that broke a veto', {
-          destination, plan: env.planForLog, dropped: dropped.map(d => `${d.veto}: ${d.text.slice(0, 60)}`),
-        });
-        days[i] = day as typeof days[number];
-      }
-    }
-  }
-  return days;
+  return [...out.values()].filter(refs => refs.size === ids.size).length;
 }

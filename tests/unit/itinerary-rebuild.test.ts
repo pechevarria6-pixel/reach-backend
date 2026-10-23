@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { carriedOverOnRebuild, afterRebuild } from '../../lib/itinerary-rebuild.ts';
+import { carriedOverOnRebuild, afterRebuild, awayMissing, afterAwayRebuild } from '../../lib/itinerary-rebuild.ts';
 
 // A trip as the generate path builds it: the three fixed lines, then the days.
 const TRIP = [
@@ -55,4 +55,40 @@ test('a trip that never had them is not given any', () => {
   assert.deepEqual(carriedOverOnRebuild(FRESH), []);
   assert.equal(afterRebuild([], FRESH).length, 2);
   assert.equal(afterRebuild(null, FRESH).length, 2);
+});
+
+// ─── An away plan rebuilt keeps getting there and a bed (Task 6a) ────────
+const RESTORE = [
+  { time: 'Before you go', type: 'flight',    title: 'Round-trip flights to GJT' },
+  { time: 'Before you go', type: 'transport', title: 'Rental car from Grand Junction Regional (GJT)' },
+  { time: 'Before you go', type: 'hotel',     title: 'Somewhere to stay · 13 nights' },
+];
+
+test('Moab, rebuilt after it had lost its flight and its stay, gets both back', () => {
+  // The damage in the table: thirty-nine lines, not one of them bookable.
+  assert.deepEqual(awayMissing(FRESH, { nights: 13 }), ['transport', 'lodging']);
+  const after = afterAwayRebuild(FRESH, FRESH, RESTORE, { nights: 13 });
+  assert.deepEqual(after.slice(0, 3).map(i => i.type), ['flight', 'transport', 'hotel']);
+  assert.equal(after.length, FRESH.length + 3);
+});
+
+test('a plan that has both is rebuilt exactly as before — nothing doubled', () => {
+  assert.deepEqual(awayMissing(TRIP, { nights: 7 }), []);
+  assert.deepEqual(afterAwayRebuild(TRIP, FRESH, RESTORE, { nights: 7 }), afterRebuild(TRIP, FRESH));
+});
+
+test('only the missing one comes back, and a car is never added beside one it kept', () => {
+  const noBed = TRIP.filter(i => i.type !== 'hotel');
+  const after = afterAwayRebuild(noBed, FRESH, RESTORE, { nights: 7 });
+  assert.equal(after.filter(i => i.type === 'hotel').length, 1);
+  assert.equal(after.filter(i => i.type === 'flight').length, 1);
+  assert.equal(after.filter(i => i.type === 'transport').length, 1, 'the transfer it kept, and no second car');
+  const noFlight = TRIP.filter(i => i.type !== 'flight');
+  const back = afterAwayRebuild(noFlight, FRESH, RESTORE, { nights: 7 });
+  assert.equal(back.filter(i => i.type === 'flight').length, 1);
+  assert.equal(back.filter(i => i.type === 'transport').length, 1);
+});
+
+test('a day trip needs no bed', () => {
+  assert.deepEqual(awayMissing([TRIP[0]], { nights: 0 }), []);
 });
