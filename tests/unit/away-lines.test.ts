@@ -109,9 +109,78 @@ test('a driver comes off the flight; the flight stays on the plan', () => {
   assert.equal(flight.flying, 3);
   assert.equal(flight.driving, 1);
   assert.match(flight.subtitle, /3 flying, 1 driving/);
+  assert.equal(flight.party_cents, 70000 * 3, 'the party pays three flights, not four');
+  const row = rowOf(flight) as Record<string, unknown>;
+  assert.equal(row.flying, 3, 'who is flying reaches the client row');
+  assert.equal(row.driving, 1);
+  assert.equal(row.party_cents, 210000);
+});
+
+test('nobody flying: the line says so and is no flight anybody is charged or quoted for', () => {
+  const est = awayEstimate(option(), { nights: 3 });
   const all = awayLines(est, { town: 'Lisbon', party: 2, driving: 2, solo: false });
-  assert.ok(all.find(l => l.type === 'flight'), 'even with everybody driving the line is there to say so');
-  assert.match(all.find(l => l.type === 'flight')!.subtitle, /Everyone is driving/);
+  assert.equal(all.filter(l => l.type === 'flight').length, 0, "type 'flight' is what the bookable route quotes");
+  const said = all.find(l => /driving/.test(l.title))!;
+  assert.ok(said, 'the line is there to say so');
+  assert.match(said.title, /Everyone is driving/);
+  assert.equal(said.cost_cents, 0);
+  assert.equal(said.booking_mode, null, 'nothing to book: not counted as a step');
+  assert.equal(said.payment_note, null, 'never "Booked through Reach"');
+  const solo = awayLines(est, { town: 'Lisbon', party: 1, driving: 1, solo: true });
+  const mine = solo.find(l => /driving/.test(l.title))!;
+  assert.match(mine.title, /^You're driving/);
+  for (const l of solo) assert.doesNotMatch(`${l.title} ${l.subtitle} ${l.payment_note ?? ''}`, /everyone|group/i, 'one person, spoken to as one');
+});
+
+test('a car or transfers Reach never prices does not promise a live price at Lock it in', () => {
+  const gateway = { iata: 'GJT', name: 'Grand Junction Regional', miles: 97 };
+  for (const ground of [100, 0]) {
+    const est = awayEstimate(option({ costs: { ...option().costs, ground_transport: { per_person: ground, details: '' } } }), { nights: 4, gateway });
+    const car = awayLines(est, { town: 'Moab', start: '2026-11-02', end: '2026-11-06', party: 2, solo: false }).find(l => l.type === 'transport')!;
+    assert.doesNotMatch(car.subtitle, /Lock it in/, `the car at ${ground}`);
+    assert.match(car.subtitle, ground ? /Estimate/ : /Not estimated/);
+  }
+  const transfers = awayLines(awayEstimate(option(), { nights: 4 }), { town: 'Lisbon', party: 2, solo: false }).find(l => l.title === 'Airport transfers')!;
+  assert.ok(transfers);
+  assert.doesNotMatch(transfers.subtitle, /Lock it in/);
+  assert.match(transfers.subtitle, /Estimate/);
+});
+
+test('somewhere a drive away gets the road, not a flight', () => {
+  // New York to Philadelphia, a day trip: away by distance, never by air.
+  const day = option({ destination: 'Philadelphia', city: 'Philadelphia', total_per_person: 300,
+    costs: { flights: { per_person: 0, details: '' }, ground_transport: { per_person: 60, details: 'Amtrak round trip' }, food_drink: { per_person: 120, details: '' } } });
+  const est = awayEstimate(day, { nights: 0, km: 130 });
+  assert.equal(est.transport.kind, 'ground');
+  assert.equal(est.transport.per_person, 60);
+  assert.deepEqual(est.unpriced, [], 'a drive priced by road is not a gap');
+  const lines = awayLines(est, { town: 'Philadelphia', start: '2026-11-02', end: '2026-11-02', party: 2, solo: false });
+  assert.equal(lines.filter(l => l.type === 'flight').length, 0, 'no flight Reach would go and quote');
+  const there = lines.find(l => l.type === 'transport')!;
+  assert.equal(there.title, 'Getting there and back');
+  assert.equal(there.booking_mode, 'ahead');
+  assert.doesNotMatch(there.subtitle, /Lock it in/);
+  assert.equal(lines.length, 1, 'no transfers line doubling the same money');
+  // A flight the model priced for a drive is off the plan and off the figure.
+  const flown = awayEstimate(option({ total_per_person: 1000, costs: { ...option().costs, flights: { per_person: 200, details: '' } } }), { nights: 2, km: 150 });
+  assert.equal(flown.transport.kind, 'ground');
+  assert.equal(flown.per_person, 800);
+  // Unknown distance is never "near".
+  assert.equal(awayEstimate(option(), { nights: 2, km: null }).transport.kind, 'flight');
+  assert.equal(awayEstimate(option(), { nights: 2, km: 5000 }).transport.kind, 'flight');
+});
+
+test('an option that rightly priced the drive is not sent back for a flight', () => {
+  const drive = option({ destination: 'Asheville', costs: { ...option().costs, flights: { per_person: 0, details: '' }, ground_transport: { per_person: 80, details: 'Drive' } } });
+  assert.deepEqual(awayGaps([drive], 2, () => true), []);
+  const nothing = option({ destination: 'Asheville', tier: 'saver', costs: { ...option().costs, flights: { per_person: 0, details: '' }, ground_transport: { per_person: 0, details: '' } } });
+  const gaps = awayGaps([nothing], 2, () => true);
+  assert.deepEqual(gaps.map(g => g.missing), [['transport']]);
+  assert.match(awayCorrection(gaps, 2), /drive away and costs\.ground_transport\.per_person was 0/);
+  assert.deepEqual(awayGaps([drive], 2).map(g => g.missing), [['transport']], 'far, or not measured: the flight is still owed');
+  const block = awayPromptBlock({ nights: 2, from: 'Raleigh (RDU)' });
+  assert.match(block, /drive or take the train/);
+  assert.doesNotMatch(block, /round trip from Raleigh \(RDU\) for one person\. Never 0\./, 'never 0 only for somewhere you fly to');
 });
 
 test('alone, the lines speak to one person', () => {
@@ -161,7 +230,9 @@ test('the estimate the route attaches is part of the written-down shape of an id
 test('the options route asks for both lines, retries a gap, and attaches the estimate', () => {
   const src = readFileSync(new URL('../../app/api/trips/generate/route.ts', import.meta.url), 'utf8');
   assert.match(src, /\$\{nights >= 1 \? awayPromptBlock\(/, 'the away block is in the options prompt');
-  assert.match(src, /const gaps = awayGaps\(trips, nights\);/);
+  assert.match(src, /const gaps = awayGaps\(trips, nights, await nearOnes\(trips\)\);/, 'a flight left at 0 for a drive is not a gap');
+  assert.match(src, /awayEstimate\(trip, \{ nights: Math\.max\(0, nights\), gateway: landed\?\.gateway \?\? null, km \}\)/, 'the card knows how far it is');
+  assert.match(src, /awayEstimate\(\{ \.\.\.tripSource, costs: costs \?\? \{\} \}, \{ nights: Math\.max\(0, nights\), gateway, km \}\)/, 'and so do the days');
   assert.match(src, /awayCorrection\(gaps, nights\)/, 'the retry names what was missing');
   assert.match(src, /\.away = isAway === true\s*\? awayEstimate\(trip,/);
   // The days come back with their lines, built on the server.

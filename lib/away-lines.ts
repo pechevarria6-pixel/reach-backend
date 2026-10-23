@@ -72,6 +72,24 @@ export function nightsWord(n: number): string {
   return `${n} night${n === 1 ? '' : 's'}`;
 }
 
+// ─── A drive, not a flight ───────────────────────────────────────────────
+// An away plan needs getting there; it does not need an aeroplane. 80 km
+// makes a day trip away (lib/away.ts), and a day in Philadelphia from New
+// York was given "Round-trip flights · not estimated yet — priced live at
+// Lock it in", a line Reach would then have tried to quote. Somewhere this
+// close is a drive or a train, priced in ground_transport, and the plan
+// carries no flight.
+//
+// Great-circle km, measured from both ends as real points. 400 km is about
+// 250 miles — four hours or so on the road, which is where most people
+// start to fly. Unknown distance is never "near": a drive line on a week in
+// Lisbon because a geocoder was slow is the worse mistake.
+export const DRIVE_KM = 400;
+export function isNear(km: number | null | undefined): boolean {
+  return typeof km === 'number' && Number.isFinite(km) && km < DRIVE_KM;
+}
+const milesOf = (km: number) => Math.round(km / 1.609344);
+
 /**
  * What the options prompt is told about getting there and sleeping, for an
  * away trip. The numbers stay the model's estimates; the classes do not.
@@ -81,9 +99,13 @@ export function awayPromptBlock(opts: { nights: number; from: string }): string 
   const stay = nights >= 1;
   return `
 THIS TRIP IS AWAY FROM HOME, so every option carries getting there${stay ? ' and somewhere to sleep' : ''}:
-- costs.flights.per_person is the round trip from ${from} for one person. Never 0.
-  If the town has no airport of its own, price the flight to the nearest
-  airport that has one and put a rental car from there in ground_transport.
+- costs.flights.per_person is the round trip from ${from} for one person.
+  If the place is close enough that people would drive or take the train —
+  about ${milesOf(DRIVE_KM)} miles (${DRIVE_KM} km) or less — put 0 here and price the round trip
+  by road or rail in costs.ground_transport, its details saying which.
+  Otherwise never 0. If the town has no airport of its own, price the
+  flight to the nearest airport that has one and put a rental car from
+  there in ground_transport.
 ${stay ? `- costs.accommodation.per_person covers all ${nightsWord(nights)} for one person. Never 0,
   and its details says the class of stay and "${nightsWord(nights)}".
 - accommodation.example is the neighbourhood or area to stay in — never a
@@ -108,19 +130,24 @@ export interface AwayTripLike {
 const priced = (c: CostLineLike) => typeof c?.per_person === 'number' && Number.isFinite(c.per_person) && c.per_person > 0;
 
 export type AwayPart = 'transport' | 'lodging';
-export interface AwayGap { destination: string; tier: string; missing: AwayPart[] }
+export interface AwayGap { destination: string; tier: string; missing: AwayPart[]; near: boolean }
 
 /**
  * The options that left out getting there or a bed. Empty when every
  * option prices both (or the trip has no night, and so needs no bed).
+ *
+ * Getting there is the flight, or — for an option `near` says is a drive
+ * away (isNear on its measured km) — the road or rail in ground_transport.
+ * An option that rightly put flights at 0 for a drive is not a gap.
  */
-export function awayGaps(trips: AwayTripLike[], nights: number): AwayGap[] {
+export function awayGaps(trips: AwayTripLike[], nights: number, near: (t: AwayTripLike) => boolean = () => false): AwayGap[] {
   const gaps: AwayGap[] = [];
   for (const t of trips ?? []) {
     const missing: AwayPart[] = [];
-    if (!priced(t.costs?.flights)) missing.push('transport');
+    const close = near(t);
+    if (!priced(close ? t.costs?.ground_transport : t.costs?.flights)) missing.push('transport');
     if (nights >= 1 && !priced(t.costs?.accommodation)) missing.push('lodging');
-    if (missing.length) gaps.push({ destination: String(t.destination ?? ''), tier: String(t.tier ?? ''), missing });
+    if (missing.length) gaps.push({ destination: String(t.destination ?? ''), tier: String(t.tier ?? ''), missing, near: close });
   }
   return gaps;
 }
@@ -129,7 +156,9 @@ export function awayGaps(trips: AwayTripLike[], nights: number): AwayGap[] {
 export function awayCorrection(gaps: AwayGap[], nights: number): string {
   if (!gaps.length) return '';
   const lines = gaps.map(g => `- ${g.destination || 'an option'} (${g.tier || 'no tier'}): ${g.missing
-    .map(m => m === 'transport' ? 'costs.flights.per_person was 0' : `costs.accommodation.per_person was 0 for ${nightsWord(nights)}`)
+    .map(m => m === 'transport'
+      ? (g.near ? 'it is a drive away and costs.ground_transport.per_person was 0' : 'costs.flights.per_person was 0')
+      : `costs.accommodation.per_person was 0 for ${nightsWord(nights)}`)
     .join('; ')}`);
   return `IMPORTANT — your last answer left getting there or somewhere to sleep out of an away trip:\n${lines.join('\n')}\nEvery option needs both, priced, as described above.`;
 }
@@ -144,8 +173,11 @@ export interface AwayEstimate {
   estimate: true;
   tier: Tier | null;
   travel: TierTravel | null;
+  /** Great-circle km from home, when both ends were placed. */
+  km: number | null;
   transport: {
-    kind: 'flight' | 'flight_and_car';
+    /** 'ground': close enough to drive or take the train (isNear) — no flight. */
+    kind: 'flight' | 'flight_and_car' | 'ground';
     /** Round trip, one person; null when nobody estimated it. */
     per_person: number | null;
     label: string;
@@ -178,17 +210,23 @@ export interface AwayEstimate {
  * What an away option's card says about getting there and sleeping, with
  * the figures it can stand behind and the ones it cannot named as such.
  */
-export function awayEstimate(trip: AwayTripLike, opts: { nights: number; gateway?: Gateway | null }): AwayEstimate {
+export function awayEstimate(trip: AwayTripLike, opts: { nights: number; gateway?: Gateway | null; km?: number | null }): AwayEstimate {
   const nights = Math.max(0, Math.round(opts.nights));
   const tier = tierOf(trip.tier);
   const travel = tier ? TIER_TRAVEL[tier] : null;
   const c = trip.costs ?? {};
-  const gateway = opts.gateway ?? null;
+  const km = typeof opts.km === 'number' && Number.isFinite(opts.km) ? Math.round(opts.km) : null;
+  const near = isNear(km);
+  // A drive away has no airport to land at, whatever the town has.
+  const gateway = near ? null : opts.gateway ?? null;
   const unpriced: AwayEstimate['unpriced'] = [];
 
-  const flight = priced(c.flights) ? Math.round(c.flights!.per_person as number) : null;
-  if (flight === null) unpriced.push('transport');
+  // A flight the model priced for somewhere it is a drive to is not on the
+  // plan, so it is not in the figure either.
+  const modelFlight = priced(c.flights) ? Math.round(c.flights!.per_person as number) : null;
+  const flight = near ? null : modelFlight;
   const ground = priced(c.ground_transport) ? Math.round(c.ground_transport!.per_person as number) : null;
+  if (near ? ground === null : flight === null) unpriced.push('transport');
   if (gateway && ground === null) unpriced.push('car');
 
   let lodging: AwayEstimate['lodging'] = null;
@@ -205,15 +243,18 @@ export function awayEstimate(trip: AwayTripLike, opts: { nights: number; gateway
     };
   }
 
-  const total = typeof trip.total_per_person === 'number' && Number.isFinite(trip.total_per_person) ? Math.round(trip.total_per_person) : 0;
+  const stated = typeof trip.total_per_person === 'number' && Number.isFinite(trip.total_per_person) ? Math.round(trip.total_per_person) : 0;
+  const total = Math.max(0, stated - (near ? modelFlight ?? 0 : 0));
   return {
-    away: true, nights, estimate: true, tier, travel,
+    away: true, nights, estimate: true, tier, travel, km,
     transport: {
-      kind: gateway ? 'flight_and_car' : 'flight',
-      per_person: flight,
-      label: gateway
-        ? `Flights to ${gateway.name} (${gateway.iata}), then a rental car`
-        : (travel ? travel.flightLabel : 'Round-trip flights'),
+      kind: near ? 'ground' : gateway ? 'flight_and_car' : 'flight',
+      per_person: near ? ground : flight,
+      label: near
+        ? `By road or rail — about ${milesOf(km!)} miles`
+        : gateway
+          ? `Flights to ${gateway.name} (${gateway.iata}), then a rental car`
+          : (travel ? travel.flightLabel : 'Round-trip flights'),
       airport: gateway,
     },
     car: gateway ? { per_person: ground, from: gateway } : null,
@@ -233,7 +274,14 @@ export interface FixedLine {
   subtitle: string;
   /** Per person, as the client's fixed lines always were; null is not priced yet. */
   cost_cents: number | null;
-  booking_mode: 'reach' | 'ahead';
+  /**
+   * The flight's whole party figure: per person times those flying. The
+   * client's per-person sum is right for somebody flying; a group total is
+   * this, not cost_cents times everyone, once somebody drives.
+   */
+  party_cents?: number | null;
+  /** Null: nothing to book (everyone driving) — bookingTracker counts none. */
+  booking_mode: 'reach' | 'ahead' | null;
   payment_note: string | null;
   venue_website?: string | null;
   venue_name?: string | null;
@@ -248,8 +296,14 @@ export interface FixedLine {
   driving?: number | null;
 }
 
+// For what Reach books and quotes at Lock it in: the flight and the stay
+// (app/api/plans/[planId]/bookable quotes hotel, flight and activity).
 const ESTIMATE = 'Estimate — live prices at Lock it in.';
 const NOT_YET = 'Not estimated yet — priced live at Lock it in.';
+// For what Reach neither books nor quotes — a rental car, transfers, the
+// drive. Nothing prices these at Lock it in, so the line must not say so.
+const OWN_ESTIMATE = 'Estimate — yours to book, so Reach never prices it live.';
+const OWN_NOT_YET = 'Not estimated — yours to book, and Reach does not price it.';
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -258,7 +312,10 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
  *
  * Built on the server so the client cannot drop one for being unpriced —
  * which is how they went before. A drive opt-out (lib/participation.ts,
- * decision 8) takes the driver off the flight, never the flight off the plan.
+ * decision 8) takes the driver off the flight, never the flight off the plan;
+ * with nobody left flying, the line stays to say so and is no longer a
+ * flight anybody could be charged or quoted for. Somewhere a drive away
+ * (isNear) gets no flight at all: getting there is the road or the rail.
  */
 export function awayLines(est: AwayEstimate, opts: {
   town: string; start?: string | null; end?: string | null;
@@ -271,17 +328,40 @@ export function awayLines(est: AwayEstimate, opts: {
   const funds = opts.solo ? 'Booked through Reach when you pay for the trip' : 'Booked through Reach when the group funds the trip';
   const cents = (n: number | null) => n === null ? null : Math.round(n * 100);
 
-  const who = driving > 0
-    ? (flying > 0 ? ` ${flying} flying, ${driving} driving or already booked.` : ' Everyone is driving or already has a flight.')
-    : '';
-  lines.push({
-    scheduled_time: 'Before you go', type: 'flight',
-    title: est.transport.airport ? `Round-trip flights to ${est.transport.airport.iata}` : 'Round-trip flights',
-    subtitle: `${est.travel?.flightLabel ?? 'Flights'}. ${est.transport.per_person === null ? NOT_YET : ESTIMATE}${who}`,
-    cost_cents: cents(est.transport.per_person),
-    booking_mode: 'reach', payment_note: funds, estimate: true,
-    flying, driving,
-  });
+  if (est.transport.kind === 'ground') {
+    // A drive or a train: getting there is on the plan, and it is the
+    // traveller's to arrange — Reach books neither.
+    lines.push({
+      scheduled_time: 'Before you go', type: 'transport',
+      title: 'Getting there and back',
+      subtitle: `${opts.town} is about ${est.km === null ? 'a drive' : `${milesOf(est.km)} miles`} from home as the crow flies — a drive or a train, not a flight. ${est.transport.per_person === null ? OWN_NOT_YET : OWN_ESTIMATE}`,
+      cost_cents: cents(est.transport.per_person), booking_mode: 'ahead',
+      payment_note: 'You arrange this yourself', estimate: true,
+    });
+  } else if (flying === 0) {
+    // Nobody is flying: the line stays to say so, but it is not a flight
+    // any more — type 'flight' is what the bookable route quotes, and a
+    // priced "Booked through Reach" flight nobody takes is a promise
+    // Reach would keep by buying a seat nobody sits in.
+    lines.push({
+      scheduled_time: 'Before you go', type: 'transport',
+      title: opts.solo ? "You're driving or already have a flight" : 'Everyone is driving or already has a flight',
+      subtitle: 'No flights to book for this trip.',
+      cost_cents: 0, party_cents: 0, booking_mode: null, payment_note: null, estimate: true,
+      flying: 0, driving,
+    });
+  } else {
+    const who = driving > 0 ? ` ${flying} flying, ${driving} driving or already booked.` : '';
+    const per = cents(est.transport.per_person);
+    lines.push({
+      scheduled_time: 'Before you go', type: 'flight',
+      title: est.transport.airport ? `Round-trip flights to ${est.transport.airport.iata}` : 'Round-trip flights',
+      subtitle: `${est.travel?.flightLabel ?? 'Flights'}. ${est.transport.per_person === null ? NOT_YET : ESTIMATE}${who}`,
+      cost_cents: per, party_cents: per === null ? null : per * flying,
+      booking_mode: 'reach', payment_note: funds, estimate: true,
+      flying, driving,
+    });
+  }
 
   if (est.car) {
     const line = opts.start && opts.end && DAY.test(opts.start) && DAY.test(opts.end)
@@ -289,7 +369,7 @@ export function awayLines(est: AwayEstimate, opts: {
     lines.push({
       scheduled_time: 'Before you go', type: 'transport',
       title: line?.title ?? `Rental car from ${est.car.from.name} (${est.car.from.iata})`,
-      subtitle: `${line?.subtitle ?? `${opts.town} is about ${est.car.from.miles} miles away as the crow flies — the drive is longer.`} ${est.car.per_person === null ? NOT_YET : ESTIMATE}`,
+      subtitle: `${line?.subtitle ?? `${opts.town} is about ${est.car.from.miles} miles away as the crow flies — the drive is longer.`} ${est.car.per_person === null ? OWN_NOT_YET : OWN_ESTIMATE}`,
       cost_cents: cents(est.car.per_person),
       // Reach has no car provider: the search, opened at the airport and the
       // dates, is the traveller's to book.
@@ -304,10 +384,10 @@ export function awayLines(est: AwayEstimate, opts: {
   // always wrote when the option priced it, kept as it was — the
   // traveller's to arrange, never one Reach books.
   const ground = est.ground;
-  if (!est.car && ground !== null) {
+  if (!est.car && est.transport.kind !== 'ground' && ground !== null) {
     lines.push({
       scheduled_time: 'Before you go', type: 'transport',
-      title: 'Airport transfers', subtitle: ESTIMATE,
+      title: 'Airport transfers', subtitle: OWN_ESTIMATE,
       cost_cents: cents(ground), booking_mode: 'ahead',
       payment_note: 'You arrange this yourself', estimate: true,
     });
@@ -341,6 +421,10 @@ export function rowOf(line: FixedLine) {
     time: line.scheduled_time, title: line.title, sub: line.subtitle, type: line.type,
     conf: null, filled: false,
     cost_cents: line.cost_cents, booking_mode: line.booking_mode, payment_note: line.payment_note,
+    estimate: true,
+    // Who is on the flight, carried to the screen: dropped here, the client
+    // went on totalling a flight for everyone after somebody drove.
+    ...(line.flying != null ? { flying: line.flying, driving: line.driving ?? 0, party_cents: line.party_cents ?? null } : {}),
     ...(line.venue_website ? { venue_website: line.venue_website, venue_name: line.venue_name ?? null } : {}),
   };
 }

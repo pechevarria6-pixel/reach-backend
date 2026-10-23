@@ -92,3 +92,16 @@ test('only the missing one comes back, and a car is never added beside one it ke
 test('a day trip needs no bed', () => {
   assert.deepEqual(awayMissing([TRIP[0]], { nights: 0 }), []);
 });
+
+test('a plan reached by road holds getting there in its transport line — no flight is owed', () => {
+  const drive = [
+    { time: 'Before you go', type: 'transport', title: 'Getting there and back' },
+    { time: 'Before you go', type: 'hotel', title: 'Somewhere to stay · 2 nights' },
+  ];
+  assert.deepEqual(awayMissing(drive, { nights: 2, byRoad: true }), []);
+  assert.deepEqual(awayMissing(drive, { nights: 2 }), ['transport'], 'a car is not a flight where one is owed');
+  const lost = drive.filter(i => i.type !== 'transport');
+  assert.deepEqual(awayMissing(lost, { nights: 2, byRoad: true }), ['transport']);
+  const back = afterAwayRebuild(lost, [], [drive[0]], { nights: 2, byRoad: true });
+  assert.equal(back.filter(i => i.type === 'transport').length, 1, 'the road line comes back once');
+});

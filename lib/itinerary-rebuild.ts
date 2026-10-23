@@ -59,11 +59,15 @@ export function afterRebuild<T extends RebuildItem>(existing: T[] | null | undef
 // (lib/away-lines.ts), so a rebuild of one that has lost either puts the
 // missing line back — never twice, and never over one somebody has.
 
-/** Which of the two an away plan's existing lines are missing. */
-export function awayMissing(existing: RebuildItem[] | null | undefined, opts: { nights: number }): Array<'transport' | 'lodging'> {
+/**
+ * Which of the two an away plan's existing lines are missing. `byRoad`: the
+ * plan has no flight to keep — somewhere a drive away, or nobody flying —
+ * so getting there is its transport line, and a plan holding one has it.
+ */
+export function awayMissing(existing: RebuildItem[] | null | undefined, opts: { nights: number; byRoad?: boolean }): Array<'transport' | 'lodging'> {
   const kept = carriedOverOnRebuild(existing);
   const missing: Array<'transport' | 'lodging'> = [];
-  if (!kept.some(i => i.type === 'flight')) missing.push('transport');
+  if (!kept.some(i => i.type === 'flight' || (opts.byRoad === true && i.type === 'transport'))) missing.push('transport');
   if (opts.nights >= 1 && !kept.some(i => i.type === 'hotel')) missing.push('lodging');
   return missing;
 }
@@ -75,7 +79,7 @@ export function awayMissing(existing: RebuildItem[] | null | undefined, opts: { 
  * days. A plan that has both is exactly afterRebuild.
  */
 export function afterAwayRebuild<T extends RebuildItem>(
-  existing: T[] | null | undefined, freshDays: T[], restore: T[] | null | undefined, opts: { nights: number },
+  existing: T[] | null | undefined, freshDays: T[], restore: T[] | null | undefined, opts: { nights: number; byRoad?: boolean },
 ): T[] {
   const kept = carriedOverOnRebuild(existing);
   const missing = new Set(awayMissing(existing, opts));

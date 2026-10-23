@@ -36,8 +36,8 @@ import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
 import { placesFor, placeMenu, scenesFrom, cleanRef, type RealPlace } from '@/lib/discovery/real-places';
 import { track, isEventName } from '@/lib/track';
-import { away } from '@/lib/away';
-import { awayPromptBlock, awayGaps, awayCorrection, awayEstimate, awayLines, rowOf, type AwayEstimate } from '@/lib/away-lines';
+import { away, farEnough } from '@/lib/away';
+import { isNear, awayPromptBlock, awayGaps, awayCorrection, awayEstimate, awayLines, rowOf, type AwayEstimate } from '@/lib/away-lines';
 import { arrivalFor } from '@/lib/booking/arrival';
 import { awayMissing, afterAwayRebuild } from '@/lib/itinerary-rebuild';
 import { readSkips } from '@/lib/participation';
@@ -669,6 +669,19 @@ export async function POST(req: NextRequest) {
   const tripAccommodation = (together?.accommodation.length ? together.accommodation : (tripPrefs.accommodation || [])).join(', ');
   const departure = departureCity || 'a major US city';
   const departureCode = departureAirport || 'nearest major airport';
+  // How far a place is from home, great-circle km, or null when either end
+  // cannot be placed. Home is placed once, and only if something asks. It
+  // decides whether an away plan's getting-there is a flight or a drive
+  // (lib/away-lines.ts isNear), and whether a day trip is away at all.
+  let homePlaced: ReturnType<typeof locate> | null = null;
+  const kmFromHome = async (place: string, countryCode?: string | null): Promise<number | null> => {
+    if (!departureCity || !place.trim()) return null;
+    homePlaced ??= within(locate(String(departureCity)), 5000, 'placing home').catch(() => null);
+    const [home, there] = await Promise.all([
+      homePlaced, within(locate(place, countryCode ?? null), 5000, 'placing the trip').catch(() => null),
+    ]);
+    return away({ mode: 'trip', home, destination: there }).km;
+  };
 
   // ── STAGE 2: Full itinerary for one selected trip ──────────────────────────
   if (detailTripId) {
@@ -718,18 +731,15 @@ export async function POST(req: NextRequest) {
       if (isNightPlan) return {};
       const town = String(tripCity || fixedPlace || destination || '').trim();
       const known = tripSource.away && typeof tripSource.away === 'object' ? tripSource.away as Partial<AwayEstimate> : null;
+      // The distance the card was built with, else measured now: it
+      // decides a flight or a drive, and for a day trip whether it is away.
+      const km = typeof known?.km === 'number' ? known.km : await kmFromHome(town, tripCountry ?? null);
       let isAway: boolean | null = nights >= 1 ? true : known?.away === true ? true : null;
-      if (isAway === null && departureCity && town) {
-        const [home, there] = await Promise.all([
-          within(locate(String(departureCity)), 5000, 'placing home').catch(() => null),
-          within(locate(town, tripCountry ?? null), 5000, 'placing the trip').catch(() => null),
-        ]);
-        isAway = away({ mode: 'trip', startDate, endDate, home, destination: there }).away;
-      }
+      if (isAway === null && km !== null && farEnough(km)) isAway = true;
       if (isAway !== true) return { away: null };
       const gateway = known?.transport?.airport
         ?? (town ? (await within(arrivalFor({ city: town, countryCode: tripCountry ?? null }), 6000, 'the arrival airport').catch(() => null))?.gateway ?? null : null);
-      const est = awayEstimate({ ...tripSource, costs: costs ?? {} }, { nights: Math.max(0, nights), gateway });
+      const est = awayEstimate({ ...tripSource, costs: costs ?? {} }, { nights: Math.max(0, nights), gateway, km });
       const driving = detailIsPlan ? await drivingCount(supabase, String(detailTripId)) : 0;
       const lines = awayLines(est, {
         town: town || 'the town', start: startDate ? String(startDate) : null, end: endDate ? String(endDate) : null,
@@ -747,9 +757,12 @@ export async function POST(req: NextRequest) {
         console.error('[trips itinerary] could not read the plan\'s own lines', { plan: detailTripId, code: heldErr.code });
         return { away: est, fixed, restore: null };
       }
-      const missing = awayMissing((held ?? []).map(r => ({ time: r.scheduled_time, type: r.type })), { nights: est.nights });
+      // No flight among the lines (a drive away, or nobody flying): getting
+      // there is the transport line, and a plan that holds one has it.
+      const byRoad = !lines.some(l => l.type === 'flight');
+      const missing = awayMissing((held ?? []).map(r => ({ time: r.scheduled_time, type: r.type })), { nights: est.nights, byRoad });
       if (missing.length) console.error('[trips itinerary] an away plan had lost getting there or its bed — offering them back', { plan: detailTripId, missing });
-      const restore = afterAwayRebuild((held ?? []).map(r => ({ time: r.scheduled_time, type: r.type })), [], fixed, { nights: est.nights })
+      const restore = afterAwayRebuild((held ?? []).map(r => ({ time: r.scheduled_time, type: r.type })), [], fixed, { nights: est.nights, byRoad })
         .filter(r => (fixed as unknown[]).includes(r));
       return { away: est, fixed, restore, missing };
     };
@@ -1637,7 +1650,18 @@ Return JSON only, shaped exactly like this:
     // out. Whatever is still missing after that is not dropped: the card
     // says it is not estimated yet (lib/away-lines.ts awayEstimate).
     if (trips?.length && !isNightPlan && nights >= 1) {
-      const gaps = awayGaps(trips, nights);
+      // A flight left at 0 may be right: somewhere a drive away is priced
+      // by road in ground_transport. Measured only for those, and only to
+      // decide which line counts as getting there.
+      const nearOnes = async (list: typeof trips) => {
+        const near = new Set<unknown>();
+        await Promise.all(list.map(async t => {
+          if (Number(t.costs?.flights?.per_person) > 0) return;
+          if (isNear(await kmFromHome(String(t.city || t.destination || ''), t.country_code ?? null))) near.add(t);
+        }));
+        return (t: unknown) => near.has(t);
+      };
+      const gaps = awayGaps(trips, nights, await nearOnes(trips));
       if (gaps.length) {
         console.error('[trips generate] an away option left out getting there or a bed — asking again', { groupId, gaps });
         const again = await withSchemaFallback(
@@ -1649,10 +1673,10 @@ Return JSON only, shaped exactly like this:
         const second = reparsed ? applyRules(normalizeTrips(reparsed, samePlaceIsFine), rule) : null;
         // Taken only if it is better and still right about the place.
         if (second && !second.fatal.length && second.trips.length >= trips.length
-          && awayGaps(second.trips, nights).length < gaps.length) {
+          && awayGaps(second.trips, nights, await nearOnes(second.trips)).length < gaps.length) {
           trips = second.trips;
         } else {
-          console.error('[trips generate] still missing after asking again — shown as not estimated', { groupId, gaps: awayGaps(trips, nights) });
+          console.error('[trips generate] still missing after asking again — shown as not estimated', { groupId, gaps });
         }
       }
     }
@@ -1763,10 +1787,6 @@ Return JSON only, shaped exactly like this:
     // the venues we have verified in it. Counted, it cannot be wrong. Where
     // we hold nothing the line says so, which is a fair thing to tell
     // somebody choosing between three places.
-    // Home, placed once, for a day trip: with no night in it, whether it is
-    // away is the distance (lib/away.ts), and that needs both ends.
-    const homeAt = !isNightPlan && nights < 1 && departureCity
-      ? within(locate(String(departureCity)), 5000, 'placing home').catch(() => null) : null;
     await Promise.all(trips.map(async (trip) => {
       // ── Getting there and a bed, said on the card ──────────────────
       // Where it lands: the town's own airport, or the nearest that has
@@ -1777,14 +1797,13 @@ Return JSON only, shaped exactly like this:
       if (!isNightPlan) {
         const place = String(trip.city || trip.destination || '');
         const landing = within(arrivalFor({ city: place, countryCode: trip.country_code ?? null }), 6000, 'the arrival airport').catch(() => null);
-        let isAway: boolean | null = nights >= 1 ? true : null;
-        if (isAway === null && homeAt) {
-          const [home, there] = await Promise.all([homeAt, within(locate(place, trip.country_code ?? null), 5000, 'placing the option').catch(() => null)]);
-          isAway = away({ mode: 'trip', startDate, endDate, home, destination: there }).away;
-        }
+        // How far from home: a day trip is away only by distance, and a
+        // place a drive away is reached by road, not by a flight.
+        const km = await kmFromHome(place, trip.country_code ?? null);
+        const isAway = nights >= 1 || (km !== null && farEnough(km));
         const landed = await landing;
         (trip as Record<string, unknown>).away = isAway === true
-          ? awayEstimate(trip, { nights: Math.max(0, nights), gateway: landed?.gateway ?? null })
+          ? awayEstimate(trip, { nights: Math.max(0, nights), gateway: landed?.gateway ?? null, km })
           : null;
       }
       // A picture of the place the idea goes to, kept per destination so

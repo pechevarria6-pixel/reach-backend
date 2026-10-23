@@ -12,7 +12,7 @@ import type { z } from 'zod';
 import { SlotSchema, type ItineraryDaySchema, type SlotPart } from './trip-schema.ts';
 import {
   withoutUnverified, unverifiedNames, citedPlace, cleanRef, bookingFor, wouldMangle,
-  readBackCoherence, type RealPlace, type CoherenceNote,
+  readBackCoherence, placeOf, type RealPlace, type CoherenceNote,
 } from './discovery/real-places.ts';
 import { realPlacesAmong } from './discovery/is-place.ts';
 import { locate } from './discovery/geocode.ts';
@@ -481,14 +481,21 @@ export function oneSlotReadBack(input: {
   }
   // Something else means somewhere else: not the stop it replaces, and not
   // another stop the same day already goes to.
-  const ref = got.place_ref ? cleanRef(got.place_ref) : null;
+  //
+  // Compared as places, not as refs. A saved plan's rows (itinerary_items,
+  // the client's slotRow) carry no place_ref at all, so a ref-only check
+  // waved "Late-night drinks at The Gibson" through as something else for
+  // "Cocktails at The Gibson". placeOf is the cited place, or else the one
+  // the line names — the same fallback readBackCoherence uses.
+  const mine = placeOf(got, env.realPlaces);
   const others = [
     ...(['morning', 'afternoon', 'evening'] as const).filter(k => k !== part).map(k => input.day[k]),
     ...(input.day.daytime ?? []).filter((_, i) => !(part === 'daytime' && i === index)),
   ];
-  const same = (ref && current?.place_ref && ref === cleanRef(current.place_ref))
+  const samePlace = (o: GenSlot | null | undefined) => !!mine && placeOf(o, env.realPlaces)?.ref === mine.ref;
+  const same = samePlace(current)
     || normalise(got.plan) === normalise(current?.plan ?? '')
-    || (ref && others.some(o => o?.place_ref && cleanRef(o.place_ref) === ref));
+    || others.some(samePlace);
   if (same) return { refused: 'same_place' };
   return { slot: got };
 }

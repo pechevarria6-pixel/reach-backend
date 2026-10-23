@@ -72,6 +72,23 @@ test('somewhere else means somewhere else', () => {
   assert.deepEqual(repeat, { refused: 'same_place' }, 'not a stop the day already goes to');
 });
 
+test('a saved plan\'s rows carry no place_ref: the same place is still caught by name', () => {
+  // itinerary_items and the client's slotRow never hold a ref, so the
+  // screen's `current` and the day's other stops arrive as bare text.
+  const saved = (): GenDay => ({
+    day: 1, title: 'Friday', cost_today: 80, daytime: [],
+    morning: slot('A drink at The Pour House to start'),
+    afternoon: slot('Dinner at Bida Manda', '', 'ahead'),
+    evening: slot('Live music at Kings'),
+  });
+  const swap = oneSlotReadBack({ day: saved(), part: 'evening', index: null, fresh: slot('One more song at Kings to finish', 'p3'), env: env() });
+  assert.deepEqual(swap, { refused: 'same_place' }, 'Kings for Kings is not something else');
+  const repeat = oneSlotReadBack({ day: saved(), part: 'evening', index: null, fresh: slot('Last round back at The Pour House', 'p1'), env: env() });
+  assert.deepEqual(repeat, { refused: 'same_place' }, 'not a stop the day already goes to, named without a ref');
+  const fine = oneSlotReadBack({ day: saved(), part: 'evening', index: null, fresh: slot("Late plates at Poole's Diner", 'p4', 'ahead'), env: env() });
+  assert.notDeepEqual(fine, { refused: 'same_place' }, 'a different place is not refused as the same one');
+});
+
 test('nothing on the menu fits: an empty answer is said, never filled', () => {
   const out = oneSlotReadBack({ day: evening(), part: 'evening', index: null, fresh: slot(''), env: env() });
   assert.deepEqual(out, { refused: 'nothing_fits' });
