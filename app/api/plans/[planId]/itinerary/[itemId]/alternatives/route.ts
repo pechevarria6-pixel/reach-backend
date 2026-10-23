@@ -9,12 +9,15 @@
 // (status 'booking_line', with the booking to ask).
 //
 // Read only. `right` says what this person can do with the answer: 'apply'
-// (PATCH the line), 'suggest' (POST .../suggestions), or 'locked_out'.
+// (PATCH the line), 'suggest' (POST .../suggestions), or 'locked_out';
+// `held` is non-null when somebody already holds a booking for this line,
+// with what to do before it can be changed.
 import { NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { readLine, menuFor } from '@/lib/itinerary-change-server';
 import { refusal, suggestionsClosed } from '@/lib/itinerary-change';
 import { alternativesFor } from '@/lib/itinerary-alternatives';
+import { bookingOnSwap } from '@/lib/itinerary-bookings';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +35,13 @@ export async function GET(_req: Request, { params }: { params: { planId: string;
     // Suggestions are a group's, before Lock it in. Never on a trip for one.
     canSuggest: lc.right === 'suggest' && !suggestionsClosed(lc),
     why: refusal(lc.right, lc.organiserName),
+    // Somebody already holds a real booking here — on its row, or "I
+    // reserved it" on the line — so a swap would be refused (409 'booked').
+    // Said up front, with what to do, rather than after a pick.
+    held: (() => {
+      const on = bookingOnSwap(lc.booking, { filled: lc.item.filled, venue_name: lc.item.venue_name, booking_mode: lc.item.booking_mode });
+      return on.action === 'refuse' ? { code: on.code, why: on.message } : null;
+    })(),
   };
 
   const places = await menuFor(ctx.db, lc.plan);

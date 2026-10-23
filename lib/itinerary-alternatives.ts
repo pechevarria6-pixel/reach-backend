@@ -16,8 +16,9 @@
 //                town (SAME_EVENING_KM); a day can take a drive (SAME_DAY_KM).
 //                A place with no point on the map is kept — not knowing where
 //                something is is not evidence it is far — and sorted last.
-//   when         open on that day, in that part of the day, going by the
-//                map's hours (closedThroughout). Hours we cannot read keep the
+//   when         open on that day, in that part of the day (slotWindow —
+//                the slot's, whatever the place is), going by the map's
+//                hours (closedThroughout). Hours we cannot read keep the
 //                place, the same lean the menu itself takes.
 //
 // Price: we hold no price for a venue. Not one row in discovery_venues says
@@ -29,7 +30,7 @@
 // Pure, so the rule can be tested without a database.
 import type { RealPlace } from './discovery/real-places.ts';
 import { namedPlace, SAME_EVENING_KM, SAME_DAY_KM, bookingFor } from './discovery/real-places.ts';
-import { closedThroughout, windowFor } from './discovery/hours.ts';
+import { closedThroughout, type Window } from './discovery/hours.ts';
 import { haversineMiles } from './discovery/distance.ts';
 import { dayOf } from './budget.ts';
 import { typeForKind, honestMode, ABOUT_THE_PLACE } from './contracts/itinerary-item.ts';
@@ -86,9 +87,49 @@ export function placeOfLine(line: PlanLine, places: RealPlace[]): RealPlace | nu
   return (line.venue_name ? namedPlace(line.venue_name, places) : null) ?? namedPlace(line.title, places);
 }
 
-/** Whether a line's slot is in the evening: a night out is, and so is "Day 2 · Evening". */
+/** Whether a line's slot is in the evening: a night out is, and so is "Day 2 · Evening" or "Day 2 · 9:30 PM". */
 export function eveningSlot(time: unknown, nightOut: boolean): boolean {
-  return nightOut || /\bevening\b/i.test(String(time ?? ''));
+  if (nightOut) return true;
+  const w = slotWindow(time, false);
+  return w === 'evening' || w === 'night';
+}
+
+/** The hour a "7:30 PM" or "19:30" in a slot label gives, or null. */
+function clockHour(time: string): number | null {
+  const ampm = /\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b/i.exec(time);
+  if (ampm) {
+    const h = Number(ampm[1]);
+    if (h < 1 || h > 12) return null;
+    return (h % 12) + (/p/i.test(ampm[3]) ? 12 : 0);
+  }
+  const h24 = /\b([01]?\d|2[0-3]):([0-5]\d)\b/.exec(time);
+  return h24 ? Number(h24[1]) : null;
+}
+
+/**
+ * The part of the day a line is in, for whether a place is open then.
+ *
+ * Read off the slot, never the kind of place: a museum offered for "Day 2 ·
+ * Evening" has to be open in the evening, and a club offered for the morning
+ * has to be open in the morning — judging either on the whole day offered
+ * a gallery at nine at night. A clock time wins over a word. A night out with
+ * nothing more said is the evening; a slot that says nothing ("Day 2") is the
+ * whole day, the lean the menu takes when it cannot tell.
+ */
+export type SlotPart = 'morning' | 'afternoon' | 'evening' | 'night' | 'day';
+const PART_WINDOW: Record<SlotPart, Window> = {
+  morning: 'morning', afternoon: 'afternoon', evening: 'after_six', night: 'night', day: 'day',
+};
+
+export function slotWindow(time: unknown, nightOut: boolean): SlotPart {
+  const t = String(time ?? '');
+  const h = clockHour(t);
+  if (h !== null) return h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night';
+  if (/\blate[\s-]*night\b|\bnight\b/i.test(t) && !/\bnight out\b/i.test(t)) return 'night';
+  if (/\b(evening|dinner|sunset)\b/i.test(t)) return 'evening';
+  if (/\b(afternoon|lunch)\b/i.test(t)) return 'afternoon';
+  if (/\b(morning|breakfast|brunch)\b/i.test(t)) return 'morning';
+  return nightOut ? 'evening' : 'day';
 }
 
 /**
@@ -245,6 +286,7 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
   );
 
   const evening = eveningSlot(line.scheduled_time, nightOut);
+  const window = slotWindow(line.scheduled_time, nightOut);
   const limitKm = evening ? SAME_EVENING_KM : SAME_DAY_KM;
   const date = dateOfLine(line.scheduled_time, input.startDate ?? null, nightOut);
 
@@ -257,8 +299,7 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
     // undated plan, or a line with no day in its label) and nothing is ruled
     // out: the menu was already read for the plan's dates.
     const where = located(p) ? { lat: p.lat, lng: p.lng, countryCode: input.countryCode ?? null } : null;
-    return !(date && closedThroughout(p.hours ?? null, { from: date, to: date },
-      windowFor(p.kind, p.interest ?? null, evening), where));
+    return !(date && closedThroughout(p.hours ?? null, { from: date, to: date }, PART_WINDOW[window], where));
   });
 
   const sameKind = (p: RealPlace) => !!current && p.kind === current.kind;

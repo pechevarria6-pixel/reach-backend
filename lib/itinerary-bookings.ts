@@ -76,11 +76,22 @@ export interface LineBooking {
   id: string;
   status: string;
   mode?: string | null;
+  provider?: string | null;
   vertical?: string | null;
   approved_at?: string | null;
   updated_at?: string | null;
   confirmation_number?: string | null;
   booked_by?: string | null;
+  /** Who said it was done (PATCH /api/bookings/[id], the confirmation route) — the person who booked it. */
+  fulfilled_by?: string | null;
+}
+
+/** The line itself, as far as whether somebody has already reserved it. */
+export interface LineMark {
+  /** "I reserved it" on the line (itinerary_items.is_confirmed). */
+  filled?: boolean | null;
+  venue_name?: string | null;
+  booking_mode?: string | null;
 }
 
 export type SwapBooking =
@@ -89,18 +100,58 @@ export type SwapBooking =
   | { action: 'refuse'; code: 'booking_now' | 'booked'; message: string };
 
 /**
- * What cancelling a made booking means, by what it is. Reach cancels only a
- * Duffel flight (POST /api/bookings/[id]/cancel); everything else is undone
- * where it was made, and the sentence says where.
+ * A booking Reach bought itself, made: nothing in Reach can take it off
+ * 'confirmed' except the flight cancel (POST /api/bookings/[id]/cancel), so
+ * no sentence here may say "then pick another" unless that route undoes it.
+ * Only a flight's does. A room or an activity stays on the plan, and the
+ * sentence says where it is cancelled and that it stays — not a path back
+ * that does not exist.
  */
 export const CANNOT_CANCEL: Record<string, string> = {
-  hotel: "This room is already booked, and Reach can't cancel it for you — the hotel's confirmation email says how, if their policy allows it. Once it's cancelled there, you can pick another.",
-  restaurant: "This table is already booked on the restaurant's own site, and Reach can't cancel it for you — cancel it there first, then pick another.",
-  activity: "This is already booked, and Reach can't cancel it for you — the booking page it came from can. Cancel it there first, then pick another.",
+  hotel: "This room is already booked, and Reach can't cancel it or swap it for you — the hotel's confirmation email says how to cancel, if their policy allows it. It stays on the plan as booked.",
+  restaurant: "This table is already booked, and Reach can't cancel it or swap it for you — the restaurant can, on their own site or by phone. It stays on the plan as booked.",
+  activity: "This is already booked, and Reach can't cancel it or swap it for you — whoever it was booked through can, if their policy allows it. It stays on the plan as booked.",
   event: 'These tickets are already bought. Whoever sold them refunds them, under their own policy — Reach can\'t cancel them for you.',
   flight: 'These flights are already booked. Cancel them from the trip first — you will see what you would get back before anything changes — then pick others.',
 };
-const CANNOT_CANCEL_ELSE = "This is already booked, and Reach can't cancel it for you — cancel it where it was booked first, then pick another.";
+const CANNOT_CANCEL_ELSE = "This is already booked, and Reach can't cancel it or swap it for you — cancel it where it was booked. It stays on the plan as booked.";
+
+/**
+ * Booked by a person on the seller's own site (a redirect, a concierge
+ * request). The way back is real only where the Book tab offers "Not booked
+ * after all" for the line — a line somebody books ahead (lib/plan-steps.ts
+ * bookingTracker, who 'you') — which takes the row back to 'pending' and lets
+ * the swap through. Anywhere else nothing in Reach takes the row off
+ * 'confirmed', so the sentence does not offer a way back.
+ */
+const UNDO = 'then tap “Not booked after all” on the Book tab, and you can pick another.';
+const BOOKED_THERE_ELSE = "Somebody has booked this on the seller's own site, and Reach can't cancel it or swap it for you — cancel it there if you need to. It stays on the plan as booked.";
+/** "Sam reserved it" on the line, with no booking row behind it: cancel it there, untick, then swap. */
+export function reservedOnLine(venue: string | null | undefined): string {
+  const at = String(venue ?? '').trim();
+  return `Somebody has marked this one reserved${at ? ` at ${at}` : ''}. Cancel it with ${at ? 'them' : 'the place'} first, ${UNDO}`;
+}
+
+/** Whether Reach paid a provider for this row — mirrors reachBuys in lib/booking/charged.ts. */
+function reachBought(b: LineBooking): boolean {
+  if (b.mode === 'redirect' || b.mode === 'concierge') return false;
+  return b.provider !== 'concierge';
+}
+
+/**
+ * What a made booking is told on a swap: where it is undone, and only a path
+ * back that exists. `lineMode` is the line's booking_mode: 'ahead' is the
+ * line the Book tab can untick.
+ */
+export function madeRefusal(b: LineBooking, lineMode?: string | null): string {
+  const lane = String(b.vertical ?? '');
+  // A Duffel flight is the one Reach-bought row the cancel route undoes.
+  if (reachBought(b)) return CANNOT_CANCEL[lane] ?? CANNOT_CANCEL_ELSE;
+  if (lineMode === 'ahead' && lane !== 'event') {
+    return `Somebody has booked this already. Cancel it ${lane === 'restaurant' ? 'with the restaurant' : 'where it was booked'} first, ${UNDO}`;
+  }
+  return BOOKED_THERE_ELSE;
+}
 
 /** "Somebody is booking this right now" — mirrors midClaim in lib/booking/claim.ts. */
 function atProvider(b: LineBooking): boolean {
@@ -109,17 +160,29 @@ function atProvider(b: LineBooking): boolean {
   return Date.parse(b.approved_at) === Date.parse(b.updated_at);
 }
 
-export function bookingOnSwap(booking: LineBooking | null | undefined): SwapBooking {
-  if (!booking || booking.status === 'failed' || booking.status === 'cancelled') return { action: 'none' };
-  if (atProvider(booking)) {
+/**
+ * What the line's booking — and the line's own "I reserved it" — means for
+ * a swap. The line matters as much as the row: a table booked by phone has
+ * no booking row at all (/bookable makes rows only for what Reach books), so
+ * the tick on the line is the only record that somebody holds a real one.
+ */
+export function bookingOnSwap(booking: LineBooking | null | undefined, line?: LineMark | null): SwapBooking {
+  const live = !!booking && booking.status !== 'failed' && booking.status !== 'cancelled';
+  if (live && atProvider(booking!)) {
     return { action: 'refuse', code: 'booking_now', message: 'Somebody is booking this right now — wait a moment, then try again.' };
   }
-  const boughtElsewhere = !!String(booking.confirmation_number ?? '').trim();
-  const lane = String(booking.vertical ?? '');
-  if (booking.status === 'confirmed' || boughtElsewhere) {
-    return { action: 'refuse', code: 'booked', message: CANNOT_CANCEL[lane] ?? CANNOT_CANCEL_ELSE };
+  if (live) {
+    const b = booking!;
+    // "Not booked after all" writes 'pending' and leaves the number it was
+    // given, so a number on a pending row is the one taken back, not a
+    // reservation somebody holds.
+    const boughtElsewhere = !!String(b.confirmation_number ?? '').trim() && b.status !== 'pending';
+    if (b.status === 'confirmed' || boughtElsewhere) return { action: 'refuse', code: 'booked', message: madeRefusal(b, line?.booking_mode ?? null) };
   }
-  if (UNMADE.has(booking.status)) return { action: 'retire', bookingId: booking.id };
+  if (line?.filled) return { action: 'refuse', code: 'booked', message: reservedOnLine(line.venue_name) };
+  if (!live) return { action: 'none' };
+  const b = booking!;
+  if (UNMADE.has(b.status)) return { action: 'retire', bookingId: b.id };
   // A status this file has never heard of is not something to discard.
   return { action: 'refuse', code: 'booked', message: 'This one cannot be changed right now.' };
 }

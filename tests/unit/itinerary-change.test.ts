@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lockedIn, changeRight, suggestionsClosed, refusal, shownSuggestions } from '../../lib/itinerary-change.ts';
+import { lockedIn, changeRight, bookedBy, suggestionsClosed, refusal, shownSuggestions } from '../../lib/itinerary-change.ts';
 import { bookingOnSwap, CANNOT_CANCEL } from '../../lib/itinerary-bookings.ts';
 import { replaceLine } from '../../lib/itinerary-replace.ts';
 
@@ -53,7 +53,7 @@ test('a swap lets go of a booking not yet made, and refuses one that is', () => 
   assert.equal(hotel.action, 'refuse');
   if (hotel.action === 'refuse') {
     assert.equal(hotel.message, CANNOT_CANCEL.hotel);
-    assert.match(hotel.message, /Reach can't cancel it for you/);
+    assert.match(hotel.message, /Reach can't cancel it or swap it for you/);
   }
   // Bought on the seller's own site: a real reservation, whatever the status says.
   assert.equal(bookingOnSwap({ id: 'b', status: 'awaiting_approval', mode: 'redirect', confirmation_number: 'ABC123' }).action, 'refuse');
@@ -83,4 +83,53 @@ test('one line is written in place, on the version read, and a lost race writes 
     'taken only on the line as it was read');
   const raced = fakeDb({ data: null, error: null });
   assert.deepEqual(await replaceLine(raced.db, 'p1', 'i3', { title: 'x', venue_name: 'SPIN' }, {}), { status: 'changed' });
+});
+
+test('a line ticked "I reserved it" with no booking row behind it is refused, with the way back', () => {
+  // A table booked by phone: /bookable makes no row for it, so the tick on
+  // the line is the only record that somebody holds one at Vinny's.
+  const ticked = bookingOnSwap(null, { filled: true, venue_name: "Vinny's", booking_mode: 'ahead' });
+  assert.equal(ticked.action, 'refuse');
+  if (ticked.action === 'refuse') {
+    assert.equal(ticked.code, 'booked');
+    assert.match(ticked.message, /Vinny's/);
+    assert.match(ticked.message, /Not booked after all/);
+  }
+  assert.deepEqual(bookingOnSwap(null, { filled: false, venue_name: "Vinny's" }), { action: 'none' });
+  // An unmade row under a ticked line is still a held table.
+  assert.equal(bookingOnSwap({ id: 'b', status: 'pending', mode: 'redirect' }, { filled: true }).action, 'refuse');
+});
+
+test('only somebody who said they booked it on the seller\'s site is its booker — not whoever opened the Book tab first', () => {
+  // Sam's visit to the Book tab created the hotel row: booked_by is Sam,
+  // but Reach books it, through the organiser's Lock it in.
+  assert.equal(bookedBy({ mode: 'reach', provider: 'liteapi', fulfilled_by: null, booked_by: 'sam' } as never, 'sam'), false);
+  assert.equal(bookedBy({ mode: 'redirect', provider: 'resy', fulfilled_by: null } as never, 'sam'), false, 'created, never booked');
+  assert.equal(bookedBy({ mode: 'redirect', provider: 'resy', fulfilled_by: 'sam' }, 'sam'), true);
+  assert.equal(bookedBy({ mode: 'redirect', provider: 'resy', fulfilled_by: 'ana' }, 'sam'), false);
+  assert.equal(bookedBy({ mode: 'reach', provider: 'liteapi', fulfilled_by: 'sam' }, 'sam'), false, 'a row Reach bought is the group\'s');
+  assert.equal(bookedBy(null, 'sam'), false);
+});
+
+test('a refusal only offers a way back that exists', () => {
+  // A room Reach bought: nothing in Reach takes it off 'confirmed', so no "pick another".
+  for (const vertical of ['hotel', 'activity', 'restaurant']) {
+    const out = bookingOnSwap({ id: 'b', status: 'confirmed', vertical, mode: 'reach', provider: 'x' });
+    assert.ok(out.action === 'refuse');
+    if (out.action === 'refuse') assert.doesNotMatch(out.message, /pick another|then pick|Once it's cancelled/i, vertical);
+  }
+  // A table recorded on Resy for an 'ahead' line: cancel there, untick, pick another.
+  const resy = bookingOnSwap({ id: 'b', status: 'confirmed', vertical: 'restaurant', mode: 'redirect', confirmation_number: 'ABC123' },
+    { booking_mode: 'ahead' });
+  assert.ok(resy.action === 'refuse' && /Not booked after all/.test(resy.message));
+  // A line the Book tab offers no untick for gets no promise of one.
+  const hotelThere = bookingOnSwap({ id: 'b', status: 'confirmed', vertical: 'hotel', mode: 'redirect' }, { booking_mode: 'reach' });
+  assert.ok(hotelThere.action === 'refuse' && !/pick another/.test(hotelThere.message));
+});
+
+test('"Not booked after all" really frees the line: a pending row keeping its old number is let go', () => {
+  // The untick PATCHes status 'pending' and leaves confirmation_number.
+  assert.deepEqual(
+    bookingOnSwap({ id: 'b', status: 'pending', vertical: 'restaurant', mode: 'redirect', confirmation_number: 'ABC123' }),
+    { action: 'retire', bookingId: 'b' });
 });

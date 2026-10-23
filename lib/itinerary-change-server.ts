@@ -12,7 +12,7 @@ import { membersOf, organiserOf, firstName, type Member } from '@/lib/trip-ideas
 import { isOrganiser } from '@/lib/trip-vote';
 import { isSoloPlan } from '@/lib/booking/approval';
 import { atVersion } from '@/lib/booking/claim';
-import { lockedIn, changeRight, shownSuggestions, type Right, type ShownSuggestion, type SuggestionRow, type VoteRow } from '@/lib/itinerary-change';
+import { lockedIn, changeRight, bookedBy, shownSuggestions, type Right, type ShownSuggestion, type SuggestionRow, type VoteRow } from '@/lib/itinerary-change';
 import { bookingOnSwap, type LineBooking } from '@/lib/itinerary-bookings';
 import { replaceLine } from '@/lib/itinerary-replace';
 import { alternativesFor, placeByRef, placeOfLine, placeRef, swappedLine, type PlanLine } from '@/lib/itinerary-alternatives';
@@ -61,7 +61,7 @@ export async function planState(ctx: PlanCtx): Promise<{ fail: NextResponse } | 
   const [members, { data: bookings, error: bookErr }, { data: paid, error: paidErr }] = await Promise.all([
     membersOf(db, plan.group_id),
     db.from('bookings')
-      .select('id, itinerary_item_id, status, mode, vertical, approved_at, updated_at, confirmation_number, booked_by')
+      .select('id, itinerary_item_id, status, mode, provider, vertical, approved_at, updated_at, confirmation_number, booked_by, fulfilled_by')
       .eq('plan_id', plan.id),
     db.from('contributions').select('amount_cents').eq('plan_id', plan.id).eq('status', 'succeeded'),
   ]);
@@ -115,7 +115,7 @@ export async function readLine(ctx: PlanCtx, itemId: string): Promise<{ fail: Ne
       asRead: { title: (r.title as string | null) ?? null, venue_name: (r.venue_name as string | null) ?? null },
       lines: (all ?? []) as PlanLine[],
       booking,
-      right: changeRight({ solo: state.solo, organiser: state.organiser, locked: state.locked, bookedIt: !!booking && booking.booked_by === ctx.user.id }),
+      right: changeRight({ solo: state.solo, organiser: state.organiser, locked: state.locked, bookedIt: bookedBy(booking, ctx.user.id) }),
     },
   };
 }
@@ -157,7 +157,7 @@ export async function swapLine(
 ): Promise<NextResponse> {
   const { db } = ctx;
   const itemId = String(lc.item.id);
-  const on = bookingOnSwap(lc.booking);
+  const on = bookingOnSwap(lc.booking, { filled: lc.item.filled, venue_name: lc.item.venue_name, booking_mode: lc.item.booking_mode });
   if (on.action === 'refuse') {
     return NextResponse.json({ code: on.code, error: on.message, bookingId: lc.booking?.id ?? null }, { status: 409 });
   }

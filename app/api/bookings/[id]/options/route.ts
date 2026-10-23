@@ -12,7 +12,8 @@
 //        the same rule /bookable and /api/bookings keep (lib/booking/reprice.ts).
 //
 // Who: anybody on the trip until it is locked in; after that only the
-// organiser, or whoever booked this line (decision 14, 2026-09-25) — 403
+// organiser, or whoever booked this line on the seller's own site (bookedBy,
+// lib/itinerary-change.ts — never whoever opened the Book tab first) — 403
 // code 'locked_out', and GET answers changeable: false with the same why.
 // GET's options each carry deltaPerPersonCents — the difference to one
 // person's share against what is priced now — marked estimate: true.
@@ -44,8 +45,8 @@ import { nothingFound, nearbyAsk, nearbyDates, TRY_NEARBY_DATES } from '@/lib/bo
 import { today } from '@/lib/calendar';
 import { planState } from '@/lib/itinerary-change-server';
 import { track } from '@/lib/track';
-import { refusal } from '@/lib/itinerary-change';
-import { CANNOT_CANCEL } from '@/lib/itinerary-bookings';
+import { refusal, bookedBy } from '@/lib/itinerary-change';
+import { madeRefusal, type LineBooking } from '@/lib/itinerary-bookings';
 
 /**
  * The request sized for who is on this booking now, not who was when it was
@@ -77,7 +78,7 @@ const Choose = z.object({
 async function load(id: string) {
   const { data: booking, error } = await createServerClient()
     .from('bookings')
-    .select('id, plan_id, vertical, status, mode, provider, approved_at, updated_at, request_payload, response_payload, price_cents, detail, booked_by')
+    .select('id, plan_id, vertical, status, mode, provider, approved_at, updated_at, request_payload, response_payload, price_cents, detail, booked_by, fulfilled_by')
     .eq('id', id).maybeSingle();
   if (error) {
     console.error('[options] could not read booking', { id, code: error.code });
@@ -98,7 +99,7 @@ async function load(id: string) {
  * only the organiser, or whoever booked this line — the same rule a swap of
  * any other line keeps (lib/itinerary-change.ts). Null when this person may.
  */
-async function lockedOut(ctx: Parameters<typeof planState>[0], booking: { booked_by?: string | null }):
+async function lockedOut(ctx: Parameters<typeof planState>[0], booking: { mode?: string | null; provider?: string | null; fulfilled_by?: string | null }):
   Promise<{ status: number; body: { code?: string; error: string } } | null> {
   const st = await planState(ctx);
   if ('fail' in st) {
@@ -106,7 +107,7 @@ async function lockedOut(ctx: Parameters<typeof planState>[0], booking: { booked
     return { status: 500, body: { error: 'Could not check this trip just now.' } };
   }
   const { solo, organiser, locked, organiserName } = st.state;
-  if (!locked || solo || organiser || booking.booked_by === ctx.user.id) return null;
+  if (!locked || solo || organiser || bookedBy(booking, ctx.user.id)) return null;
   return { status: 403, body: { code: 'locked_out', error: refusal('locked_out', organiserName) as string } };
 }
 
@@ -114,8 +115,8 @@ async function lockedOut(ctx: Parameters<typeof planState>[0], booking: { booked
  * Why a booked one cannot be swapped, said plainly. A room is the case that
  * matters: Reach cannot cancel it, so "cancel it first" has to say where.
  */
-function bookedRefusal(booking: { status?: unknown; vertical?: unknown }, refused: string): string {
-  return booking.status === 'confirmed' && booking.vertical === 'hotel' ? CANNOT_CANCEL.hotel : refused;
+function bookedRefusal(booking: LineBooking, refused: string): string {
+  return booking.status === 'confirmed' && booking.vertical === 'hotel' ? madeRefusal(booking) : refused;
 }
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {

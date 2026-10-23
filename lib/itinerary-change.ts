@@ -49,6 +49,27 @@ export interface Who {
   bookedIt?: boolean;
 }
 
+/**
+ * Whether this person is "the person who booked that line".
+ *
+ * Not `booked_by`: that is whoever created the row, and the Book tab creates
+ * the hotel, flight and Reach-booked rows (POST /bookable) as whichever member
+ * happens to open it first — which handed that member the right to change the
+ * group's hotel after Lock it in. The person who booked it is the one who
+ * said they did, on the seller's own site: `fulfilled_by`, written by "I've
+ * got it" (the confirmation route) and PATCH /api/bookings/[id]. A row Reach
+ * bought itself was booked by the group, through the organiser's Lock it in,
+ * so nobody holds it as theirs.
+ */
+export function bookedBy(
+  booking: { mode?: unknown; provider?: unknown; fulfilled_by?: unknown } | null | undefined,
+  userId: string,
+): boolean {
+  if (!booking || !userId) return false;
+  const theirs = booking.mode === 'redirect' || booking.mode === 'concierge' || booking.provider === 'concierge';
+  return theirs && booking.fulfilled_by === userId;
+}
+
 export function changeRight(w: Who): Right {
   if (w.solo || w.organiser) return 'apply';
   if (w.locked) return w.bookedIt ? 'apply' : 'locked_out';

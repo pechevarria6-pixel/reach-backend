@@ -15,14 +15,25 @@
 // server-side dependency; see docs/INGEST.md).
 import OpeningHours from 'opening_hours';
 
-/** The stretch of a day that matters for this kind of place. */
-export type Window = 'evening' | 'day';
+/**
+ * The stretch of a day that matters. 'evening' and 'day' are what a menu is
+ * read for; the parts of a day are what one line of a plan is in ("Day 2 ·
+ * Morning"), for a swap that must be open when that line is.
+ */
+export type Window = 'evening' | 'day' | 'morning' | 'afternoon' | 'after_six' | 'night';
 
 const WINDOWS: Record<Window, [number, number]> = {
   // From five until midnight: dinner, a drink, a gig.
   evening: [17, 24],
   // From nine: a museum that shuts at five is open for the afternoon.
   day: [9, 24],
+  morning: [8, 12],
+  afternoon: [12, 17],
+  // One line in the evening, not a menu for one: from six, so a museum that
+  // shuts at half past five is not "open" for "Day 2 · Evening".
+  after_six: [18, 24],
+  // Late: a club that opens at ten is open for it; a museum is not.
+  night: [21, 24],
 };
 
 /** Somewhere you go in the evening, going by what the map calls it. */

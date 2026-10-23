@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  alternativesFor, placeRef, placeByRef, dateOfLine, swappedTitle, swappedLine, whyLine, type PlanLine,
+  alternativesFor, placeRef, placeByRef, dateOfLine, swappedTitle, swappedLine, whyLine, slotWindow, eveningSlot, type PlanLine,
 } from '../../lib/itinerary-alternatives.ts';
 import { ABOUT_THE_PLACE } from '../../lib/contracts/itinerary-item.ts';
 import type { RealPlace } from '../../lib/discovery/real-places.ts';
@@ -136,4 +136,39 @@ test('a swapped line clears or replaces every fact about the old place, and keep
   assert.equal(patch.is_confirmed, false);
   // Never "Reach will book this" over somewhere Reach cannot book.
   assert.notEqual(swappedLine({ ...dinner, booking_mode: 'reach' }, PUB, PUB2).booking_mode, 'reach');
+});
+
+test('open then means open in the slot\'s part of the day, whatever kind of place it is', () => {
+  // 2026-10-23 is a Friday. An evening activity slot with only one other bar
+  // near: the rest are other activities, and a museum shut at 17:30 is not one.
+  const GALLERY = P({ name: 'National Gallery of Art', kind: 'museum', street: 'Constitution Ave NW', lat: 38.8913, lng: -77.0200, hours: 'Mo-Su 10:00-17:30' });
+  const CLUB = P({ name: 'Late Club', kind: 'nightclub', street: '2 Somewhere St', lat: 38.8975, lng: -77.0305, hours: 'Mo-Su 22:00-04:00' });
+  const menu = [SPIN, POUR, MUSEUM, GALLERY, CLUB];
+  const drinks: PlanLine = { id: 'i9', type: 'activity', title: 'Drinks at SPIN', scheduled_time: 'Day 1 · Evening', venue_name: 'SPIN' };
+  const ev = alternativesFor({ line: drinks, lines: [drinks], places: menu, nightOut: false, startDate: '2026-10-23', count: 20 });
+  assert.equal(ev.status, 'ok');
+  if (ev.status === 'ok') assert.ok(!ev.alternatives.some(a => a.name === 'National Gallery of Art'), 'shut by the evening');
+  // And a morning slot is never offered a club that opens at ten at night.
+  const walk: PlanLine = { id: 'i8', type: 'activity', title: 'The Renwick Gallery', scheduled_time: 'Day 1 · Morning', venue_name: 'Renwick Gallery' };
+  const am = alternativesFor({ line: walk, lines: [walk], places: menu, nightOut: false, startDate: '2026-10-23', count: 20 });
+  assert.equal(am.status, 'ok');
+  if (am.status === 'ok') {
+    assert.ok(!am.alternatives.some(a => a.name === 'Late Club'), 'shut all morning');
+    assert.ok(am.alternatives.some(a => a.name === 'National Gallery of Art'), 'open at ten');
+  }
+});
+
+test('the part of the day is read off the slot: a clock time first, then its word', () => {
+  assert.equal(slotWindow('Day 2 · Morning', false), 'morning');
+  assert.equal(slotWindow('Day 2 · Afternoon', false), 'afternoon');
+  assert.equal(slotWindow('Day 2 · Evening', false), 'evening');
+  assert.equal(slotWindow('Day 2 · Late night', false), 'night');
+  assert.equal(slotWindow('Day 2 · 7:30 PM', false), 'evening');
+  assert.equal(slotWindow('Day 2 · 10:00 AM', false), 'morning');
+  assert.equal(slotWindow('Day 2 · 22:30', false), 'night');
+  assert.equal(slotWindow('12:00 PM', false), 'afternoon');
+  assert.equal(slotWindow('The main event', true), 'evening', 'a night out with nothing more said');
+  assert.equal(slotWindow('Day 2', false), 'day', 'nothing said is the whole day');
+  assert.equal(eveningSlot('Day 2 · 9:30 PM', false), true);
+  assert.equal(eveningSlot('Day 2 · Morning', false), false);
 });
