@@ -24,7 +24,7 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 | Sentry live | 🔒 | `lib/report.ts` posts to the ingest endpoint and no-ops without a DSN. Deliberately not `@sentry/nextjs`: that package wraps the build, and the build broke twice on 09-21. Inert until the owner sets `SENTRY_DSN` |
 | events / metrics flowing | ✅ | **proven in production today, both ways.** `plan_created` had no call site at all; a plan created against prod now writes `{city, kind, solo, nights, voting, country, budget_cents}`. `plan_deleted` was structurally impossible (FK `23503`) and now writes `{plan, cancelled_quotes}` after a real delete. All four QA event rows swept; the table is back to its 5 genuine rows and no `QA-` plan remains |
 | rate limits on | ✅ | 10 new trips/hour, 30 rebuilds/hour, separate counters, human copy on 429 |
-| one-active-trip on | 🟡 | owner chose (a) on 09-25: one active trip and one active night out per group. Server rule in `lib/one-active.ts`, off until the start screen ships; then `sql/one-active-plan-2026-09-25.sql` |
+| one-active-trip on | ✅ | owner chose (a) on 09-25: one active trip and one active night out per group, solo groups exempt. Every create path asks first and handles the 409 (`tests/unit/one-active.test.ts`); `sql/one-active-plan-2026-09-25.sql` run 2026-10-23 |
 
 ## OWNER (Peter)
 

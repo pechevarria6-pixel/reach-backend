@@ -16,8 +16,10 @@ Probed today (PostgREST GETs, `vercel env ls`, the GitHub Actions API).
   commits between 2026-09-25 and today. Vercel's live build was from 09-25.
 - **Every migration in `sql/` written before today has been run**, except two
   held on purpose:
-  - `sql/one-active-plan-2026-09-25.sql` — wait until the "already planning"
-    screen ships, or the current client gets a refusal it cannot show.
+  - ~~`sql/one-active-plan-2026-09-25.sql`~~ — run by the owner 2026-10-23
+    once every path handled the refusal and solo plans were exempt: 12
+    past-dated plans closed as completed, 17 plans marked solo, one active
+    plan left (Puerto Vallarta, solo).
   - `sql/nudge-index-2026-09-25.sql` — optional; speeds nudges up as
     `audit_logs` grows.
 - **The 8 checkout migrations of 2026-09-25** (section 0 below) were run by the
