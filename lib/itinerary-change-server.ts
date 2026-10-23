@@ -153,7 +153,7 @@ export type SwapReason = 'organiser' | 'booker' | 'solo' | 'suggestion';
  */
 export async function swapLine(
   ctx: PlanCtx, lc: LineContext, places: RealPlace[], place: RealPlace,
-  reason: SwapReason, extra: { suggestionId?: string; title?: string | null } = {},
+  reason: SwapReason, extra: { suggestionId?: string; title?: string | null; costCents?: number | null } = {},
 ): Promise<NextResponse> {
   const { db } = ctx;
   const itemId = String(lc.item.id);
@@ -180,7 +180,7 @@ export async function swapLine(
   const asLine: PlanLine = { id: itemId, type: lc.item.type, title: lc.item.title, scheduled_time: lc.item.time,
     venue_name: lc.item.venue_name, booking_mode: lc.item.booking_mode };
   const oldPlace = placeOfLine(asLine, places);
-  const patch = swappedLine(asLine, oldPlace, place, extra.title ?? null);
+  const patch = swappedLine(asLine, oldPlace, place, extra.title ?? null, { costCents: extra.costCents ?? null });
   let out = await replaceLine(db, lc.plan.id, itemId, lc.asRead, patch);
   if (out.status === 'failed' && missingColumn(out.detail)) {
     console.error('[itinerary item] verifier columns missing — swapping without clearing them; run sql/itinerary-verification-2026-09-20.sql');

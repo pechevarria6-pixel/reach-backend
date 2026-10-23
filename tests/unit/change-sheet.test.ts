@@ -23,8 +23,8 @@ test('the days open with the server\'s away lines; the client no longer builds i
   assert.doesNotMatch(app, /function fixedCostRows|fixedCostRows\(/, 'the cents>0 builder that dropped an unpriced flight is gone');
   const rows = between('function awayRows(', '\n}\n');
   assert.match(rows, /if\(Array\.isArray\(fixed\)\)return fixed;/, 'the server\'s fixed rows win whenever they came back');
-  assert.match(rows, /awayLines\(est,/);
-  assert.match(rows, /\.map\(rowOf\)/);
+  assert.match(rows, /awayLines\(trip\.away,opts\)\.map\(rowOf\)/);
+  assert.match(rows, /savedIdeaLines\(trip\|\|\{\},\{\.\.\.opts,nights\}\)\.map\(rowOf\)/);
   // Both days-stage calls pass the server's `fixed` through.
   assert.equal((app.match(/awayRows\(trip,\{fixed:(d|data)\.fixed,/g) ?? []).length, 2);
 });
@@ -51,9 +51,15 @@ test('the client fallback keeps an unpriced flight as a line, as the server does
 
 test('the option card shows the away lines, labelled estimates, and says what is unpriced', () => {
   const card = between('function AwayLinesCard(', '\n}\n');
-  assert.match(card, /away\.lodging/);
-  assert.match(card, /away\.car/);
-  assert.match(card, /t\.kind==="ground"/);
+  // The rows are lib/away-lines.ts awayCardRows' — the stay, the car, the
+  // road, the transfers — held to the total in tests/unit/away-lines.test.ts.
+  assert.match(card, /awayCardRows\(away,\{solo\}\)/);
+  const lib = readFileSync(new URL('../../lib/away-lines.ts', import.meta.url), 'utf8');
+  const rowsFn = lib.slice(lib.indexOf('export function awayCardRows('), lib.indexOf('\n}\n', lib.indexOf('export function awayCardRows(')));
+  assert.match(rowsFn, /away\.lodging/);
+  assert.match(rowsFn, /away\.car/);
+  assert.match(rowsFn, /t\.kind === 'ground'/);
+  assert.match(rowsFn, /Airport transfers/);
   assert.match(card, /No estimate yet for/);
   assert.match(card, /"Not estimated"/);
   // Only the flight and the stay are priced live; the road and the car never are.

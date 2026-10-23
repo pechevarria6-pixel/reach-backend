@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { archetypeFor, playbookGuidance, PlaybookSchema } from '@/lib/playbooks';
 import { datedDays } from '@/lib/calendar';
 import { report } from '@/lib/report';
-import { requireGroupMember, isFail } from '@/lib/auth';
+import { requireGroupMember, groupMemberIds, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
 import {
   ItinerarySchema, TRIPS_JSON_SCHEMA, ITINERARY_JSON_SCHEMA, parseTrips,
@@ -41,7 +41,7 @@ import { away, farEnough } from '@/lib/away';
 import { isNear, awayPromptBlock, awayGaps, awayCorrection, awayEstimate, awayLines, rowOf, type AwayEstimate } from '@/lib/away-lines';
 import { arrivalFor } from '@/lib/booking/arrival';
 import { awayMissing, afterAwayRebuild } from '@/lib/itinerary-rebuild';
-import { readSkips } from '@/lib/participation';
+import { readTimedSkips, memberJoins, whoIsOff } from '@/lib/participation';
 import { readBackDays, clearPhotos, attachTicket, vouchedGeography, asGenSlot, oneSlotReadBack, type ReadBackEnv, type GenDay, type GenSlot } from '@/lib/itinerary-readback';
 
 /** Logged when a stop is dropped for being nowhere near the rest of its day. */
@@ -741,10 +741,10 @@ export async function POST(req: NextRequest) {
       const gateway = known?.transport?.airport
         ?? (town ? (await within(arrivalFor({ city: town, countryCode: tripCountry ?? null }), 6000, 'the arrival airport').catch(() => null))?.gateway ?? null : null);
       const est = awayEstimate({ ...tripSource, costs: costs ?? {} }, { nights: Math.max(0, nights), gateway, km });
-      const driving = detailIsPlan ? await drivingCount(supabase, String(detailTripId)) : 0;
+      const off = detailIsPlan ? await drivingCount(supabase, String(detailTripId), groupId) : { driving: 0, late: 0 };
       const lines = awayLines(est, {
         town: town || 'the town', start: startDate ? String(startDate) : null, end: endDate ? String(endDate) : null,
-        party: groupSize, driving, solo,
+        party: groupSize, driving: off.driving, joinedLate: off.late, solo,
       });
       const fixed = lines.map(rowOf);
       if (!detailIsPlan) return { away: est, fixed };
@@ -1976,23 +1976,26 @@ async function tellTheGroup(
  * Flights are one booking per departure airport, so somebody is driving
  * only when they sit out every one of them. Zero when there are no flight
  * bookings yet, or the opt-outs cannot be read: the flight line then says
- * nothing about who is driving rather than guessing.
+ * nothing about who is driving rather than guessing. Somebody kept off by
+ * joining after the seats were booked is counted apart (`late`): they never
+ * said they were driving.
  */
-async function drivingCount(db: import('@supabase/supabase-js').SupabaseClient, planId: string): Promise<number> {
+async function drivingCount(db: import('@supabase/supabase-js').SupabaseClient, planId: string, groupId: unknown): Promise<{ driving: number; late: number }> {
+  // Cancelled too: a flight the group dropped because nobody was on it
+  // still says everybody is driving (whoIsOff), so a rebuild keeps it off.
   const { data: flights, error } = await db.from('bookings')
-    .select('id').eq('plan_id', planId).eq('vertical', 'flight').not('status', 'in', '("failed","cancelled")');
+    .select('id, status').eq('plan_id', planId).eq('vertical', 'flight').neq('status', 'failed');
   if (error) {
     console.error('[trips itinerary] could not read the plan\'s flights', { plan: planId, code: error.code });
-    return 0;
+    return { driving: 0, late: 0 };
   }
-  const ids = new Set((flights ?? []).map(f => String(f.id)));
-  if (!ids.size) return 0;
-  const skips = await readSkips(db, planId).then(r => r.skips).catch(() => []);
-  const out = new Map<string, Set<string>>();
-  for (const s of skips) {
-    if (!ids.has(s.ref)) continue;
-    if (!out.has(s.userId)) out.set(s.userId, new Set());
-    out.get(s.userId)!.add(s.ref);
+  if (!flights?.length) return { driving: 0, late: 0 };
+  try {
+    const [skips, joins, memberIds] = await Promise.all([
+      readTimedSkips(db, planId), memberJoins(db, String(groupId)), groupMemberIds(db, String(groupId)),
+    ]);
+    return whoIsOff(flights, skips, memberIds, joins);
+  } catch {
+    return { driving: 0, late: 0 };
   }
-  return [...out.values()].filter(refs => refs.size === ids.size).length;
 }

@@ -393,7 +393,21 @@ export function titleNaming(title: unknown, place: RealPlace): string | null {
  * photo with its credit), so a swapped line is no thinner than a generated
  * one.
  */
-export function swappedLine(line: PlanLine, oldPlace: RealPlace | null, place: RealPlace, title?: string | null): Record<string, unknown> {
+/**
+ * What a "Something else…" stop costs a person, in cents, from the one-slot
+ * rewrite's own `cost` (whole dollars, the same estimate every generated
+ * line carries). Null when it said nothing usable.
+ */
+export function slotCostCents(cost: unknown): number | null {
+  const n = typeof cost === 'number' ? cost : typeof cost === 'string' && cost.trim() ? Number(cost) : NaN;
+  if (!Number.isFinite(n) || n < 0 || n > 5000) return null;
+  return Math.round(n) * 100;
+}
+
+export function swappedLine(
+  line: PlanLine, oldPlace: RealPlace | null, place: RealPlace, title?: string | null,
+  opts: { costCents?: number | null } = {},
+): Record<string, unknown> {
   const type = typeForKind(place.kind) ?? (line.type && MENU_TYPES.has(String(line.type)) ? String(line.type) : 'activity');
   const mode = honestMode(type, bookingFor(String(line.booking_mode || 'walk_in'), place));
   const site = mode === 'ahead' && place.reserveUrl ? place.reserveUrl : place.url ?? null;
@@ -413,5 +427,12 @@ export function swappedLine(line: PlanLine, oldPlace: RealPlace | null, place: R
     venue_image_link: photo?.link ?? null,
     is_confirmed: false,
   });
+  // "Something else…" may be another kind of place altogether — a walk
+  // becomes a brunch — so the old line's estimate is not this one's. It
+  // takes the rewrite's own estimate for the new stop. A same-kind swap
+  // keeps the estimate it had: no venue row holds a price.
+  if (title && typeof opts.costCents === 'number' && Number.isFinite(opts.costCents) && opts.costCents >= 0) {
+    out.cost_cents = Math.round(opts.costCents);
+  }
   return out;
 }

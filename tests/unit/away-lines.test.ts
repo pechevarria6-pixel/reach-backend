@@ -239,3 +239,63 @@ test('the options route asks for both lines, retries a gap, and attaches the est
   assert.match(src, /const awayPart = await awayForDays\(\);/);
   assert.match(src, /\.\.\.awayPart,/);
 });
+
+// ─── The option card's rows add up to its total ──────────────────────────
+import { awayCardRows, savedIdeaLines } from '../../lib/away-lines.ts';
+
+test('a town with its own airport: the card shows the airport transfers the total holds', () => {
+  const est = awayEstimate(option({ total_per_person: 1600, costs: {
+    flights: { per_person: 450 }, accommodation: { per_person: 700, example: 'Alfama' },
+    ground_transport: { per_person: 80, details: 'Airport transfers' },
+    food_drink: { per_person: 250 }, activities: { per_person: 100 }, misc: { per_person: 20 },
+  } }), { nights: 5 });
+  assert.equal(est.transport.kind, 'flight');
+  const rows = awayCardRows(est);
+  const transfers = rows.find(r => r.label === 'Airport transfers');
+  assert.ok(transfers, 'the $80 has a row');
+  assert.equal(transfers!.cost, 80);
+  // Rows on the card, plus food, activities and misc, are the headline.
+  const shown = rows.reduce((n, r) => n + (r.cost ?? 0), 0) + 250 + 100 + 20;
+  assert.equal(shown, est.per_person);
+});
+
+test('a rental-car town shows the car, not transfers as well; a drive shows the road once', () => {
+  const car = awayEstimate(option(), { nights: 7, gateway: { iata: 'FAO', name: 'Faro', miles: 40 } });
+  const carRows = awayCardRows(car);
+  assert.ok(carRows.some(r => r.label.startsWith('Rental car')));
+  assert.ok(!carRows.some(r => r.label === 'Airport transfers'));
+  const drive = awayEstimate(option({ costs: { ...option().costs, flights: { per_person: 0 } } }), { nights: 2, km: 150 });
+  const driveRows = awayCardRows(drive);
+  assert.equal(driveRows.filter(r => r.cost === 100).length, 1, 'ground_transport is the road, counted once');
+});
+
+test('one person is not "each"', () => {
+  const est = awayEstimate(option(), { nights: 7 });
+  const group = awayCardRows(est).find(r => r.icon === '🏨')!;
+  const solo = awayCardRows(est, { solo: true }).find(r => r.icon === '🏨')!;
+  assert.match(group.detail!, /a night each/);
+  assert.doesNotMatch(solo.detail!, /each/);
+  assert.match(solo.detail!, /a night/);
+});
+
+test('an idea saved without an estimate that priced no flight gets no flight to quote', () => {
+  const cabin = option({ costs: { ...option().costs, flights: { per_person: 0 }, ground_transport: { per_person: 60 } } });
+  const lines = savedIdeaLines(cabin, { nights: 2, town: 'Boone', party: 4, solo: false });
+  assert.equal(lines.some(l => l.type === 'flight'), false, 'no "Round-trip flights · Booked through Reach"');
+  assert.equal(lines.some(l => l.title === 'Airport transfers'), false);
+  const there = lines.find(l => l.title === 'Getting there and back')!;
+  assert.equal(there.booking_mode, 'ahead');
+  assert.doesNotMatch(there.subtitle, /Lock it in/);
+  assert.ok(lines.some(l => l.type === 'hotel'), 'the bed stays');
+  // A flight it did price is a flight.
+  const priced = savedIdeaLines(option(), { nights: 7, town: 'Lisbon', party: 4, solo: false });
+  assert.ok(priced.some(l => l.type === 'flight' && l.booking_mode === 'reach'));
+});
+
+test('the card and the saved-idea fallback use these, not their own', () => {
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  assert.match(app, /awayCardRows\(away,\{solo\}\)/);
+  assert.match(app, /<AwayLinesCard away=\{away\} solo=\{groupSize<=1\}\/>/);
+  assert.match(app, /savedIdeaLines\(trip\|\|\{\},\{\.\.\.opts,nights\}\)/);
+  assert.doesNotMatch(app, /awayEstimate\(trip\|\|\{\},\{nights\}\)/);
+});

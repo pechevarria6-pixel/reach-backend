@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { report } from '@/lib/report';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { planShares } from '@/lib/money';
-import { planSkips } from '@/lib/participation';
+import { planSkips, readTimedSkips, memberJoins, joinedLate } from '@/lib/participation';
 import { netCollectedCents } from '@/lib/booking/approval';
 import { readParty, staleRows } from '@/lib/booking/reprice';
 import { midClaim } from '@/lib/booking/claim';
@@ -99,6 +99,20 @@ async function fundingStatus(
     .in('vertical', ['flight', 'hotel'])
     .not('status', 'in', '("failed","cancelled")');
   if (seatsErr) console.error('[funding] could not read the flights and hotels', { planId, code: seatsErr.code });
+  // Only who was kept off by joining late. A driver who came off the flight
+  // (lib/participation.ts) is off it by choice, and telling them it "was
+  // already booked before you joined" is a sentence about somebody else.
+  // A hotel cannot be sat out by choice, so every row on one is a join's.
+  let keptOff: { ref: string; userId: string }[] | null = null;
+  if (!seatsErr) {
+    try {
+      const [timed, joins] = await Promise.all([readTimedSkips(db, planId), memberJoins(db, groupId)]);
+      const flights = new Set((seatsAndRooms ?? []).filter(b => b.vertical === 'flight').map(b => String(b.id)));
+      keptOff = timed.filter(s => !flights.has(s.ref) || joinedLate(s, joins.get(s.userId)));
+    } catch {
+      keptOff = null;
+    }
+  }
 
   return {
     targetCents,
@@ -115,7 +129,7 @@ async function fundingStatus(
     // seat that is not theirs.
     // Null when it could not be read: the screen then says nothing either
     // way, rather than "✓ In" over a seat that may not be theirs.
-    notOnBooked: seatsErr ? null : notOnBooked(seatsAndRooms, skips, memberIds),
+    notOnBooked: seatsErr || !keptOff ? null : notOnBooked(seatsAndRooms, keptOff, memberIds),
     myShareCents,
     myPaidCents,
     myRemainingCents: Math.max(0, myShareCents - myPaidCents),

@@ -13,7 +13,7 @@ import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, re
 import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild, afterAwayRebuild } from "@/lib/itinerary-rebuild";
-import { awayEstimate, awayLines, rowOf } from "@/lib/away-lines";
+import { awayLines, awayCardRows, savedIdeaLines, rowOf } from "@/lib/away-lines";
 import { ticketSources } from "@/lib/tickets";
 import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
@@ -457,21 +457,22 @@ function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);retu
 // nothing was asked of the server — the same function is run here on the
 // estimate the idea was saved with, which is exactly what the server's own
 // "kept" branch does. An idea saved before away lines existed has no
-// estimate; for one with nights it is worked out from its costs the way the
-// days stage does, and a day trip with none carries no lines it can't vouch
-// for.
+// estimate and no distance, so nothing here can tell a flight from a drive:
+// for one with nights, savedIdeaLines keeps a flight it priced and says of
+// one it priced at 0 that getting there is not worked out — never a flight
+// Reach would go and quote for a cabin down the road. A day trip with none
+// carries no lines it can't vouch for.
 function awayRows(trip,{fixed,startDate,endDate,party=1,solo=false}={}){
   if(Array.isArray(fixed))return fixed;
   const nights=nightsBetween(startDate,endDate)||0;
-  const est=trip?.away&&typeof trip.away==="object"
-    ?trip.away
-    :(nights>=1?awayEstimate(trip||{},{nights}):null);
-  if(!est)return [];
-  return awayLines(est,{
+  const opts={
     town:String(trip?.city||trip?.destination||"the town").split(",")[0].trim()||"the town",
     start:startDate||null,end:endDate||null,
     party:Math.max(1,party||1),solo,
-  }).map(rowOf);
+  };
+  if(trip?.away&&typeof trip.away==="object")return awayLines(trip.away,opts).map(rowOf);
+  if(nights<1)return [];
+  return savedIdeaLines(trip||{},{...opts,nights}).map(rowOf);
 }
 
 /** What the days stage is told about the option, so its away lines carry the tier. */
@@ -6092,26 +6093,11 @@ function livePriced(away){
   const stay=u.includes("lodging");
   return flight&&stay?"The flights and the stay are":flight?"The flights are":stay?"The stay is":null;
 }
-function AwayLinesCard({away}){
-  const t=away.transport||{};
+function AwayLinesCard({away,solo=false}){
+  // Every part of the total has a row, the airport transfers included
+  // (lib/away-lines.ts awayCardRows); and one person is not "each".
   const usd=n=>typeof n==="number"&&n>0?`$${Math.round(n).toLocaleString()}`:null;
-  const rows=[];
-  if(t.kind==="ground"){
-    rows.push({icon:"🚗",label:"Getting there and back",detail:t.label,cost:usd(t.per_person)});
-  }else{
-    rows.push({icon:"✈️",label:t.kind==="flight_and_car"&&t.airport?`Flights to ${t.airport.iata}`:"Round-trip flights",
-      detail:t.label,cost:usd(t.per_person)});
-    if(away.car)rows.push({icon:"🚗",label:`Rental car from ${away.car.from?.iata||"the airport"}`,
-      detail:away.car.from?`${away.car.from.name}, about ${away.car.from.miles} miles away as the crow flies — yours to book`:"Yours to book",
-      cost:usd(away.car.per_person)});
-  }
-  if(away.lodging){
-    const l=away.lodging;
-    rows.push({icon:"🏨",label:`Somewhere to stay · ${plural(l.nights,"night")}`,
-      detail:[l.label?String(l.label).split(" · ")[0]:null,l.area?`around ${l.area}`:null,
-        usd(l.per_night)?`about ${usd(l.per_night)} a night each`:null].filter(Boolean).join(", "),
-      cost:usd(l.per_person)});
-  }
+  const rows=awayCardRows(away,{solo}).map(r=>({...r,cost:usd(r.cost)}));
   const unpriced=(away.unpriced||[]).map(k=>AWAY_UNPRICED[k]).filter(Boolean);
   return(
     <>
@@ -6220,7 +6206,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
           <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
             Full cost breakdown per person
           </div>
-          {away&&<AwayLinesCard away={away}/>}
+          {away&&<AwayLinesCard away={away} solo={groupSize<=1}/>}
           {[
             ...(away?[]:[
               {icon:"✈️",label:"Flights",cost:trip.costs?.flights?.per_person,detail:trip.costs?.flights?.details},
@@ -9379,12 +9365,15 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
   const mayApply=right==="apply"&&!held;
   const maySuggest=!solo&&!!d?.canSuggest&&!held;
 
-  const apply=async(to,title)=>{
+  // `cost` only with a title: "Something else…" can be another kind of
+  // place, so it carries the rewrite's own estimate for the new stop.
+  const freeBody=(to,title,cost)=>title?{to,title,...(typeof cost==="number"&&cost>=0?{cost}:{})}:{to};
+  const apply=async(to,title,cost)=>{
     if(busy)return;
     setBusy(to);setSaid(null);
     try{
       const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}`,{method:"PATCH",
-        headers:{"Content-Type":"application/json"},body:JSON.stringify(title?{to,title}:{to})},30000,"changing that");
+        headers:{"Content-Type":"application/json"},body:JSON.stringify(freeBody(to,title,cost))},30000,"changing that");
       const out=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(out.error||"Couldn't change that — nothing was changed");
       onSwapped(out.item);
@@ -9397,12 +9386,12 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
     }
     setBusy(null);
   };
-  const suggest=async(to,title)=>{
+  const suggest=async(to,title,cost)=>{
     if(busy)return;
     setBusy(to);setSaid(null);
     try{
       const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/suggestions`,{method:"POST",
-        headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"suggest",to,...(title?{title}:{})})},20000,"suggesting that");
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"suggest",...freeBody(to,title,cost)})},20000,"suggesting that");
       const out=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(out.error||"Couldn't suggest that — try again");
       if(Array.isArray(out.suggestions))onList(item.id,out.suggestions);
@@ -9508,9 +9497,17 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
                   <div style={{marginTop:10,padding:"10px 12px",borderRadius:12,background:C.s2,border:`1px solid ${C.border}`}}>
                     <div style={{fontSize:13.5,color:C.t1,fontWeight:600,lineHeight:1.4}}>{fresh.plan}</div>
                     {fresh.tip&&<div style={{fontSize:11.5,color:C.t2,marginTop:3,lineHeight:1.45}}>{String(fresh.tip).replace(/^\s*💡\s*/u,"")}</div>}
+                    {/* Not "the estimate stays": this may be another kind of
+                        place, so the line takes this stop's own estimate. */}
+                    {freshTo&&<div style={{fontSize:11,color:C.t3,marginTop:4,lineHeight:1.5}}>
+                      {typeof fresh.cost==="number"&&fresh.cost>0
+                        ?`About $${Math.round(fresh.cost).toLocaleString()} ${solo?"for you":"a person"}, an estimate — the line takes this in place of its old one.`
+                        :fresh.cost===0?"Free, as far as we know — the line's estimate becomes $0."
+                        :"No estimate for this stop, so the line keeps the one it had."}
+                    </div>}
                     {freshTo?(
                       <button className="bsm bsm-p" style={{marginTop:8}} disabled={!!busy}
-                        onClick={()=>mayApply?apply(freshTo,fresh.plan):suggest(freshTo,fresh.plan)}>
+                        onClick={()=>mayApply?apply(freshTo,fresh.plan,fresh.cost):suggest(freshTo,fresh.plan,fresh.cost)}>
                         {busy===freshTo?"…":mayApply?"Use this":"Suggest"}
                       </button>
                     ):(
@@ -9840,7 +9837,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       if(item.vertical==="flight"){
         // The flight's seats moved, so its row and the totals did too.
         await refreshBookings();
-        toast(optOut?"You're off the flight":"You're back on the flight");
+        // The last one off took the flight off the plan; its line now says
+        // nobody is flying, and the screen shows that line.
+        if(d.item)lineSwapped(d.item);
+        toast(d.notice||(optOut?"You're off the flight":"You're back on the flight"));
       }else{
         toast(optOut?`You're sitting out ${item.title}`:`You're in for ${item.title}`);
       }
@@ -10736,7 +10736,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               <div style={{padding:"0 20px 14px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
                   <div className="sl">What you're in for</div>
-                  <div style={{fontSize:13,color:C.t1,fontWeight:600}}>Your trip: {usd(share.yourShare_cents)}</div>
+                  <div style={{fontSize:13,color:C.t1,fontWeight:600}}>Your trip: {share.estimate?"about ":""}{usd(share.yourShare_cents)}</div>
                 </div>
                 {share.items.map(it=>{
                   const flight=it.vertical==="flight";
@@ -10746,7 +10746,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:14,color:it.imIn?C.t1:C.t3,fontWeight:500}}>{it.title}</div>
                       <div style={{fontSize:12,color:C.t2}}>
-                        {it.imIn?`${usd(it.myCents)} for you`:flight?"You're driving or have a flight":"Sitting this one out"}{` · ${plural(it.inCount,"person","people")} ${flight?"flying":"going"}`}
+                        {/* Said of them only what they said, or what we know:
+                            off a flight because they joined after its seats
+                            were booked is not "driving" (lib/participation.ts). */}
+                        {it.imIn
+                          ?(it.held?"On hold — in nobody's total until it's let go"
+                            :`${it.repriced?"about ":""}${usd(it.myCents)} for you`)
+                          :flight?(it.joinedLate?"You joined after these seats were booked — book your own":"You're driving or have a flight")
+                          :"Sitting this one out"}
+                        {` · ${plural(it.inCount,"person","people")} ${flight?"flying":"going"}`}
+                        {it.imIn&&it.repriced&&!it.held&&<span style={{color:C.t3}}>{` · fare for ${it.inCount} is quoted again at checkout`}</span>}
                       </div>
                     </div>
                     {!share.locked&&it.open!==false&&(

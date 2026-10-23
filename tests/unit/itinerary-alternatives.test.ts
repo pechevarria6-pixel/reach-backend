@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
-  alternativesFor, placeRef, placeByRef, dateOfLine, swappedTitle, swappedLine, titleNaming, whyLine, slotWindow, eveningSlot, type PlanLine,
+  alternativesFor, placeRef, placeByRef, dateOfLine, swappedTitle, swappedLine, slotCostCents, titleNaming, whyLine, slotWindow, eveningSlot, type PlanLine,
 } from '../../lib/itinerary-alternatives.ts';
 import { ABOUT_THE_PLACE } from '../../lib/contracts/itinerary-item.ts';
 import type { RealPlace } from '../../lib/discovery/real-places.ts';
@@ -198,4 +199,32 @@ test('the title something else wrote is kept only while it names the place the l
   assert.equal(other.title, 'Dinner at Renwick Gallery');
   assert.equal(titleNaming('', MUSEUM), null);
   assert.equal(titleNaming('x'.repeat(201) + ' Renwick Gallery', MUSEUM), null);
+});
+
+test('something else takes the rewrite\'s own estimate; a same-kind swap keeps the line\'s', () => {
+  // A free walk that becomes a brunch is not $0.
+  const walk = { ...dinner, cost_cents: 0 };
+  const brunch = swappedLine(walk, PUB, MUSEUM, 'A slow hour at the Renwick Gallery', { costCents: slotCostCents(35) });
+  assert.equal(brunch.cost_cents, 3500);
+  // Without a title it is a pick from the same kind of place: nothing moves.
+  const same = swappedLine({ ...dinner, cost_cents: 2500 }, PUB, PUB2, null, { costCents: 9900 });
+  assert.equal('cost_cents' in same, false, 'the estimate stays on a same-kind swap');
+  // No usable figure from the rewrite: the line keeps what it had.
+  const none = swappedLine(walk, PUB, MUSEUM, 'A slow hour at the Renwick Gallery', { costCents: slotCostCents(undefined) });
+  assert.equal('cost_cents' in none, false);
+  assert.equal(slotCostCents(0), 0, 'free is a figure');
+  assert.equal(slotCostCents(-5), null);
+  assert.equal(slotCostCents(99999), null);
+  assert.equal(slotCostCents('abc'), null);
+});
+
+test('the swap routes and the sheet carry the rewrite\'s cost', () => {
+  const patch = readFileSync(new URL('../../app/api/plans/[planId]/itinerary/[itemId]/route.ts', import.meta.url), 'utf8');
+  assert.match(patch, /costCents: title \? slotCostCents\(parsed\.data\.cost\)/);
+  const sugg = readFileSync(new URL('../../app/api/plans/[planId]/itinerary/[itemId]/suggestions/route.ts', import.meta.url), 'utf8');
+  assert.match(sugg, /cost_cents: slotCostCents\(body\.cost\)/);
+  assert.match(sugg, /costCents: typeof snap\.cost_cents === 'number'/);
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  assert.match(app, /apply\(freshTo,fresh\.plan,fresh\.cost\)/);
+  assert.match(app, /the line takes this in place of its old one/);
 });

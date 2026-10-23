@@ -22,17 +22,24 @@
 // POST /api/trips/generate (`slot`) answers with the ref of the menu place
 // it named (`to`) and its own line (`slot.plan`). The place may be of any
 // menu type, held to everything else an alternative is; the title is kept
-// only while it names that place (titleNaming).
+// only while it names that place (titleNaming), and the line takes the
+// rewrite's estimate for that stop (`cost`) rather than keeping the old one.
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { readLine, menuFor, swapLine, candidateFor, suggestionsMissing, type SwapReason } from '@/lib/itinerary-change-server';
 import { refusal } from '@/lib/itinerary-change';
-import { BOOKING_TYPES } from '@/lib/itinerary-alternatives';
+import { BOOKING_TYPES, slotCostCents } from '@/lib/itinerary-alternatives';
 
 export const dynamic = 'force-dynamic';
 
-const Swap = z.object({ to: z.string().regex(/^v:[0-9a-f]{8}$/), title: z.string().trim().min(1).max(200).nullish() });
+// `cost`: the rewrite's estimate for the new stop, whole dollars a person
+// (its `slot.cost`). Taken only with a title: a different kind of place
+// does not keep the old line's estimate.
+const Swap = z.object({
+  to: z.string().regex(/^v:[0-9a-f]{8}$/), title: z.string().trim().min(1).max(200).nullish(),
+  cost: z.number().min(0).max(5000).nullish(),
+});
 
 export async function PATCH(req: NextRequest, { params }: { params: { planId: string; itemId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -66,7 +73,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   }
 
   const reason: SwapReason = lc.solo ? 'solo' : lc.organiser ? 'organiser' : 'booker';
-  const swapped = await swapLine(ctx, lc, places, place, reason, { title });
+  const swapped = await swapLine(ctx, lc, places, place, reason, { title, costCents: title ? slotCostCents(parsed.data.cost) : null });
   if (swapped.ok && !lc.solo) {
     // Somebody had suggested exactly this: it is now what the line says, so
     // the card under it is marked applied rather than left asking for 👍.

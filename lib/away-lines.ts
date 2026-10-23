@@ -307,6 +307,20 @@ const OWN_NOT_YET = 'Not estimated — yours to book, and Reach does not price i
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * Getting there when nobody is flying: everyone driving or holding their own
+ * seat. Also what the participation route writes over the flight's line when
+ * the last person comes off it (lib/participation.ts lastOut).
+ */
+export function nobodyFlyingLine(solo: boolean): FixedLine {
+  return {
+    scheduled_time: 'Before you go', type: 'transport',
+    title: solo ? "You're driving or already have a flight" : 'Everyone is driving or already has a flight',
+    subtitle: 'No flights to book for this trip.',
+    cost_cents: 0, party_cents: 0, booking_mode: null, payment_note: null, estimate: true,
+  };
+}
+
+/**
  * The lines an away plan's itinerary opens with: getting there, the car
  * from the airport when the town has none, and a bed for every night.
  *
@@ -320,11 +334,19 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 export function awayLines(est: AwayEstimate, opts: {
   town: string; start?: string | null; end?: string | null;
   party: number; driving?: number; solo: boolean;
+  /**
+   * Members kept off the flight because they joined after its seats were
+   * booked or paid for (lib/joining.ts latecomerOptOuts). Not flying with the
+   * group, and not driving either — nobody asked them — so they are counted
+   * apart, never in `driving`.
+   */
+  joinedLate?: number;
 }): FixedLine[] {
   const lines: FixedLine[] = [];
   const party = Math.max(1, Math.round(opts.party));
   const driving = Math.max(0, Math.min(party, Math.round(opts.driving ?? 0)));
-  const flying = party - driving;
+  const late = Math.max(0, Math.min(party - driving, Math.round(opts.joinedLate ?? 0)));
+  const flying = party - driving - late;
   const funds = opts.solo ? 'Booked through Reach when you pay for the trip' : 'Booked through Reach when the group funds the trip';
   const cents = (n: number | null) => n === null ? null : Math.round(n * 100);
 
@@ -343,15 +365,12 @@ export function awayLines(est: AwayEstimate, opts: {
     // any more — type 'flight' is what the bookable route quotes, and a
     // priced "Booked through Reach" flight nobody takes is a promise
     // Reach would keep by buying a seat nobody sits in.
-    lines.push({
-      scheduled_time: 'Before you go', type: 'transport',
-      title: opts.solo ? "You're driving or already have a flight" : 'Everyone is driving or already has a flight',
-      subtitle: 'No flights to book for this trip.',
-      cost_cents: 0, party_cents: 0, booking_mode: null, payment_note: null, estimate: true,
-      flying: 0, driving,
-    });
+    lines.push({ ...nobodyFlyingLine(opts.solo), flying: 0, driving });
   } else {
-    const who = driving > 0 ? ` ${flying} flying, ${driving} driving or already booked.` : '';
+    const who = driving > 0 || late > 0
+      ? ` ${[`${flying} flying`, driving > 0 ? `${driving} driving or already booked` : null,
+        late > 0 ? `${late} joined after the seats were booked` : null].filter(Boolean).join(', ')}.`
+      : '';
     const per = cents(est.transport.per_person);
     lines.push({
       scheduled_time: 'Before you go', type: 'flight',
@@ -409,6 +428,91 @@ export function awayLines(est: AwayEstimate, opts: {
     });
   }
   return lines;
+}
+
+// ─── The option card's rows ──────────────────────────────────────────────
+// What AwayLinesCard shows, worked out here so a test can hold it to the
+// total. Every part awayEstimate puts into per_person has a row: the card
+// dropped the airport transfers once, and its rows came to less than the
+// "Total per person" printed under them with nothing saying why.
+export interface AwayCardRow {
+  icon: string;
+  label: string;
+  detail: string | null;
+  /** Per person, whole dollars; null is not estimated. */
+  cost: number | null;
+}
+const dollars = (n: number | null | undefined) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.round(n) : null);
+const usdWord = (n: number) => `$${n.toLocaleString('en-US')}`;
+
+export function awayCardRows(away: AwayEstimate, opts: { solo?: boolean } = {}): AwayCardRow[] {
+  const t = away.transport;
+  const rows: AwayCardRow[] = [];
+  if (t.kind === 'ground') {
+    rows.push({ icon: '🚗', label: 'Getting there and back', detail: t.label, cost: dollars(t.per_person) });
+  } else {
+    rows.push({
+      icon: '✈️', label: t.kind === 'flight_and_car' && t.airport ? `Flights to ${t.airport.iata}` : 'Round-trip flights',
+      detail: t.label, cost: dollars(t.per_person),
+    });
+    if (away.car) {
+      rows.push({
+        icon: '🚗', label: `Rental car from ${away.car.from?.iata || 'the airport'}`,
+        detail: away.car.from ? `${away.car.from.name}, about ${away.car.from.miles} miles away as the crow flies — yours to book` : 'Yours to book',
+        cost: dollars(away.car.per_person),
+      });
+    } else if (dollars(away.ground) !== null) {
+      // The town has its own airport: ground_transport is getting from it,
+      // the same "Airport transfers" line awayLines puts on the plan.
+      rows.push({ icon: '🚕', label: 'Airport transfers', detail: 'Yours to arrange', cost: dollars(away.ground) });
+    }
+  }
+  if (away.lodging) {
+    const l = away.lodging;
+    const night = dollars(l.per_night);
+    rows.push({
+      icon: '🏨', label: `Somewhere to stay · ${nightsWord(l.nights)}`,
+      detail: [l.label ? String(l.label).split(' · ')[0] : null, l.area ? `around ${l.area}` : null,
+        night !== null ? `about ${usdWord(night)} a night${opts.solo ? '' : ' each'}` : null].filter(Boolean).join(', ') || null,
+      cost: dollars(l.per_person),
+    });
+  }
+  return rows;
+}
+
+// ─── An idea saved before away estimates existed ─────────────────────────
+// It carries its costs and no distance, so nothing can say whether it is a
+// flight or a drive. A flight it priced is a flight. One it priced at 0 may
+// be a drive — the prompt asks for 0 then — or a model that left it out,
+// and naming it "Round-trip flights · Booked through Reach" turned a cabin
+// 150 miles away into a flight checkout went off to quote. So that line
+// says what we know: getting there is not worked out, and it is theirs to
+// arrange. ground_transport is said as what it is, getting about, since it
+// may be the drive or transfers from an airport.
+export function savedIdeaLines(trip: AwayTripLike, opts: {
+  nights: number; town: string; start?: string | null; end?: string | null;
+  party: number; solo: boolean;
+}): FixedLine[] {
+  const est = awayEstimate(trip, { nights: opts.nights });
+  const lines = awayLines(est, opts);
+  if (est.transport.per_person !== null) return lines;
+  const ground = est.ground;
+  const kept = lines.filter(l => l.type !== 'flight' && l.title !== 'Airport transfers');
+  const front: FixedLine[] = [{
+    scheduled_time: 'Before you go', type: 'transport',
+    title: 'Getting there and back',
+    subtitle: `This idea was saved without a flight or a drive worked out, so how you get to ${opts.town} is yours to arrange. ${OWN_NOT_YET}`,
+    cost_cents: null, booking_mode: 'ahead', payment_note: 'You arrange this yourself', estimate: true,
+  }];
+  if (ground !== null) {
+    front.push({
+      scheduled_time: 'Before you go', type: 'transport',
+      title: 'Getting about', subtitle: OWN_ESTIMATE,
+      cost_cents: Math.round(ground * 100), booking_mode: 'ahead',
+      payment_note: 'You arrange this yourself', estimate: true,
+    });
+  }
+  return [...front, ...kept];
 }
 
 /**

@@ -23,12 +23,12 @@ import {
   readLine, menuFor, swapLine, candidateFor, readSuggestions, suggestionsMissing, SUGGESTIONS_SQL,
 } from '@/lib/itinerary-change-server';
 import { suggestionsClosed } from '@/lib/itinerary-change';
-import { whyLine, titleNaming, BOOKING_TYPES } from '@/lib/itinerary-alternatives';
+import { whyLine, titleNaming, slotCostCents, BOOKING_TYPES } from '@/lib/itinerary-alternatives';
 
 export const dynamic = 'force-dynamic';
 
 const Body = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('suggest'), to: z.string().regex(/^v:[0-9a-f]{8}$/), title: z.string().trim().min(1).max(200).nullish(), note: z.string().trim().max(280).nullish() }),
+  z.object({ action: z.literal('suggest'), to: z.string().regex(/^v:[0-9a-f]{8}$/), title: z.string().trim().min(1).max(200).nullish(), cost: z.number().min(0).max(5000).nullish(), note: z.string().trim().max(280).nullish() }),
   z.object({ action: z.enum(['vote', 'unvote', 'withdraw', 'apply', 'dismiss']), suggestionId: z.string().uuid() }),
 ]);
 
@@ -91,7 +91,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     const candidate = {
       name: place.name, kind: place.kind, street: place.street ?? null, url: place.url ?? null,
       why: whyLine(place, null, lc.nightOut ? 'your evening' : 'the day'),
-      ...(free ? { free: true, title } : {}),
+      ...(free ? { free: true, title, cost_cents: slotCostCents(body.cost) } : {}),
     };
     const { data: made, error } = await db.from('itinerary_item_suggestions').insert({
       plan_id: lc.plan.id, item_id: params.itemId, suggested_by: me,
@@ -187,7 +187,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // shut that day, or left the map, is not put on the plan on the strength
   // of a suggestion made last week.
   const places = await menuFor(db, lc.plan);
-  const snap = (s.candidate && typeof s.candidate === 'object' ? s.candidate : {}) as { free?: unknown; title?: unknown };
+  const snap = (s.candidate && typeof s.candidate === 'object' ? s.candidate : {}) as { free?: unknown; title?: unknown; cost_cents?: unknown };
   const place = candidateFor(lc, places, s.candidate_ref, { anyType: snap.free === true });
   if (!place) {
     return NextResponse.json({
@@ -197,6 +197,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   }
   const swapped = await swapLine(ctx, lc, places, place, 'suggestion', {
     suggestionId: String(s.id), title: typeof snap.title === 'string' ? snap.title : null,
+    costCents: typeof snap.cost_cents === 'number' ? snap.cost_cents : null,
   });
   if (!swapped.ok) return swapped;
   // The line has changed; the suggestion is marked after it, so a failure
