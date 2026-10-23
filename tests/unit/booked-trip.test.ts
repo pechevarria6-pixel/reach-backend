@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   slotMinutes, inTimeOrder, bookingFor, referenceLine, whereOf, calendarEvents,
   calendarFileName, moneyLines, celebrationTitle, claimWasFirst, celebratedKey,
+  bookedDetail, bookedContacts, bookedForMe, celebrationDue, mapEmptyLine,
 } from '../../lib/booked-trip.ts';
 import { buildIcs } from '../../lib/ics.ts';
 
@@ -137,4 +138,57 @@ test("the server's claim is read as first only when it says so", () => {
   assert.equal(claimWasFirst({}), false);
   assert.equal(claimWasFirst(null), false);
   assert.equal(celebratedKey('abc'), 'reach:celebrated:abc');
+});
+
+// ── Review fixes, 2026-10-23 ────────────────────────────────────────────
+
+test('"Early evening" is the evening, not six in the morning', () => {
+  assert.equal(slotMinutes('Day 2 · Early evening'), 19 * 60);
+  assert.equal(slotMinutes('Early dinner'), 19 * 60);
+  assert.equal(slotMinutes('Day 1 · Early afternoon'), 14 * 60);
+  assert.equal(slotMinutes('Day 1 · Early'), 6 * 60);
+  const day = [
+    { time: 'Day 2 · Early evening', title: 'Drinks' },
+    { time: 'Day 2 · Morning', title: 'Coffee' },
+  ];
+  assert.deepEqual(inTimeOrder(day).map(d => d.title), ['Coffee', 'Drinks']);
+});
+
+test('a booked row keeps the hotel by name and the venue it already knew how to reach', () => {
+  const hotel = { id: 'h', type: 'hotel', title: '7 nights in Puerto Vallarta' };
+  const row = { itinerary_item_id: 'h', vertical: 'hotel', status: 'confirmed', detail: 'Casa Azul · 4★ · 2 rooms', response_payload: { orderId: 'X' } };
+  assert.equal(bookedDetail(hotel, row), 'Casa Azul · 4★ · 2 rooms');
+  // The map is asked for the hotel, not for a title that names no place.
+  assert.equal(whereOf(hotel, row, 'Puerto Vallarta')?.query, 'Casa Azul, Puerto Vallarta');
+  // A detail that only repeats the title adds nothing.
+  assert.equal(bookedDetail({ title: 'Dinner' }, { detail: 'dinner' }), null);
+  assert.equal(bookedDetail(hotel, null), null);
+
+  const bar = { type: 'activity', venue_name: 'The Pint', venue_website: 'https://pint.example', venue_phone: '+1 (919) 555-0100' };
+  assert.deepEqual(bookedContacts(bar), [
+    { kind: 'site', url: 'https://pint.example', label: 'The Pint' },
+    { kind: 'phone', url: 'tel:+19195550100', label: '+1 (919) 555-0100' },
+  ]);
+  // An event's website is the ticket seller, not the venue's own site.
+  assert.deepEqual(bookedContacts({ type: 'event', venue_website: 'https://tm.example/e', venue_phone: '555' }), []);
+});
+
+test('somebody on none of the bookings is not told they are booked, and a finished trip is not celebrated', () => {
+  const notOn = { sam: [{ vertical: 'flight' }, { vertical: 'hotel' }], ana: [] };
+  assert.equal(bookedForMe(true, notOn, 'sam'), false);
+  assert.equal(bookedForMe(true, notOn, 'ana'), true);
+  assert.equal(bookedForMe(true, null, 'ana'), true);
+  assert.equal(bookedForMe(false, null, 'ana'), false);
+  assert.equal(celebrationDue(true, 'upcoming'), true);
+  assert.equal(celebrationDue(true, 'on_now'), true);
+  assert.equal(celebrationDue(true, null), true);
+  assert.equal(celebrationDue(true, 'over'), false);
+  assert.equal(celebrationDue(false, 'upcoming'), false);
+});
+
+test('an empty map says our gap is ours, and only a person with no trips gets "Your first trip"', () => {
+  assert.equal(mapEmptyLine({ pins: 0, trips: 0 }), 'Your first trip goes here');
+  assert.equal(mapEmptyLine({ pins: 0, trips: 3 }), "Your trips aren't on the map yet");
+  assert.equal(mapEmptyLine({ pins: 0, trips: 1 }), "Your trip isn't on the map yet");
+  assert.equal(mapEmptyLine({ pins: 2, trips: 3 }), null);
 });

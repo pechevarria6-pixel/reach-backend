@@ -61,3 +61,20 @@ test('a ticket from the seller counts until somebody says they have it', () => {
   assert.equal(t.total, 1);
   assert.equal(t.items[0].who, 'you');
 });
+
+test('a tick says what made it, so "Not booked after all" can undo that and not something else', () => {
+  const lines = [{ id: 'd', type: 'restaurant', booking_mode: 'ahead', filled: false }];
+  // Confirmed through "I've got it": the booking row is what has to go back.
+  const byRow = bookingTracker(lines, [{ id: 'bk1', itinerary_item_id: 'd', status: 'confirmed' }]).items[0];
+  assert.deepEqual(byRow.via, ['booking']);
+  assert.deepEqual(byRow.bookingIds, ['bk1']);
+  // Ticked on the line: only the line.
+  const byLine = bookingTracker([{ ...lines[0], filled: true }]).items[0];
+  assert.deepEqual(byLine.via, ['line']);
+  assert.deepEqual(byLine.bookingIds, []);
+  // Both: both, or clearing one leaves it ticked by the other.
+  const both = bookingTracker([{ ...lines[0], filled: true }], [{ id: 'bk1', itinerary_item_id: 'd', status: 'confirmed' }]).items[0];
+  assert.deepEqual(both.via, ['line', 'booking']);
+  // Once the row is put back to pending, nothing says it is done.
+  assert.equal(bookingTracker(lines, [{ id: 'bk1', itinerary_item_id: 'd', status: 'pending' }]).items[0].done, false);
+});

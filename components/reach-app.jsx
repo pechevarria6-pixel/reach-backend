@@ -37,7 +37,7 @@ import { isJourney } from "@/lib/travel-slot";
 import { bookingTracker } from "@/lib/plan-steps";
 import { getNextAction } from "@/lib/next-action";
 import { buildIcs } from "@/lib/ics";
-import { inTimeOrder, bookingFor, referenceLine, whereOf, calendarEvents, calendarFileName, moneyLines, celebrationTitle, claimWasFirst, celebratedKey } from "@/lib/booked-trip";
+import { inTimeOrder, bookingFor, referenceLine, whereOf, calendarEvents, calendarFileName, moneyLines, celebrationTitle, claimWasFirst, celebratedKey, bookedDetail, bookedContacts, bookedForMe, celebrationDue, mapEmptyLine } from "@/lib/booked-trip";
 import { kindOf as planKind } from "@/lib/one-active";
 import { bringAlongNote, tripHolds, notOnSentence } from "@/lib/joining";
 
@@ -1159,7 +1159,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
         {alsoComing.map(plan=>(
           <PhotoFrame key={plan.id} src={plan.imageUrl&&plan.imageCredit?plan.imageUrl:null}
             alt={photoAlt(plan.destinationCity,plan.title)}>{({ok:hasPhoto,img})=>(
-          <div {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id,...(nexts[plan.id]?.allBooked?{initialTab:"bookings"}:{})})}
+          <div {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id,...(nexts[plan.id]?.bookedForMe?{initialTab:"bookings"}:{})})}
             style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
               // A picture of the place they are actually going. The gradient
               // stays underneath, so a photo that fails to load leaves the
@@ -1199,7 +1199,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
               {/* Booked: the card opens on the trip itself, and says so. The
                   card is the one way in — this is its label, not a second
                   button beside it. */}
-              {nexts[plan.id]?.allBooked&&(
+              {nexts[plan.id]?.bookedForMe&&(
                 <div style={{fontSize:12,fontWeight:700,color:"white",marginTop:10}}>See your trip →</div>
               )}
               {/* Whose photograph it is. A picture is somebody's work, and
@@ -2959,7 +2959,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <span style={{fontSize:11.5,color:C.t3}}>{plural(section.plans.length,"plan")}</span>
             </div>
           {section.plans.map(plan=>(
-            <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId,...(nexts[plan.id]?.allBooked?{initialTab:"bookings"}:{})})}>
+            <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId,...(nexts[plan.id]?.bookedForMe?{initialTab:"bookings"}:{})})}>
               <div style={{padding:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                   <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{plan.title}</div>
@@ -3001,7 +3001,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                 )}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <AvCluster ids={plan.participants} um={um} max={4}/>
-                  <div style={{fontSize:12,color:C.accentText,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{nexts[plan.id]?.allBooked?"See your trip":"View"} <span style={{fontSize:16}}>→</span></div>
+                  <div style={{fontSize:12,color:C.accentText,fontWeight:600,display:"flex",alignItems:"center",gap:4}}>{nexts[plan.id]?.bookedForMe?"See your trip":"View"} <span style={{fontSize:16}}>→</span></div>
                 </div>
               </div>
             </div>
@@ -8523,7 +8523,13 @@ function nextInput(plan,group,me,{bookings,funding,readiness,vote,outcome}={}){
 function nextFor(plan,group,me,got){
   if(!plan||!group||isTempId(plan.id)||!got)return null;
   if(!Array.isArray(got.bookings)||!got.funding)return null;
-  try{return getNextAction(nextInput(plan,group,me,got));}
+  try{
+    const na=getNextAction(nextInput(plan,group,me,got));
+    // `allBooked` is the plan's rows; `bookedForMe` is whether this person is
+    // on them. Somebody who joined after the flight was bought is not, and
+    // "Your trip", "See your trip" and the celebration read this one.
+    return na?{...na,bookedForMe:bookedForMe(na.allBooked,got.funding?.notOnBooked,me)}:na;
+  }
   catch(e){console.error("[next] could not work out what's next",{planId:plan.id},e);return null;}
 }
 
@@ -9256,21 +9262,43 @@ function BookedTripHead({plan,funding,bookings,solo,toast}){
  * What was booked, on the row it was booked for: whose reference it is, and
  * where it is. One line where the "how to book it" pills and buttons were.
  */
-function BookedRowFacts({item,booking,tracked,city}){
+function BookedRowFacts({item,booking,tracked,city,onUndo}){
   const ref=referenceLine(item,booking);
   const where=whereOf(item,booking,city);
+  // What Reach found (the hotel by name, the airline and route) and how to
+  // reach the place — both were on the screen before it was booked, and
+  // being booked does not make either less worth having.
+  const detail=bookedDetail(item,booking);
+  const contacts=bookedContacts(item);
   const done=ref||(tracked?.done?(tracked.who==="reach"?"Booked by Reach":item.type==="restaurant"?"Table reserved":"Sorted"):null);
-  if(!done&&!where)return null;
+  // Somebody said they sorted it; somebody can say it fell through. The To
+  // book list is gone once it is all booked, so the way back lives here.
+  const undo=onUndo&&tracked?.who==="you"&&tracked.done;
+  if(!done&&!where&&!detail&&!contacts.length)return null;
+  const link={color:C.accentText,fontWeight:600,textDecoration:"none"};
   return(
-    <div style={{display:"flex",flexWrap:"wrap",alignItems:"baseline",gap:"4px 14px",marginTop:6,fontSize:12,lineHeight:1.45}}>
-      {done&&<span style={{color:C.green,fontWeight:600}}>✓ {done}</span>}
-      {where&&(
-        <a href={where.url} target="_blank" rel="noopener noreferrer"
-          aria-label={`Open ${where.query} in maps`}
-          style={{color:C.accentText,fontWeight:600,textDecoration:"none"}}>
-          📍 {where.address||"Map"} →
-        </a>
-      )}
+    <div style={{marginTop:6,fontSize:12,lineHeight:1.45}}>
+      {detail&&<div style={{color:C.t2,marginBottom:3}}>{detail}</div>}
+      <div style={{display:"flex",flexWrap:"wrap",alignItems:"baseline",gap:"4px 14px"}}>
+        {done&&<span style={{color:C.green,fontWeight:600}}>✓ {done}</span>}
+        {where&&(
+          <a href={where.url} target="_blank" rel="noopener noreferrer"
+            aria-label={`Open ${where.query} in maps`} style={link}>
+            📍 {where.address||"Map"} →
+          </a>
+        )}
+        {contacts.map(c=>(
+          <a key={c.kind} href={c.url} {...(c.kind==="site"?{target:"_blank",rel:"noopener noreferrer"}:{})} style={link}>
+            {c.kind==="phone"?`📞 ${c.label}`:`${c.label} →`}
+          </a>
+        ))}
+        {undo&&(
+          <button onClick={()=>onUndo(item)}
+            style={{background:"none",border:"none",padding:0,color:C.t3,fontSize:11.5,cursor:"pointer",textDecoration:"underline",minHeight:24}}>
+            Not booked after all
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -9768,8 +9796,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // Everything on the plan is booked: the Book tab becomes the trip itself
   // rather than a list of things to book, and the first time this person
   // sees it, the celebration.
-  const booked=!!na?.allBooked;
-  const [celebrating,endCelebration]=useCelebration(planId,booked,{groupId,screen:"plan"});
+  const booked=!!na?.bookedForMe;
+  // Not over a trip that has already happened: "You're going to Lisbon" on
+  // one that ended last month is a sentence about the past.
+  const [celebrating,endCelebration]=useCelebration(planId,
+    celebrationDue(booked,plan?tripTiming({startDate:plan.startDate,endDate:plan.endDate},today()):null),{groupId,screen:"plan"});
 
   if(!plan||!group)return <NotLoaded what={group?"This plan":"This group"} onBack={onBack}/>;
   // Travelling alone means there is nobody to ask. Every voting affordance is
@@ -9824,12 +9855,33 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const tracker=bookingTracker(plan.itinerary||[],planBookings);
   const trackedOf=item=>tracker.items.find(t=>t.line===item)||null;
 
-  /** Taking back "I reserved it" — plans change, and a tick you cannot undo is a lie waiting to happen. */
+  /**
+   * Taking back "I reserved it" — plans change, and a tick you cannot undo is
+   * a lie waiting to happen. It undoes whatever made the tick (the tracker's
+   * `via`): `filled` on the line, and the booking row "I've got it" confirmed.
+   * Clearing only `filled` left a row-confirmed dinner ticked, with a button
+   * that did nothing.
+   */
   const unmarkGot=async(row)=>{
-    const next=(plan.itinerary||[]).map(r=>r===row?{...r,filled:false}:r);
-    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:next}:p)}));
-    const ok=await saveItineraryToServer(planId,next);
-    if(ok===false)toast("Couldn't save that — try again in a moment");
+    const t=trackedOf(row);
+    const via=t?.via||["line"];
+    let ok=true;
+    if(via.includes("booking")){
+      for(const id of t.bookingIds||[]){
+        try{
+          const r=await fetchWithin(`/api/bookings/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"pending"})});
+          if(!r.ok){const d=await r.json().catch(()=>({}));console.error("[book] could not take back the booking",{bookingId:id,status:r.status});toast(d.error||"Couldn't save that — try again in a moment");ok=false;}
+        }catch(e){console.error("[book] could not take back the booking",{bookingId:id},e);toast("Couldn't save that — try again in a moment");ok=false;}
+      }
+      forgetNext(planId);
+      await refreshBookings();
+    }
+    if(via.includes("line")||row.filled){
+      const next=(plan.itinerary||[]).map(r=>r===row?{...r,filled:false}:r);
+      updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:next}:p)}));
+      const saved=await saveItineraryToServer(planId,next);
+      if(saved===false&&ok)toast("Couldn't save that — try again in a moment");
+    }
   };
 
   // The itinerary's own estimate, used only until there are real booking rows
@@ -10536,7 +10588,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           file have three times. */}
                       {booked&&!(trackedOf(item)&&!trackedOf(item).done)
                         ?<BookedRowFacts item={item} booking={bookingFor(item,planBookings)} tracked={trackedOf(item)}
-                          city={plan?.destinationCity||plan?.destination}/>
+                          city={plan?.destinationCity||plan?.destination} onUndo={unmarkGot}/>
                         :trackedOf(item)&&!booked
                         ?<div style={{fontSize:11.5,marginTop:6,fontWeight:600,color:trackedOf(item).done?C.green:C.accentText}}>
                           {trackedOf(item).done?"✓ Done":"In your list to book above ↑"}
@@ -11582,7 +11634,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // booked, from the same answer, and the celebration if this is the first
   // time this person has seen it. Partly booked is the plain done screen.
   const doneNa=phase==="done"?nextFor(plan,group,me,{bookings:bookings||[],funding,readiness:ckReadiness}):null;
-  const [celebrating,endCelebration]=useCelebration(planId,!!doneNa?.allBooked,{groupId,screen:"checkout"});
+  const [celebrating,endCelebration]=useCelebration(planId,
+    celebrationDue(!!doneNa?.bookedForMe,plan?tripTiming({startDate:plan.startDate,endDate:plan.endDate},today()):null),{groupId,screen:"checkout"});
   const tapped=()=>trackEvent("checkout_cta_tapped",{state:na?.state||"none",cta:ctaId(na?.cta),screen:"checkout"},{planId,groupId});
   // What this person has paid in, net of refunds, and how much of that is
   // beyond their share of what is still being bought — the money a refund
@@ -12532,12 +12585,18 @@ function TripMap({groups,push,toast}){
     let live=true;
     fetch("/api/me/trips-map")
       .then(r=>r.ok?r.json():Promise.reject(new Error(`trips-map ${r.status}`)))
-      .then(d=>{if(live)setPins({upcoming:Array.isArray(d?.upcoming)?d.upcoming:[],past:Array.isArray(d?.past)?d.past:[]});})
+      .then(d=>{if(d?.pending)console.warn("[map] the map has no points until this runs",{sql:d.pending});if(live)setPins({upcoming:Array.isArray(d?.upcoming)?d.upcoming:[],past:Array.isArray(d?.past)?d.past:[]});})
       .catch(e=>{console.error("[map] could not load your trips",e);if(live)setFailed(true);});
     return()=>{live=false;};
   },[]);
   const all=pins?[...pins.past.map(p=>({...p,when:"past"})),...pins.upcoming.map(p=>({...p,when:"upcoming"}))]:[];
   const empty=!!pins&&all.length===0;
+  // An empty map is not the same as no trips. Before the map's SQL runs the
+  // route says `pending`, and after it every older plan has no point until
+  // the backfill — so "Your first trip goes here" is only for somebody whose
+  // groups hold no plans at all, counted from what the app has loaded.
+  const trips=(groups||[]).reduce((n,g)=>n+(g.plans||[]).filter(p=>!isTempId(p.id)).length,0);
+  const emptyLine=empty?mapEmptyLine({pins:0,trips}):null;
   useEffect(()=>{
     if(!pins||!box.current)return;
     let map=null,gone=false;
@@ -12595,11 +12654,11 @@ function TripMap({groups,push,toast}){
       </div>
       {MAP_TILES.dim&&<style dangerouslySetInnerHTML={{__html:`.trip-map-dim{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.3);}`}}/>}
       <div style={{position:"relative",height:200,borderRadius:16,overflow:"hidden",border:`1px solid ${C.border}`,background:"#0E1116",isolation:"isolate"}}>
-        <div ref={box} role="region" aria-label={empty?"Map, no trips on it yet":`Map of your trips: ${all.map(p=>p.label).join(", ")}`} style={{position:"absolute",inset:0}}/>
+        <div ref={box} role="region" aria-label={empty?`Map: ${emptyLine}`:`Map of your trips: ${all.map(p=>p.label).join(", ")}`} style={{position:"absolute",inset:0}}/>
         {empty&&(
           <div style={{position:"absolute",inset:0,zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",
             background:"rgba(14,17,22,.45)"}}>
-            <div style={{color:"#F2F2F2",fontFamily:"var(--font-display)",fontSize:20}}>Your first trip goes here</div>
+            <div style={{color:"#F2F2F2",fontFamily:"var(--font-display)",fontSize:20,textAlign:"center",padding:"0 16px"}}>{emptyLine}</div>
           </div>
         )}
         {!pins&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12.5,color:"#B8C0C8"}}>Loading your map…</div>}

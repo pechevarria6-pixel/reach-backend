@@ -48,9 +48,19 @@ export interface TrackLine {
   venue_website?: string | null;
   filled?: boolean;
 }
-export interface TrackBooking { itinerary_item_id?: string | null; status: string }
+export interface TrackBooking { id?: string | null; itinerary_item_id?: string | null; status: string }
 
-export interface Tracked<T> { line: T; who: 'reach' | 'you'; done: boolean }
+/**
+ * `via` is what says it is done, so taking it back can undo the same thing:
+ * 'line' is `filled` on the itinerary row, 'booking' is a confirmed booking
+ * row (with its id). A "you" line can be both; undoing it has to clear both,
+ * or the tick comes straight back from the one left behind.
+ */
+export interface Tracked<T> {
+  line: T; who: 'reach' | 'you'; done: boolean;
+  via: Array<'line' | 'booking'>;
+  bookingIds: string[];
+}
 
 /**
  * Everything that has to be booked for this trip, and whether it has been.
@@ -69,13 +79,20 @@ export interface Tracked<T> { line: T; who: 'reach' | 'you'; done: boolean }
 export function bookingTracker<T extends TrackLine>(lines: T[], bookings: TrackBooking[] = []): {
   items: Tracked<T>[]; done: number; total: number;
 } {
-  const confirmed = new Set(bookings.filter(b => b.status === 'confirmed').map(b => b.itinerary_item_id).filter(Boolean));
+  const confirmedRows = (bookings ?? []).filter(b => b.status === 'confirmed' && b.itinerary_item_id);
+  const rowsFor = (line: T) => (line.id ? confirmedRows.filter(b => b.itinerary_item_id === line.id) : []);
   const items: Tracked<T>[] = [];
   for (const line of lines ?? []) {
+    const rows = rowsFor(line);
+    const bookingIds = rows.map(b => b.id).filter((id): id is string => !!id);
     if (line.booking_mode === 'reach') {
-      items.push({ line, who: 'reach', done: !!line.id && confirmed.has(line.id) });
+      const done = rows.length > 0;
+      items.push({ line, who: 'reach', done, via: done ? ['booking'] : [], bookingIds });
     } else if (line.booking_mode === 'ahead' || (line.type === 'event' && line.venue_website)) {
-      items.push({ line, who: 'you', done: !!line.filled || (!!line.id && confirmed.has(line.id)) });
+      const via: Array<'line' | 'booking'> = [];
+      if (line.filled) via.push('line');
+      if (rows.length) via.push('booking');
+      items.push({ line, who: 'you', done: via.length > 0, via, bookingIds });
     }
   }
   return { items, done: items.filter(i => i.done).length, total: items.length };

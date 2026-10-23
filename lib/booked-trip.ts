@@ -27,6 +27,7 @@ import { reachBuys } from './booking/charged.ts';
 
 export interface BookedItem {
   id?: string | null;
+  venue_phone?: string | null;
   time?: string | null;
   title?: string | null;
   sub?: string | null;
@@ -56,8 +57,12 @@ export interface BookedRow {
 // day is. Anything else keeps its place beside the row written before it —
 // a row nobody can place is not moved to the end, which would be a claim
 // that it happens last.
+//
+// "Early" is read last, and only when nothing else is named: "Early
+// evening" is the evening and "Early dinner" is dinner. Read first, it put
+// drinks at six in the morning, ahead of breakfast.
 const PART_OF_DAY: Array<[RegExp, number]> = [
-  [/\b(early|sunrise|dawn)\b/i, 6 * 60],
+  [/\b(sunrise|dawn)\b/i, 6 * 60],
   [/\bbreakfast\b/i, 8 * 60],
   [/\bmorning\b/i, 9 * 60],
   [/\bbrunch\b/i, 10 * 60 + 30],
@@ -68,6 +73,7 @@ const PART_OF_DAY: Array<[RegExp, number]> = [
   [/\b(evening|dinner)\b/i, 19 * 60],
   [/\bmain event\b/i, 20 * 60],
   [/\b(night|late|after|nightcap)\b/i, 22 * 60],
+  [/\bearly\b/i, 6 * 60],
 ];
 
 /** Minutes after midnight the row's own words put it at, or null when they do not say. */
@@ -145,6 +151,19 @@ const hotelOf = (b: BookedRow | null): { name?: unknown; address?: unknown } | n
   return p && typeof p === 'object' && p.hotel && typeof p.hotel === 'object' ? p.hotel : null;
 };
 
+/**
+ * A booked hotel's name, from the line Reach wrote when it found it ("Casa
+ * Azul · 4★ · 2 rooms"). After booking, the provider's book response
+ * carries no hotel, and the itinerary line only ever says "7 nights in
+ * Puerto Vallarta" — so the detail is the one place the name survives.
+ */
+function hotelNameFromDetail(item: BookedItem, booking: BookedRow | null): string | null {
+  const type = String(booking?.vertical || item?.type || '');
+  if (type !== 'hotel') return null;
+  const first = clean(booking?.detail)?.split(' · ')[0];
+  return clean(first);
+}
+
 /** A maps link anyone's phone opens: Apple Maps on iOS hands off, Google everywhere else. */
 export function mapsUrl(query: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
@@ -166,10 +185,42 @@ export function whereOf(item: BookedItem, booking: BookedRow | null, city?: stri
     const query = name ? `${name}, ${address}` : address;
     return { query, address, url: mapsUrl(query) };
   }
-  const name = clean(item?.venue_name) ?? clean(hotel?.name);
+  const name = clean(item?.venue_name) ?? clean(hotel?.name) ?? hotelNameFromDetail(item, booking);
   if (!name) return null;
   const query = town && !name.toLowerCase().includes(town.toLowerCase()) ? `${name}, ${town}` : name;
   return { query, address: null, url: mapsUrl(query) };
+}
+
+// ── What else the row already knew ──────────────────────────────────────
+/**
+ * What Reach found for a line it booked — the hotel by name, the airline
+ * and the route — which the line's own title never says. Null when the
+ * booking holds nothing more than the title already does.
+ */
+export function bookedDetail(item: BookedItem, booking: BookedRow | null): string | null {
+  const detail = clean(booking?.detail);
+  if (!detail) return null;
+  const title = clean(item?.title);
+  return title && title.toLowerCase() === detail.toLowerCase() ? null : detail;
+}
+
+export interface Contact { kind: 'site' | 'phone'; url: string; label: string }
+
+/**
+ * The venue's own website and phone, kept on a booked row. Being booked
+ * does not make the opening hours, the menu or the number to ring when you
+ * are running late any less worth having. An event's `venue_website` is the
+ * ticket seller, not the venue, so it is not offered as "their site"; and a
+ * ticketed line never carries a phone (slotRow).
+ */
+export function bookedContacts(item: BookedItem): Contact[] {
+  const out: Contact[] = [];
+  const ticketed = item?.type === 'event' && !!clean(item?.venue_website);
+  const site = item?.type !== 'event' ? clean(item?.venue_website) : null;
+  if (site) out.push({ kind: 'site', url: site, label: clean(item?.venue_name) ?? 'Their site' });
+  const phone = !ticketed ? clean(item?.venue_phone) : null;
+  if (phone) out.push({ kind: 'phone', url: `tel:${phone.replace(/[^0-9+]/g, '')}`, label: phone });
+  return out;
 }
 
 // ── The calendar ────────────────────────────────────────────────────────
@@ -252,6 +303,34 @@ export function celebrationTitle(p: { city?: string | null; title?: string | nul
   return "You're all set";
 }
 
+/** Whatever this one person still needs, from the server's funding read: `notOnBooked[me]`. */
+export type NotOnBooked = Record<string, unknown[] | null | undefined> | null | undefined;
+
+/**
+ * Whether the trip is booked *for this person*. getNextAction's `allBooked`
+ * is about the plan's rows; somebody who joined after the flight and the
+ * hotel were bought is on none of them (funding.notOnBooked), and telling
+ * them they are booked — "Your trip", a green booking reference on a seat
+ * that is not theirs, a celebration — is the one thing the screen must not
+ * say. Their Overview already tells them what they still need.
+ */
+export function bookedForMe(allBooked: boolean | null | undefined, notOnBooked: NotOnBooked, me: string | null | undefined): boolean {
+  if (!allBooked) return false;
+  const missing = me && notOnBooked ? notOnBooked[me] : null;
+  return !(Array.isArray(missing) && missing.length > 0);
+}
+
+/**
+ * Whether the celebration is due: booked for this person, and the trip not
+ * already over. "You're going to Lisbon" over a trip that ended last month,
+ * opened for the first time from the group's past plans, is a sentence
+ * about the future that is about the past. A trip with no dates is not
+ * known to be over.
+ */
+export function celebrationDue(booked: boolean, timing: string | null | undefined): boolean {
+  return !!booked && timing !== 'over';
+}
+
 /** The localStorage key that remembers the celebration on a device whose server cannot. */
 export const celebratedKey = (planId: string) => `reach:celebrated:${planId}`;
 
@@ -264,4 +343,19 @@ export const celebratedKey = (planId: string) => `reach:celebrated:${planId}`;
 export function claimWasFirst(body: unknown): boolean {
   const b = body as { first?: unknown; claimed?: unknown } | null;
   return !!b && (b.first === true || b.claimed === true);
+}
+
+// ── Your map, when it has nothing on it ─────────────────────────────────
+/**
+ * The sentence over an empty map. "Your first trip goes here" is only true
+ * of somebody with no trips. A person with trips whose places we have not
+ * put on the map yet — before sql/trip-map-2026-09-25.sql runs (`pending`),
+ * or before the backfill gives their plans a point — is looking at our gap,
+ * and is told that, not something about themselves. `trips` is the plans
+ * this person holds, counted from what the app has loaded, not from the map.
+ */
+export function mapEmptyLine(p: { pins: number; trips: number }): string | null {
+  if (p.pins > 0) return null;
+  if (p.trips > 0) return p.trips === 1 ? "Your trip isn't on the map yet" : "Your trips aren't on the map yet";
+  return 'Your first trip goes here';
 }
