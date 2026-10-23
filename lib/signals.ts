@@ -58,6 +58,7 @@ export async function readSignals(
   let rows = 0;
   let from = 0;
   let truncated = false;
+  let failed: string | null = null;
   for (;;) {
     if (Date.now() > opts.deadline || rows >= opts.maxRows) { truncated = true; break; }
     const { data, error } = await db
@@ -68,7 +69,9 @@ export async function readSignals(
       .order('user_id').order('at', { nullsFirst: true }).order('kind').order('ref', { nullsFirst: true })
       .order('plan_id', { nullsFirst: true })
       .range(from, from + PAGE - 1);
-    if (error) return { byUser, rows, truncated: true, error: `${error.code ?? ''} ${error.message}`.trim() };
+    // A failed page is a cut like any other: the person whose rows straddle
+    // it is dropped below, never written from the half that arrived.
+    if (error) { failed = `${error.code ?? ''} ${error.message}`.trim(); truncated = true; break; }
     const page = (data ?? []) as Signal[];
     for (const s of page) {
       if (!s?.user_id) continue;
@@ -85,5 +88,5 @@ export async function readSignals(
     const last = [...byUser.keys()].pop()!;
     byUser.delete(last);
   }
-  return { byUser, rows, truncated, error: null };
+  return { byUser, rows, truncated, error: failed };
 }

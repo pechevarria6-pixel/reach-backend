@@ -45,9 +45,36 @@ export type Pace = 'relaxed' | 'balanced' | 'packed';
 export type BudgetPosture = 'lean' | 'mid' | 'comfortable' | 'splurge';
 export type NightEnergy = 'chilled' | 'lively' | 'big';
 
-/** The trip quiz's "absolute no" ids that are about travel and leisure. */
-export const NO_GOS = ['crowds', 'loud', 'earlyMornings', 'heights', 'clubs', 'coldWeather', 'camping', 'karaoke'] as const;
+/**
+ * The "absolute no" answers that are about travel and leisure, one name each.
+ * A trip's answers (trip_input) carry the per-trip quiz's ids, and a trip and
+ * a night out spell them differently — `crowded` and `big crowds`,
+ * `loud rooms` — while the profile quiz's own ids (`crowds`, `loud`, ...) live
+ * in users.no_way_jose, which the view leaves out. NO_GO_ID reads every
+ * spelling the quiz screens save into one of these.
+ */
+export const NO_GOS = [
+  'crowds', 'loud', 'clubs', 'earlyMornings', 'longFlights', 'coldWeather', 'camping', 'hiking',
+  'heights', 'karaoke', 'longQueues', 'standingAllNight', 'dressingUp',
+] as const;
 export type NoGo = typeof NO_GOS[number];
+
+/**
+ * Every id a "No Way José" screen saves, into its NoGo. The trip quiz
+ * (components/reach-app.jsx, CreatePlanFlow's trip questions), the night-out
+ * quiz (its phrases) and the profile quiz's ids, carried onto a trip.
+ * Food ("spicy") is left out: it is not about where anybody goes.
+ */
+export const NO_GO_ID: Readonly<Record<string, NoGo>> = {
+  // The trip quiz.
+  camping: 'camping', longFlights: 'longFlights', coldWeather: 'coldWeather',
+  crowded: 'crowds', earlyMornings: 'earlyMornings', hiking: 'hiking',
+  // The night-out quiz.
+  'big crowds': 'crowds', 'loud rooms': 'loud', clubs: 'clubs',
+  'long queues': 'longQueues', 'standing all night': 'standingAllNight', 'dressing up': 'dressingUp',
+  // The profile quiz's ids.
+  crowds: 'crowds', loud: 'loud', heights: 'heights', karaoke: 'karaoke',
+};
 
 export interface TasteProfile {
   version: 1;
@@ -173,13 +200,18 @@ function tierPosture(budget: unknown): BudgetPosture | null {
   return tier ? POSTURE_OF_TIER[tier] ?? null : null;
 }
 
-/** A trip's per-person budget spread over its days, in the same four bands. */
-function perDayPosture(budget: unknown, nights: unknown): BudgetPosture | null {
+/**
+ * A trip's per-person budget spread over its days, in the same four bands.
+ * Null when the trip has no length yet: the create flow sends nights 0 for a
+ * trip whose dates are still to come from the poll, and a week's budget read
+ * as one day's spend is "splurge" for almost anybody.
+ */
+export function perDayPosture(budget: unknown, nights: unknown): BudgetPosture | null {
   const total = Number(str(budget) || budget);
   if (!Number.isFinite(total) || total <= 0) return null;
   const n = Number(nights);
-  const days = Number.isFinite(n) && n > 0 ? n : 1;
-  const perDay = total / days;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const perDay = total / n;
   if (perDay < 100) return 'lean';
   if (perDay < 200) return 'mid';
   if (perDay < 400) return 'comfortable';
@@ -275,8 +307,8 @@ export function distill(signals: Signal[], now: number = Date.now()): Distilled 
           if (LODGING.includes(id)) { lodging[id] = (lodging[id] ?? 0) + 1; saw('travel_style', 'trip_input'); }
         }
         for (const n of list(a.noWayJose)) {
-          const id = str(n) as NoGo;
-          if (!(NO_GOS as readonly string[]).includes(id)) continue;
+          const id = NO_GO_ID[str(n)];
+          if (!id) continue;
           noGo.set(id, (noGo.get(id) ?? 0) + 1);
           saw('no_go', 'trip_input');
           const tag = NO_GO_TAG[id];
@@ -477,17 +509,27 @@ export async function distillAll(
       }
     }
 
-    // Retention: nothing new from somebody in two years, nothing kept.
+    // Retention: nothing new from somebody in two years, nothing kept — the
+    // profile and the pseudonym that maps it back to their users.id.
     const cutoff = new Date(now);
     cutoff.setUTCMonth(cutoff.getUTCMonth() - RETENTION_MONTHS);
-    const { error: staleErr, count: stale } = await db.from('user_taste_profile')
-      .delete({ count: 'exact' }).lt('last_signal_at', cutoff.toISOString());
+    const { data: staleRows, error: staleErr } = await db.from('user_taste_profile')
+      .delete().lt('last_signal_at', cutoff.toISOString()).select('user_id');
     if (staleErr) fail('could not apply retention', staleErr);
-    else report.purged_stale = stale ?? 0;
+    else {
+      const staleIds = (staleRows ?? []).map(r => String((r as { user_id: string }).user_id));
+      report.purged_stale = staleIds.length;
+      for (let i = 0; i < staleIds.length; i += WRITE_CHUNK) {
+        const { error } = await db.from('taste_profile_ids').delete().in('user_id', staleIds.slice(i, i + WRITE_CHUNK));
+        if (error) fail('could not purge stale profile ids', error);
+      }
+    }
 
     const read = await readSignals(db, { maxRows: opts.maxRows ?? 50_000, deadline });
     report.rows_read = read.rows;
     report.truncated = read.truncated;
+    // A failed page leaves byUser holding everyone read before it, the person
+    // it cut off already dropped (lib/signals.ts), so the rest are whole.
     if (read.error) fail('could not read v_taste_signals', { message: read.error });
 
     const rows: Array<Record<string, unknown>> = [];

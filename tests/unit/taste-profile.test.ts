@@ -307,3 +307,104 @@ test('the distill rides the daily knowledge cron, with no vercel.json entry of i
   assert.ok(!crons.some(c => /taste/.test(c.path)));
   assert.ok(crons.some(c => c.path === '/api/cron/knowledge'));
 });
+
+// ── Review fixes ──────────────────────────────────────────────────────────
+
+test("every spelling a No Way José screen saves is read, and a night's loud rooms rules out clubs", () => {
+  const { profile } = distill([
+    sig('trip_input', { answers: { tripType: ['party'] } }),
+    // The trip quiz's ids and the night-out quiz's phrases, as CreatePlanFlow saves them.
+    sig('trip_input', { answers: { noWayJose: ['crowded', 'longFlights', 'hiking', 'earlyMornings', 'camping', 'coldWeather'] } }),
+    sig('trip_input', { answers: { noWayJose: ['big crowds', 'loud rooms', 'long queues', 'standing all night', 'dressing up'] } }),
+  ], NOW);
+  assert.equal(profile.interests.nightclubs, undefined);
+  assert.ok(profile.avoid.nightclubs > 0);
+  assert.deepEqual([...profile.no_go].sort(), [
+    'camping', 'coldWeather', 'crowds', 'dressingUp', 'earlyMornings', 'hiking', 'longFlights', 'longQueues', 'loud', 'standingAllNight',
+  ]);
+  // "Touristy traps" and "big crowds" are one no-go, counted twice.
+  assert.equal(profile.no_go[0], 'crowds');
+  for (const n of profile.no_go) assert.ok((NO_GOS as readonly string[]).includes(n));
+});
+
+test('a trip with no length yet says nothing about budget', () => {
+  // The create flow sends nights 0 until the date poll settles the dates.
+  const undated = distill([sig('trip_input', { answers: { budget: '1000', nights: 0 } })], NOW).profile;
+  assert.equal(undated.budget_posture, null);
+  const week = distill([sig('trip_input', { answers: { budget: '1000', nights: 7 } })], NOW).profile;
+  assert.equal(week.budget_posture, 'mid');
+});
+
+test('an avoid in the profile changes no word on a card either', () => {
+  const town2 = town('Cityton', 35.1, -79.9);
+  const counts = { 'live music|music venue': 30, 'comedy|comedy club': 25, 'museums & history|museum': 20, 'art & galleries|gallery': 18, 'places to eat|restaurant': 40 };
+  const hs2 = new Map<string, Holdings>([[town2.key, held(counts)]]);
+  const p = (profile: TasteProfile | null): Person => ({
+    ...person(profile),
+    me: { favorite_activities: ['Live music', 'Comedy', 'Museums & history', 'Art & galleries'], cuisines: [], no_way_jose: [], budget_range: '$100 – $200' },
+  });
+  const plain = pickTrips([town2], hs2, p(null)).picks;
+  const shaped = pickTrips([town2], hs2, p(learned({}, { comedy: 1 }))).picks;
+  assert.ok(plain.length > 0);
+  assert.ok(plain.some(x => /comedy/i.test(x.matched ?? '')), 'the quiz-named comedy is on the card without a profile');
+  const words = ({ score: _s, ...rest }: TripPick) => JSON.stringify(rest);
+  const byRef = new Map(plain.map(x => [x.ref, words(x)]));
+  for (const x of shaped) assert.equal(words(x), byRef.get(x.ref), x.ref);
+  // It still reorders: the avoid costs the town score.
+  assert.ok(shaped[0].score < plain[0].score);
+});
+
+test('a page that fails mid-read drops the person it cut off, as a row cap does', async () => {
+  const { readSignals } = await import('../../lib/signals.ts');
+  const page1 = Array.from({ length: 1000 }, (_, i) => ({
+    user_id: i < 600 ? 'a' : 'b', source: 'behavioural', kind: 'vote', ref: null, plan_id: null, group_id: null, detail: {}, at: null,
+  }));
+  let call = 0;
+  const db: any = { from: () => {
+    const q: any = { select: () => q, order: () => q, range: () => {
+      call++;
+      return Promise.resolve(call === 1 ? { data: page1, error: null } : { data: null, error: { code: '57014', message: 'timeout' } });
+    } };
+    return q;
+  } };
+  const read = await readSignals(db, { maxRows: 50_000, deadline: Date.now() + 10_000 });
+  assert.ok(read.error);
+  assert.equal(read.truncated, true);
+  assert.deepEqual([...read.byUser.keys()], ['a']);
+});
+
+test('retention deletes the pseudonym along with the profile', async () => {
+  const calls: Array<{ table: string; op: string; ids?: unknown }> = [];
+  const db: any = { from: (table: string) => {
+    let op = 'select';
+    let ids: unknown;
+    const q: any = {
+      select: () => q, not: () => q, eq: () => q, order: () => q,
+      delete: () => { op = 'delete'; return q; },
+      upsert: () => { op = 'upsert'; return q; },
+      in: (_c: string, v: unknown) => { ids = v; return q; },
+      lt: () => q,
+      range: () => Promise.resolve({ data: [], error: null }),
+      then: (ok: (v: unknown) => void) => {
+        calls.push({ table, op, ids });
+        if (table === 'user_taste_profile' && op === 'delete') return ok({ data: [{ user_id: 'old1' }], error: null });
+        return ok({ data: [], error: null });
+      },
+    };
+    return q;
+  } };
+  const report = await distillAll(db, { budgetMs: 5000, now: NOW });
+  assert.equal(report.purged_stale, 1);
+  assert.ok(calls.some(c => c.table === 'taste_profile_ids' && c.op === 'delete' && Array.isArray(c.ids) && (c.ids as string[]).includes('old1')));
+});
+
+test('the privacy line promises about the summary, never about the activity group members already see', () => {
+  const page = read('app/(legal)/privacy/page.tsx');
+  const line = page.slice(page.indexOf('What we learn from what you do'), page.indexOf('</li>', page.indexOf('What we learn from what you do')));
+  assert.ok(line.length > 0);
+  // Members see each other's offered dates and the group's bookings, and the
+  // rows behind them wait the 30 days the Deletion paragraph states.
+  assert.doesNotMatch(line, /It is never shown|it is deleted as soon as/);
+  assert.match(line, /summary is never shown/);
+  assert.match(line, /as described there/);
+});

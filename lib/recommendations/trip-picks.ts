@@ -1066,20 +1066,24 @@ export function scoreOf(t: Tally, c: Candidate, band: Band, miles: number, mine:
   // that did most to choose the town rather than whichever was ticked first.
   const adds: Array<{ i: string; w: number }> = [];
   let score = 0;
+  // An avoid the profile holds halves what that interest adds to the score,
+  // but not its weight in `adds`: `adds` orders the card's own words
+  // (matchedLine, heldLine), and those must read the same with or without
+  // the profile.
   const damped = (i: string) => (inferred?.damp.has(i) ? 0.5 : 1);
   mine.forEach((i, idx) => {
     const n = t.byInterest.get(i) ?? 0;
     if (!n) return;
-    const w = damped(i) * Math.max(0.5, 1 - idx * 0.06) * Math.log2(1 + n);
+    const w = Math.max(0.5, 1 - idx * 0.06) * Math.log2(1 + n);
     adds.push({ i, w });
-    score += w;
+    score += damped(i) * w;
   });
   for (const i of theirs) {
     const n = t.byInterest.get(i) ?? 0;
     if (!n) continue;
-    const w = damped(i) * 0.5 * Math.log2(1 + n);
+    const w = 0.5 * Math.log2(1 + n);
     adds.push({ i, w });
-    score += w;
+    score += damped(i) * w;
   }
   // What the profile learned: weighted below anything they said, and kept
   // out of `adds`, so it can choose a town but never be named on its card.
