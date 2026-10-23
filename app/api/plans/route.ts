@@ -151,9 +151,14 @@ export async function POST(req: NextRequest) {
     destination_style: body.destination_style || null,
     dealbreakers: body.dealbreakers || [],
     vote_options: body.vote_options || [],
-    // The caller's flag, but only for a group that really is one person —
-    // the trip generator used to skip the wait for a group saved as solo.
-    solo_mode: body.solo_mode === true && soloGroup,
+    // Whether the group is one person, decided here and not by the caller:
+    // the trip generator used to skip the wait for a group saved as solo,
+    // and a screen that forgot to say so (Discover's "add to group") left a
+    // plan of one person's marked as a group's. plans_one_active
+    // (sql/one-active-plan-2026-09-25.sql) leaves solo plans out by this
+    // flag, because an index cannot count members; lib/joining.ts clears it
+    // when somebody joins.
+    solo_mode: soloGroup,
     why_chosen: body.why_chosen?.length ? body.why_chosen : null,
     // Never the picture without the credit: a photograph is somebody's work.
     ...(photo ? { image_url: photo.url, image_credit: photo.credit, image_source: photo.source } : {}),
@@ -247,7 +252,7 @@ export async function POST(req: NextRequest) {
     planId: String(plan.id),
     props: {
       kind: String(body.type ?? 'trip'),
-      solo: body.solo_mode === true,
+      solo: soloGroup,
       voting: body.enable_voting === true,
       // Where people actually plan to go. Not personal data — a destination —
       // and it is the first question anybody asks of this table.

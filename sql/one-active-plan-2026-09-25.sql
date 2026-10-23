@@ -1,19 +1,15 @@
 -- ─── One trip and one night out being planned per group ─────────────────
--- HOLD — do not run yet. Written 2026-09-25. Safe to run twice, once it is time.
+-- Ready to run as of 2026-10-23. Safe to run twice.
 --
--- Two things have to be true first, and neither is yet:
---   1. components/reach-app.jsx handles a 409 `one_active` (drops its own
---      copy, opens `planId`) and sends `accepts_one_active: true`. Until
---      then the route only answers `one_active` to a caller that asks for
---      it, but this index cannot tell callers apart: it would refuse the
---      insert anyway, and the client would keep a ghost plan and say it was
---      saved.
---   2. A group of one is left out. The route exempts it (a solo user's
---      personal "Just me" group holds every plan they make alone), but an
---      index cannot count members. Before running, add a condition that
---      does — e.g. `and not solo_mode` once every plan saved into a group of
---      one carries solo_mode (ExpDetailScreen's plans do not yet).
--- tests/unit/one-active.test.ts keeps this line here until (1) is done.
+-- The two holds it was written with are both met:
+--   1. Every path in components/reach-app.jsx that makes a plan sends
+--      `accepts_one_active: true` and handles a 409 `one_active` by dropping
+--      its own copy and opening `planId` (tests/unit/one-active.test.ts
+--      fails if a new path does not).
+--   2. A group of one is left out. POST /api/plans now sets solo_mode from
+--      the member count itself, lib/joining.ts clears it when somebody
+--      joins, the backfill below marks existing plans in one-person groups,
+--      and the index skips solo_mode plans.
 --
 -- The owner's rule (a), 2026-09-25: a group may have one TRIP and one NIGHT
 -- OUT in planning or voting at a time. Starting a second of the same kind is
@@ -56,12 +52,19 @@ update public.plans
  where status in ('planning', 'voting')
    and coalesce(end_date, start_date) < (now() at time zone 'Etc/GMT+12')::date;
 
+-- Plans already in a one-person group are marked solo, as POST /api/plans
+-- now marks every new one, so the index below leaves them out.
+update public.plans p
+   set solo_mode = true, updated_at = now()
+ where coalesce(p.solo_mode, false) = false
+   and (select count(*) from public.group_members m where m.group_id = p.group_id) = 1;
+
 do $$
 begin
   if not exists (select 1 from pg_indexes where schemaname = 'public' and indexname = 'plans_one_active') then
     if exists (
       select 1 from public.plans
-       where status in ('planning', 'voting')
+       where status in ('planning', 'voting') and not coalesce(solo_mode, false)
        group by group_id, (case when type in ('restaurant', 'concert') then 'night' else 'trip' end)
       having count(*) > 1
     ) then
@@ -69,7 +72,7 @@ begin
     else
       create unique index plans_one_active on public.plans
         (group_id, (case when type in ('restaurant', 'concert') then 'night' else 'trip' end))
-        where status in ('planning', 'voting');
+        where status in ('planning', 'voting') and not coalesce(solo_mode, false);
     end if;
   end if;
 end $$;
@@ -81,5 +84,5 @@ end $$;
 --          array_agg(id order by created_at) as plans,
 --          array_agg(title order by created_at) as titles
 --     from public.plans
---    where status in ('planning', 'voting')
+--    where status in ('planning', 'voting') and not coalesce(solo_mode, false)
 --    group by 1, 2 having count(*) > 1;

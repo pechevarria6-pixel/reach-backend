@@ -233,3 +233,13 @@ test('every path that makes a plan asks first and can be refused', () => {
   // And each asks before anything is made on the phone.
   assert.ok((app.match(/activePlanIn\(group,np\.type\)/g) || []).length >= 3);
 });
+
+test('a group of one is never held by the index, because the server marks its plans solo', () => {
+  const sql = readFileSync('sql/one-active-plan-2026-09-25.sql', 'utf8');
+  const index = sql.slice(sql.indexOf('create unique index plans_one_active'));
+  assert.match(index.slice(0, 300), /and not coalesce\(solo_mode, false\)/);
+  assert.match(sql, /update public\.plans p\s+set solo_mode = true/);
+  const route = readFileSync('app/api/plans/route.ts', 'utf8');
+  assert.match(route, /solo_mode: soloGroup,/);
+  assert.doesNotMatch(route, /solo_mode: body\.solo_mode === true && soloGroup/);
+});
