@@ -31,6 +31,36 @@ export async function pushState(): Promise<PushState> {
   return sub ? 'on' : 'off';
 }
 
+/**
+ * Puts /sw.js in place without asking for anything. The worker keeps the
+ * trip wallet for when there is no signal (and nothing else), which only
+ * works once it is registered — and until now it was registered only by
+ * turning notifications on. No permission prompt: registering a worker
+ * needs none. Safe to call on every load; the browser keeps one.
+ */
+export async function registerServiceWorker(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false;
+  try {
+    await navigator.serviceWorker.register('/sw.js');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Forgets the offline wallet, for sign-out: on a shared device the next
+ * person must not find somebody else's confirmation numbers in it.
+ */
+export async function clearOfflineWallet(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  try { await caches.delete('reach-wallet-v1'); } catch { /* no Cache API: nothing was kept */ }
+  const reg = typeof navigator !== 'undefined' && 'serviceWorker' in navigator
+    ? await navigator.serviceWorker.getRegistration('/sw.js').catch(() => undefined)
+    : undefined;
+  reg?.active?.postMessage({ type: 'clear-wallet' });
+}
+
 export async function turnOnPush(): Promise<PushState> {
   const now = await pushState();
   if (now !== 'off') return now;
