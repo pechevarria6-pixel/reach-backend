@@ -140,6 +140,70 @@ test('T-7: a packing list built from the itinerary, only for an overnight, locke
 
 // ── flights ──
 
+test('T-7 names no hotel reference or tickets for a line nobody holds, even when something else is held', () => {
+  const hotel: PingLine = { id: 'h1', type: 'hotel', title: 'The Crawford', scheduled_time: 'Day 1 · 3 PM' };
+  const gig: PingLine = { id: 'e1', type: 'event', title: 'J. Cole concert', scheduled_time: 'Day 1 · 8 PM' };
+  const walk: PingLine = { id: 'l3', type: 'activity', title: 'Brooklyn Bridge walking tour', scheduled_time: 'Day 2 · 10 AM' };
+  const at = nyc('2026-10-30', 11);
+  const pending: PingBooking[] = [dinnerBooked,
+    { id: 'hb', itinerary_item_id: 'h1', vertical: 'hotel', mode: 'native', status: 'awaiting_approval' },
+    { id: 'eb', itinerary_item_id: 'e1', vertical: 'event', mode: 'redirect', status: 'redirected' }];
+  const due = duePings(input({ lines: [dinner, hotel, gig, walk], bookings: pending }), at);
+  assert.equal(due.length, 2);
+  assert.doesNotMatch(due[0].note.body ?? '', /booking reference|tickets/i);
+  assert.match(due[0].note.body ?? '', /Walking shoes/);
+  // Booked, both are named.
+  const held: PingBooking[] = [dinnerBooked,
+    { id: 'hb', itinerary_item_id: 'h1', vertical: 'hotel', mode: 'native', status: 'confirmed' },
+    { id: 'eb', itinerary_item_id: 'e1', vertical: 'event', mode: 'redirect', status: 'redirected', confirmation_number: 'TM-88' }];
+  const body = duePings(input({ lines: [dinner, hotel, gig, walk], bookings: held }), at)[0].note.body ?? '';
+  assert.match(body, /Your hotel's booking reference \(The Crawford\)/);
+  assert.match(body, /Your tickets \(J\. Cole concert\)/);
+});
+
+test('flight days are the departure airport\'s, not the destination\'s: New York to Rome, Los Angeles to Tokyo', () => {
+  // Rome (12.5° → +1). JFK departs 2026-11-06.
+  const rome = plan({ destination_lng: 12.5, start_date: '2026-11-07', end_date: '2026-11-12' });
+  const jfk: PingBooking = { ...flight, detail: 'American Airlines · JFK → FCO · 2026-11-06',
+    request_payload: { flight: { origin: 'JFK', destination: 'FCO', departDate: '2026-11-06' } } };
+  const at = (iso: string) => new Date(iso);
+  // 04:07Z is 5:07 AM 11-06 in Rome and 11:07 PM 11-05 in New York: not "today".
+  assert.deepEqual(duePings(input({ plan: rome, bookings: [jfk], lines: [] }), at('2026-11-06T04:07:00Z')).filter(p => p.kind === 'flight_day'), []);
+  // 7:07 AM in New York on the 6th: today.
+  const day = duePings(input({ plan: rome, bookings: [jfk], lines: [] }), at('2026-11-06T12:07:00Z')).filter(p => p.kind === 'flight_day');
+  assert.deepEqual(kinds(day), ['flight_day:ana', 'flight_day:ben']);
+  assert.equal(day[0].localDay, '2026-11-06');
+  // Check-in on the 5th by New York's clock, not Rome's.
+  assert.deepEqual(kinds(duePings(input({ plan: rome, bookings: [jfk], lines: [] }), at('2026-11-05T15:07:00Z'))), ['flight_checkin:ana', 'flight_checkin:ben']);
+
+  // Tokyo (139.7° → +9) from LAX, departing 2026-11-06.
+  const tokyo = plan({ destination_lng: 139.7, start_date: '2026-11-07', end_date: '2026-11-12' });
+  const lax: PingBooking = { ...flight, request_payload: { flight: { origin: 'LAX', destination: 'NRT', departDate: '2026-11-06' } } };
+  // 2026-11-04T23:07Z: 8:07 AM on the 5th in Tokyo, 3:07 PM on the 4th in LA — two days out in LA.
+  assert.deepEqual(duePings(input({ plan: tokyo, bookings: [lax], lines: [] }), at('2026-11-04T23:07:00Z')), []);
+  // 2026-11-05T21:07Z: 1:07 PM on the 5th in LA — the day before.
+  assert.deepEqual(kinds(duePings(input({ plan: tokyo, bookings: [lax], lines: [] }), at('2026-11-05T21:07:00Z'))), ['flight_checkin:ana', 'flight_checkin:ben']);
+  // 2026-11-05T21:07Z is 6:07 AM on the 6th in Tokyo: not the morning of in LA.
+  assert.ok(duePings(input({ plan: tokyo, bookings: [lax], lines: [] }), at('2026-11-05T21:07:00Z')).every(p => p.kind !== 'flight_day'));
+});
+
+test('a departure airport whose zone we do not hold gets no flight pings, and says so', () => {
+  const odd: PingBooking = { ...flight, request_payload: { flight: { origin: 'ZZZ', destination: 'JFK', departDate: '2026-11-06' } } };
+  const skipped: string[] = [];
+  assert.deepEqual(duePings(input({ bookings: [odd], lines: [], onSkip: w => skipped.push(w) }), nyc('2026-11-05', 11)), []);
+  assert.deepEqual(duePings(input({ bookings: [odd], lines: [], onSkip: w => skipped.push(w) }), nyc('2026-11-06', 7)), []);
+  assert.deepEqual(skipped, ['flight_no_origin_zone', 'flight_no_origin_zone']);
+});
+
+test('the morning-of note is only for the departure airport\'s today, and only before the flight goes', () => {
+  const f = [{ status: 'Scheduled', scheduled_out: '2026-11-06T23:00:00Z', origin: { code_iata: 'JFK', timezone: 'America/New_York' } }];
+  // 11:07 PM on the 5th in New York.
+  assert.equal(flightDayNote('AA1234', '2026-11-06', f, new Date('2026-11-06T04:07:00Z')), null);
+  assert.equal(flightDayNote('AA1234', '2026-11-06', f, new Date('2026-11-06T12:07:00Z'))?.title, 'AA1234 today: Scheduled');
+  // After it has left.
+  assert.equal(flightDayNote('AA1234', '2026-11-06', f, new Date('2026-11-06T23:30:00Z')), null);
+});
+
 test('T-1: check-in only for a confirmed flight row, with the airline reference and never Duffel\'s order id', () => {
   const at = nyc('2026-11-05', 11);
   const due = duePings(input({ bookings: [flight] }), at);

@@ -9,8 +9,13 @@
 //
 //   the dates       "Clothes for 3 nights" — counted on the calendar from
 //                   the plan's own start and end, never from a clock.
-//   a flight line   "ID for the airport" — there is a flight on the plan.
-//   a hotel line    "Your hotel's booking reference" — there is a stay.
+//   a flight line   "ID for the airport" — a flight somebody holds.
+//   a hotel line    "Your hotel's booking reference" — a stay somebody
+//                   holds. An unbooked hotel line has no reference, and an
+//                   event nobody bought tickets for has no tickets: these
+//                   three need the line to be `held` (lib/pings.ts reserved),
+//                   because each names a booking, and a booking that does
+//                   not exist is the thing CLAUDE.md says never to mention.
 //   a line's words  "Walking shoes" because a line says "hike". The word
 //                   lists are per thing, and narrow on purpose: a match has
 //                   to be a word the line actually uses, so "Hikers' Bar"
@@ -30,6 +35,8 @@ export interface PackLine {
   type?: string | null;
   title?: string | null;
   subtitle?: string | null;
+  /** Somebody actually holds a place for it — confirmed, or bought with a confirmation number. */
+  held?: boolean | null;
 }
 
 export interface PackItem {
@@ -45,6 +52,8 @@ interface Rule {
   words: RegExp;
   /** A word that means the line is about something else ("hikers' bar"). */
   not?: RegExp;
+  /** The item names a booking (tickets), so only a held line may give it. */
+  held?: boolean;
 }
 
 // Each pattern matches whole words only. Ordered as a list is read: what you
@@ -55,7 +64,7 @@ const RULES: Rule[] = [
   { item: 'Warm layers', words: /\b(ski|skiing|snowboard|snowboarding|snowshoe|snowshoeing|glacier|ice skating)\b/i },
   { item: 'Clothes that can get wet', words: /\b(kayak|kayaking|canoe|canoeing|rafting|paddleboard|paddleboarding|tubing|boat tour)\b/i },
   { item: 'Something smart for dinner', words: /\b(tasting menu|black tie|dress code|jacket required)\b/i },
-  { item: 'Your tickets', words: /\b(concert|gig|tickets?|festival)\b/i },
+  { item: 'Your tickets', words: /\b(concert|gig|tickets?|festival)\b/i, held: true },
 ];
 
 const clean = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
@@ -92,6 +101,7 @@ export function packingList(input: {
   for (const l of lines) {
     const type = clean(l.type).toLowerCase();
     const name = nameOf(l);
+    if (l.held !== true) continue;
     if (type === 'flight') add('ID for the airport', name ?? 'Your flight');
     if (type === 'hotel') add("Your hotel's booking reference", name ?? 'Your stay');
   }
@@ -101,6 +111,7 @@ export function packingList(input: {
       const text = `${clean(l.title)} ${clean(l.subtitle)}`;
       if (!rule.words.test(text)) continue;
       if (rule.not && rule.not.test(text)) continue;
+      if (rule.held && l.held !== true) continue;
       const name = nameOf(l);
       if (!name) continue;
       add(rule.item, name);

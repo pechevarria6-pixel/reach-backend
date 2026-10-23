@@ -8,8 +8,8 @@ test('every item points at the line or the dates it came from', () => {
   const list = packingList({
     startDate: '2026-11-06', endDate: '2026-11-09',
     lines: [
-      { id: 'a', type: 'flight', title: 'RDU → DEN' },
-      { id: 'b', type: 'hotel', title: 'The Crawford' },
+      { id: 'a', type: 'flight', title: 'RDU → DEN', held: true },
+      { id: 'b', type: 'hotel', title: 'The Crawford', held: true },
       { id: 'c', type: 'activity', title: 'Sunrise hike to Royal Arch', subtitle: 'Chautauqua trailhead' },
     ],
   });
@@ -51,4 +51,19 @@ test('the phone line cites each reason and says how many more there are', () => 
     { item: 'Swimwear', because: 'Beach morning' },
   ], 2);
   assert.equal(line, 'Clothes for 2 nights, Walking shoes (Sunrise hike), and 1 more');
+});
+
+test('a hotel nobody booked has no reference to bring, and a concert nobody bought has no tickets', () => {
+  const lines = [
+    { id: 'a', type: 'hotel', title: 'The Crawford' },
+    { id: 'b', type: 'event', title: 'J. Cole concert' },
+    { id: 'c', type: 'flight', title: 'RDU → DEN', held: false },
+    { id: 'd', type: 'activity', title: 'Sunrise hike to Royal Arch' },
+  ];
+  const list = packingList({ startDate: '2026-11-06', endDate: '2026-11-09', lines });
+  assert.deepEqual(items(list), ['Clothes for 3 nights', 'Walking shoes']);
+  // Held, they are on the list, each citing its line.
+  const held = packingList({ startDate: '2026-11-06', endDate: '2026-11-09', lines: lines.map(l => ({ ...l, held: true })) });
+  assert.deepEqual(items(held), ['Clothes for 3 nights', "Your hotel's booking reference", 'ID for the airport', 'Walking shoes', 'Your tickets']);
+  assert.equal(held.find(i => i.item === 'Your tickets')?.because, 'J. Cole concert');
 });

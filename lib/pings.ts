@@ -33,10 +33,18 @@
 // dinner. The day and hour come from the destination's longitude, exactly
 // as lib/calendar.ts dayWhere works it out, so the two can never disagree;
 // a plan with no point on the map has no local clock we can read, and gets
-// no pings rather than pings at a guessed hour. The flight pings use the
-// same clock — the departure airport's own zone is not something we hold,
-// and for a trip within one country the difference is a few hours inside a
-// window that is most of a day wide.
+// no pings rather than pings at a guessed hour.
+//
+// The flight pings are the exception, and must be: a flight's departDate is
+// the departure airport's date, not the destination's. New York to Rome,
+// keyed on Rome's clock, said "AA123 today" at eleven the night before in
+// New York; Los Angeles to Tokyo said "Your flight is tomorrow" two days
+// out. So "today" and "tomorrow" for a flight are read on the departure
+// airport's own clock — its IANA zone from AIRPORT_ZONES below, by the IATA
+// code the booking was made with. A departure airport not in the table gets
+// no flight pings (counted as skipped.flight_no_origin_zone), never pings at
+// the destination's hour. The morning-of ping is checked a second time
+// against the zone AeroAPI itself names for the flight.
 //
 // ── Who ──
 //
@@ -71,6 +79,66 @@ export function localClock(lng: unknown, now: Date = new Date()): { day: string;
   const hours = Math.max(-12, Math.min(14, Math.round(deg / 15)));
   const there = new Date(now.getTime() + hours * 3_600_000);
   return { day: there.toISOString().slice(0, 10), hour: there.getUTCHours() };
+}
+
+/**
+ * The IANA zone of a departure airport, by IATA code. A fixed fact per
+ * airport, not a guess: every airport lib/airports.ts hands out as a home
+ * airport, plus the large international departure points. Absent is absent —
+ * see the header.
+ */
+export const AIRPORT_ZONES: Record<string, string> = {
+  // US Eastern
+  JFK: 'America/New_York', LGA: 'America/New_York', EWR: 'America/New_York', PHL: 'America/New_York',
+  JAX: 'America/New_York', CMH: 'America/New_York', CLT: 'America/New_York', IND: 'America/Indiana/Indianapolis',
+  BOS: 'America/New_York', MIA: 'America/New_York', FLL: 'America/New_York', ATL: 'America/New_York',
+  DTW: 'America/Detroit', BWI: 'America/New_York', DCA: 'America/New_York', IAD: 'America/New_York',
+  SDF: 'America/Kentucky/Louisville', RDU: 'America/New_York', ORF: 'America/New_York', CLE: 'America/New_York',
+  TPA: 'America/New_York', MCO: 'America/New_York', PIT: 'America/New_York', RIC: 'America/New_York',
+  CVG: 'America/New_York', BUF: 'America/New_York', SAV: 'America/New_York', CHS: 'America/New_York',
+  // US Central
+  ORD: 'America/Chicago', MDW: 'America/Chicago', IAH: 'America/Chicago', HOU: 'America/Chicago',
+  SAT: 'America/Chicago', DFW: 'America/Chicago', DAL: 'America/Chicago', AUS: 'America/Chicago',
+  BNA: 'America/Chicago', MSP: 'America/Chicago', MSY: 'America/Chicago', MEM: 'America/Chicago',
+  MKE: 'America/Chicago', MCI: 'America/Chicago', OMA: 'America/Chicago', TUL: 'America/Chicago',
+  ICT: 'America/Chicago', BHM: 'America/Chicago', STL: 'America/Chicago', XNA: 'America/Chicago',
+  // US Mountain, Pacific, beyond
+  PHX: 'America/Phoenix', TUS: 'America/Phoenix', DEN: 'America/Denver', COS: 'America/Denver',
+  ABQ: 'America/Denver', SLC: 'America/Denver', BOI: 'America/Boise',
+  LAX: 'America/Los_Angeles', SAN: 'America/Los_Angeles', SJC: 'America/Los_Angeles', SFO: 'America/Los_Angeles',
+  OAK: 'America/Los_Angeles', SEA: 'America/Los_Angeles', PDX: 'America/Los_Angeles', LAS: 'America/Los_Angeles',
+  FAT: 'America/Los_Angeles', SMF: 'America/Los_Angeles', LGB: 'America/Los_Angeles', SNA: 'America/Los_Angeles',
+  BFL: 'America/Los_Angeles', BUR: 'America/Los_Angeles',
+  ANC: 'America/Anchorage', HNL: 'Pacific/Honolulu', OGG: 'Pacific/Honolulu', SJU: 'America/Puerto_Rico',
+  // Canada, Mexico
+  YYZ: 'America/Toronto', YUL: 'America/Toronto', YVR: 'America/Vancouver', YYC: 'America/Edmonton',
+  MEX: 'America/Mexico_City', CUN: 'America/Cancun',
+  // Europe
+  LHR: 'Europe/London', LGW: 'Europe/London', MAN: 'Europe/London', EDI: 'Europe/London', DUB: 'Europe/Dublin',
+  CDG: 'Europe/Paris', ORY: 'Europe/Paris', AMS: 'Europe/Amsterdam', FRA: 'Europe/Berlin', MUC: 'Europe/Berlin',
+  BER: 'Europe/Berlin', MAD: 'Europe/Madrid', BCN: 'Europe/Madrid', LIS: 'Europe/Lisbon', FCO: 'Europe/Rome',
+  MXP: 'Europe/Rome', ZRH: 'Europe/Zurich', VIE: 'Europe/Vienna', CPH: 'Europe/Copenhagen', ARN: 'Europe/Stockholm',
+  OSL: 'Europe/Oslo', HEL: 'Europe/Helsinki', BRU: 'Europe/Brussels', ATH: 'Europe/Athens', IST: 'Europe/Istanbul',
+  KEF: 'Atlantic/Reykjavik',
+  // Asia, Middle East, Oceania, Latin America, Africa
+  NRT: 'Asia/Tokyo', HND: 'Asia/Tokyo', ICN: 'Asia/Seoul', PEK: 'Asia/Shanghai', PVG: 'Asia/Shanghai',
+  HKG: 'Asia/Hong_Kong', SIN: 'Asia/Singapore', BKK: 'Asia/Bangkok', DEL: 'Asia/Kolkata', BOM: 'Asia/Kolkata',
+  DXB: 'Asia/Dubai', DOH: 'Asia/Qatar', TLV: 'Asia/Jerusalem', SYD: 'Australia/Sydney', MEL: 'Australia/Melbourne',
+  AKL: 'Pacific/Auckland', GRU: 'America/Sao_Paulo', EZE: 'America/Argentina/Buenos_Aires', BOG: 'America/Bogota',
+  LIM: 'America/Lima', SCL: 'America/Santiago', JNB: 'Africa/Johannesburg', CAI: 'Africa/Cairo',
+};
+
+/** The day and hour now in a named IANA zone, or null for a zone Intl does not know. */
+export function zoneClock(tz: unknown, now: Date = new Date()): { day: string; hour: number } | null {
+  if (typeof tz !== 'string' || !tz) return null;
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23',
+    }).formatToParts(now).map(x => [x.type, x.value]));
+    return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) % 24 };
+  } catch {
+    return null;
+  }
 }
 
 /** A calendar date `n` days from `day`, counted as dates. */
@@ -132,6 +200,8 @@ export interface PingInput {
   bookings: PingBooking[];
   /** booking id → the people sitting it out. */
   optOuts: Map<string, Set<string>>;
+  /** Told why a ping that might have been due was not worked out. */
+  onSkip?: (why: string) => void;
 }
 
 /** One ping for one person, or one that needs AeroAPI before it is written. */
@@ -185,6 +255,12 @@ export function clockText(time: string): string | null {
 function departDateOf(b: PingBooking): string | null {
   const flight = obj(obj(b.request_payload)?.flight);
   return validDay(flight?.departDate);
+}
+
+/** The departure airport's zone, from the IATA code the flight was booked from. */
+export function departZoneOf(b: PingBooking): string | null {
+  const code = clean(obj(obj(b.request_payload)?.flight)?.origin).toUpperCase();
+  return AIRPORT_ZONES[code] ?? null;
 }
 
 function identOf(b: PingBooking): string | null {
@@ -250,10 +326,12 @@ export function duePings(input: PingInput, now: Date = new Date()): PlannedPing[
   ) {
     for (const userId of people) {
       const mine: PackLine[] = [
-        ...lines.filter(l => onLine(l, userId)),
+        // `held` is what lets the list name a booking reference or tickets:
+        // an unbooked hotel line has no reference to bring.
+        ...lines.filter(l => onLine(l, userId)).map(l => ({ ...l, held: reserved(l, bookings) })),
         // A flight bought through Reach is on the trip whether or not the
         // itinerary has a line for it.
-        ...flights.filter(b => !sitsOut(b.id, userId)).map(b => ({ id: b.id, type: 'flight', title: clean(b.detail) || null })),
+        ...flights.filter(b => !sitsOut(b.id, userId)).map(b => ({ id: b.id, type: 'flight', title: clean(b.detail) || null, held: true })),
       ];
       const items = packingList({ startDate: plan.start_date, endDate: plan.end_date, lines: mine });
       if (!items.length) continue;
@@ -265,37 +343,54 @@ export function duePings(input: PingInput, now: Date = new Date()): PlannedPing[
   }
 
   // ── flights: T-1 check-in, and the morning of ──
+  // Read on the departure airport's clock, never the destination's: the
+  // departDate is that airport's date (see the header).
+  const flightClock = new Map<string, { day: string; hour: number } | null>();
+  for (const b of flights) {
+    const day = departDateOf(b);
+    if (!day) continue;
+    const zone = departZoneOf(b);
+    const c = zone ? zoneClock(zone, now) : null;
+    flightClock.set(b.id, c);
+    // Only worth saying near the flight: the trip's clock is within a day
+    // or so of any airport's, so this counts a flight whose ping could be
+    // due about now and cannot be read, not every flight on every run.
+    if (!c && [shiftDay(day, -1), day].includes(clock.day)) input.onSkip?.('flight_no_origin_zone');
+  }
   for (const userId of people) {
     const theirs = flights.filter(b => !sitsOut(b.id, userId)).map(b => ({ b, day: departDateOf(b) })).filter(f => f.day);
-    const tomorrow = theirs.filter(f => f.day === shiftDay(clock.day, 1));
-    const today = theirs.filter(f => f.day === clock.day);
     // Two confirmed flights leaving the same day and nothing saying which
     // one is theirs (one per departure airport, say): naming either could
     // send somebody to the wrong desk, so neither is named.
-    if (tomorrow.length === 1 && inWindow('flight_checkin', clock.hour)) {
-      const { b } = tomorrow[0];
-      const what = clean(b.detail);
-      const ref = referenceOf(b);
-      out.push({
-        kind: 'flight_checkin', userId, localDay: clock.day,
-        note: {
-          kind: 'flight_checkin',
-          title: 'Your flight is tomorrow',
-          body: [what ? `${what}.` : null, 'Check in with the airline before you go.', ref ? `Booking reference ${ref}.` : null].filter(Boolean).join(' '),
-          url, planId: plan.id,
-        },
-      });
-    }
-    if (today.length === 1 && inWindow('flight_day', clock.hour)) {
-      const ident = identOf(today[0].b);
-      if (ident) {
+    const sameDay = (d: string | null) => theirs.filter(f => f.day === d).length;
+    for (const { b, day } of theirs) {
+      if (sameDay(day) !== 1) continue;
+      const at = flightClock.get(b.id);
+      if (!at) continue;
+      if (at.day === shiftDay(day as string, -1) && inWindow('flight_checkin', at.hour)) {
+        const what = clean(b.detail);
+        const ref = referenceOf(b);
         out.push({
-          kind: 'flight_day', userId, localDay: clock.day,
-          // Written by runPings from AeroAPI's answer; nothing is said
-          // about this flight until AeroAPI has said it.
-          note: { kind: 'flight_day', title: ident, url, planId: plan.id },
-          flight: { ident, departDate: today[0].day as string },
+          kind: 'flight_checkin', userId, localDay: at.day,
+          note: {
+            kind: 'flight_checkin',
+            title: 'Your flight is tomorrow',
+            body: [what ? `${what}.` : null, 'Check in with the airline before you go.', ref ? `Booking reference ${ref}.` : null].filter(Boolean).join(' '),
+            url, planId: plan.id,
+          },
         });
+      }
+      if (at.day === day && inWindow('flight_day', at.hour)) {
+        const ident = identOf(b);
+        if (ident) {
+          out.push({
+            kind: 'flight_day', userId, localDay: at.day,
+            // Written by runPings from AeroAPI's answer; nothing is said
+            // about this flight until AeroAPI has said it.
+            note: { kind: 'flight_day', title: ident, url, planId: plan.id },
+            flight: { ident, departDate: day as string },
+          });
+        }
       }
     }
   }
@@ -364,9 +459,16 @@ function wallClock(iso: unknown, tz: unknown): { day: string; time: string } | n
  * flight on that date. Gate and terminal only as AeroAPI gave them; a time
  * only in the departure airport's own zone, as AeroAPI named it.
  */
-export function flightDayNote(ident: string, departDate: string, flights: AeroFlight[]): { title: string; body: string } | null {
+export function flightDayNote(ident: string, departDate: string, flights: AeroFlight[], now?: Date): { title: string; body: string } | null {
   const f = (Array.isArray(flights) ? flights : []).find(x => wallClock(x?.scheduled_out, x?.origin?.timezone)?.day === departDate);
   if (!f) return null;
+  if (now) {
+    // "Today" is the departure airport's today, in the zone AeroAPI names,
+    // and only before the flight has gone.
+    if (zoneClock(f.origin?.timezone, now)?.day !== departDate) return null;
+    const out = Date.parse(String(f.estimated_out ?? f.scheduled_out ?? ''));
+    if (!f.cancelled && Number.isFinite(out) && now.getTime() >= out) return null;
+  }
   const sched = wallClock(f.scheduled_out, f.origin?.timezone);
   const est = wallClock(f.estimated_out, f.origin?.timezone);
   if (f.cancelled) return { title: `${ident} is cancelled`, body: 'The airline has cancelled this flight. Check with them for your options.' };
@@ -504,6 +606,7 @@ export async function runPings(db: SupabaseClient, opts: {
       lines: (linesBy.get(plan.id) ?? []) as unknown as PingLine[],
       bookings: (bookingsBy.get(plan.id) ?? []) as unknown as PingBooking[],
       optOuts,
+      onSkip: skip,
     }, now);
     if (!due.length) continue;
 
@@ -520,7 +623,7 @@ export async function runPings(db: SupabaseClient, opts: {
         if (!lookups.has(ident)) lookups.set(ident, opts.aero(ident));
         const flights = await lookups.get(ident);
         if (!flights) { skip('flight_day_aeroapi_failed'); continue; }
-        const said = flightDayNote(ident, departDate, flights);
+        const said = flightDayNote(ident, departDate, flights, now);
         if (!said) { skip('flight_day_not_found'); continue; }
         note = { ...note, ...said };
       }
