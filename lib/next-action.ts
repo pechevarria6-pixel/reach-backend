@@ -181,7 +181,8 @@ export interface AnswersView {
 
 /** GET /api/plans/[id]/readiness → travelers (Readiness in lib/essentials.ts). */
 export interface DetailsView {
-  travelers: { userId: string; name: string; ready: boolean; missing: string[] }[];
+  /** `flying: false` is somebody off every flight — driving, or kept off: nothing is asked of them for one. */
+  travelers: { userId: string; name: string; ready: boolean; missing: string[]; flying?: boolean }[];
 }
 
 /** GET /api/plans/[id]/vote, as far as this needs it. */
@@ -486,7 +487,11 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   if (!moving && unrowed.length && !rows.length) return noPrice();
 
   // ── The checkout: what the money and the rows allow ──
-  const myDetails = input.essentials?.travelers.find(t => t.userId === me) ?? null;
+  // Only somebody flying owes an airline anything. A driver off the flight
+  // was told "Flights can't be booked without your date of birth", and the
+  // group "Waiting on Sam" for a seat approval never names him on.
+  const flyers = (input.essentials?.travelers ?? []).filter(t => t.flying !== false);
+  const myDetails = flyers.find(t => t.userId === me) ?? null;
   const flightWaiting = !!cs?.waiting.some(r => r.vertical === 'flight');
   const needsMyDetails = (): NextAction | null => {
     if (!flightWaiting || !myDetails || myDetails.ready) return null;
@@ -571,7 +576,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       stage = 'booked';
       const details = needsMyDetails();
       if (details) return details;
-      const others = flightWaiting ? (input.essentials?.travelers ?? []).filter(t => !t.ready && t.userId !== me) : [];
+      const others = flightWaiting ? flyers.filter(t => !t.ready && t.userId !== me) : [];
       if (others.length) {
         const names = others.map(t => t.name.trim().split(/\s+/)[0] || 'someone');
         const w = waitOn(names, `Waiting on ${list(names)}`,

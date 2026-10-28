@@ -741,10 +741,10 @@ export async function POST(req: NextRequest) {
       const gateway = known?.transport?.airport
         ?? (town ? (await within(arrivalFor({ city: town, countryCode: tripCountry ?? null }), 6000, 'the arrival airport').catch(() => null))?.gateway ?? null : null);
       const est = awayEstimate({ ...tripSource, costs: costs ?? {} }, { nights: Math.max(0, nights), gateway, km });
-      const off = detailIsPlan ? await drivingCount(supabase, String(detailTripId), groupId) : { driving: 0, late: 0 };
+      const off = detailIsPlan ? await drivingCount(supabase, String(detailTripId), groupId) : { driving: 0, late: 0, unsaid: 0, nobodyFlying: false };
       const lines = awayLines(est, {
         town: town || 'the town', start: startDate ? String(startDate) : null, end: endDate ? String(endDate) : null,
-        party: groupSize, driving: off.driving, joinedLate: off.late, solo,
+        party: groupSize, driving: off.driving, joinedLate: off.late, offUnsaid: off.unsaid ?? 0, nobodyFlying: off.nobodyFlying, solo,
       });
       const fixed = lines.map(rowOf);
       if (!detailIsPlan) return { away: est, fixed };
@@ -1980,22 +1980,28 @@ async function tellTheGroup(
  * joining after the seats were booked is counted apart (`late`): they never
  * said they were driving.
  */
-async function drivingCount(db: import('@supabase/supabase-js').SupabaseClient, planId: string, groupId: unknown): Promise<{ driving: number; late: number }> {
-  // Cancelled too: a flight the group dropped because nobody was on it
-  // still says everybody is driving (whoIsOff), so a rebuild keeps it off.
+async function drivingCount(db: import('@supabase/supabase-js').SupabaseClient, planId: string, groupId: unknown): Promise<{ driving: number; late: number; unsaid?: number; nobodyFlying: boolean }> {
+  // Cancelled too: a flight taken off because nobody was on it carries that
+  // on the booking (droppedFlight), so a rebuild keeps it off — whoever has
+  // joined since, and however the rows of who came off it read.
   const { data: flights, error } = await db.from('bookings')
-    .select('id, status').eq('plan_id', planId).eq('vertical', 'flight').neq('status', 'failed');
+    .select('id, status, request_payload').eq('plan_id', planId).eq('vertical', 'flight').neq('status', 'failed');
   if (error) {
     console.error('[trips itinerary] could not read the plan\'s flights', { plan: planId, code: error.code });
-    return { driving: 0, late: 0 };
+    return { driving: 0, late: 0, nobodyFlying: false };
   }
-  if (!flights?.length) return { driving: 0, late: 0 };
+  if (!flights?.length) return { driving: 0, late: 0, nobodyFlying: false };
   try {
     const [skips, joins, memberIds] = await Promise.all([
-      readTimedSkips(db, planId), memberJoins(db, String(groupId)), groupMemberIds(db, String(groupId)),
+      readTimedSkips(db, planId), memberJoins(db, String(groupId)).catch(() => null), groupMemberIds(db, String(groupId)),
     ]);
-    return whoIsOff(flights, skips, memberIds, joins);
+    if (joins) return whoIsOff(flights, skips, memberIds, joins);
+    // Who is off is known; why is not. Counted off the flight with no reason
+    // given — never "driving" for somebody who may only have joined late —
+    // and a flight taken off stays off.
+    const off = whoIsOff(flights, skips, memberIds);
+    return { driving: 0, late: 0, unsaid: off.driving + off.late, nobodyFlying: off.nobodyFlying };
   } catch {
-    return { driving: 0, late: 0 };
+    return { driving: 0, late: 0, nobodyFlying: false };
   }
 }

@@ -17,7 +17,7 @@ import { awayLines, awayCardRows, savedIdeaLines, rowOf } from "@/lib/away-lines
 import { ticketSources } from "@/lib/tickets";
 import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
-import { byDay, dearestDay } from "@/lib/budget";
+import { byDay, dearestDay, linesYoureOff } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { priceLabel } from "@/lib/discovery/price-label";
@@ -9822,24 +9822,30 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     }catch(e){console.error("[planDetail] could not load dates",e);}
   };
 
-  const setSkip=async(item,optOut)=>{
+  // The last one off a flight takes it off for everybody: the server says so
+  // first (needsConfirm), and this holds the question until they answer.
+  const [dropAsk,setDropAsk]=useState(null);
+  const setSkip=async(item,optOut,{confirm=false}={})=>{
     if(skipping)return;
     if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
     setSkipping(item.ref);
     try{
       const r=await fetch(`/api/plans/${planId}/participation`,{
         method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({itemRef:item.ref,optOut}),
+        body:JSON.stringify({itemRef:item.ref,optOut,...(confirm?{confirm:true}:{})}),
       });
       const d=await r.json().catch(()=>({}));
+      if(r.status===409&&d.needsConfirm){setDropAsk({ref:item.ref,item,warning:d.warning||d.error});setSkipping(null);return;}
       if(!r.ok)throw new Error(d.error||"That didn't save — try again");
+      setDropAsk(null);
       await loadShare();
       if(item.vertical==="flight"){
         // The flight's seats moved, so its row and the totals did too.
         await refreshBookings();
-        // The last one off took the flight off the plan; its line now says
-        // nobody is flying, and the screen shows that line.
-        if(d.item)lineSwapped(d.item);
+        // The last one off took the flight off the plan — its line now says
+        // nobody is flying, and the car from the airport went with it — or
+        // "I'm flying" put it back, with them.
+        flightLinesMoved(d);
         toast(d.notice||(optOut?"You're off the flight":"You're back on the flight"));
       }else{
         toast(optOut?`You're sitting out ${item.title}`:`You're in for ${item.title}`);
@@ -10188,6 +10194,23 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     if(!row?.id)return;
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id!==planId?p:{...p,
       itinerary:(p.itinerary||[]).map(i=>i.id===row.id?{...i,...row}:i)})}));
+    loadSuggestions();
+  };
+  // A flight taken off or put back (participation POST): its line, the car
+  // and transfers from the airport that went with it, and those coming back.
+  const flightLinesMoved=({item,items,removed}={})=>{
+    const rows=[...(item?[item]:[]),...(Array.isArray(items)?items:[])].filter(r=>r?.id);
+    const gone=new Set(Array.isArray(removed)?removed.map(String):[]);
+    if(!rows.length&&!gone.size)return;
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>{
+      if(p.id!==planId)return p;
+      const kept=(p.itinerary||[]).filter(i=>!gone.has(String(i.id)));
+      const known=new Set(kept.map(i=>i.id));
+      return {...p,itinerary:[
+        ...kept.map(i=>{const r=rows.find(x=>x.id===i.id);return r?{...i,...r}:i;}),
+        ...rows.filter(r=>!known.has(r.id)),
+      ]};
+    })}));
     loadSuggestions();
   };
 
@@ -10605,7 +10628,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       value, not even to the person's own group. */}
                   {hasFlight&&!(funding?.notOnBooked?.[uid]||[]).some(i=>i.vertical==="flight")&&(()=>{
                     const r=readiness?.travelers?.find(t=>t.userId===uid);
-                    if(!r)return null;
+                    // Off every flight (driving, or a seat of their own): no
+                    // airline needs anything from them, so neither chip.
+                    if(!r||r.flying===false)return null;
                     return r.ready
                       ?<span className="pill pill-g" style={{fontSize:10}}>✓ Ready to fly</span>
                       :<span className="pill" style={{fontSize:10,background:C.amberDim,color:C.amber,border:`1px solid ${C.amber}`}}
@@ -10749,16 +10774,28 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                         {/* Said of them only what they said, or what we know:
                             off a flight because they joined after its seats
                             were booked is not "driving" (lib/participation.ts). */}
-                        {it.imIn
+                        {it.dropped
+                          ?"Off the plan — nobody's flying"
+                          :it.imIn
                           ?(it.held?"On hold — in nobody's total until it's let go"
                             :`${it.repriced?"about ":""}${usd(it.myCents)} for you`)
-                          :flight?(it.joinedLate?"You joined after these seats were booked — book your own":"You're driving or have a flight")
+                          :flight?(it.joinedLate?"You joined after these seats were booked — book your own"
+                            :it.joinedLate===null?"You're off this flight":"You're driving or have a flight")
                           :"Sitting this one out"}
-                        {` · ${plural(it.inCount,"person","people")} ${flight?"flying":"going"}`}
+                        {!it.dropped&&` · ${plural(it.inCount,"person","people")} ${flight?"flying":"going"}`}
                         {it.imIn&&it.repriced&&!it.held&&<span style={{color:C.t3}}>{` · fare for ${it.inCount} is quoted again at checkout`}</span>}
                       </div>
+                      {dropAsk?.ref===it.ref&&(
+                        <div role="alert" style={{marginTop:8,fontSize:12,color:C.amber,lineHeight:1.45}}>
+                          {dropAsk.warning}
+                          <div style={{display:"flex",gap:8,marginTop:8}}>
+                            <button className="bsm bsm-p" disabled={!!skipping} onClick={()=>setSkip(it,true,{confirm:true})}>Take the flight off</button>
+                            <button className="bsm bsm-g" disabled={!!skipping} onClick={()=>setDropAsk(null)}>Keep it</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    {!share.locked&&it.open!==false&&(
+                    {!share.locked&&it.open!==false&&dropAsk?.ref!==it.ref&&(
                       <button className={`bsm ${it.imIn?"bsm-g":"bsm-p"}`} disabled={!!skipping} onClick={()=>setSkip(it,it.imIn)}>
                         {skipping===it.ref?"…":flight?(it.imIn?"I'll drive / already have a flight":"I'm flying"):(it.imIn?"Skip this one":"I'm in")}
                       </button>
@@ -11324,7 +11361,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               // fields and dropped the rest, so a tab that lists the places
               // you have to book yourself printed their names and prices and
               // not the website or phone number sitting on the same row.
-              const fixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0)
+              // Not what you came off: the flight you are driving instead
+              // of, a dinner you sit out. "What you're in for" leaves them
+              // out of your trip, and this is your budget too.
+              const youreOff=linesYoureOff(planBookings,share?.items);
+              const notYours=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0&&youreOff.has(String(i.id)));
+              const fixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0&&!youreOff.has(String(i.id)))
                 .map(i=>({l:i.title,d:i.time,c:i.cost_cents,it:i}));
               // Everything you pay for yourself, as it happens.
               const variable=items.filter(i=>i.booking_mode!=="reach"&&i.cost_cents>0)
@@ -11341,7 +11383,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               const fixedTotal=sum(fixed), varTotal=sum(variable);
               const heads=plan.participants.length||1;
 
-              if(!fixed.length&&!variable.length&&!unpriced.length)return(
+              if(!fixed.length&&!variable.length&&!unpriced.length&&!notYours.length)return(
                 <div style={{fontSize:13,color:C.t2,lineHeight:1.6,padding:"4px 0 8px"}}>
                   Costs appear here once this trip has a day-by-day plan. Build it on the
                   Itinerary tab and every event gets priced.
@@ -11382,6 +11424,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     <Section title="Reach will book these" tone={C.accentText}
                       note="Committed once the group funds the trip. You pay this through Reach and it is done."
                       rows={fixed} total={fixedTotal}/>
+                  )}
+                  {notYours.length>0&&(
+                    <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,margin:"-8px 0 18px"}}>
+                      Not in your budget: {notYours.map(i=>i.title).join(", ")} — you're not in for {notYours.length===1?"it":"them"}.
+                    </div>
                   )}
                   {/* Named, with no number, because there is not a true one
                       yet. The old screen dropped these entirely and left the

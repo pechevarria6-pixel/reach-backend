@@ -10,7 +10,7 @@
 // The values themselves go to one place only: /api/profile, to their owner.
 import { NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { groupReadiness, tripTravellerIds, travellerOrigins } from '@/lib/essentials-server';
+import { groupReadiness, tripTravellerIds, travellerOrigins, notFlyingIds } from '@/lib/essentials-server';
 import { byDepartureAirport, travelDetails } from '@/lib/airports';
 import { planReadiness, waitingSentence, answersSentence } from '@/lib/plan-readiness';
 import { voteTitles } from '@/lib/trip-vote';
@@ -21,7 +21,9 @@ export async function GET(_req: Request, { params }: { params: { planId: string 
 
   // Who can be ticketed for this trip: a solo plan's own traveller, not
   // everybody who happens to be in the group it sits in.
-  const readiness = await groupReadiness(ctx.db, ctx.plan.group_id as string, tripTravellerIds(ctx.plan));
+  // Less anybody off every flight: a driver is not asked for a date of birth.
+  const readiness = await groupReadiness(ctx.db, ctx.plan.group_id as string, tripTravellerIds(ctx.plan),
+    await notFlyingIds(ctx.db, params.planId, String(ctx.plan.group_id)));
 
   // Two different questions about the same group, answered together because
   // a screen asking one usually wants the other: who can be ticketed, and

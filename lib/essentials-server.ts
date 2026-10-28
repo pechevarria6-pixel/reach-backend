@@ -9,6 +9,7 @@ import { onTheTrip, type Person } from '@/lib/booking/approval';
 import { originsFor, nearestAirportFor, type NearestAnswer, type Origin } from '@/lib/airports';
 import { locateOrFail } from '@/lib/discovery/geocode';
 import { nearestAirports } from '@/lib/booking/providers/flights.duffel';
+import { readSkips, offEveryFlight } from '@/lib/participation';
 
 export interface GroupReadiness {
   travelers: Readiness[];
@@ -63,6 +64,13 @@ export async function groupReadiness(
   db: SupabaseClient, groupId: string,
   /** Only these people — a solo plan's traveller (see tripTravellerIds). */
   only?: string[] | null,
+  /**
+   * Off every flight on the plan — driving, already holding a seat, or kept
+   * off for joining late (notFlyingIds). Listed with `flying: false` and left
+   * out of `ready` and `blocking`: a driver owes no airline a date of birth,
+   * and "Waiting on Sam" for a seat Sam is not in held up the whole group.
+   */
+  notFlying?: Set<string> | null,
 ): Promise<GroupReadiness> {
   const full = await db
     .from('group_members')
@@ -113,7 +121,32 @@ export async function groupReadiness(
     });
   });
 
-  return { travelers, ready: travelers.every(t => t.ready), blocking: blockingMessage(travelers) };
+  const off = notFlying ?? new Set<string>();
+  const marked = travelers.map(t => ({ ...t, flying: !off.has(t.userId) }));
+  const flyers = marked.filter(t => t.flying);
+  return { travelers: marked, ready: flyers.every(t => t.ready), blocking: blockingMessage(flyers) };
+}
+
+/**
+ * Who on this plan is off every flight on it (lib/participation.ts
+ * offEveryFlight), for groupReadiness. Empty when it cannot be read: then
+ * everybody is asked for their details, as before anybody could drive.
+ */
+export async function notFlyingIds(db: SupabaseClient, planId: string, groupId: string): Promise<Set<string>> {
+  try {
+    const [flights, members, { skips }] = await Promise.all([
+      db.from('bookings').select('id, status, request_payload').eq('plan_id', planId).eq('vertical', 'flight'),
+      db.from('group_members').select('user_id').eq('group_id', groupId),
+      readSkips(db, planId),
+    ]);
+    if (flights.error || members.error) {
+      console.error('[readiness] could not tell who is flying', { planId, code: flights.error?.code ?? members.error?.code });
+      return new Set();
+    }
+    return offEveryFlight(flights.data ?? [], skips, (members.data ?? []).map(m => String(m.user_id)));
+  } catch {
+    return new Set();
+  }
 }
 
 /**

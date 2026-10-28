@@ -241,7 +241,7 @@ test('the options route asks for both lines, retries a gap, and attaches the est
 });
 
 // ─── The option card's rows add up to its total ──────────────────────────
-import { awayCardRows, savedIdeaLines } from '../../lib/away-lines.ts';
+import { awayCardRows, savedIdeaLines, flightOnlyLine } from '../../lib/away-lines.ts';
 
 test('a town with its own airport: the card shows the airport transfers the total holds', () => {
   const est = awayEstimate(option({ total_per_person: 1600, costs: {
@@ -298,4 +298,40 @@ test('the card and the saved-idea fallback use these, not their own', () => {
   assert.match(app, /<AwayLinesCard away=\{away\} solo=\{groupSize<=1\}\/>/);
   assert.match(app, /savedIdeaLines\(trip\|\|\{\},\{\.\.\.opts,nights\}\)/);
   assert.doesNotMatch(app, /awayEstimate\(trip\|\|\{\},\{nights\}\)/);
+});
+
+test('nobody flying: no rental car from an airport nobody lands at, no transfers from one', () => {
+  const gateway = { iata: 'GJT', name: 'Grand Junction Regional', miles: 97 };
+  const est = awayEstimate(option({ destination: 'Moab', city: 'Moab' }), { nights: 4, gateway });
+  const all = awayLines(est, { town: 'Moab', start: '2026-11-02', end: '2026-11-06', party: 3, driving: 3, solo: false });
+  assert.equal(all.some(l => /Rental car/.test(l.title)), false, 'everybody driving: nobody picks up a car at GJT');
+  assert.ok(all.some(l => l.type === 'hotel'), 'the stay is still the trip');
+  const some = awayLines(est, { town: 'Moab', start: '2026-11-02', end: '2026-11-06', party: 3, driving: 2, solo: false });
+  assert.ok(some.some(l => /Rental car/.test(l.title)), 'one flying: the car from the airport stays');
+
+  const town = awayEstimate(option(), { nights: 3 });
+  assert.ok(awayLines(town, { town: 'Lisbon', party: 2, solo: false }).some(l => l.title === 'Airport transfers'));
+  assert.equal(awayLines(town, { town: 'Lisbon', party: 2, driving: 2, solo: false }).some(l => l.title === 'Airport transfers'), false);
+  for (const l of all.filter(x => x.type === 'transport')) assert.equal(flightOnlyLine(l), false, l.title);
+  assert.equal(flightOnlyLine(some.find(l => /Rental car/.test(l.title))!), true);
+});
+
+test('a flight taken off stays off for whoever joins later, and is not said of them', () => {
+  const est = awayEstimate(option(), { nights: 3 });
+  // Three drove, the flight came off, a fourth joined: nobody flies, and
+  // "Everyone is driving" is not said of somebody who never said it.
+  const lines = awayLines(est, { town: 'Lisbon', party: 4, driving: 3, nobodyFlying: true, solo: false });
+  assert.equal(lines.some(l => l.type === 'flight'), false);
+  assert.equal(lines[0].title, 'Nobody is flying with the group');
+  assert.match(lines[0].subtitle, /I.m flying/, 'the way back is on the line');
+  assert.equal(awayLines(est, { town: 'Lisbon', party: 3, driving: 3, nobodyFlying: true, solo: false })[0].title,
+    'Everyone is driving or already has a flight');
+});
+
+test('off the flight for a reason that could not be read: counted off, said of nobody', () => {
+  const est = awayEstimate(option(), { nights: 3 });
+  const f = awayLines(est, { town: 'Lisbon', party: 4, offUnsaid: 1, solo: false }).find(l => l.type === 'flight')!;
+  assert.equal(f.flying, 3);
+  assert.match(f.subtitle, /3 flying, 1 not flying/);
+  assert.doesNotMatch(f.subtitle, /driving|joined/);
 });

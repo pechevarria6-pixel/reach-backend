@@ -310,14 +310,31 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
  * Getting there when nobody is flying: everyone driving or holding their own
  * seat. Also what the participation route writes over the flight's line when
  * the last person comes off it (lib/participation.ts lastOut).
+ *
+ * "Everyone is driving" only when everyone said so: somebody who joined
+ * after the flight came off never did, and is told nobody is flying with
+ * the group instead — with the way to put a flight back.
  */
-export function nobodyFlyingLine(solo: boolean): FixedLine {
+export function nobodyFlyingLine(solo: boolean, everyoneSaid = true): FixedLine {
   return {
     scheduled_time: 'Before you go', type: 'transport',
-    title: solo ? "You're driving or already have a flight" : 'Everyone is driving or already has a flight',
-    subtitle: 'No flights to book for this trip.',
+    title: solo ? "You're driving or already have a flight"
+      : everyoneSaid ? 'Everyone is driving or already has a flight' : 'Nobody is flying with the group',
+    subtitle: solo ? 'No flights to book for this trip.'
+      : 'No flights to book for this trip. Until anybody pays, \u201cI\u2019m flying\u201d under What you\u2019re in for puts the flight back.',
     cost_cents: 0, party_cents: 0, booking_mode: null, payment_note: null, estimate: true,
   };
+}
+
+/**
+ * The lines that exist only because somebody flies: the rental car from the
+ * arrival airport, and the transfers from an airport in town. Nobody flying,
+ * nobody lands there — so they come off with the flight (and back with it).
+ */
+export function flightOnlyLine(row: { type?: unknown; title?: unknown; scheduled_time?: unknown }): boolean {
+  if (row.type !== 'transport') return false;
+  const title = String(row.title ?? '');
+  return /^Rental car from /.test(title) || title === 'Airport transfers';
 }
 
 /**
@@ -341,12 +358,22 @@ export function awayLines(est: AwayEstimate, opts: {
    * apart, never in `driving`.
    */
   joinedLate?: number;
+  /**
+   * The flight was taken off because nobody was on it (lib/participation.ts
+   * droppedFlight): nobody flies, whoever has joined since.
+   */
+  nobodyFlying?: boolean;
+  /** Off the flight for a reason that could not be read: counted off, said of nobody. */
+  offUnsaid?: number;
 }): FixedLine[] {
   const lines: FixedLine[] = [];
   const party = Math.max(1, Math.round(opts.party));
   const driving = Math.max(0, Math.min(party, Math.round(opts.driving ?? 0)));
   const late = Math.max(0, Math.min(party - driving, Math.round(opts.joinedLate ?? 0)));
-  const flying = party - driving - late;
+  const unsaid = Math.max(0, Math.min(party - driving - late, Math.round(opts.offUnsaid ?? 0)));
+  const flying = opts.nobodyFlying ? 0 : party - driving - late - unsaid;
+  // Nobody lands anywhere: no car from the airport, no transfers from it.
+  const lands = est.transport.kind === 'ground' || flying > 0;
   const funds = opts.solo ? 'Booked through Reach when you pay for the trip' : 'Booked through Reach when the group funds the trip';
   const cents = (n: number | null) => n === null ? null : Math.round(n * 100);
 
@@ -365,11 +392,12 @@ export function awayLines(est: AwayEstimate, opts: {
     // any more — type 'flight' is what the bookable route quotes, and a
     // priced "Booked through Reach" flight nobody takes is a promise
     // Reach would keep by buying a seat nobody sits in.
-    lines.push({ ...nobodyFlyingLine(opts.solo), flying: 0, driving });
+    lines.push({ ...nobodyFlyingLine(opts.solo, driving === party), flying: 0, driving });
   } else {
-    const who = driving > 0 || late > 0
+    const who = driving > 0 || late > 0 || unsaid > 0
       ? ` ${[`${flying} flying`, driving > 0 ? `${driving} driving or already booked` : null,
-        late > 0 ? `${late} joined after the seats were booked` : null].filter(Boolean).join(', ')}.`
+        late > 0 ? `${late} joined after the seats were booked` : null,
+        unsaid > 0 ? `${unsaid} not flying` : null].filter(Boolean).join(', ')}.`
       : '';
     const per = cents(est.transport.per_person);
     lines.push({
@@ -382,7 +410,7 @@ export function awayLines(est: AwayEstimate, opts: {
     });
   }
 
-  if (est.car) {
+  if (est.car && lands) {
     const line = opts.start && opts.end && DAY.test(opts.start) && DAY.test(opts.end)
       ? rentalLine(est.car.from, opts.town, opts.start, opts.end) : null;
     lines.push({
@@ -403,7 +431,7 @@ export function awayLines(est: AwayEstimate, opts: {
   // always wrote when the option priced it, kept as it was — the
   // traveller's to arrange, never one Reach books.
   const ground = est.ground;
-  if (!est.car && est.transport.kind !== 'ground' && ground !== null) {
+  if (!est.car && est.transport.kind !== 'ground' && flying > 0 && ground !== null) {
     lines.push({
       scheduled_time: 'Before you go', type: 'transport',
       title: 'Airport transfers', subtitle: OWN_ESTIMATE,

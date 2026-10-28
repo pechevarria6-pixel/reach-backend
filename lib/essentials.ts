@@ -49,6 +49,8 @@ export interface Readiness {
   ready: boolean;
   /** Field names, never values: "date of birth", not the date. */
   missing: string[];
+  /** False for somebody off every flight on the plan: nothing is asked of them for one. */
+  flying?: boolean;
 }
 
 /** A date of birth is a real past date, not a typo and not tomorrow. */

@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PROVIDERS } from '@/lib/booking/registry';
 import { report } from '@/lib/report';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { groupReadiness, withoutTravelerDetails, travellersFor, tripTravellerIds } from '@/lib/essentials-server';
+import { groupReadiness, withoutTravelerDetails, travellersFor, tripTravellerIds, notFlyingIds } from '@/lib/essentials-server';
 import { partySize } from '@/lib/participation';
 import { airlineOnly } from '@/lib/booking/approval';
 import { airlineHandoff } from '@/lib/booking/duffel-map';
@@ -89,7 +89,9 @@ export async function POST(req: NextRequest) {
   let flightsBlocked: string | null = null;
   if ((body.items as BookingItemRequest[]).some(i => i.vertical === 'flight')) {
     // Whoever the trip is for — on a solo plan, its own traveller only.
-    const { ready, blocking } = await groupReadiness(ctx.db, ctx.plan.group_id as string, tripTravellerIds(ctx.plan));
+    // Not somebody off every flight on the plan: approval names nobody sitting it out.
+    const { ready, blocking } = await groupReadiness(ctx.db, ctx.plan.group_id as string, tripTravellerIds(ctx.plan),
+      await notFlyingIds(ctx.db, String(body.planId), String(ctx.plan.group_id)));
     if (!ready) flightsBlocked = blocking;
   }
 

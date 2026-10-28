@@ -655,3 +655,30 @@ test('the rail says which step is current, and a done dot is a 44px target', () 
   assert.match(rail, /todo:"to do"/);
   assert.match(rail, /minHeight:44/);
 });
+
+// ─── Off the flight is off its paperwork ────────────────────────────────
+// "I'll drive / already have a flight" takes somebody off the flight, and
+// approval names nobody sitting it out. Readiness marks them flying: false;
+// they owe no airline a date of birth, and the group waits on nobody for it.
+
+test('a driver off the flight is not asked for travel details, and the group does not wait on them', () => {
+  const driverMissing = {
+    travelers: [
+      { userId: ME, name: 'Pat Me', ready: true, missing: [] },
+      { userId: SAM, name: 'Sam Lee', ready: false, missing: ['date of birth'], flying: false },
+    ],
+  };
+  const flightWaiting = { plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE] },
+    bookings: [hotel('awaiting_approval'), flight('awaiting_approval')], funding: FUNDED };
+  const book = run(base({ ...flightWaiting, essentials: driverMissing }));
+  assert.equal(book.state, 'ready_to_book', 'not "Waiting on Sam" for a seat Sam is not in');
+  assert.doesNotMatch(book.title, /Sam/);
+
+  // The planted bug: the same plan with Sam still flying waits on Sam.
+  const flyer = run(base({ ...flightWaiting, essentials: { travelers: driverMissing.travelers.map(t => ({ ...t, flying: true })) } }));
+  assert.equal(flyer.title, 'Waiting on Sam');
+
+  // And the driver themself is never told flights can't be booked without them.
+  const mine = run(base({ ...flightWaiting, me: SAM, plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE], createdBy: ME } , essentials: driverMissing }));
+  assert.notEqual(mine.state, 'needs_travel_details');
+});

@@ -57,3 +57,25 @@ export function dearestDay(groups: DayGroup[]): DayGroup | null {
   if (days.length < 2) return null;
   return days.reduce((a, b) => (b.totalCents > a.totalCents ? b : a));
 }
+
+/**
+ * The lines this person is not in for: a flight they came off ("I'll drive /
+ * already have a flight"), a dinner they sit out — by the booking the line
+ * carries, as the participation route lists them (imIn false). The Budget
+ * tab charged a driver the full flight while "What you're in for" on the
+ * same plan left it out: two figures for one person.
+ *
+ * Empty while who is in for what is unknown: nothing is taken out on a guess.
+ */
+export function linesYoureOff(
+  bookings: { id?: unknown; itinerary_item_id?: unknown; status?: unknown }[] | null | undefined,
+  items: { ref?: unknown; imIn?: unknown; dropped?: unknown }[] | null | undefined,
+): Set<string> {
+  const off = new Set((items ?? []).filter(i => i.imIn === false && !i.dropped).map(i => String(i.ref)));
+  const lines = new Set<string>();
+  for (const b of bookings ?? []) {
+    if (['failed', 'cancelled'].includes(String(b.status))) continue;
+    if (off.has(String(b.id)) && b.itinerary_item_id) lines.add(String(b.itinerary_item_id));
+  }
+  return lines;
+}

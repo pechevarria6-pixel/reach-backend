@@ -15,7 +15,7 @@
 // re-opening checkout adds what is missing and touches nothing else.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
-import { groupReadiness, tripTravellerIds, travellerOrigins } from '@/lib/essentials-server';
+import { groupReadiness, tripTravellerIds, travellerOrigins, notFlyingIds } from '@/lib/essentials-server';
 import { type Gateway } from '@/lib/booking/providers/flights.duffel';
 import { arrivalFor } from '@/lib/booking/arrival';
 import { partySize as countParty } from '@/lib/participation';
@@ -399,7 +399,8 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const flightWhy = hasFlight
     // Only whoever the trip is for: a solo plan is not held up by somebody
     // else in the group who is not coming.
-    ? (await groupReadiness(ctx.db, String(ctx.plan.group_id), tripTravellerIds(ctx.plan))).blocking ?? null
+    ? (await groupReadiness(ctx.db, String(ctx.plan.group_id), tripTravellerIds(ctx.plan),
+      await notFlyingIds(ctx.db, params.planId, String(ctx.plan.group_id)))).blocking ?? null
     : null;
 
   // Where a flight would go, and where it would leave from. Both are asked
