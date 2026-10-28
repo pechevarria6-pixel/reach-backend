@@ -106,7 +106,7 @@ export interface CloseSettle {
   unsettled: boolean;
   youOweCents: number;
   owedToYouCents: number;
-  /** A payment somebody said they sent that nobody has confirmed, on one of their lines. */
+  /** A payment started in Venmo or Cash App and not yet marked either way, on one of their lines. */
   pending: boolean;
 }
 

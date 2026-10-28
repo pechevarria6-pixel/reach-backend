@@ -43,7 +43,7 @@ import { inTimeOrder, bookingFor, referenceLine, whereOf, calendarEvents, calend
 import { kindOf as planKind } from "@/lib/one-active";
 import { bringAlongNote, tripHolds, notOnSentence } from "@/lib/joining";
 import { facesShown, othersPending, nudgeOutcome, waitWords, retryAfter, askNote as askNoteFor } from "@/lib/group-wait";
-import { dollars as settleDollars, nameFor, lineWords, openLines, settleHeadline, pendingWords, venmoHref, hasWayToPay, lineKeyPart, settleRefusal, closeSettleLine, CLOSE_SCORES, SETTLE_FOOTER } from "@/lib/settle-view";
+import { nameFor, lineWords, openLines, settleHeadline, pendingWords, settledWords, nextBlockedWords, CLOSE_PENDING_LINE, dollars as settleDollars, venmoHref, hasWayToPay, lineKeyPart, settleRefusal, closeSettleLine, CLOSE_SCORES, SETTLE_FOOTER } from "@/lib/settle-view";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -9841,7 +9841,7 @@ function CloseCard({planId,groupId,push,toast}){
     setSaving(null);
   };
   const owed=closeSettleLine(c.settle);
-  const settleText=owed||(c.settle?.pending?"A payment is waiting to be confirmed":null);
+  const settleText=owed||(c.settle?.pending?CLOSE_PENDING_LINE:null);
   const next=c.next;
   const planNext=()=>{
     if(!next)return;
@@ -9879,7 +9879,7 @@ function CloseCard({planId,groupId,push,toast}){
       )}
       {next&&(
         <button className="bp" style={{marginTop:14,width:"100%"}} onClick={planNext}>
-          {next.blockedBy?`You're already planning ${next.blockedBy.title||"the next one"} — open it`:"Plan the next one?"}
+          {next.blockedBy?nextBlockedWords(next.blockedBy,{solo:c.solo,type:next.type}):"Plan the next one?"}
         </button>
       )}
     </div>
@@ -9937,8 +9937,11 @@ function MuteReminders({planId,toast,solo=false}){
 // owes you $18"), and on the lines they pay, the ways the other person chose
 // to be paid. Reach never moves this money — Venmo and Cash App open the
 // payer's own app already filled in, Zelle is the contact with a copy button,
-// and "Mark as paid" records what happened. Nothing reads as received until
-// the person it was paid to says so.
+// and "Mark as paid" records what the payer says happened. Opening an app
+// is said as only that (lib/settle-view.ts pendingWords). Nothing reads as
+// received until the person it was paid to says so: a line the payer marked
+// paid on their own is "marked as paid" on the payee's screen, with "It never
+// arrived" beside it, until the payee confirms or withdraws it.
 const SETTLE_HANDLE_ASKED="reach_settle_handle_asked";
 function newSettleKey(){
   try{ if(typeof crypto!=="undefined"&&crypto.randomUUID)return crypto.randomUUID().replace(/-/g,"").slice(0,16); }
@@ -9952,6 +9955,9 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
   const [failed,setFailed]=useState(false);
   const [done,setDone]=useState([]);
   const [busy,setBusy]=useState(null);
+  // The payer's "Mark as paid" closes the line on their word alone, so it
+  // asks once first (the line's key while it is asking).
+  const [confirming,setConfirming]=useState(null);
   // One key per line, minted when it is drawn and sent on every tap.
   const keys=useRef({});
   const keyFor=line=>{const k=lineKeyPart(line);if(!keys.current[k])keys.current[k]=`${k}.${newSettleKey()}`;return keys.current[k];};
@@ -9986,23 +9992,33 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
   };
   // Leaving for Venmo or Cash App: said as "on its way" (pending) as they go,
   // so the line asks them on the way back whether it went.
+  // Leaving for an app is not paying: the row says only that it was opened,
+  // and the pay buttons stay, for a payment that did not go through.
   const opened=(line,app)=>{
     trackEvent("settle_up_link_opened",{app,amount:line.amountCents},{planId,groupId});
     send("POST",{toUserId:line.with,amountCents:line.amountCents,method:app,status:"pending",idempotencyKey:keyFor(line)},{quiet:true,keepalive:true})
       .then(()=>load());
   };
   const act=async(id,fn)=>{if(busy)return;setBusy(id);try{await fn();}finally{setBusy(null);}await load();};
+  // A mark that landed is done with its key: the same line drawn again (the
+  // payee said it never arrived) is a new mark, not a replay of that one.
   const markPaid=line=>act(`paid:${line.with}`,async()=>{
+    setConfirming(null);
     const ok=line.pending
       ?await send("PATCH",{id:line.pending.id,status:"paid"})
       :await send("POST",{toUserId:line.with,amountCents:line.amountCents,method:"other",status:"paid",idempotencyKey:keyFor(line)});
-    if(ok)toast(`Marked as paid to ${nameOf(line.with)}`);
+    if(ok){delete keys.current[lineKeyPart(line)];toast(`Marked as paid — ${nameOf(line.with)} can say if it never arrived`);}
   });
   const markReceived=line=>act(`got:${line.with}`,async()=>{
     const ok=line.pending
       ?await send("PATCH",{id:line.pending.id,status:"paid"})
       :await send("POST",{fromUserId:line.with,amountCents:line.amountCents,method:"other",status:"paid",idempotencyKey:keyFor(line)});
-    if(ok)toast(`Marked as received from ${nameOf(line.with)}`);
+    if(ok){delete keys.current[lineKeyPart(line)];toast(`Marked as received from ${nameOf(line.with)}`);}
+  });
+  // The payee's answer to a line the payer closed alone: it never came. The
+  // server lets only the payee withdraw a paid row; the line comes back owed.
+  const neverArrived=row=>act(`never:${row.id}`,async()=>{
+    if(await send("PATCH",{id:row.id,status:"cancelled"}))toast(`Back on the list — ${nameOf(row.from_user_id)} still owes you ${settleDollars(row.amount_cents)}`);
   });
   const withdraw=line=>act(`undo:${line.with}`,async()=>{
     if(!line.pending)return;
@@ -10090,7 +10106,7 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
                 <div key={`${line.direction}:${line.with}`} style={{padding:14,background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,marginBottom:10}}>
                   <div style={{fontSize:15,color:C.t1,fontWeight:600}}>{line.amountCents>0?lineWords(line,name):line.direction==="you_owe"?`To ${name}`:`From ${name}`}</div>
                   {pend&&<div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginTop:6}}>⏳ {pend}</div>}
-                  {line.direction==="you_owe"&&!line.pending&&line.amountCents>0&&(
+                  {line.direction==="you_owe"&&line.amountCents>0&&(
                     <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
                       {venmo&&<a href={venmo} {...(/^https?:/.test(venmo)?{target:"_blank",rel:"noopener noreferrer"}:{})} style={primary} onClick={()=>opened(line,"venmo")}>Pay on Venmo</a>}
                       {line.pay?.cashApp&&<a href={line.pay.cashApp} target="_blank" rel="noopener noreferrer" style={venmo?quiet:primary} onClick={()=>opened(line,"cashapp")}>Pay on Cash App</a>}
@@ -10107,16 +10123,23 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
                   )}
                   {marking&&(
                     <div style={{display:"flex",gap:8,marginTop:10}}>
-                      {line.direction==="you_owe"?(
-                        <>
-                          <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>markPaid(line)}>{busy===`paid:${k}`?"…":"Mark as paid"}</button>
-                          {line.pending&&<button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>withdraw(line)}>{busy===`undo:${k}`?"…":"I didn't send it"}</button>}
-                        </>
+                      {line.direction==="you_owe"?(confirming===lineKeyPart(line)?(
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:8}}>
+                            Only once it's sent: {name} will see it marked as paid, and can say if it never arrived.
+                          </div>
+                          <div style={{display:"flex",gap:8}}>
+                            <button style={{...primary,flex:1}} disabled={!!busy} onClick={()=>markPaid(line)}>{busy===`paid:${k}`?"…":"Yes, I've paid"}</button>
+                            <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>setConfirming(null)}>Cancel</button>
+                          </div>
+                        </div>
                       ):(
                         <>
-                          <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>markReceived(line)}>{busy===`got:${k}`?"…":"Mark received"}</button>
-                          {line.pending&&<button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>withdraw(line)}>{busy===`undo:${k}`?"…":"Not yet"}</button>}
+                          <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>setConfirming(lineKeyPart(line))}>Mark as paid</button>
+                          {line.pending&&<button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>withdraw(line)}>{busy===`undo:${k}`?"…":"It didn't go through"}</button>}
                         </>
+                      )):(
+                        <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>markReceived(line)}>{busy===`got:${k}`?"…":"Mark received"}</button>
                       )}
                     </div>
                   )}
@@ -10126,12 +10149,19 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
             {done.length>0&&(
               <div style={{marginTop:16}}>
                 <div className="sl" style={{marginBottom:8}}>Settled</div>
-                {done.map(s=>(
-                  <div key={s.id} style={{fontSize:13,color:C.t2,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
-                    <span style={{color:C.green,fontWeight:700}}>✓</span>{" "}
-                    {s.from_user_id===me?`You paid ${nameOf(s.to_user_id)} ${settleDollars(s.amount_cents)}`:`${nameOf(s.from_user_id)} paid you ${settleDollars(s.amount_cents)}`}
-                  </div>
-                ))}
+                {done.map(s=>{
+                  const w=settledWords(s,me,nameOf);
+                  return(
+                    <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.t2,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                      <span style={{flex:1,minWidth:0}}>
+                        {w.confirmed?<span style={{color:C.green,fontWeight:700}}>✓ </span>:null}{w.text}
+                      </span>
+                      {w.canDispute&&marking&&(
+                        <button className="bsm" disabled={!!busy} onClick={()=>neverArrived(s)}>{busy===`never:${s.id}`?"…":"It never arrived"}</button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </>
@@ -14518,6 +14548,16 @@ export default function ReachApp({realUser,onSignOut}={}){
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         if(/^[0-9a-f-]{36}$/i.test(planId)&&/^[0-9a-f-]{36}$/i.test(groupId||""))push("checkout",{planId,groupId});
+      }
+      // From the settle-up reminder (lib/pings.ts settleUrl): straight to
+      // Settle up, which reads the ledger itself — the close card that also
+      // leads there is not shown on every trip the reminder is sent for.
+      if(params.get("settle")){
+        const planId=params.get("settle"), groupId=params.get("group");
+        params.delete("settle");params.delete("group");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        if(/^[0-9a-f-]{36}$/i.test(planId)&&/^[0-9a-f-]{36}$/i.test(groupId||""))push("settleUp",{planId,groupId});
       }
       // From "<organiser> called off <plan>": the group, where the next one
       // is started. Only when nothing above has already used the group.

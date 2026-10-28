@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   dueSettleUps, runPings, money, newest, SETTLE_QUIET_MS,
   type SettleInput, type SettlePlan,
@@ -277,9 +278,18 @@ test('a ledger that cannot be read reminds nobody', async () => {
 });
 
 test('the cron route runs the settle-up pass through runPings, not a schedule of its own', async () => {
-  const { readFileSync } = await import('node:fs');
+
   const route = readFileSync(new URL('../../app/api/cron/pings/route.ts', import.meta.url), 'utf8');
   assert.match(route, /runPings\(/);
   const vercel = readFileSync(new URL('../../vercel.json', import.meta.url), 'utf8');
   assert.doesNotMatch(vercel, /settle/);
+});
+
+test('the reminder opens Settle up itself, not the plan, whose close card may not be there', () => {
+  const [due] = dueSettleUps(input(), NOW);
+  assert.equal(due.note.url, '/home?settle=p1&group=g1');
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  const a = app.indexOf('if(params.get("settle")){');
+  assert.ok(a >= 0, 'the client reads ?settle');
+  assert.match(app.slice(a, app.indexOf('\n      }', a)), /push\("settleUp",\{planId,groupId\}\)/);
 });

@@ -292,6 +292,13 @@ function referenceOf(b: PingBooking): string | null {
 const planUrl = (plan: PingPlan) =>
   `/home?group=${encodeURIComponent(String(plan.group_id))}&plan=${encodeURIComponent(plan.id)}`;
 
+// The settle-up reminder opens Settle up itself (the client reads `settle`).
+// Through the plan it would depend on the close card, which the reminder's
+// own conditions do not promise: a trip whose bookings never reached
+// 'confirmed', or one before sql/post-trip-close-2026-09-25.sql, has no card.
+export const settleUrl = (plan: Pick<PingPlan, 'id' | 'group_id'>) =>
+  `/home?settle=${encodeURIComponent(plan.id)}&group=${encodeURIComponent(String(plan.group_id))}`;
+
 // ── What is due ──────────────────────────────────────────────────────────
 
 /**
@@ -625,7 +632,7 @@ export function dueSettleUps(input: SettleInput, now: Date = new Date()): Planne
   for (const l of owing) byPayer.set(l.from, [...(byPayer.get(l.from) ?? []), l]);
 
   const note = settleNote(plan as unknown as Record<string, unknown>);
-  const url = planUrl(plan);
+  const url = settleUrl(plan);
   const out: PlannedPing[] = [];
   const quietSince = shiftDay(clock.day, -(SETTLE_EVERY_DAYS - 1)) as string;
   for (const [payer, theirs] of byPayer) {

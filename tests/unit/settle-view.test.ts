@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import {
   dollars, lineWords, openLines, settleHeadline, pendingWords, venmoHref, hasWayToPay,
   lineKeyPart, settleRefusal, closeSettleLine, CLOSE_SCORES, SETTLE_FOOTER, type LedgerLine,
+  settledWords, nextBlockedWords, CLOSE_PENDING_LINE,
 } from '../../lib/settle-view.ts';
 import { readMute, writeMute, muteTableMissing } from '../../lib/plan-mute.ts';
 
@@ -38,8 +39,69 @@ test('"You owe Sam $42 · Alex owes you $18", what you owe first', () => {
 test('a 0 line is kept only for a claim still to answer', () => {
   const claim = owe({ amountCents: 0, pending: { id: 'p', amountCents: 4200, method: 'venmo' } });
   assert.deepEqual(openLines([owe({ amountCents: 0 }), claim]), [claim]);
-  assert.match(pendingWords(owe({ direction: 'owed_to_you', pending: { id: 'p', amountCents: 4200, method: 'venmo' } }), 'Sam') ?? '',
-    /^Sam says they sent \$42 on Venmo\. Did it arrive\?$/, 'never said as received until the payee says so');
+});
+
+test('a pay button opened an app, and that is all a pending line says: nobody is quoted as saying they sent it', () => {
+  const pending = { id: 'p', amountCents: 4200, method: 'venmo' };
+  const payee = pendingWords(owe({ direction: 'owed_to_you', pending }), 'Alex') ?? '';
+  const payer = pendingWords(owe({ pending }), 'Sam') ?? '';
+  assert.equal(payer, 'You opened Venmo to pay Sam $42. Did it go through? If it did, mark it paid.');
+  assert.equal(payee, "Alex opened Venmo to pay you $42, but hasn't marked it sent. Mark it received once it arrives.");
+  for (const w of [payer, payee, CLOSE_PENDING_LINE]) {
+    assert.doesNotMatch(w, /\bsaid\b|\bsays\b|\bsent \$|waiting to be confirmed|Did it arrive/i, w);
+  }
+  assert.match(pendingWords(owe({ pending: { ...pending, method: 'cashapp' } }), 'Sam') ?? '', /opened Cash App/);
+  assert.equal(pendingWords(owe(), 'Sam'), null);
+});
+
+test('the payer keeps their pay buttons while a line is pending, and the payee is not asked to deny a claim nobody made', () => {
+  const screen = between('function SettleUpScreen(', '\nfunction ');
+  assert.match(screen, /\{line\.direction==="you_owe"&&line\.amountCents>0&&\(/, 'Pay on Venmo stays after a tab closed unpaid');
+  assert.doesNotMatch(screen, /"Not yet"/);
+  assert.match(screen, /"It didn't go through"/);
+  const card = between('function CloseCard(', '\n}\n');
+  assert.match(card, /c\.settle\?\.pending\?CLOSE_PENDING_LINE:null/);
+  assert.doesNotMatch(card, /waiting to be confirmed/);
+});
+
+test('a line the payer closed alone reads as marked, never as received, and the payee can say it never arrived', () => {
+  const nameOf = (id: string) => ({ alex: 'Alex', sam: 'Sam' } as Record<string, string>)[id] ?? 'Someone';
+  const row = { id: 's1', from_user_id: 'alex', to_user_id: 'sam', amount_cents: 4200 };
+  // Alex marked it paid himself.
+  const byPayer = { ...row, closed_by: 'alex' };
+  assert.deepEqual(settledWords(byPayer, 'sam', nameOf), { text: 'Alex marked $42 to you as paid', confirmed: false, canDispute: true });
+  assert.deepEqual(settledWords(byPayer, 'alex', nameOf), { text: 'You marked $42 to Sam as paid — Sam can say if it never arrived', confirmed: false, canDispute: false });
+  // An old row with nobody named is not taken as confirmed either.
+  assert.equal(settledWords({ ...row, closed_by: null }, 'sam', nameOf).confirmed, false);
+  // Sam confirmed it.
+  const byPayee = { ...row, closed_by: 'sam' };
+  assert.deepEqual(settledWords(byPayee, 'sam', nameOf), { text: 'Alex paid you $42', confirmed: true, canDispute: false });
+  assert.deepEqual(settledWords(byPayee, 'alex', nameOf), { text: 'Sam got your $42', confirmed: true, canDispute: false });
+
+  const screen = between('function SettleUpScreen(', '\nfunction ');
+  assert.match(screen, /w\.canDispute&&marking/);
+  assert.match(screen, /send\("PATCH",\{id:row\.id,status:"cancelled"\}\)/, 'the payee withdraws the paid row, which the server allows only them');
+  assert.match(screen, /"It never arrived"/);
+  assert.doesNotMatch(screen, /`\$\{nameOf\(s\.from_user_id\)\} paid you/, 'no "paid you" written over a row the payee never confirmed');
+  // The payer's Mark as paid asks once before closing the line on their word.
+  assert.match(screen, /onClick=\{\(\)=>setConfirming\(lineKeyPart\(line\)\)\}>Mark as paid</);
+  assert.match(screen, /"Yes, I've paid"/);
+});
+
+test('"already planning" is said for the group, and never names "Where next?"', () => {
+  assert.equal(nextBlockedWords({ title: 'Where next?' }, { solo: false, type: 'trip' }), 'This group is already planning a trip — open it');
+  assert.equal(nextBlockedWords({ title: 'Lisbon' }, { solo: false, type: 'trip' }), 'This group is already planning Lisbon — open it');
+  assert.equal(nextBlockedWords({ title: null }, { solo: false, type: 'night' }), 'This group is already planning a night out — open it');
+  assert.equal(nextBlockedWords({ title: 'Tokyo' }, { solo: true }), "You're already planning Tokyo — open it");
+  const card = between('function CloseCard(', '\n}\n');
+  assert.match(card, /nextBlockedWords\(next\.blockedBy,\{solo:c\.solo,type:next\.type\}\)/);
+  assert.doesNotMatch(card, /You're already planning/);
+});
+
+test('/home?settle=<plan>&group=<group> opens Settle up, before the group link takes ?group', () => {
+  const link = between('if(params.get("settle")){', '\n      }');
+  assert.match(link, /push\("settleUp",\{planId,groupId\}\)/);
+  assert.ok(app.indexOf('if(params.get("settle")){') < app.indexOf('if(params.get("group")){'));
 });
 
 test('Venmo opens the app on a phone and the site elsewhere; no way to pay is said, never a dead link', () => {

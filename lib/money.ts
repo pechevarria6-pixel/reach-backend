@@ -204,7 +204,7 @@ export function applySettlements(net: Record<string, number>, settlements: Settl
 export type PendingSettlement = { id: string; amountCents: number; method: string | null; createdAt: string | null };
 
 export type SettleLine = Transfer & {
-  /** A payment one side said they sent and nobody has confirmed yet. */
+  /** A payment the payer started from a pay button, not yet marked paid or withdrawn. */
   pending: PendingSettlement | null;
 };
 
