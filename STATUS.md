@@ -30,12 +30,25 @@ Probed today (PostgREST GETs, `vercel env ls`, the GitHub Actions API).
   105 regions ok. `europe/italy/centro` and `russia/central-fed-district`
   failed every run with "Unterminated string in JSON" — readline split a
   record at a bare `\r`. Fixed in `8eb4f7a` (lib/discovery/feature-lines.ts);
-  confirm on the next daily run.
+  confirmed — both load every run since 2026-10-24 (≈10.8k and 11.4k kept),
+  all 105 regions ok.
 - **Email is still dead:** `RESEND_API_KEY` in Vercel last changed 89 days ago.
-- **In progress:** checkout spec Stage 2 UI (the 5-dot rail replacing the
-  sign-off tabs, getNextAction on every chip, the one-active start screen) —
-  built and reviewed in `.claude/worktrees/wf_b319ed23-9c9-1`, fix pass
-  running. Stages 3–6 not started (plan: wf_0331f72d-1d7).
+- **Checkout spec (REACH-CHECKOUT-NEXT-STEP-2026-09-25): Stages 1–6 merged and
+  live by 2026-10-28** (main `552beae`, 1920 unit tests) — the 5-dot rail and
+  getNextAction everywhere, one active trip, the booked "Your trip" view, the
+  once-only celebration, Your map, the wallet, pings, the taste profile
+  (never shown), away trips with flight + stay or the road, Change on every
+  line, faces, "How was it?", settle-up, per-trip mutes, and the polish pass.
+  Every builder was reviewed adversarially and its findings fixed before merge.
+- **Not yet seen on a signed-in screen.** Task 12's end-to-end walk needs a
+  `+qa` test account (`TEST_EMAIL`); until then the new screens are covered by
+  unit and source-text tests only.
+- **Owner, to switch things on:** GitHub secrets `CRON_SECRET` and `APP_URL`
+  (pings); Vercel `REACH_OPS_SECRET` (ops taste read); optional
+  `NEXT_PUBLIC_CARTO_KEY` (dark map tiles) and `AEROAPI_KEY` (gate/delay).
+- **Known open:** server routes ignore the Undo `Idempotency-Key` (the changes
+  are repeat-safe anyway); no way back once the last flyer drops a flight;
+  the nearby-dates button on the plan is not built.
 
 ## 0. Checkout migrations, 2026-09-25 — ✅ all eight run by the owner on 09-25
 
