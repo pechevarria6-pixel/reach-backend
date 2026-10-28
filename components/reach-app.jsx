@@ -42,6 +42,8 @@ import { buildIcs } from "@/lib/ics";
 import { inTimeOrder, bookingFor, referenceLine, whereOf, calendarEvents, calendarFileName, moneyLines, celebrationTitle, claimWasFirst, celebratedKey, bookedDetail, bookedContacts, bookedForMe, celebrationDue, mapEmptyLine } from "@/lib/booked-trip";
 import { kindOf as planKind } from "@/lib/one-active";
 import { bringAlongNote, tripHolds, notOnSentence } from "@/lib/joining";
+import { facesShown, othersPending, nudgeOutcome, waitWords, retryAfter, askNote as askNoteFor } from "@/lib/group-wait";
+import { dollars as settleDollars, nameFor, lineWords, openLines, settleHeadline, pendingWords, venmoHref, hasWayToPay, lineKeyPart, settleRefusal, closeSettleLine, CLOSE_SCORES, SETTLE_FOOTER } from "@/lib/settle-view";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -6448,12 +6450,11 @@ const DAYS_UNDER_WAY_MS=10*60*1000;
 // that is and says so in `mayPick` — and ties are theirs to call.
 //
 // Group trips only: somebody on their own picks straight from the cards.
-function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,saveItineraryToServer,departure,rev=0,enriching=0,enrichFailed=false,onRegenerate,onPicked}){
+function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,saveItineraryToServer,departure,rev=0,enriching=0,enrichFailed=false,onRegenerate,onPicked}){
   const [v,setV]=useState(null);
   const [loadErr,setLoadErr]=useState(false);
   const [busy,setBusy]=useState(null);
   const [picking,setPicking]=useState(null);
-  const [nudging,setNudging]=useState(false);
   const [confirmNew,setConfirmNew]=useState(false);
   const load=async()=>{
     if(!planId||isTempId(planId))return;
@@ -6564,24 +6565,13 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
     if(ok&&onPicked)onPicked();
     else if(!ok)load();
   };
-  const nudge=async()=>{
-    if(nudging||isTempId(planId))return;
-    setNudging(true);
-    try{
-      const r=await fetch(`/api/plans/${planId}/notify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"vote"})});
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
-      toast(d.notified?`Reminded ${plural(d.notified,"person","people")}`:(d.message||"Everyone has voted"));
-    }catch(e){console.error("[tripIdeas] vote nudge failed",e);toast(e.message);}
-    setNudging(false);
-  };
-
   // Where it stands, said once, for who is reading it.
   const standing=v.everyoneVoted
     ?(v.leader
       ?`Everyone has voted — most votes: ${show(v.leader)}.`
       :v.tied.length?`Everyone has voted, and it's a tie between ${namesList(v.tied.map(show))}.`:"Everyone has voted.")
-    :`${v.voted} of ${v.members} have voted${v.stillToVote?.length?` — still to vote: ${namesList(v.stillToVote)}`:""}.`;
+    // Who is still to vote is the faces below, not a second list of names.
+    :`${v.voted} of ${v.members} have voted.`;
   const next=v.mayPick
     ?(v.tied.length?"It's your call — pick the one the group goes with.":v.leader?`Pick ${show(v.leader)} to go with the vote, or any of them — it's your call.`:"Pick one when you're ready — the votes are here to help.")
     :v.myVote
@@ -6596,11 +6586,12 @@ function TripIdeas({planId,groupId,group,plan,toast,updateGroup,refreshGroup,sav
         </div>
         <div style={{fontSize:13.5,color:C.t1,lineHeight:1.6,marginBottom:4}}>{standing}</div>
         <div style={{fontSize:13,color:C.t2,lineHeight:1.6}}>{next}</div>
-        {/* Only when somebody else is still to vote — nobody is nudged about their own. */}
-        {!closed&&(v.stillToVote||[]).some(n=>n!=="you")&&(
-          <button className="bsm bsm-p" style={{marginTop:10}} disabled={nudging} onClick={nudge}>
-            {nudging?"Sending…":"Nudge whoever hasn't voted"}
-          </button>
+        {/* One face each, ✓ voted or grey — never for which. A grey face
+            nudges that one person; the organiser can remind everyone. */}
+        {!closed&&!v.everyoneVoted&&(
+          <div style={{marginTop:10}}>
+            <WaitFaces planId={planId} kind="vote" um={um} toast={toast} organiser={!!organiser?.isYou} rev={v.voted}/>
+          </div>
         )}
         <div style={{fontSize:12,color:C.t3,marginTop:10,lineHeight:1.5}}>
           Shown as counts — Reach never lists who voted for or vetoed which.
@@ -7326,21 +7317,18 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       const d=await r.json().catch(()=>({}));
       if(r.status===429){
         // Somebody (maybe this person, a moment ago) already nudged them.
-        setNudgeWait(Math.min(60,Math.max(1,Number(d.retryAfterSeconds)||60)));
-        setAskNote(d.error||"They were just nudged — you can nudge them again in a minute.");
+        // The server's own wait, whole: one person's twelve hours (lib/
+        // nudge.ts) is hours, and this once said "a minute" at most.
+        setNudgeWait(retryAfter(d));
+        setAskNote(d.error||"They were nudged lately — try again later.");
         setAsking(false);
         return;
       }
       if(!r.ok)throw new Error(d.error||"Couldn't nudge them just now.");
-      if(d.notified){
-        setNudgeWait(60);
-        // Said as it went: on their phone, in the app, by email.
-        const how=[
-          d.pushed?`${plural(d.pushed,"phone","phones")} notified`:null,
-          d.emailed?`${plural(d.emailed,"email","emails")} sent`:null,
-        ].filter(Boolean);
-        setAskNote(`Nudged ${plural(d.notified,"person","people")} — it's waiting in their Reach notifications${how.length?` (${how.join(", ")})`:""}.`);
-      }else setAskNote(d.message||"Everyone else has already answered.");
+      if(d.notified)setNudgeWait(60);
+      // Said only the ways it went: "in their Reach notifications" when the
+      // bell was written (inApp), never because a phone push got through.
+      setAskNote(askNoteFor(d));
     }catch(e){
       console.error("[groupTrip] could not ask the others",e);
       setAskNote(`${e.message} Pass the link on to them instead.`);
@@ -7509,7 +7497,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   {error}
                 </div>
               )}
-              <TripIdeas planId={wp.id} groupId={groupId} group={group} plan={wp} toast={toast}
+              <TripIdeas planId={wp.id} groupId={groupId} group={group} plan={wp} toast={toast} um={um}
                 updateGroup={updateGroup} refreshGroup={refreshGroup} saveItineraryToServer={saveItineraryToServer}
                 departure={departure} rev={ideasRev} enriching={enriching} enrichFailed={enrichFailed}
                 onRegenerate={()=>findOurTrips(wp,{regenerate:true})}
@@ -7530,9 +7518,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         const othersOut=members.some(m=>!m.answered&&m.userId!==me);
         const first=n=>String(n||"").trim().split(/\s+/)[0]||"Someone";
         const nightWait=wp.type==="restaurant";
-        const stillToAnswer=members.filter(m=>!m.answered);
         const haveAnswered=members.filter(m=>m.answered);
-        const nameOf=m=>m.userId===me?"you":first(m.name);
         // The organiser can go ahead with who has answered once somebody
         // besides whoever made the trip has, or it is 48 hours old — the
         // server's own rule, imported (lib/group-answers.ts mayGoAhead).
@@ -7563,14 +7549,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                     :orgWait?orgWait.body
                     :`Your three ${nightWait?"ideas for the night":"trip ideas"} are built from what every one of you wants, so we wait until everyone has answered. Nothing gets picked on one person's say-so.`}
                 </div>
+                {/* One face each: ✓ answered, grey still to. A grey face is
+                    the nudge for that one person, and the organiser has
+                    "Remind everyone" under them — the one way to ask. */}
                 {members.length>0&&!allAnswered&&(
-                  <div style={{fontSize:13.5,color:C.t1,lineHeight:1.6,marginBottom:12}}>
-                    {stillToAnswer.length>0&&(
-                      <div><strong>Still to answer:</strong> {namesList(stillToAnswer.map(nameOf))}</div>
-                    )}
-                    {haveAnswered.length>0&&(
-                      <div style={{color:C.t2}}><strong style={{color:C.t1}}>Answered:</strong> {namesList(haveAnswered.map(nameOf))}</div>
-                    )}
+                  <div style={{marginBottom:12}}>
+                    <WaitFaces planId={waitPlanId} kind="prefs" um={um} toast={toast} organiser={iOrganise}
+                      solo={isSolo} rev={haveAnswered.length} onNudged={()=>setAskNote(null)}/>
                   </div>
                 )}
                 <div style={{fontSize:12,color:C.t3,lineHeight:1.5,marginBottom:14}}>
@@ -7604,12 +7589,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {othersOut&&(
               <div style={{marginBottom:14}}>
                 <div style={{display:"flex",gap:8}}>
-                  <button className="bs" style={{flex:1}} disabled={asking||nudgeWait>0}
-                    onClick={()=>askTheOthers(waitPlanId)}>
-                    {asking?"Nudging…":nudgeWait>0?`Nudge again in ${nudgeWait}s`:"Nudge them"}
-                  </button>
                   {/* Opens the phone's share sheet, or copies — it hands the
-                      link over rather than sending anything itself. */}
+                      link over rather than sending anything itself. The
+                      nudges are the faces above. */}
                   <button className="bs" style={{flex:1}} onClick={()=>shareAnswerLink(waitPlanId,nightWait)}>
                     Pass on the link
                   </button>
@@ -8076,6 +8058,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       destinationCity:where?.city||null,
       destinationCountry:where?.country||null,
       soloMode:isSoloGroup,
+      ...(seed?.fromClose?{fromClose:seed.fromClose}:{}),
       // What the flow asked, kept as this person's answers for the plan — the
       // itinerary reads tonight's food and time from exactly here. The
       // cuisine, the genre and the time were asked and then thrown away.
@@ -8725,9 +8708,8 @@ async function runNextCta(cta,{na,screen,planId,groupId,push,toast,goToProfileSe
     try{
       const r=await fetch(`/api/plans/${planId}/notify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:cta.nudge})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't send that reminder");
-      toast(d.notified?`Reminded ${d.notified} ${d.notified===1?"person":"people"} 📬`:(d.message||"Nobody needed reminding"));
-    }catch(e){console.error("[next] reminder failed",{planId,kind:cta.nudge},e);toast(e.message);}
+      toast(nudgeOutcome(r.status,d).text);
+    }catch(e){console.error("[next] reminder failed",{planId,kind:cta.nudge},e);toast("Couldn't send that nudge — try again in a moment.");}
     return false;
   }
   if(cta.kind==="confirm"&&cta.itemId){
@@ -9725,6 +9707,441 @@ function BookedRowFacts({item,booking,tracked,city,onUndo}){
   );
 }
 
+// ─── Who the group is waiting on, as faces ───────────────────────────────
+// Wherever a group plan waits on its people — answers, the vote, the money —
+// one face per person: ✓ for done, grey for still to do. Never an amount,
+// never a vote choice, never what anybody said (owner decision 13). A grey
+// face is a button: tapping it nudges that one person (POST /notify with a
+// userId), and the toast says who it reached, as the server said it. The
+// organiser also gets "Remind everyone". Never on a plan for one — there is
+// nobody to wait on, so the component draws nothing.
+function WaitFace({f,u,busy,onTap}){
+  const tappable=!f.done&&!f.isYou&&f.canNudge&&!!onTap;
+  const nudged=!f.done&&!f.isYou&&!f.canNudge&&!!f.nudgedUntil;
+  const label=f.isYou?"You":f.name;
+  const initials=u?.initials||String(f.name||"?").slice(0,2).toUpperCase();
+  return(
+    <button type="button" onClick={tappable?onTap:undefined} disabled={!tappable||busy}
+      aria-label={f.done?`${label}, done`:tappable?`Nudge ${label}`:nudged?`${label}, nudged lately`:`${label}, still to do`}
+      style={{background:"none",border:"none",padding:0,display:"flex",flexDirection:"column",alignItems:"center",gap:4,width:56,cursor:tappable?"pointer":"default"}}>
+      <span style={{position:"relative",width:40,height:40,display:"block"}}>
+        <span style={{width:40,height:40,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
+          background:f.done?(u?.color||C.accent):C.s3,color:f.done?"#fff":C.t2,fontSize:13,fontWeight:700,
+          opacity:f.done?1:.6,border:tappable?`1px dashed ${C.t3}`:"1px solid transparent"}}>{initials}</span>
+        {f.done&&(
+          <span aria-hidden="true" style={{position:"absolute",right:-3,bottom:-3,width:18,height:18,borderRadius:"50%",
+            background:C.green,color:"#fff",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",
+            border:`2px solid ${C.s1}`}}>✓</span>
+        )}
+      </span>
+      <span style={{fontSize:11,color:f.done?C.t1:C.t2,maxWidth:56,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+        {busy?"…":label}
+      </span>
+      {nudged&&<span style={{fontSize:9.5,color:C.t3,marginTop:-3}}>nudged</span>}
+    </button>
+  );
+}
+
+function WaitFaces({planId,kind,um,toast,organiser=false,solo=false,rev=0,onNudged}){
+  const [faces,setFaces]=useState(null);
+  const [failed,setFailed]=useState(false);
+  const [busy,setBusy]=useState(null);
+  // Held presses, by person (or "*" for everyone), until when. The server's
+  // own number — a 429 can mean twelve hours, never capped at a minute.
+  const [heldTill,setHeldTill]=useState({});
+  const live=!solo&&!!planId&&!isTempId(planId);
+  const load=async()=>{
+    try{
+      const r=await fetch(`/api/plans/${planId}/notify?kind=${kind}`);
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||String(r.status));
+      setFaces(facesShown(d.people));
+      setFailed(false);
+    }catch(e){console.error("[faces] could not read who is done",{planId,kind},e);setFailed(true);}
+  };
+  useEffect(()=>{
+    if(!live)return;
+    return pollWhileVisible(load,20000);
+  },[planId,kind,rev,live]);
+  if(!live)return null;
+  if(!faces)return failed?<div style={{fontSize:12,color:C.t3}}>Couldn't check who's done just now.</div>:null;
+  if(!faces.length)return null;
+  const now=Date.now();
+  const heldFor=k=>(heldTill[k]&&heldTill[k]>now)?heldTill[k]:null;
+  const press=async(userId)=>{
+    const k=userId||"*";
+    if(busy||isTempId(planId))return;
+    setBusy(k);
+    try{
+      const r=await fetch(`/api/plans/${planId}/notify`,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(userId?{kind,userId}:{kind})});
+      const d=await r.json().catch(()=>({}));
+      const o=nudgeOutcome(r.status,d);
+      if(o.waitSeconds)setHeldTill(h=>({...h,[k]:Date.now()+o.waitSeconds*1000}));
+      toast(o.text);
+      if(o.ok&&onNudged)onNudged();
+      load();
+    }catch(e){
+      console.error("[faces] nudge failed",{planId,kind},e);
+      toast("Couldn't send that nudge — try again in a moment.");
+    }
+    setBusy(null);
+  };
+  const pending=othersPending(faces);
+  const canTap=faces.some(f=>!f.done&&!f.isYou&&f.canNudge);
+  const allHeld=heldFor("*");
+  return(
+    <div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+        {faces.map(f=>(
+          <WaitFace key={f.userId} f={heldFor(f.userId)?{...f,canNudge:false,nudgedUntil:new Date(heldFor(f.userId)).toISOString()}:f}
+            u={um?.[f.userId]} busy={busy===f.userId} onTap={()=>press(f.userId)}/>
+        ))}
+      </div>
+      {canTap&&<div style={{fontSize:11.5,color:C.t3,marginTop:6}}>Tap a grey face to nudge them.</div>}
+      {organiser&&pending&&(
+        <button className="bs" style={{marginTop:10,width:"100%"}} disabled={!!busy||!!allHeld} onClick={()=>press(null)}>
+          {busy==="*"?"Nudging…":allHeld?`Remind everyone again in ${waitWords((allHeld-now)/1000)}`:"Remind everyone"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── "How was it?" ───────────────────────────────────────────────────────
+// After the trip (GET /api/plans/[id]/close says when: over by its own
+// dates, something on it was actually held, and this person was there).
+// One answer per person, changeable; the money still to move between
+// friends, said as totals with the way to the settle-up screen; and the one
+// door back in — the next plan, with the same group, or the one this group
+// is already planning when there is one (one trip and one night out at a
+// time). Nothing about anybody's taste is shown here, or anywhere.
+function CloseCard({planId,groupId,push,toast}){
+  const [c,setC]=useState(null);
+  const [saving,setSaving]=useState(null);
+  useEffect(()=>{
+    if(!planId||isTempId(planId))return;
+    let off=false;
+    fetch(`/api/plans/${planId}/close`)
+      .then(r=>r.ok?r.json():null)
+      .then(d=>{if(!off)setC(d);})
+      .catch(e=>console.error("[close] could not read the close card",{planId},e));
+    return()=>{off=true;};
+  },[planId]);
+  if(!c?.ask)return null;
+  const answer=async(score)=>{
+    if(saving)return;
+    setSaving(score);
+    try{
+      const r=await fetch(`/api/plans/${planId}/close`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({score})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      setC(x=>({...x,answer:d.answer??score}));
+    }catch(e){console.error("[close] answer not saved",{planId},e);toast(e.message);}
+    setSaving(null);
+  };
+  const owed=closeSettleLine(c.settle);
+  const settleText=owed||(c.settle?.pending?"A payment is waiting to be confirmed":null);
+  const next=c.next;
+  const planNext=()=>{
+    if(!next)return;
+    if(next.blockedBy){push("planDetail",{planId:next.blockedBy.id,groupId:next.groupId});return;}
+    // The same group and the same kind of plan; `fromClose` goes to POST
+    // /api/plans as from_close, which counts it once the plan exists.
+    push("createPlan",{fresh:true,defaultGroupId:next.groupId,seed:{planType:next.type,fromClose:next.fromClose}});
+  };
+  const chosen=CLOSE_SCORES.find(s=>s.score===c.answer);
+  return(
+    <div style={{margin:"0 20px 16px",padding:"16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:18}}>
+      <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1,marginBottom:10}}>How was it?</div>
+      <div style={{display:"flex",gap:8}} role="group" aria-label="How was it?">
+        {CLOSE_SCORES.map(s=>{
+          const on=c.answer===s.score;
+          return(
+            <button key={s.score} type="button" aria-pressed={on} aria-label={s.label} disabled={!!saving} onClick={()=>answer(s.score)}
+              style={{flex:1,padding:"10px 0",borderRadius:14,fontSize:26,cursor:saving?"progress":"pointer",
+                border:`1px solid ${on?C.accentText:C.border}`,background:on?C.accentDim:"none"}}>
+              {saving===s.score?"…":s.emoji}
+            </button>
+          );
+        })}
+      </div>
+      {chosen&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>{chosen.label} — thanks. Tap another to change it.</div>}
+      {settleText&&(
+        <button type="button" onClick={()=>push("settleUp",{planId,groupId})}
+          style={{display:"flex",justifyContent:"space-between",alignItems:"center",width:"100%",marginTop:14,padding:"12px 14px",
+            background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,color:C.t1,fontSize:13.5,cursor:"pointer",textAlign:"left"}}>
+          <span>{settleText}</span><span style={{color:C.accentText,fontWeight:700,flexShrink:0,marginLeft:10}}>Settle up →</span>
+        </button>
+      )}
+      {c.settleKnown===false&&(
+        <div style={{fontSize:12,color:C.t3,marginTop:12}}>Couldn't check what's owed on this trip just now.</div>
+      )}
+      {next&&(
+        <button className="bp" style={{marginTop:14,width:"100%"}} onClick={planNext}>
+          {next.blockedBy?`You're already planning ${next.blockedBy.title||"the next one"} — open it`:"Plan the next one?"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── "Mute reminders for this trip" ──────────────────────────────────────
+// One switch per person per plan (plan_notification_mutes, through
+// /api/plans/[id]/mute). lib/notify-user.ts checks it before anything about
+// this plan reaches the bell or the phone — the countdown pings, the
+// settle-up reminder and a friend's nudge alike. Hidden until the table is
+// there, rather than a switch that does nothing.
+function MuteReminders({planId,toast,solo=false}){
+  const [m,setM]=useState(null);
+  const [busy,setBusy]=useState(false);
+  useEffect(()=>{
+    if(!planId||isTempId(planId))return;
+    let off=false;
+    fetch(`/api/plans/${planId}/mute`).then(r=>r.ok?r.json():null).then(d=>{if(!off)setM(d);})
+      .catch(e=>console.error("[mute] could not read",{planId},e));
+    return()=>{off=true;};
+  },[planId]);
+  if(!m?.available)return null;
+  const flip=async()=>{
+    if(busy)return;
+    setBusy(true);
+    try{
+      const r=await fetch(`/api/plans/${planId}/mute`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({muted:!m.muted})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      setM(x=>({...x,muted:d.muted===true}));
+      toast(d.muted?"Reminders for this trip are off":"Reminders for this trip are back on");
+    }catch(e){console.error("[mute] not saved",{planId},e);toast(e.message);}
+    setBusy(false);
+  };
+  return(
+    <label style={{display:"flex",alignItems:"center",gap:12,marginTop:14,padding:"12px 14px",background:C.s2,
+      border:`1px solid ${C.border}`,borderRadius:14,cursor:busy?"progress":"pointer"}}>
+      <span style={{flex:1}}>
+        <span style={{display:"block",fontSize:13.5,color:C.t1,fontWeight:600}}>Mute reminders for this trip</span>
+        <span style={{display:"block",fontSize:12,color:C.t2,lineHeight:1.5,marginTop:2}}>
+          {solo
+            ?(m.muted?"Nothing about this trip reaches your bell or your phone.":"Reminders about this trip come to your bell and your phone.")
+            :(m.muted?"Nothing about this trip reaches your bell or your phone — not reminders, not nudges from the group.":"Reminders and nudges about this trip come to your bell and your phone.")}
+        </span>
+      </span>
+      <input type="checkbox" checked={!!m.muted} disabled={busy} onChange={flip} aria-label="Mute reminders for this trip"
+        style={{width:20,height:20,accentColor:C.accent}}/>
+    </label>
+  );
+}
+
+// ─── Settle up ───────────────────────────────────────────────────────────
+// GET /api/plans/[id]/ledger: this person's lines ("You owe Sam $42 · Alex
+// owes you $18"), and on the lines they pay, the ways the other person chose
+// to be paid. Reach never moves this money — Venmo and Cash App open the
+// payer's own app already filled in, Zelle is the contact with a copy button,
+// and "Mark as paid" records what happened. Nothing reads as received until
+// the person it was paid to says so.
+const SETTLE_HANDLE_ASKED="reach_settle_handle_asked";
+function newSettleKey(){
+  try{ if(typeof crypto!=="undefined"&&crypto.randomUUID)return crypto.randomUUID().replace(/-/g,"").slice(0,16); }
+  catch(e){console.error("[settle] no randomUUID here, minting a key without it",e);}
+  return Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+}
+function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
+  const group=groups.find(g=>g.id===groupId);
+  const plan=group?.plans?.find(p=>p.id===planId);
+  const [l,setL]=useState(null);
+  const [failed,setFailed]=useState(false);
+  const [done,setDone]=useState([]);
+  const [busy,setBusy]=useState(null);
+  // One key per line, minted when it is drawn and sent on every tap.
+  const keys=useRef({});
+  const keyFor=line=>{const k=lineKeyPart(line);if(!keys.current[k])keys.current[k]=`${k}.${newSettleKey()}`;return keys.current[k];};
+  const [askDismissed,setAskDismissed]=useState(true);
+  useEffect(()=>{try{setAskDismissed(!!localStorage.getItem(`${SETTLE_HANDLE_ASKED}:${me||""}`));}catch(e){setAskDismissed(false);}},[me]);
+  const [handles,setHandles]=useState({venmo:"",cashtag:"",zelle:""});
+  const [savingHandles,setSavingHandles]=useState(false);
+
+  const load=async()=>{
+    try{
+      const [r,s]=await Promise.all([fetch(`/api/plans/${planId}/ledger`),fetch(`/api/plans/${planId}/settlements`)]);
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||String(r.status));
+      setL(d);setFailed(false);
+      const sd=s.ok?await s.json().catch(()=>null):null;
+      setDone((sd?.settlements||[]).filter(x=>x.status==="paid"));
+    }catch(e){console.error("[settle] could not read the ledger",{planId},e);setFailed(true);}
+  };
+  useEffect(()=>{if(planId&&!isTempId(planId))load();},[planId]);
+
+  const nameOf=id=>l?.people?.[id]?.name?nameFor(l.people,id):firstNameOf(um?.[id],"Someone");
+  const send=async(method,body,{quiet=false,keepalive=false}={})=>{
+    const r=await fetch(`/api/plans/${planId}/settlements`,{method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body),keepalive});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok){
+      const text=settleRefusal(r.status,d);
+      if(!quiet)toast(text);
+      console.error("[settle] not recorded",{planId,status:r.status,reason:d.reason});
+      return false;
+    }
+    return true;
+  };
+  // Leaving for Venmo or Cash App: said as "on its way" (pending) as they go,
+  // so the line asks them on the way back whether it went.
+  const opened=(line,app)=>{
+    trackEvent("settle_up_link_opened",{app,amount:line.amountCents},{planId,groupId});
+    send("POST",{toUserId:line.with,amountCents:line.amountCents,method:app,status:"pending",idempotencyKey:keyFor(line)},{quiet:true,keepalive:true})
+      .then(()=>load());
+  };
+  const act=async(id,fn)=>{if(busy)return;setBusy(id);try{await fn();}finally{setBusy(null);}await load();};
+  const markPaid=line=>act(`paid:${line.with}`,async()=>{
+    const ok=line.pending
+      ?await send("PATCH",{id:line.pending.id,status:"paid"})
+      :await send("POST",{toUserId:line.with,amountCents:line.amountCents,method:"other",status:"paid",idempotencyKey:keyFor(line)});
+    if(ok)toast(`Marked as paid to ${nameOf(line.with)}`);
+  });
+  const markReceived=line=>act(`got:${line.with}`,async()=>{
+    const ok=line.pending
+      ?await send("PATCH",{id:line.pending.id,status:"paid"})
+      :await send("POST",{fromUserId:line.with,amountCents:line.amountCents,method:"other",status:"paid",idempotencyKey:keyFor(line)});
+    if(ok)toast(`Marked as received from ${nameOf(line.with)}`);
+  });
+  const withdraw=line=>act(`undo:${line.with}`,async()=>{
+    if(!line.pending)return;
+    // A claim taken back is a new start: the next tap is a new key, or it
+    // would replay the cancelled one and record nothing.
+    if(await send("PATCH",{id:line.pending.id,status:"cancelled"}))delete keys.current[lineKeyPart(line)];
+  });
+  const copy=async(value)=>{
+    try{await navigator.clipboard.writeText(value);toast("Copied");}
+    catch(e){toast(value);}
+  };
+  const dismissAsk=()=>{try{localStorage.setItem(`${SETTLE_HANDLE_ASKED}:${me||""}`,"1");}catch(e){}setAskDismissed(true);};
+  const saveHandles=async()=>{
+    if(savingHandles)return;
+    const body={};
+    if(handles.venmo.trim())body.venmoHandle=handles.venmo.trim();
+    if(handles.cashtag.trim())body.cashtag=handles.cashtag.trim();
+    if(handles.zelle.trim())body.zelleContact=handles.zelle.trim();
+    if(!Object.keys(body).length){toast("Add at least one, or tap Not now");return;}
+    setSavingHandles(true);
+    try{
+      const r=await fetch("/api/profile",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      dismissAsk();
+      toast("Saved — friends who owe you can pay you there now");
+      await load();
+    }catch(e){console.error("[settle] handles not saved",e);toast(e.message);}
+    setSavingHandles(false);
+  };
+
+  const ua=typeof navigator!=="undefined"?navigator.userAgent:"";
+  const lines=openLines(l?.lines);
+  const headline=l?settleHeadline(l.lines,l.people):null;
+  const marking=l?.settlementsAvailable!==false;
+  const btn={padding:"10px 12px",borderRadius:12,fontSize:13,fontWeight:700,textDecoration:"none",textAlign:"center",cursor:"pointer"};
+  const primary={...btn,background:C.accent,color:C.onAccent,border:"none"};
+  const quiet={...btn,background:"none",color:C.t1,border:`1px solid ${C.border}`};
+
+  return(
+    <div>
+      <ScreenHeader onBack={onBack} title="Settle up"/>
+      <div style={{padding:"0 20px 30px"}}>
+        <div style={{fontSize:12.5,color:C.t3,marginBottom:6}}>{plan?.title||"This trip"}{group?.name?` · ${group.name}`:""}</div>
+        {!l&&!failed&&<div style={{fontSize:13,color:C.t3}}>Working out who owes whom…</div>}
+        {failed&&!l&&(
+          <div style={{fontSize:13,color:C.t1,lineHeight:1.5}}>
+            Couldn't read what's owed just now.{" "}
+            <button onClick={load} style={{background:"none",border:"none",padding:0,color:C.accentText,fontWeight:600,cursor:"pointer",fontSize:13}}>Try again</button>
+          </div>
+        )}
+        {l?.solo&&<div style={{fontSize:14,color:C.t2,lineHeight:1.6}}>A trip for one has nobody to settle up with.</div>}
+        {l&&!l.solo&&(
+          <>
+            <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,lineHeight:1.3,marginBottom:14}}>
+              {headline||"You're all square"}
+            </div>
+            {!marking&&(
+              <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:12}}>
+                Marking a payment isn't switched on yet, so lines here don't move when someone pays.
+              </div>
+            )}
+            {l.you?.askForHandle&&!askDismissed&&(
+              <div style={{padding:14,background:C.accentDim,border:`1px solid ${C.accentText}`,borderRadius:14,marginBottom:14}}>
+                <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>Add your Venmo so friends can pay you back</div>
+                <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:10}}>Only people who owe you see it. Any one is enough.</div>
+                <input className="inp" placeholder="Venmo username" aria-label="Venmo username" value={handles.venmo}
+                  onChange={e=>setHandles(h=>({...h,venmo:e.target.value}))} style={{width:"100%",marginBottom:8,color:C.t1}}/>
+                <input className="inp" placeholder="$Cashtag" aria-label="Cash App $Cashtag" value={handles.cashtag}
+                  onChange={e=>setHandles(h=>({...h,cashtag:e.target.value}))} style={{width:"100%",marginBottom:8,color:C.t1}}/>
+                <input className="inp" placeholder="Zelle email or phone" aria-label="Zelle email or phone" value={handles.zelle}
+                  onChange={e=>setHandles(h=>({...h,zelle:e.target.value}))} style={{width:"100%",marginBottom:10,color:C.t1}}/>
+                <div style={{display:"flex",gap:8}}>
+                  <button className="bp" style={{flex:1}} disabled={savingHandles} onClick={saveHandles}>{savingHandles?"Saving…":"Save"}</button>
+                  <button className="bs" style={{flex:1}} onClick={dismissAsk}>Not now</button>
+                </div>
+              </div>
+            )}
+            {lines.map(line=>{
+              const name=nameOf(line.with);
+              const pend=pendingWords(line,name);
+              const venmo=venmoHref(line.pay?.venmo,ua);
+              const k=line.with;
+              return(
+                <div key={`${line.direction}:${line.with}`} style={{padding:14,background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,marginBottom:10}}>
+                  <div style={{fontSize:15,color:C.t1,fontWeight:600}}>{line.amountCents>0?lineWords(line,name):line.direction==="you_owe"?`To ${name}`:`From ${name}`}</div>
+                  {pend&&<div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginTop:6}}>⏳ {pend}</div>}
+                  {line.direction==="you_owe"&&!line.pending&&line.amountCents>0&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:12}}>
+                      {venmo&&<a href={venmo} {...(/^https?:/.test(venmo)?{target:"_blank",rel:"noopener noreferrer"}:{})} style={primary} onClick={()=>opened(line,"venmo")}>Pay on Venmo</a>}
+                      {line.pay?.cashApp&&<a href={line.pay.cashApp} target="_blank" rel="noopener noreferrer" style={venmo?quiet:primary} onClick={()=>opened(line,"cashapp")}>Pay on Cash App</a>}
+                      {line.pay?.zelle&&(
+                        <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5,color:C.t2}}>
+                          <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis"}}>Zelle: <strong style={{color:C.t1}}>{line.pay.zelle.value}</strong></span>
+                          <button className="bsm" onClick={()=>copy(line.pay.zelle.value)}>Copy</button>
+                        </div>
+                      )}
+                      {!hasWayToPay(line)&&(
+                        <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5}}>{name} hasn't added a way to be paid yet — pay them however you usually do.</div>
+                      )}
+                    </div>
+                  )}
+                  {marking&&(
+                    <div style={{display:"flex",gap:8,marginTop:10}}>
+                      {line.direction==="you_owe"?(
+                        <>
+                          <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>markPaid(line)}>{busy===`paid:${k}`?"…":"Mark as paid"}</button>
+                          {line.pending&&<button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>withdraw(line)}>{busy===`undo:${k}`?"…":"I didn't send it"}</button>}
+                        </>
+                      ):(
+                        <>
+                          <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>markReceived(line)}>{busy===`got:${k}`?"…":"Mark received"}</button>
+                          {line.pending&&<button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>withdraw(line)}>{busy===`undo:${k}`?"…":"Not yet"}</button>}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {done.length>0&&(
+              <div style={{marginTop:16}}>
+                <div className="sl" style={{marginBottom:8}}>Settled</div>
+                {done.map(s=>(
+                  <div key={s.id} style={{fontSize:13,color:C.t2,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <span style={{color:C.green,fontWeight:700}}>✓</span>{" "}
+                    {s.from_user_id===me?`You paid ${nameOf(s.to_user_id)} ${settleDollars(s.amount_cents)}`:`${nameOf(s.from_user_id)} paid you ${settleDollars(s.amount_cents)}`}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+        <div style={{fontSize:12,color:C.t3,marginTop:22,textAlign:"center"}}>{SETTLE_FOOTER}</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── "Where is this?" for a plan that never said ──────────────────────────
 // Plans made before the create flow asked where have no place, and their
 // days were being written for the title — "Test", "Weekend Away". This asks
@@ -9788,7 +10205,6 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   const [loadFailed,setLoadFailed]=useState(false);
   const [building,setBuilding]=useState(false);
-  const [nudging,setNudging]=useState(false);
   const [emailing,setEmailing]=useState(false);
   // The line whose Change sheet is open, and every open suggestion on the
   // plan ("Sam suggests … · 👍 2"), each under the line it is about.
@@ -10535,6 +10951,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       <div style={{flex:1,overflowY:"auto",paddingBottom:20}}>
         {atab==="overview"&&(
           <div style={{padding:"16px 0"}}>
+            {/* After the trip: the server says whether to ask (over by its
+                own clock, something on it held, and this person there). */}
+            {timing==="over"&&<CloseCard planId={planId} groupId={groupId} push={push} toast={toast}/>}
             {/* A weather no-go was saved, and nothing can check it. Said once,
                 quietly — never as though it was applied. */}
             {!CLIMATE_CHECKS_ENABLED&&savedWeatherNoGo({dealbreakers:plan.dealbreakers,noWayJose:myNoGos})&&(
@@ -10818,6 +11237,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   the options to the group is a different thing, and stays. */}
               {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&plan.options?.length>0&&<button className="bs" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
+              {/* Settle-up reminders come after the trip, so this stays then too. */}
+              <MuteReminders planId={planId} toast={toast} solo={soloTrip}/>
               {/* Only where a plan can be stuck — still deciding where it goes.
                   A decided plan may have money in it, and calling it off
                   from here says nothing about that. */}
@@ -11194,7 +11615,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             votes here, and the organiser picks (TripIdeas). */}
         {atab==="vote"&&plan.hasIdeas&&(
           <div style={{padding:"16px 0"}}>
-            <TripIdeas planId={planId} groupId={groupId} group={group} plan={plan} toast={toast}
+            <TripIdeas planId={planId} groupId={groupId} group={group} plan={plan} toast={toast} um={um}
               updateGroup={updateGroup} refreshGroup={refreshGroup} saveItineraryToServer={saveItineraryToServer}
               departure={departure}
               onRegenerate={()=>push("groupTrip",{groupId,planId,regenerate:true})}
@@ -11221,31 +11642,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     ?"One vote away."
                     :`${totalV} of ${plan.participants.length} voted.`}
               </div>
-              {/* A plan could sit needing one vote for a week with no way to
-                  tell anyone. This emails the people who have not voted. */}
-              {totalV<plan.participants.length&&(
-                <button className="bsm bsm-p" disabled={nudging} onClick={async()=>{
-                  if(nudging)return;
-                  if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
-                  setNudging(true);
-                  try{
-                    const r=await fetch(`/api/plans/${planId}/notify`,{
-                      method:"POST",headers:{"Content-Type":"application/json"},
-                      body:JSON.stringify({kind:"vote"}),
-                    });
-                    const d=await r.json().catch(()=>({}));
-                    if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
-                    toast(d.notified
-                      ? `Reminded ${d.notified} ${d.notified===1?"person":"people"} 📬`
-                      : (d.message||"Everyone has voted"));
-                  }catch(e){
-                    console.error("[planDetail] vote nudge failed",e);
-                    toast(e.message);
-                  }
-                  setNudging(false);
-                }}>{nudging?"Sending…":"Give them a nudge"}</button>
-              )}
             </div>
+            {/* A plan could sit needing one vote for a week with no way to
+                tell anyone. One face each, ✓ voted or grey: a grey face
+                nudges that person, and the organiser can remind everyone. */}
+            {totalV<plan.participants.length&&!soloTrip&&(
+              <div style={{marginBottom:18}}>
+                <WaitFaces planId={planId} kind="vote" um={um} toast={toast} organiser={organiserHere} rev={totalV}/>
+              </div>
+            )}
             {/* What moving the dates would disturb, read before it happens
                 rather than discovered afterwards. Each line names who has to
                 act: a table booked on somebody's own account can only be
@@ -11659,7 +12064,7 @@ const FIX_FOR=[
 ];
 function fixFor(why){ return FIX_FOR.find(f=>f.when.test(String(why||"")))||null; }
 
-function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toast,returnedIntent,redirectStatus,saveItineraryToServer,goToProfileSection,me}){
+function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,toast,returnedIntent,redirectStatus,saveItineraryToServer,goToProfileSection,me}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans?.find(p=>p.id===planId);
   // phases: loading | review | pay | approving | waiting | priceUp | reprice | problems | done | error
@@ -11679,6 +12084,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
   // Pricing again was refused in a way pressing it again cannot fix.
   const [repriceStuck,setRepriceStuck]=useState(false);
   const [nudging,setNudging]=useState(false);
+  // Bumped after a nudge, so the faces read who was nudged straight away.
+  const [facesRev,setFacesRev]=useState(0);
   const [funding,setFunding]=useState(null);
   const [bookings,setBookings]=useState([]);
   const [clientSecret,setClientSecret]=useState(null);
@@ -12126,13 +12533,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
         body:JSON.stringify({kind:"funding"}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't send those reminders");
-      toast(d.notified
-        ? `Reminded ${d.notified} ${d.notified===1?"person":"people"} 📬`
-        : (d.message||"Everyone has already paid"));
+      // Said as the server answered: who it reached, who was nudged lately,
+      // and a 429's own wait — hours, when it is hours.
+      toast(nudgeOutcome(r.status,d).text);
+      if(r.ok)setFacesRev(x=>x+1);
     }catch(e){
       console.error("[checkout] nudge failed",e);
-      toast(e.message);
+      toast("Couldn't send that nudge — try again in a moment.");
     }
     setNudging(false);
   };
@@ -12310,6 +12717,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents||0)/Math.max(funding.targetCents||0,1))*100));
       return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
+    {/* Who has paid, as faces — ✓ or grey, never an amount (owner decision
+        13). A grey face nudges that one person; the button is everyone. */}
+    <div style={{display:"flex",justifyContent:"center",marginBottom:16}}>
+      <WaitFaces planId={planId} kind="funding" um={um} toast={toast} solo={participants<=1} rev={facesRev}/>
+    </div>
     <button disabled={nudging} onClick={nudge} style={{padding:"12px 24px",borderRadius:14,border:"none",background:C.accent,color:C.onAccent,fontWeight:700,cursor:nudging?"progress":"pointer",opacity:nudging?.6:1}}>
       {nudging?"Sending…":"Give them a nudge"}
     </button>
@@ -12939,8 +13351,15 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,updateGroup,toas
             {busy?"One sec…":na?.state==="ready_to_book"?na.cta.label:"Book it"}</button>
         );
         if(s==="waiting")return(
-          <button disabled={nudging} onClick={()=>{tapped();nudge();}} style={{...big,opacity:nudging?.6:1}}>
-            {nudging?"Sending…":na?.state==="waiting_on_payments"?na.cta.label:"Give them a nudge"}</button>
+          <div>
+            {/* ✓ paid or grey, never an amount. A grey face nudges that
+                one person; the button under them reminds everyone. */}
+            <div style={{marginBottom:14}}>
+              <WaitFaces planId={planId} kind="funding" um={um} toast={toast} solo={participants<=1} rev={facesRev}/>
+            </div>
+            <button disabled={nudging} onClick={()=>{tapped();nudge();}} style={{...big,opacity:nudging?.6:1}}>
+              {nudging?"Sending…":na?.state==="waiting_on_payments"?na.cta.label:"Give them a nudge"}</button>
+          </div>
         );
         if(s==="in_progress")return(
           <button onClick={()=>{setPhase("loading");load();}} style={big}>Check again</button>
@@ -14091,14 +14510,28 @@ export default function ReachApp({realUser,onSignOut}={}){
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         push("checkout",{planId,groupId,returnedIntent,redirectStatus});
       }
-      // From "<organiser> called off <plan>": the group, where the next one
-      // is started. Only when nothing above has already used the group.
-      if(params.get("group")){
-        const groupId=params.get("group");
-        params.delete("group");
+      // From the funding nudge ("Your share is still to pay"): straight to
+      // that trip's checkout, where paying is.
+      if(params.get("pay")){
+        const planId=params.get("pay"), groupId=params.get("group");
+        params.delete("pay");params.delete("group");
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
-        if(/^[0-9a-f-]{36}$/i.test(groupId))push("groupDetail",{groupId});
+        if(/^[0-9a-f-]{36}$/i.test(planId)&&/^[0-9a-f-]{36}$/i.test(groupId||""))push("checkout",{planId,groupId});
+      }
+      // From "<organiser> called off <plan>": the group, where the next one
+      // is started. Only when nothing above has already used the group.
+      // With `plan` beside it (the countdown and settle-up pings, lib/
+      // pings.ts planUrl), the plan itself, which is what the ping is about.
+      if(params.get("group")){
+        const groupId=params.get("group"), planId=params.get("plan");
+        params.delete("group");params.delete("plan");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        if(/^[0-9a-f-]{36}$/i.test(groupId)){
+          if(/^[0-9a-f-]{36}$/i.test(planId||""))push("planDetail",{planId,groupId});
+          else push("groupDetail",{groupId});
+        }
       }
     }
   },[]);
@@ -14627,6 +15060,10 @@ export default function ReachApp({realUser,onSignOut}={}){
           // the caller does — CreatePlanFlow and GroupTripScreen — so the
           // rule holds across two phones whose group lists are both stale.
           ...(onOneActive?{accepts_one_active:true}:{}),
+          // Started from a finished trip's "Plan the next one?": the server
+          // counts it once this plan exists (next_trip_started_from_close),
+          // never stored on the plan.
+          ...(plan.fromClose?{from_close:plan.fromClose}:{}),
         }),
       });
       if(res.ok){
@@ -14841,6 +15278,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     if(screen==="createPlan")return <CreatePlanFlow {...cp} {...props} user={user} departure={departure}/>;
     if(screen==="editGroup")return <EditGroupScreen {...cp} {...props} onBack={pop}/>;
     if(screen==="checkout")return <CheckoutScreenV2 {...cp} {...props}/>;
+    if(screen==="settleUp")return <SettleUpScreen {...cp} {...props}/>;
     if(screen==="editItinerary")return <EditItineraryScreen {...cp} {...props}/>;
     if(screen==="expDetail")return <ExpDetailScreen {...cp} {...props} updateGroup={updateGroup} savePlanToServer={savePlanToServer} user={user} onQuizChange={syncUser}/>;
     return null;

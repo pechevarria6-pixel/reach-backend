@@ -322,7 +322,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   }
   const emailTo = recipients.filter(p => delivery.unreached.includes(String(p.id)));
 
-  const reached = new Set<string>(delivery.stored ? sendTo : []);
+  // The bell reached everybody it was written for — which is nobody who
+  // muted this trip (lib/notify-user.ts leaves them out of everything). Counting
+  // sendTo whole told the nudger "Nudged Sam" about a Sam who heard nothing.
+  const mutedIds = new Set(delivery.muted ?? []);
+  const reached = new Set<string>(delivery.stored ? sendTo.filter(id => !mutedIds.has(id)) : []);
   for (const id of delivery.pushed) reached.add(id);
   let emailed = 0;
   const failures: string[] = [];
@@ -381,5 +385,8 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     // so left out of this one.
     nudged: sendTo.filter(id => reached.has(id)).map(id => ({ userId: id, name: nameOf.get(id) ?? 'Someone' })),
     held,
+    // Turned reminders off for this trip ("Mute reminders for this trip"):
+    // nothing went to them, and the screen says so rather than "Nudged".
+    muted: sendTo.filter(id => mutedIds.has(id)).map(id => ({ userId: id, name: nameOf.get(id) ?? 'Someone' })),
   });
 }
