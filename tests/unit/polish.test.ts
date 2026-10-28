@@ -111,11 +111,41 @@ test('an old idea a drive away gets no flight line, whatever it priced', () => {
   assert.ok(lines.some(l => l.type === 'hotel'));
 });
 
-test('an old idea a long way off keeps its flight, and one whose distance is unknown writes none', () => {
+test('an old idea a long way off keeps its flight', () => {
   assert.ok(oldIdeaLines(oldIdea, { ...opts, km: 2400 }).some(l => l.type === 'flight'));
-  const unknown = oldIdeaLines(oldIdea, { ...opts, km: null });
-  assert.equal(unknown.some(l => l.type === 'flight'), false);
-  assert.ok(unknown.some(l => l.title === 'Getting there and back' && l.booking_mode === 'ahead'));
+});
+
+test('a drive away puts no price on the road: the model\'s ground figure was airport shuttles', () => {
+  // Asheville, a flight priced, $45 of "Airport shuttle and rideshares", 160 km from home.
+  const asheville = {
+    destination: 'Asheville', city: 'Asheville', tier: 'on_budget', total_per_person: 900,
+    costs: { flights: { per_person: 320 }, accommodation: { per_person: 400 }, ground_transport: { per_person: 45 } },
+  };
+  const lines = oldIdeaLines(asheville, { ...opts, town: 'Asheville', km: 160 });
+  const road = lines.find(l => l.title === 'Getting there and back')!;
+  assert.equal(road.cost_cents, null);
+  assert.equal(road.booking_mode, 'ahead');
+  assert.doesNotMatch(String(road.subtitle), /Estimate —/);
+  // Kept as what nobody can say it covers, never as the drive.
+  const about = lines.find(l => l.title === 'Getting about')!;
+  assert.equal(about.cost_cents, 4500);
+  assert.equal(lines.some(l => l.title === 'Airport transfers' || l.type === 'flight'), false);
+});
+
+test('a distance nobody could measure keeps the flight the idea was saved with', () => {
+  const lisbon = {
+    destination: 'Lisbon', city: 'Lisbon', tier: 'on_budget', total_per_person: 2200,
+    costs: { flights: { per_person: 900 }, accommodation: { per_person: 1100 } },
+  };
+  const unknown = oldIdeaLines(lisbon, { ...opts, town: 'Lisbon', km: null });
+  const flight = unknown.find(l => l.type === 'flight')!;
+  assert.equal(flight.cost_cents, 90000);
+  assert.equal(flight.booking_mode, 'reach');
+  assert.equal(unknown.some(l => /saved without a flight/.test(String(l.subtitle))), false);
+  // One priced at 0 really was saved without one, and says so.
+  const none = oldIdeaLines({ ...lisbon, costs: { ...lisbon.costs, flights: { per_person: 0 } } }, { ...opts, town: 'Lisbon', km: null });
+  assert.equal(none.some(l => l.type === 'flight'), false);
+  assert.ok(none.some(l => l.title === 'Getting there and back' && /saved without a flight/.test(String(l.subtitle))));
 });
 
 test('the client measures the distance before writing an old idea\'s lines', () => {
@@ -204,6 +234,86 @@ test('a second change sends the first straight away; a failed send reverts and s
   clock.advance(UNDO_MS);
   await tick();
   assert.deepEqual(log.slice(-1), ['second']);
+});
+
+test('a pointer or focus on the Undo stops the clock, and leaving it starts a full five seconds', async () => {
+  const clock = fakeClock();
+  const q = createUndoQueue(clock);
+  let sent = 0;
+  const p = q.schedule({ commit: () => { sent++; } });
+  clock.advance(UNDO_MS - 100);
+  q.hold(p.id);
+  assert.equal(q.pending()?.held, true);
+  clock.advance(UNDO_MS * 10);
+  await tick();
+  assert.equal(sent, 0);
+  q.release(p.id);
+  clock.advance(UNDO_MS - 1);
+  await tick();
+  assert.equal(sent, 0);
+  clock.advance(1);
+  await tick();
+  assert.equal(sent, 1);
+});
+
+test('flush sends what is waiting and resolves only once it has been answered', async () => {
+  const clock = fakeClock();
+  const q = createUndoQueue(clock);
+  const log: string[] = [];
+  let answer!: () => void;
+  q.schedule({ commit: () => new Promise<void>(r => { answer = () => { log.push('answered'); r(); }; }) });
+  let told = 0;
+  const off = q.subscribe(() => { told++; });
+  const done = q.flush().then(() => log.push('flushed'));
+  await tick();
+  assert.equal(q.pending(), null);
+  assert.ok(told >= 1);
+  assert.deepEqual(log, []);
+  answer();
+  await done;
+  assert.deepEqual(log, ['answered', 'flushed']);
+  off();
+  // Nothing waiting: resolves at once.
+  await q.flush();
+  await q.idle();
+});
+
+test('the Undo has a slot no other toast can take, and goes only when its change does', () => {
+  assert.match(app, /const showToast=msg=>\{if\(msg&&typeof msg==="object"&&msg\.undoId\)setUndoMsg\(msg\);else setToastMsg\(msg\);\};/);
+  assert.match(app, /\{undoMsg&&<UndoToast key=\{undoMsg\.undoId\}/);
+  const toast = between('function Toast({msg,onDone,below}){', '\n}\n');
+  assert.doesNotMatch(toast, /undoId|UNDO/);
+  const undo = between('function UndoToast({msg,id,onGone}){', '\n}\n');
+  // No timer of its own: it watches the queue.
+  assert.doesNotMatch(undo, /setTimeout/);
+  assert.match(undo, /UNDO\.subscribe\(look\)/);
+  assert.match(undo, /if\(!p\|\|p\.id!==id\)onGone\(\)/);
+  // Holding it stops the clock; a change made from the keyboard puts focus on it.
+  assert.match(undo, /onPointerEnter=\{\(\)=>UNDO\.hold\(id\)\}/);
+  assert.match(undo, /onFocus=\{\(\)=>UNDO\.hold\(id\)\}/);
+  assert.match(undo, /onBlur=\{e=>\{if\(!e\.currentTarget\.contains\(e\.relatedTarget\)\)UNDO\.release\(id\);\}\}/);
+  assert.match(undo, /if\(VIA_KEYS\)btn\.current\?\.focus\(\)/);
+});
+
+test('going on to another screen, or to pay, sends the waiting change first', () => {
+  assert.match(app, /const push=\(screen,props=\{\}\)=>\{UNDO\.flush\(\);setStack/);
+  assert.match(app, /const replace=\(screen,props=\{\}\)=>\{UNDO\.flush\(\);setStack/);
+  const load = between('function CheckoutScreenV2(', 'fetch(`/api/plans/${planId}/funding`),');
+  assert.match(load, /const load=async\(\)=>\{\n    try\{\n[^]*?await UNDO\.flush\(\);/);
+  const pay = between('const startPayment=async()=>{', 'const d=await r.json()');
+  assert.ok(pay.indexOf('await UNDO.flush();') >= 0 && pay.indexOf('await UNDO.flush();') < pay.indexOf('/funding`,{method:"POST"'));
+});
+
+test('a Change stand-in carries none of the old venue\'s facts, and Undo puts them all back', () => {
+  const change = between('const apply=(to,title,cost,name,url)=>{', 'const suggest=');
+  assert.match(change, /onSwapped\(\{\.\.\.item,\.\.\.STAND_IN_CLEARS,title:named,venue_name:name\|\|null,venue_website:url\|\|null\}\)/);
+  assert.match(change, /Object\.keys\(STAND_IN_CLEARS\)\.map\(k=>\[k,was\[k\]\?\?null\]\)/);
+  const clears = between('const STAND_IN_CLEARS={', '};');
+  for (const f of ['venue_name', 'venue_website', 'venue_phone', 'venue_note', 'venue_note_credit',
+    'venue_image_url', 'venue_image_credit', 'venue_image_link', 'venue_image_of']) assert.match(clears, new RegExp(`\\b${f}:null`));
+  // Every venue_ field the app reads off a line is one the stand-in clears.
+  const read = new Set(app.match(/\bvenue_[a-z_]+/g) ?? []);
+  for (const f of read) assert.match(clears, new RegExp(`\\b${f}:null`), f);
 });
 
 test('undo keys are unique', () => {

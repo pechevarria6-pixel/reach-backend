@@ -469,21 +469,52 @@ function ScreenHeader({onBack,label="Back",title,right,overlay=false}){
 
 function Av({u,lg}){return <div className={lg?"av-lg":"av"} style={{background:u.color}}>{u.initials}</div>;}
 function AvCluster({ids,um,max=4}){const shown=ids.slice(0,max);const extra=ids.length-max;return <div className="av-cl">{shown.map(id=>{const u=um[id];return u?<div key={id} className="av" style={{background:u.color}}>{u.initials}</div>:null;})}{extra>0&&<div className="av" style={{background:C.s3,color:C.t2}}>+{extra}</div>}</div>;}
-// A toast is a string, or { msg, undoId } for one that can still be taken
-// back (lib/undo.ts), or { msg, warn:true } for a change the screen had to
+// A toast is a string, or { msg, warn:true } for a change the screen had to
 // take back. Only the plain one says ✓: a reverted change is not a success.
-function Toast({msg,onDone}){
+// { msg, undoId } — one that can still be taken back (lib/undo.ts) — never
+// comes here: it has its own slot (UndoToast), so no later toast can cover
+// the Undo while the change it would take back is still waiting to go.
+function Toast({msg,onDone,below}){
   const o=typeof msg==="object"&&msg?msg:{msg};
-  const ms=o.undoId?UNDO_MS:o.warn?4000:2500;
+  const ms=o.warn?4000:2500;
   useEffect(()=>{const t=setTimeout(onDone,ms);return()=>clearTimeout(t);},[msg]);
-  if(o.undoId)return(
-    <div className="toast toast-undo" role="status">
-      <span>{o.msg}</span>
-      <button onClick={()=>{UNDO.undo(o.undoId);onDone();}}>Undo</button>
+  const at=below?{top:128}:null;
+  if(o.warn)return <div className="toast toast-warn" role="alert" style={{...at,animation:"ti .3s ease,to .3s ease 3.7s forwards"}}>{o.msg}</div>;
+  return <div className="toast" role="status" style={at||undefined}>✓ {o.msg}</div>;
+}
+
+// Whether the last thing pressed was a key. A change made from the keyboard
+// moves focus to its Undo, since otherwise the button sits after every other
+// control on the screen and five seconds is not long enough to Tab to it.
+let VIA_KEYS=false;
+if(typeof window!=="undefined"){
+  window.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" ")VIA_KEYS=true;},true);
+  window.addEventListener("pointerdown",()=>{VIA_KEYS=false;},true);
+}
+
+// The Undo for the one change waiting (lib/undo.ts). It is there exactly as
+// long as the change can still be taken back: it goes when the change is
+// sent, undone or replaced, never on a timer of its own. A pointer over it or
+// focus in it stops the clock (UNDO.hold), and leaving starts a fresh five
+// seconds, so nobody loses the way back while reaching for it.
+function UndoToast({msg,id,onGone}){
+  const btn=useRef(null);
+  const [held,setHeld]=useState(false);
+  useEffect(()=>{
+    const look=()=>{const p=UNDO.pending();if(!p||p.id!==id)onGone();else setHeld(p.held);};
+    look();
+    if(VIA_KEYS)btn.current?.focus();
+    return UNDO.subscribe(look);
+  },[id]);
+  return(
+    <div className="toast toast-undo" role="status" aria-live="polite"
+      style={held?{animation:"none",opacity:1}:undefined}
+      onPointerEnter={()=>UNDO.hold(id)} onPointerLeave={()=>UNDO.release(id)}
+      onFocus={()=>UNDO.hold(id)} onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))UNDO.release(id);}}>
+      <span>{msg}</span>
+      <button ref={btn} onClick={()=>UNDO.undo(id)}>Undo</button>
     </div>
   );
-  if(o.warn)return <div className="toast toast-warn" role="alert" style={{animation:"ti .3s ease,to .3s ease 3.7s forwards"}}>{o.msg}</div>;
-  return <div className="toast" role="status">✓ {o.msg}</div>;
 }
 
 // The one change waiting on its Undo (lib/undo.ts). Module-wide, because a
@@ -506,6 +537,12 @@ function undoable(toast,{msg,apply,revert,commit,what}){
   });
   toast({msg,undoId:p.id});
 }
+
+// What a line says about its venue, all of it from that venue's own data.
+// A Change stand-in clears every one: the old place's phone under the new
+// place's name is a fact about a venue nobody checked.
+const STAND_IN_CLEARS={venue_name:null,venue_website:null,venue_phone:null,venue_note:null,venue_note_credit:null,
+  venue_image_url:null,venue_image_credit:null,venue_image_link:null,venue_image_of:null};
 
 /** One request for an undoable change: the key makes a repeat the same request. */
 async function sendOnce(url,{method="POST",body,key}){
@@ -568,10 +605,10 @@ function OptionSkeletons({count=3}){
 // "kept" branch does. An idea saved before away lines existed has no
 // estimate and no distance, so nothing here can tell a flight from a drive:
 // for one with nights, the distance from home is measured here and the
-// server's drive rule decides (oldIdeaLines): a drive gets the road and no
-// flight line, a long way gets the flight, and when either end cannot be
-// placed no flight line is written at all — getting there is said to be
-// theirs to arrange. Never a flight Reach would go and quote for a cabin
+// server's drive rule decides (oldIdeaLines): a drive gets the road, unpriced,
+// and no flight line, a long way gets the flight, and when either end cannot
+// be placed the idea is said as it was saved — a flight it priced stays the
+// flight, one it priced at 0 is theirs to arrange. Never a flight Reach would go and quote for a cabin
 // down the road. A day trip with none carries no lines it can't vouch for.
 async function awayRows(trip,{fixed,startDate,endDate,party=1,solo=false,from=null}={}){
   if(Array.isArray(fixed))return fixed;
@@ -9495,9 +9532,13 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
     undoable(toast,{
       msg:`Changed to ${name||named}`,
       what:item.title,
-      apply:()=>{onSwapped({...item,title:named,...(name?{venue_name:name}:{}),...(url?{venue_website:url}:{})});onClose();},
-      // Merged into the line, so what the stand-in added is cleared too.
-      revert:()=>onSwapped({...was,venue_name:was.venue_name??null,venue_website:was.venue_website??null}),
+      // The stand-in says only what is known of the new place: its name and
+      // its link when it came with one. Everything else on the line — the
+      // phone, the photo, what's on, the site — was the old venue's, and
+      // stays off until the server's own line comes back.
+      apply:()=>{onSwapped({...item,...STAND_IN_CLEARS,title:named,venue_name:name||null,venue_website:url||null});onClose();},
+      // Merged into the line, so every field the stand-in cleared comes back.
+      revert:()=>onSwapped({...was,...Object.fromEntries(Object.keys(STAND_IN_CLEARS).map(k=>[k,was[k]??null]))}),
       commit:async key=>{
         const out=await sendOnce(`/api/plans/${planId}/itinerary/${item.id}`,{method:"PATCH",body:freeBody(to,title,cost),key});
         if(out.item)onSwapped(out.item);
@@ -12421,6 +12462,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
 
   const load=async()=>{
     try{
+      // A change sent on the way here (a Skip, a Change) is answered first:
+      // the share read below must already be the one after it.
+      await UNDO.flush();
       // The itinerary becomes bookings here, on the way in. Until this
       // existed, checkout asked for the plan's bookings and got an empty
       // list — people paid their share against a target of nothing, and
@@ -12514,6 +12558,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     if(isTempId(planId)){ toast("This trip is still saving — try again in a moment"); return; }
     setBusy(true);
     try{
+      // Never an intent for a share a waiting change is about to alter.
+      await UNDO.flush();
       const r=await fetchWithin(`/api/plans/${planId}/funding`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})},15000,"setting up your payment");
       const d=await r.json().catch(()=>({}));
       // Priced for a different number of people than are going. Nothing was
@@ -14599,6 +14645,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   // rather than on an empty user object.
   const [identityLoaded,setIdentityLoaded]=useState(false);
   const [toastMsg,setToastMsg]=useState(null);
+  const [undoMsg,setUndoMsg]=useState(null);
   const [stack,setStack]=useState([]);
   // Which page of Profile to land on, when something sent somebody there to
   // fix a specific thing. Cleared when the tab changes so it does not reopen
@@ -15459,13 +15506,17 @@ export default function ReachApp({realUser,onSignOut}={}){
       return false;
     }
   };
-  const showToast=msg=>setToastMsg(msg);
-  const push=(screen,props={})=>setStack(s=>[...s,{screen,props}]);
+  // An undoable toast goes to its own slot, which nothing else replaces.
+  const showToast=msg=>{if(msg&&typeof msg==="object"&&msg.undoId)setUndoMsg(msg);else setToastMsg(msg);};
+  // Going on to another screen sends the change waiting on its Undo first:
+  // the next screen may read what it changes (checkout reads your share,
+  // which a Skip seconds ago has just made smaller).
+  const push=(screen,props={})=>{UNDO.flush();setStack(s=>[...s,{screen,props}]);};
   const pop=()=>setStack(s=>s.slice(0,-1));
   // Swaps the current screen for another. Pushing instead would leave the
   // screen you just finished with sitting underneath, so Back would walk you
   // into the form you had already completed.
-  const replace=(screen,props={})=>setStack(s=>[...s.slice(0,-1),{screen,props}]);
+  const replace=(screen,props={})=>{UNDO.flush();setStack(s=>[...s.slice(0,-1),{screen,props}]);};
   // Applies the change to whatever state is current, not to whatever `groups`
   // happened to hold when this closure was made.
   //
@@ -15601,7 +15652,8 @@ export default function ReachApp({realUser,onSignOut}={}){
               )}
           </>
         </div>
-        {toastMsg&&<Toast key={typeof toastMsg==="object"?`${toastMsg.undoId||""}:${toastMsg.msg}`:toastMsg} msg={toastMsg} onDone={()=>setToastMsg(null)}/>}
+        {undoMsg&&<UndoToast key={undoMsg.undoId} id={undoMsg.undoId} msg={undoMsg.msg} onGone={()=>setUndoMsg(u=>u&&u.undoId===undoMsg.undoId?null:u)}/>}
+        {toastMsg&&<Toast key={typeof toastMsg==="object"?toastMsg.msg:toastMsg} msg={toastMsg} below={!!undoMsg} onDone={()=>setToastMsg(null)}/>}
       </div>
     </>
   );

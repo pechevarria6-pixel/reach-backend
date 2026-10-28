@@ -551,21 +551,40 @@ export function savedIdeaLines(trip: AwayTripLike, opts: {
  * flights · Booked through Reach" — a flight checkout would go and quote for
  * somewhere you drive to. With the distance from home (lib/away.ts), the
  * server's own drive rule decides it (isNear, DRIVE_KM): a drive gets the
- * road and no flight line at all; a long way gets the flight. Without one —
- * either end could not be placed — nothing can say it is not a drive, so no
- * flight line is written either: getting there is said to be theirs to
- * arrange, which is true whichever it turns out to be.
+ * road and no flight line at all; a long way gets the flight.
+ *
+ * On a drive, the road carries no price. The only figure the idea has for
+ * the ground, ground_transport, was written by a model pricing the trip as
+ * a flight — shuttles from an airport nobody will land at — so calling it
+ * the drive is an estimate nobody made. It is kept as what savedIdeaLines
+ * calls it, "Getting about", since nobody can say what it covers.
+ *
+ * Without a distance — no home saved, or the lookup slow or empty — nothing
+ * is known that the saved idea did not already say, so it is said exactly as
+ * savedIdeaLines says it: a flight it priced stays the flight Reach books
+ * (a failed lookup must never take a transatlantic flight off a plan), and
+ * one it priced at 0 is said to be theirs to arrange.
  */
 export function oldIdeaLines(trip: AwayTripLike, opts: {
   nights: number; town: string; start?: string | null; end?: string | null;
   party: number; solo: boolean; km: number | null;
 }): FixedLine[] {
   const { km, ...rest } = opts;
-  if (typeof km === 'number' && Number.isFinite(km)) {
-    return awayLines(awayEstimate(trip, { nights: opts.nights, km }), rest);
-  }
+  if (typeof km !== 'number' || !Number.isFinite(km)) return savedIdeaLines(trip, rest);
+  if (!isNear(km)) return awayLines(awayEstimate(trip, { nights: opts.nights, km }), rest);
   const c = trip.costs ?? {};
-  return savedIdeaLines({ ...trip, costs: { ...c, flights: { per_person: 0 } } }, rest);
+  const { ground_transport: _modelGround, ...noGround } = c;
+  const lines = awayLines(awayEstimate({ ...trip, costs: noGround }, { nights: opts.nights, km }), rest);
+  const ground = priced(c.ground_transport) ? Math.round(c.ground_transport!.per_person as number) : null;
+  if (ground === null) return lines;
+  const road = lines.findIndex(l => l.title === 'Getting there and back');
+  lines.splice(road + 1, 0, {
+    scheduled_time: 'Before you go', type: 'transport',
+    title: 'Getting about', subtitle: OWN_ESTIMATE,
+    cost_cents: Math.round(ground * 100), booking_mode: 'ahead',
+    payment_note: 'You arrange this yourself', estimate: true,
+  });
+  return lines;
 }
 
 /**
