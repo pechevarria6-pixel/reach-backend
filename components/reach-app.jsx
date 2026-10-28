@@ -3,7 +3,7 @@ import { formatDates, nightsBetween, toDateOrNull } from "@/lib/dates";
 import { itineraryDays } from "@/lib/itinerary";
 import { namesList } from "@/lib/group-answers";
 import { shownTitle, isOrganiser, waitingTripIn } from "@/lib/trip-vote";
-import { lockedIn } from "@/lib/itinerary-change";
+import { lockedIn, bookedBy } from "@/lib/itinerary-change";
 import { itemsFromRows, typeForKind, itemNote } from "@/lib/contracts/itinerary-item";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive, dayWhere } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
@@ -13,11 +13,11 @@ import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, re
 import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild, afterAwayRebuild } from "@/lib/itinerary-rebuild";
-import { awayLines, awayCardRows, savedIdeaLines, rowOf } from "@/lib/away-lines";
+import { awayLines, awayCardRows, oldIdeaLines, previewFlying, rowOf } from "@/lib/away-lines";
 import { ticketSources } from "@/lib/tickets";
 import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
-import { byDay, dearestDay, linesYoureOff } from "@/lib/budget";
+import { byDay, dearestDay, linesYoureOff, lineCosts } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { visibleCategories } from "@/lib/discovery/category";
 import { priceLabel } from "@/lib/discovery/price-label";
@@ -44,6 +44,10 @@ import { kindOf as planKind } from "@/lib/one-active";
 import { bringAlongNote, tripHolds, notOnSentence } from "@/lib/joining";
 import { facesShown, othersPending, nudgeOutcome, waitWords, retryAfter, askNote as askNoteFor } from "@/lib/group-wait";
 import { nameFor, lineWords, openLines, settleHeadline, pendingWords, settledWords, nextBlockedWords, CLOSE_PENDING_LINE, dollars as settleDollars, venmoHref, hasWayToPay, lineKeyPart, settleRefusal, closeSettleLine, CLOSE_SCORES, SETTLE_FOOTER } from "@/lib/settle-view";
+import Sheet from "@/components/Sheet";
+import { haptic, prefersReducedMotion, revertWords } from "@/lib/feel";
+import { createUndoQueue, UNDO_MS } from "@/lib/undo";
+import { away as awayOf } from "@/lib/away";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -286,9 +290,30 @@ button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2
 }
 .inp::placeholder{color:${C.t3};}
 .ov{position:absolute;inset:0;background:${C.overlay};backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
-.sh{width:100%;max-height:90%;background:${C.s1};background-image:${C.grain};border-radius:28px 28px 0 0;border-top:1px solid ${C.border};box-shadow:inset 0 1px 0 ${C.edgeHi};overflow-y:auto;scrollbar-width:none;animation:su .25s cubic-bezier(.32,.72,0,1);padding-bottom:30px;}
+.sh{width:100%;max-height:90%;background:${C.s1};background-image:${C.grain};border-radius:28px 28px 0 0;border-top:1px solid ${C.border};box-shadow:inset 0 1px 0 ${C.edgeHi};overflow-y:auto;scrollbar-width:none;animation:su .2s cubic-bezier(.32,.72,0,1);padding-bottom:30px;outline:none;}
 .sh::-webkit-scrollbar{display:none;}
 .sh-hdl{width:36px;height:4px;border-radius:2px;background:${C.border};margin:12px auto 0;}
+/* The handle is what a thumb drags down (components/Sheet.jsx): a strip
+   tall enough to catch, that never scrolls the page under it. */
+.sh-drag{padding:0 0 10px;margin-bottom:-4px;touch-action:none;cursor:grab;}
+.sh-drag:active{cursor:grabbing;}
+/* Undo, beside what it undoes, for as long as it can still be undone. */
+.toast-undo{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left;
+  animation:ti .3s ease,to .3s ease ${(UNDO_MS-300)/1000}s forwards;}
+.toast-undo button{background:none;border:none;color:inherit;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer;padding:4px 2px;flex-shrink:0;}
+.toast-warn{background:${C.amberDim};color:${C.t1};border:1px solid ${C.amber};}
+/* The pin that drops when something is booked, paid or joined. */
+.pin-drop{display:inline-block;color:${C.accent};transform-origin:50% 100%;animation:pindrop .55s cubic-bezier(.3,1.4,.5,1) both;}
+.pin-drop-shadow{display:block;width:14px;height:4px;margin:2px auto 0;border-radius:50%;background:${C.accent};opacity:.35;animation:pinshadow .55s ease both;}
+/* What is coming, drawn where it will be, while it is worked out. */
+.skel{background:${C.s2};border:1px solid ${C.border};border-radius:20px;overflow:hidden;position:relative;}
+.skel-bar{background:${C.s3};border-radius:6px;height:12px;}
+.skel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+  background:linear-gradient(90deg,transparent,${C.edgeHi},transparent);animation:shimmer 1.4s ease-in-out infinite;}
+@media (prefers-reduced-motion:reduce){
+  .skel::after{display:none;}
+  .pin-drop,.pin-drop-shadow{animation:none;}
+}
 .sh-hdr{padding:20px 20px 16px;border-bottom:1px solid ${C.border};display:flex;align-items:center;justify-content:space-between;}
 .sh-ttl{font-size:17px;font-weight:600;color:${C.t1};}
 .toast{position:absolute;top:70px;left:16px;right:16px;background:${C.green};color:${C.onGreen};border-radius:14px;padding:12px 16px;font-size:13px;font-weight:600;z-index:500;text-align:center;animation:ti .3s ease,to .3s ease 2.2s forwards;}
@@ -328,6 +353,9 @@ button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2
 @keyframes su{from{transform:translateY(100%)}to{transform:translateY(0)}}
 @keyframes ti{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
 @keyframes to{to{opacity:0;transform:translateY(-10px)}}
+@keyframes pindrop{0%{transform:translateY(-22px) scale(.9);opacity:0}55%{transform:translateY(0) scale(1.06,.92);opacity:1}75%{transform:translateY(-3px) scale(.98,1.02)}100%{transform:translateY(0) scale(1)}}
+@keyframes pinshadow{0%{transform:scale(.3);opacity:0}55%{transform:scale(1.1);opacity:.4}100%{transform:scale(1);opacity:.35}}
+@keyframes shimmer{to{transform:translateX(100%)}}
 `;
 
 const ALL_CONTACTS = [];
@@ -441,7 +469,86 @@ function ScreenHeader({onBack,label="Back",title,right,overlay=false}){
 
 function Av({u,lg}){return <div className={lg?"av-lg":"av"} style={{background:u.color}}>{u.initials}</div>;}
 function AvCluster({ids,um,max=4}){const shown=ids.slice(0,max);const extra=ids.length-max;return <div className="av-cl">{shown.map(id=>{const u=um[id];return u?<div key={id} className="av" style={{background:u.color}}>{u.initials}</div>:null;})}{extra>0&&<div className="av" style={{background:C.s3,color:C.t2}}>+{extra}</div>}</div>;}
-function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);return()=>clearTimeout(t);},[]);return <div className="toast">✓ {msg}</div>;}
+// A toast is a string, or { msg, undoId } for one that can still be taken
+// back (lib/undo.ts), or { msg, warn:true } for a change the screen had to
+// take back. Only the plain one says ✓: a reverted change is not a success.
+function Toast({msg,onDone}){
+  const o=typeof msg==="object"&&msg?msg:{msg};
+  const ms=o.undoId?UNDO_MS:o.warn?4000:2500;
+  useEffect(()=>{const t=setTimeout(onDone,ms);return()=>clearTimeout(t);},[msg]);
+  if(o.undoId)return(
+    <div className="toast toast-undo" role="status">
+      <span>{o.msg}</span>
+      <button onClick={()=>{UNDO.undo(o.undoId);onDone();}}>Undo</button>
+    </div>
+  );
+  if(o.warn)return <div className="toast toast-warn" role="alert" style={{animation:"ti .3s ease,to .3s ease 3.7s forwards"}}>{o.msg}</div>;
+  return <div className="toast" role="status">✓ {o.msg}</div>;
+}
+
+// The one change waiting on its Undo (lib/undo.ts). Module-wide, because a
+// change made on one screen is still waiting after a tap to another — and
+// leaving the page sends it rather than losing it.
+const UNDO=createUndoQueue();
+if(typeof window!=="undefined")window.addEventListener("pagehide",()=>UNDO.flush());
+
+/**
+ * The screen has already changed (`apply`); this offers Undo for five
+ * seconds and then sends the one request (`commit(key)`, with the key as
+ * its Idempotency-Key). A failed commit puts the screen back (`revert`) and
+ * says so in words, never a status code.
+ */
+function undoable(toast,{msg,apply,revert,commit,what}){
+  apply?.();
+  const p=UNDO.schedule({
+    commit,revert,
+    onFail:e=>{console.error("[undo] the change did not save",e);toast({msg:revertWords(e?.message,what||"that"),warn:true});},
+  });
+  toast({msg,undoId:p.id});
+}
+
+/** One request for an undoable change: the key makes a repeat the same request. */
+async function sendOnce(url,{method="POST",body,key}){
+  const r=await fetch(url,{method,keepalive:true,
+    headers:{"Content-Type":"application/json","Idempotency-Key":key},
+    ...(body!==undefined?{body:JSON.stringify(body)}:{})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"");}
+  return r.json().catch(()=>({}));
+}
+
+// The gold pin, dropped where something just became real: booked, paid,
+// joined. Still for somebody who asked for less motion — the pin is there,
+// it just doesn't fall.
+function PinDrop({size=34,label}){
+  return(
+    <span role="img" aria-label={label||"Done"} style={{display:"inline-block",lineHeight:1}}>
+      <span className="pin-drop" aria-hidden="true">
+        <svg width={size} height={size*1.3} viewBox="0 0 24 31" fill="currentColor">
+          <path d="M12 0C5.4 0 0 5.3 0 11.9 0 20.8 12 31 12 31s12-10.2 12-19.1C24 5.3 18.6 0 12 0zm0 16.6a4.7 4.7 0 1 1 0-9.4 4.7 4.7 0 0 1 0 9.4z"/>
+        </svg>
+      </span>
+      <span className="pin-drop-shadow" aria-hidden="true"/>
+    </span>
+  );
+}
+
+// Three cards drawn where the options will be, while they are worked out.
+function OptionSkeletons({count=3}){
+  return(
+    <div aria-busy="true" aria-label="Working out your options" style={{display:"flex",flexDirection:"column",gap:14}}>
+      {Array.from({length:count},(_,i)=>(
+        <div key={i} className="skel" aria-hidden="true">
+          <div style={{height:120,background:C.s3,opacity:.6}}/>
+          <div style={{padding:"14px 16px 18px",display:"flex",flexDirection:"column",gap:10}}>
+            <div className="skel-bar" style={{width:"62%",height:16}}/>
+            <div className="skel-bar" style={{width:"88%"}}/>
+            <div className="skel-bar" style={{width:"40%"}}/>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // The big fixed costs are events too: a flight is a thing that happens on a
 // day and has a price. Making them itinerary items means the budget screen
@@ -460,11 +567,13 @@ function Toast({msg,onDone}){useEffect(()=>{const t=setTimeout(onDone,2500);retu
 // estimate the idea was saved with, which is exactly what the server's own
 // "kept" branch does. An idea saved before away lines existed has no
 // estimate and no distance, so nothing here can tell a flight from a drive:
-// for one with nights, savedIdeaLines keeps a flight it priced and says of
-// one it priced at 0 that getting there is not worked out — never a flight
-// Reach would go and quote for a cabin down the road. A day trip with none
-// carries no lines it can't vouch for.
-function awayRows(trip,{fixed,startDate,endDate,party=1,solo=false}={}){
+// for one with nights, the distance from home is measured here and the
+// server's drive rule decides (oldIdeaLines): a drive gets the road and no
+// flight line, a long way gets the flight, and when either end cannot be
+// placed no flight line is written at all — getting there is said to be
+// theirs to arrange. Never a flight Reach would go and quote for a cabin
+// down the road. A day trip with none carries no lines it can't vouch for.
+async function awayRows(trip,{fixed,startDate,endDate,party=1,solo=false,from=null}={}){
   if(Array.isArray(fixed))return fixed;
   const nights=nightsBetween(startDate,endDate)||0;
   const opts={
@@ -474,7 +583,27 @@ function awayRows(trip,{fixed,startDate,endDate,party=1,solo=false}={}){
   };
   if(trip?.away&&typeof trip.away==="object")return awayLines(trip.away,opts).map(rowOf);
   if(nights<1)return [];
-  return savedIdeaLines(trip||{},{...opts,nights}).map(rowOf);
+  const km=await kmFromHome(from,trip);
+  return oldIdeaLines(trip||{},{...opts,nights,km}).map(rowOf);
+}
+
+// Great-circle km from home to the idea's town, through our own /api/geo,
+// or null when either end cannot be placed. lib/away.ts does the sum.
+async function kmFromHome(from,trip){
+  const place=async q=>{
+    if(!q||!String(q).trim())return null;
+    try{
+      const r=await fetchWithin("/api/geo?limit=1&q="+encodeURIComponent(String(q).trim()),{},6000,"placing the town");
+      if(!r.ok){console.error("[away] geo returned",r.status);return null;}
+      const d=await r.json().catch(()=>({}));
+      const h=(d.hits||[])[0];
+      return h&&Number.isFinite(h.lat)&&Number.isFinite(h.lng)?{lat:h.lat,lng:h.lng}:null;
+    }catch(e){console.error("[away] could not place",q,e);return null;}
+  };
+  const there=[trip?.city||trip?.destination,trip?.country_code].filter(Boolean).join(", ");
+  const [home,dest]=await Promise.all([place(from),place(there)]);
+  const km=awayOf({mode:"trip",home,destination:dest}).km;
+  return typeof km==="number"&&Number.isFinite(km)?km:null;
 }
 
 /** What the days stage is told about the option, so its away lines carry the tier. */
@@ -783,9 +912,8 @@ function NotificationsBell(){
         )}
       </button>
       {open&&(
-        <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:60,display:"flex",alignItems:"flex-end"}}>
-          <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxHeight:"75vh",overflowY:"auto",background:C.s1,
-            borderRadius:"20px 20px 0 0",padding:"18px 20px 28px"}}>
+        <Sheet fixed onClose={()=>setOpen(false)} label="Notifications"
+          style={{maxHeight:"75vh",borderRadius:"20px 20px 0 0",padding:"0 20px 28px"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
               <div style={{fontSize:17,fontWeight:700,color:C.t1}}>Notifications</div>
               <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",color:C.t2,fontSize:14,cursor:"pointer"}}>Done</button>
@@ -803,7 +931,7 @@ function NotificationsBell(){
             {push==="on"&&<div style={{fontSize:11.5,color:C.green,marginBottom:12}}>✓ This device gets these as notifications.</div>}
             {!data.items.length?(
               <div style={{fontSize:13,color:C.t2,padding:"18px 0",textAlign:"center"}}>
-                {data.available?"Nothing yet. When your group needs you, it shows up here.":"Nothing here yet."}
+                {data.available?"Nothing yet. When a plan needs you, it shows up here.":"Nothing here yet."}
               </div>
             ):data.items.map(n=>(
               <a key={n.id} href={n.url||"/home"} style={{display:"block",textDecoration:"none",padding:"11px 0",borderTop:`1px solid ${C.border}`}}>
@@ -814,8 +942,7 @@ function NotificationsBell(){
                 {n.body&&<div style={{fontSize:12.5,color:C.t2,marginTop:2,lineHeight:1.45}}>{n.body}</div>}
               </a>
             ))}
-          </div>
-        </div>
+        </Sheet>
       )}
     </>
   );
@@ -1948,9 +2075,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
         if(!d)return null;
         const names=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
         return(
-          <div onClick={()=>setOpenDay(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:60,display:"flex",alignItems:"flex-end"}}>
-            <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxHeight:"80vh",overflowY:"auto",background:C.s1,
-              borderRadius:"20px 20px 0 0",padding:"18px 20px 28px"}}>
+          <Sheet fixed onClose={()=>setOpenDay(null)} label={`${names[d.weekday]} ${Number(d.day.slice(8,10))}`}
+            style={{maxHeight:"80vh",borderRadius:"20px 20px 0 0",padding:"0 20px 28px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                 <div style={{fontSize:17,fontWeight:700,color:C.t1}}>{names[d.weekday]} {Number(d.day.slice(8,10))}</div>
                 <button onClick={()=>setOpenDay(null)} style={{background:"none",border:"none",color:C.t2,fontSize:14,cursor:"pointer"}}>Done</button>
@@ -1975,8 +2101,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
                 </div>
                 )}</PhotoFrame>
               ))}
-            </div>
-          </div>
+          </Sheet>
         );
       })()}
 
@@ -2391,9 +2516,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
 
       {/* Welcome back — did that actually happen? */}
       {askIfBooked&&!planPicker&&(
-        <div className="ov" onClick={()=>setAskIfBooked(false)}>
-          <div className="sh" onClick={e=>e.stopPropagation()}>
-            <div className="sh-hdl"/>
+        <Sheet onClose={()=>setAskIfBooked(false)} label="Did you get them?">
             <div style={{padding:"18px 20px 24px",textAlign:"center"}}>
               <div style={{fontSize:30,marginBottom:10}}>🎟️</div>
               <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:6}}>
@@ -2412,15 +2535,12 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                 Not yet
               </button>
             </div>
-          </div>
-        </div>
+        </Sheet>
       )}
 
       {/* Add to group picker */}
       {planPicker&&(
-        <div className="ov" onClick={()=>setPlanPicker(false)}>
-          <div className="sh" onClick={e=>e.stopPropagation()}>
-            <div className="sh-hdl"/>
+        <Sheet onClose={()=>setPlanPicker(false)} label="Add to which group?">
             <div className="sh-hdr">
               <span className="sh-ttl">Add to which group?</span>
               <button style={{background:"none",border:"none",cursor:"pointer",color:C.t2}} onClick={()=>setPlanPicker(false)}><Ic.X/></button>
@@ -2430,7 +2550,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             </div>
             {groups.length===0&&(
               <div style={{textAlign:"center",padding:"20px 0",color:C.t3,fontSize:13}}>
-                No groups yet. Create a group first.
+                No groups yet. Start one from the Groups tab, then add this to it.
               </div>
             )}
             {groups.map(g=>(
@@ -2444,15 +2564,12 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                 {saving?<div style={{fontSize:12,color:C.t3}}>Adding…</div>:<Ic.ChevR/>}
               </div>
             ))}
-          </div>
-        </div>
+        </Sheet>
       )}
 
       {/* Book Now sheet */}
       {booking&&(
-        <div className="ov" onClick={()=>{setBooking(false);setBookStep(0);}}>
-          <div className="sh" onClick={e=>e.stopPropagation()} style={{maxHeight:"85vh",overflowY:"auto"}}>
-            <div className="sh-hdl"/>
+        <Sheet onClose={()=>{setBooking(false);setBookStep(0);}} label={`Book ${exp.title}`} style={{maxHeight:"85vh",overflowY:"auto"}}>
             {bookStep===0&&(
               <>
                 <div className="sh-hdr">
@@ -2642,8 +2759,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                 </button>
               </div>
             )}
-          </div>
-        </div>
+        </Sheet>
       )}
 
     </div>
@@ -2687,6 +2803,7 @@ function SwipeToDelete({group,onDelete,children}){
   };
 
   const confirm=async()=>{
+    haptic();
     setBusy(true);
     const gone=await onDelete(group.id);
     // On failure the row comes back rather than vanishing optimistically:
@@ -2892,16 +3009,17 @@ function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
 }
 
 // ─── GROUP DETAIL ────────────────────────────────────────────────────────────
-function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setGroups,refreshGroup,removeGroupMember,leaveGroup,me,initialTab}){
+function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setGroups,refreshGroup,removeGroupMember,leaveGroup,me,initialTab,justJoined=false}){
   const group=groups.find(g=>g.id===groupId);
   // "See your group's mix" from the quiz reveal opens on Members, where it is.
   const [tab,setTab]=useState(initialTab==="members"?"members":"plans");
   const [refreshing,setRefreshing]=useState(false);
   const [busyId,setBusyId]=useState(null);
-  // Removing somebody, or walking out yourself, is a one-tap change to other
-  // people's plans that nothing could undo. Deleting a group makes you type
-  // its name; these asked nothing at all.
-  const [confirming,setConfirming]=useState(null);
+  // Removing somebody, or walking out yourself, was a one-tap change to
+  // other people's plans that nothing could undo; then it asked "are you
+  // sure?" and still couldn't be undone. Now it is Undo for five seconds
+  // before anything is sent (lib/undo.ts). Deleting a group still makes you
+  // type its name.
   const isAdmin=group?.role==="admin";
   const isAlone=isSoloGroup(group);
   // Read off this person's clock, not Greenwich's, and read once — so the
@@ -2912,16 +3030,33 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
   // gone sits under "Been and gone", which says so.
   const nexts=useNextActions((group?.plans||[]).filter(p=>isLive(p,todayISO)).map(p=>({plan:p,group})),me);
 
-  const doRemove=async(uid,name)=>{
-    if(busyId)return;setBusyId(uid);
-    try{ await removeGroupMember(groupId,uid); toast(`${name} removed`); }
-    catch(e){ toast(e.message); }
-    finally{ setBusyId(null); }
+  // Removing somebody: gone from the list at once, Undo for five seconds,
+  // then the one request (lib/undo.ts). The server refuses to strand a group
+  // with no admin; that refusal puts them back and says so.
+  const doRemove=(uid,name)=>{
+    if(busyId)return;
+    if(isTempId(groupId)){toast("That group is still saving — try again in a moment");return;}
+    const at=(group.memberIds||[]).indexOf(uid);
+    const without=g=>g.id!==groupId?g:{...g,memberIds:(g.memberIds||[]).filter(id=>id!==uid)};
+    undoable(toast,{
+      msg:`${name} removed`,
+      what:`${name}'s place in ${group.name}`,
+      apply:()=>setGroups(gs=>gs.map(without)),
+      revert:()=>{
+        setGroups(gs=>gs.map(g=>{
+          if(g.id!==groupId||(g.memberIds||[]).includes(uid))return g;
+          const ids=[...(g.memberIds||[])];ids.splice(Math.max(0,at),0,uid);
+          return {...g,memberIds:ids};
+        }));
+        if(refreshGroup)refreshGroup(groupId);
+      },
+      commit:key=>sendOnce(`/api/groups/${groupId}/members`,{method:"DELETE",body:{userId:uid},key}),
+    });
   };
-  const doLeave=async()=>{
-    if(busyId)return;setBusyId(me);
-    try{ await leaveGroup(groupId); toast(`You left ${group.name}`); }
-    catch(e){ toast(e.message); setBusyId(null); }
+  // Walking out yourself: the same, aimed at you (ReachApp's leaveGroup).
+  const doLeave=()=>{
+    if(busyId)return;
+    leaveGroup(groupId);
   };
 
   useEffect(()=>{
@@ -2945,6 +3080,16 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           </div>
           {isAdmin&&<button className="bsm bsm-g" onClick={()=>push("editGroup",{groupId})}>Edit</button>}
         </div>
+        {/* Straight from the invite: the pin drops where you landed. */}
+        {justJoined&&!isAlone&&(
+          <div style={{display:"flex",alignItems:"center",gap:12,marginTop:14,padding:"12px 14px",borderRadius:14,
+            background:C.accentDim,border:`1px solid ${C.accentBorder}`}}>
+            <PinDrop size={22} label="Joined"/>
+            <div style={{fontSize:13.5,color:C.t1,lineHeight:1.45}}>
+              You're in {group.name}. {group.plans.length?"Open a plan below to see where it stands.":"Nothing's planned yet — start one below."}
+            </div>
+          </div>
+        )}
         {/* A solo trip can stop being one. Adding somebody is the same invite
             the Members tab uses on a group — one way in — and this is where a
             group of one sees it, because it has no Members tab. Once they
@@ -2978,7 +3123,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <div style={{fontSize:40,marginBottom:12}}>🗺️</div>
               <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>Nothing planned yet</div>
               <div style={{fontSize:13,color:C.t2,marginBottom:20}}>Pick a night out or somewhere to go. We'll work out the plan, the costs and who owes what.</div>
-              <button className="bp" onClick={()=>push("groupTrip",{groupId})}>✨ Plan a Trip Together</button>
+              <button className="bp" onClick={()=>push("groupTrip",{groupId})}>Plan a trip together</button>
               <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",marginTop:10,padding:"8px 0"}} onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
             </div>
           )}
@@ -3049,7 +3194,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           {!isAlone&&<GroupMixCard groupId={groupId}/>}
           <div style={{padding:"0 20px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span className="sl">{group.memberIds.length} Members</span>
-            {isAdmin&&<button className="bsm bsm-p" onClick={()=>push("editGroup",{groupId})}>Add Member</button>}
+            {isAdmin&&<button className="bsm bsm-p" onClick={()=>push("editGroup",{groupId,focus:"add"})}>Add someone</button>}
           </div>
           {group.memberIds.map(uid=>{
             const u=um[uid];if(!u)return null;
@@ -3057,45 +3202,25 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <div key={uid} className="ri">
                 <Av u={u} lg/>
                 <div className="ri-inf"><div className="ri-t">{u.name}</div><div className="ri-s">{u.handle}</div></div>
+                {/* No "are you sure?": the toast that follows has Undo for
+                    five seconds, and nothing is sent until it runs out. */}
                 {uid===me
-                  ? (confirming==="leave"
-                      ? <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                          <span style={{fontSize:11.5,color:C.t2}}>Leave {group.name}?</span>
-                          <button className="bsm" disabled={!!busyId} onClick={()=>setConfirming(null)}>Stay</button>
-                          <button className="bsm bsm-r" disabled={!!busyId} onClick={doLeave}>{busyId===me?"Leaving…":"Leave"}</button>
-                        </div>
-                      : <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>setConfirming("leave")}>Leave</button>)
+                  ? <button className="bsm bsm-r" disabled={!!busyId} onClick={doLeave}>Leave</button>
                   : isAdmin
-                    ? (confirming===uid
-                        ? <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                            <span style={{fontSize:11.5,color:C.t2}}>Remove {u.name}?</span>
-                            <button className="bsm" disabled={!!busyId} onClick={()=>setConfirming(null)}>Keep</button>
-                            <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>doRemove(uid,u.name)}>{busyId===uid?"Removing…":"Remove"}</button>
-                          </div>
-                        : <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>setConfirming(uid)}>Remove</button>)
+                    ? <button className="bsm bsm-r" disabled={!!busyId} onClick={()=>doRemove(uid,u.name)}>Remove</button>
                     : null}
               </div>
             );
           })}
-          {isAdmin&&<div style={{padding:"12px 20px"}}><button className="bs" onClick={()=>push("editGroup",{groupId})}>+ Invite Someone</button></div>}
           {!isAdmin&&(
             <div style={{padding:"12px 20px"}}>
-              {confirming==="leave"
-                ? (<>
-                    <div style={{fontSize:12,color:C.t2,marginBottom:8,lineHeight:1.5}}>
-                      You'll lose access to {group.name}'s plans. Someone can add you back.
-                    </div>
-                    <div style={{display:"flex",gap:8}}>
-                      <button className="bs" style={{flex:1}} disabled={!!busyId} onClick={()=>setConfirming(null)}>Stay</button>
-                      <button className="bs" style={{flex:1,color:C.red,borderColor:C.redDim}} disabled={!!busyId} onClick={doLeave}>
-                        {busyId===me?"Leaving…":"Leave"}
-                      </button>
-                    </div>
-                  </>)
-                : <button className="bs" disabled={!!busyId} onClick={()=>setConfirming("leave")}
-                    style={{color:C.red,borderColor:C.redDim}}>
-                    {`Leave ${group.name}`}
-                  </button>}
+              <div style={{fontSize:12,color:C.t2,marginBottom:8,lineHeight:1.5}}>
+                Leaving takes you off {group.name}'s plans. You get five seconds to undo it, and after that someone in the group can add you back.
+              </div>
+              <button className="bs" disabled={!!busyId} onClick={doLeave}
+                style={{color:C.red,borderColor:C.redDim}}>
+                {`Leave ${group.name}`}
+              </button>
             </div>
           )}
         </div>
@@ -3103,7 +3228,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
       {tab==="wallet"&&(
         <div style={{padding:"18px 20px"}}>
           <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
-            <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Group Wallet</div>
+            <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Group wallet</div>
             <div style={{fontFamily:"var(--font-display)",fontSize:44,color:C.t1}}>${group.wallet.toLocaleString()}</div>
             <div style={{fontSize:12,color:C.t2,marginTop:4}}>Shared · {group.memberIds.length} members</div>
           </div>
@@ -3144,8 +3269,8 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   const [searching,setSearching]=useState(false);
   const [searchFailed,setSearchFailed]=useState(false);
   const [busy,setBusy]=useState(false);
-  // One tap used to remove somebody from the group with nothing in between.
-  const [confirmingRemove,setConfirmingRemove]=useState(null);
+  // One tap used to remove somebody from the group with nothing in between;
+  // now it is Undo for five seconds before anything is sent (lib/undo.ts).
 
   const isEmail=v=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v||"").trim());
 
@@ -3203,21 +3328,28 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
     finally{setBusy(false);}
   };
 
-  const removeMember=async uid=>{
+  const removeMember=uid=>{
     if(busy)return;
     if(isTempId(groupId)){toast("This group is still saving — try again in a moment");return;}
-    setBusy(true);
-    try{
-      const r=await fetch(`/api/groups/${groupId}/members`,{
-        method:"DELETE",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({userId:uid}),
-      });
-      const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't remove them");
-      toast("Removed from the group");
-      if(refreshGroup)refreshGroup(groupId);
-    }catch(e){toast(e.message);}
-    finally{setBusy(false);}
+    const name=um[uid]?.name||"They";
+    const at=members.indexOf(uid);
+    undoable(toast,{
+      msg:`${name} removed`,
+      what:`${name}'s place in the group`,
+      apply:()=>updateGroup(groupId,g=>({...g,memberIds:(g.memberIds||[]).filter(id=>id!==uid)})),
+      revert:()=>{
+        updateGroup(groupId,g=>{
+          if((g.memberIds||[]).includes(uid))return g;
+          const ids=[...(g.memberIds||[])];ids.splice(Math.max(0,at),0,uid);
+          return {...g,memberIds:ids};
+        });
+        if(refreshGroup)refreshGroup(groupId);
+      },
+      commit:async key=>{
+        await sendOnce(`/api/groups/${groupId}/members`,{method:"DELETE",body:{userId:uid},key});
+        if(refreshGroup)refreshGroup(groupId);
+      },
+    });
   };
 
   const revokeInvite=async id=>{
@@ -3266,10 +3398,10 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   // Every hook above runs on every render; the guard belongs here, below them.
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
 
-  const doLeave=async()=>{
-    if(working)return;setWorking(true);
-    try{ await leaveGroup(groupId); toast(`You left ${group.name}`); }
-    catch(e){ toast(e.message); setWorking(false); }
+  // Undo for five seconds, then sent (ReachApp's leaveGroup, lib/undo.ts).
+  const doLeave=()=>{
+    if(working)return;
+    leaveGroup(groupId);
   };
   const doDelete=async()=>{
     if(working||!nameMatches)return;setWorking(true);
@@ -3279,7 +3411,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
 
   return(
     <div className="sc">
-      <ScreenHeader onBack={onBack} label="Back" title={members.length<=1?"Edit details":"Edit Group"}/>
+      <ScreenHeader onBack={onBack} label="Back" title={members.length<=1?"Edit details":"Edit group"}/>
       <div style={{padding:"0 20px",display:"flex",gap:12,alignItems:"center",marginBottom:18}}>
         <div style={{fontSize:44,minWidth:52,textAlign:"center"}}>{inferGroupEmoji(name)}</div>
         <input aria-label="Group name" className="inp" value={name} onChange={e=>setName(e.target.value)} placeholder="Group name" style={{flex:1}}/>
@@ -3333,13 +3465,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
             <div className="ri-inf"><div className="ri-t">{u.name}</div><div className="ri-s">{u.handle}</div></div>
             {uid===me
               ? <span style={{fontSize:11,color:C.t3,fontWeight:600}}>You</span>
-              : confirmingRemove===uid
-                ? <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                    <span style={{fontSize:11.5,color:C.t2}}>Remove {u.name}?</span>
-                    <button className="bsm" disabled={busy} onClick={()=>setConfirmingRemove(null)}>Keep</button>
-                    <button className="bsm bsm-r" disabled={busy} onClick={()=>{setConfirmingRemove(null);removeMember(uid);}}>Remove</button>
-                  </div>
-                : <button className="bsm bsm-r" disabled={busy} onClick={()=>setConfirmingRemove(uid)}>Remove</button>}
+              : <button className="bsm bsm-r" disabled={busy} onClick={()=>removeMember(uid)}>Remove</button>}
           </div>
         );
       })}
@@ -3363,7 +3489,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       )}
 
       <div style={{padding:"18px 20px 10px"}}>
-        <button className="bp" onClick={save}>Save Changes</button>
+        <button className="bp" onClick={save}>Save changes</button>
       </div>
 
       <div style={{height:1,background:C.border,margin:"10px 20px 16px"}}/>
@@ -3374,19 +3500,10 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         <div style={{padding:16}}>
           <div style={{fontSize:14,fontWeight:600,color:C.t1,marginBottom:3}}>Leave this group</div>
           <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:12}}>
-            You stop seeing its plans. Everything else stays, and an admin can add you back.
+            You stop seeing its plans. You get five seconds to undo it, and after that an admin can add you back.
           </div>
-          {danger!=="leave"
-            ? <button className="bs" onClick={()=>{setDanger("leave");setTyped("");}}
-                style={{color:C.red,borderColor:C.redDim}}>Leave {group.name}</button>
-            : (
-              <div style={{display:"flex",gap:8}}>
-                <button className="bs" style={{flex:1}} disabled={working} onClick={()=>setDanger(null)}>Cancel</button>
-                <button className="bs" style={{flex:1,color:C.red,borderColor:C.red}} disabled={working} onClick={doLeave}>
-                  {working?"Leaving…":"Yes, leave"}
-                </button>
-              </div>
-            )}
+          <button className="bs" disabled={working} onClick={doLeave}
+            style={{color:C.red,borderColor:C.redDim}}>Leave {group.name}</button>
           {isAdmin&&(
             <div style={{fontSize:11,color:C.t3,marginTop:8,lineHeight:1.5}}>
               You are an admin. If you are the only one, promote someone else first — a group cannot be left without one.
@@ -6403,7 +6520,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
     if(hasDays){
       rows=nightOut
         ?itineraryRows(trip.itinerary,true)
-        :[...awayRows(trip,{startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1}),...itineraryRows(trip.itinerary)];
+        :[...await awayRows(trip,{startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1,from:departure?.city}),...itineraryRows(trip.itinerary)];
       const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
       updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
     }else{
@@ -6424,7 +6541,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
       if(r.ok&&(d.itinerary||[]).length){
         rows=nightOut
           ?itineraryRows(d.itinerary,true)
-          :[...awayRows(trip,{fixed:d.fixed,startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1}),...itineraryRows(d.itinerary)];
+          :[...await awayRows(trip,{fixed:d.fixed,startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1,from:departure?.city}),...itineraryRows(d.itinerary)];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows}:p)}));
       }else{
         console.error("[pick] itinerary for the pick failed",r.status,d);
@@ -6531,16 +6648,32 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
   const foundAt=Date.parse(v.ideas.foundAt||"");
   const daysUnderWay=Number.isFinite(foundAt)&&Date.now()-foundAt<DAYS_UNDER_WAY_MS;
 
+  // The vote shows at once — the tick and the count move under the thumb —
+  // and goes back, with a sentence saying so, if the server refuses it.
   const cast=async(o)=>{
     if(busy||closed||isTempId(planId))return;
     setBusy(o.title);
+    haptic();
+    const was=v;
+    const before=v.myVote;
+    setV(x=>{
+      if(!x)return x;
+      const c={...(x.counts||{})};
+      if(before&&c[before]>0)c[before]-=1;
+      c[o.title]=(c[o.title]||0)+1;
+      return {...x,myVote:o.title,counts:c};
+    });
     try{
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({option:o.title})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Your vote didn't save — try again");
+      if(!r.ok)throw new Error(d.error||"");
       forgetNext(planId);
-      toast(v.myVote?`Changed your vote to ${show(o.title)}`:`Voted for ${show(o.title)}`);
-    }catch(e){console.error("[tripIdeas] vote failed",e);toast(e.message);}
+      toast(before?`Changed your vote to ${show(o.title)}`:`Voted for ${show(o.title)}`);
+    }catch(e){
+      console.error("[tripIdeas] vote failed",e);
+      setV(was);
+      toast({msg:revertWords(e.message,"your vote"),warn:true});
+    }
     await load();
     setBusy(null);
   };
@@ -6637,7 +6770,7 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
                     style={{flex:1,padding:"12px 8px",borderRadius:12,border:"1px solid "+(mine?C.accentText:C.border),
                       background:mine?C.accentDim:"none",color:mine?C.accentText:C.t2,fontSize:13,fontWeight:600,
                       cursor:busy||mine?"default":"pointer"}}>
-                    {busy===o.title?"…":mine?"✓ Your vote":v.myVote?"Change vote to this":"Vote for this"}
+                    {mine?"✓ Your vote":v.myVote?"Change vote to this":"Vote for this"}
                   </button>
                 </div>
               )}
@@ -6702,6 +6835,7 @@ function CallOffPlan({plan,group,me,um,updatePlanOnServer,updateGroup,toast,onDo
   }
   const callOff=async()=>{
     if(busy)return;
+    haptic();
     setBusy(true);
     try{
       const ok=await updatePlanOnServer(plan.id,{status:"cancelled"});
@@ -7129,7 +7263,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // deciding how long somebody's evening is.
         const rows=nightOut
           ?itineraryRows(trip.itinerary,true)
-          :[...awayRows(trip,{startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1}),...itineraryRows(trip.itinerary)];
+          :[...await awayRows(trip,{startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1,from:departure?.city}),...itineraryRows(trip.itinerary)];
         const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
         if(saveItineraryToServer)await saveItineraryToServer(realId,rows);
@@ -7162,7 +7296,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         const data=await res.json();
         const itinerary=nightOut
           ?itineraryRows(data.itinerary,true)
-          :[...awayRows(trip,{fixed:data.fixed,startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1}),...itineraryRows(data.itinerary)];
+          :[...await awayRows(trip,{fixed:data.fixed,startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1,from:departure?.city}),...itineraryRows(data.itinerary)];
         if(itinerary.length){
           updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary}:p)}));
           if(saveItineraryToServer)await saveItineraryToServer(realId,itinerary);
@@ -7642,26 +7776,24 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
       {/* ── STEP 1: Generating ── */}
       {step===1&&(
-        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,textAlign:"center"}}>
-          <div style={{fontSize:60,marginBottom:20}}>✨</div>
-          <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,marginBottom:12}}>
+        // Three cards drawn where the three options will land, so the
+        // screen already has the shape of the answer while it is worked out.
+        <div style={{flex:1,overflowY:"auto",scrollbarWidth:"none",padding:"4px 20px 30px"}}>
+          <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:6}}>
             {/* A solo group is named "Just me"; a night out has no flights. */}
             {isSolo?(nightOut?"Planning your night":"Planning your trip"):`Planning for ${group.name}`}
           </div>
-          <div style={{fontSize:14,color:C.t2,lineHeight:1.8,marginBottom:30,maxWidth:280}}>
+          <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:16}}>
+            {/* Not "finding flights": somewhere within driving distance gets
+                the road, and nothing is searched for a flight there. */}
             {nightOut
-              ?<>Reading what {isSolo?"you":"everyone"} said,<br/>and finding places for the night…</>
-              :<>Reading what {isSolo?"you":"everyone"} said,<br/>
-                finding flights from {departure?.airport||departure?.city||"your city"},<br/>
-                places to stay, and things to do…</>}
+              ?`Reading what ${isSolo?"you":"everyone"} said and finding places for the night.`
+              :`Reading what ${isSolo?"you":"everyone"} said, working out getting there from ${departure?.airport||departure?.city||"home"}, somewhere to stay and things to do.`}
+            {/* "Usually takes 5-8 seconds" was never measured; a real run is
+                closer to half a minute. Nothing is promised. */}
+            {" "}This can take a little while.
           </div>
-          <div style={{width:240,height:4,background:C.s3,borderRadius:2,overflow:"hidden",marginBottom:20}}>
-            <div style={{height:"100%",background:"linear-gradient(90deg,"+C.accent+",#C084FC)",borderRadius:2,animation:"loading 1.5s ease-in-out infinite"}}/>
-          </div>
-          {/* "Usually takes 5-8 seconds" was never measured; a real run is
-              closer to half a minute. Nothing is promised. */}
-          <div style={{fontSize:12,color:C.t3}}>This can take a little while.</div>
-          <style dangerouslySetInnerHTML={{__html:`@keyframes loading{0%{width:0%}50%{width:100%}100%{width:0%;margin-left:100%}}`}}/>
+          <OptionSkeletons count={3}/>
         </div>
       )}
 
@@ -8120,14 +8252,14 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           off (the organiser's, with its own "are you sure") and carry on
           with this one. Nothing is deleted from here without asking. */}
       {already&&(
-        <div className="ov" onClick={()=>setAlready(null)}>
-          <div className="sh" onClick={e=>e.stopPropagation()}>
-            <div className="sh-hdl"/>
+        <Sheet onClose={()=>setAlready(null)} label="Already planning one">
             <div style={{padding:"20px 20px 24px"}}>
               <div style={{fontFamily:"var(--font-display)",fontSize:21,color:C.t1,marginBottom:8,lineHeight:1.3}}>
+                {/* Another member may have started it: said of the group,
+                    as refusalCopy and nextBlockedWords say it. */}
                 {isSoloGroup
                   ?`You're already planning ${already.title||"one"}`
-                  :`You're already planning ${already.title||"one"} with ${selGroup?.name||"this group"}`}
+                  :`${selGroup?.name||"This group"} is already planning ${already.title||"one"}`}
               </div>
               <div style={{fontSize:13.5,color:C.t2,lineHeight:1.55,marginBottom:16}}>
                 {`One ${planKind(already.type)==="night"?"night out":"trip"} is planned at a time in a group, so nothing is asked twice. A ${planKind(already.type)==="night"?"trip":"night out"} can still be planned alongside it.`}
@@ -8137,14 +8269,11 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 updateGroup={updateGroup} toast={toast} label="Call it off to start a new one" explain
                 onDone={()=>{const id=already.id;setAlready(null);finish({ignore:id});}}/>
             </div>
-          </div>
-        </div>
+        </Sheet>
       )}
       {/* Exit confirmation sheet */}
       {showExitConfirm&&(
-        <div className="ov" onClick={()=>setShowExitConfirm(false)}>
-          <div className="sh" onClick={e=>e.stopPropagation()}>
-            <div className="sh-hdl"/>
+        <Sheet onClose={()=>setShowExitConfirm(false)} label="Save your progress?">
             <div style={{padding:"20px 20px 10px",textAlign:"center"}}>
               <div style={{fontSize:28,marginBottom:10}}>💾</div>
               <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:8}}>Save your progress?</div>
@@ -8155,8 +8284,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 <button style={{background:"none",border:"none",color:C.accentText,fontSize:14,fontWeight:500,cursor:"pointer",padding:"8px 0"}} onClick={()=>setShowExitConfirm(false)}>Keep planning</button>
               </div>
             </div>
-          </div>
-        </div>
+        </Sheet>
       )}
       <div style={{padding:"12px 20px 14px"}}>
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
@@ -8778,7 +8906,7 @@ function useCelebration(planId,allBooked,{groupId,screen}){
  * standing still — no confetti, no pop.
  */
 function Celebration({title,sub,onDone}){
-  const reduced=typeof window!=="undefined"&&!!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const reduced=prefersReducedMotion();
   const done=useRef(onDone);done.current=onDone;
   useEffect(()=>{
     const t=setTimeout(()=>done.current(),2500);
@@ -8795,8 +8923,9 @@ function Celebration({title,sub,onDone}){
       {!reduced&&<style dangerouslySetInnerHTML={{__html:`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}@keyframes rpop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.08);opacity:1}100%{transform:scale(1)}}`}}/>}
       {bits.map(i=>(<span key={i} aria-hidden="true" style={{position:"absolute",left:(i*137)%100+"%",top:-12,width:8,height:12,borderRadius:2,
         background:[C.accent,"#FFFFFF",C.blue,"#F472B6"][i%4],animation:`rfall ${1.8+(i%5)*.3}s ${(i%7)*.12}s ease-in forwards`}}/>))}
+      {/* The same gold pin that drops for paid and joined: booked. */}
       <div aria-hidden="true" style={{width:84,height:84,borderRadius:"50%",background:"rgba(255,255,255,.16)",display:"flex",alignItems:"center",
-        justifyContent:"center",fontSize:40,color:"white",marginBottom:20,animation:reduced?"none":"rpop .5s ease-out both"}}>✓</div>
+        justifyContent:"center",marginBottom:20,animation:reduced?"none":"rpop .5s ease-out both"}}><PinDrop size={30} label="Booked"/></div>
       <div style={{fontFamily:"var(--font-display)",fontSize:32,lineHeight:1.15,color:"white",maxWidth:340}}>{title}</div>
       {sub&&<div style={{fontSize:14.5,color:"rgba(255,255,255,.8)",marginTop:10,maxWidth:320,lineHeight:1.5}}>{sub}</div>}
       <button onClick={e=>{e.stopPropagation();done.current();}}
@@ -8974,7 +9103,10 @@ function RealTrip({trip,startDate,endDate,seats}){
         body:JSON.stringify({city:trip.city,countryCode:trip.country_code,start:startDate,end:endDate,seats,
           // The tier's class of stay and flight timing rank what comes back
           // (lib/away-lines.ts flightsForTier / hotelsForTier).
-          ...(trip.tier?{tier:trip.tier}:{})})},60000,"checking prices");
+          ...(trip.tier?{tier:trip.tier}:{}),
+          // How many are on the flight: none on a drive away, so no fares
+          // are searched for and none shown for a trip nobody flies to.
+          flying:previewFlying(trip.away,seats)})},60000,"checking prices");
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(d.error||"Couldn't check prices just now");
       setState({loading:false,data:d,error:null});
@@ -9350,23 +9482,29 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
   // `cost` only with a title: "Something else…" can be another kind of
   // place, so it carries the rewrite's own estimate for the new stop.
   const freeBody=(to,title,cost)=>title?{to,title,...(typeof cost==="number"&&cost>=0?{cost}:{})}:{to};
-  const apply=async(to,title,cost)=>{
+  // The line changes on screen at once, with Undo for five seconds; the one
+  // PATCH goes when the toast runs out (lib/undo.ts). The server's own line
+  // then replaces the stand-in, and a refusal — the place was booked in the
+  // meantime, say — puts the old line back and says why.
+  const apply=(to,title,cost,name,url)=>{
     if(busy)return;
-    setBusy(to);setSaid(null);
-    try{
-      const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}`,{method:"PATCH",
-        headers:{"Content-Type":"application/json"},body:JSON.stringify(freeBody(to,title,cost))},30000,"changing that");
-      const out=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(out.error||"Couldn't change that — nothing was changed");
-      onSwapped(out.item);
-      if(out.retiredBookingId)await onBookingsChanged?.();
-      toast(out.notice||"Changed");
-      onClose();
-    }catch(e){
-      console.error("[change] could not swap",{item:item.id,to},e);
-      setSaid(e.message);
-    }
-    setBusy(null);
+    setSaid(null);
+    haptic();
+    const was=item;
+    const named=title||name||item.title;
+    undoable(toast,{
+      msg:`Changed to ${name||named}`,
+      what:item.title,
+      apply:()=>{onSwapped({...item,title:named,...(name?{venue_name:name}:{}),...(url?{venue_website:url}:{})});onClose();},
+      // Merged into the line, so what the stand-in added is cleared too.
+      revert:()=>onSwapped({...was,venue_name:was.venue_name??null,venue_website:was.venue_website??null}),
+      commit:async key=>{
+        const out=await sendOnce(`/api/plans/${planId}/itinerary/${item.id}`,{method:"PATCH",body:freeBody(to,title,cost),key});
+        if(out.item)onSwapped(out.item);
+        if(out.retiredBookingId)await onBookingsChanged?.();
+        if(out.notice)toast(out.notice);
+      },
+    });
   };
   const suggest=async(to,title,cost)=>{
     if(busy)return;
@@ -9410,9 +9548,8 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
   const fresh=other.data?.slot||null;
   const freshTo=other.data?.to||null;
   return(
-    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:60,display:"flex",alignItems:"flex-end"}}>
-      <div role="dialog" aria-label={`Change ${item.title}`} onClick={e=>e.stopPropagation()}
-        style={{width:"100%",maxHeight:"82vh",overflowY:"auto",background:C.s1,borderRadius:"20px 20px 0 0",padding:"18px 20px 28px"}}>
+    <Sheet fixed onClose={onClose} label={`Change ${item.title}`}
+      style={{maxHeight:"82vh",borderRadius:"20px 20px 0 0",padding:"0 20px 28px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12,marginBottom:12}}>
           <div style={{minWidth:0}}>
             <div style={{fontSize:17,fontWeight:700,color:C.t1}}>Change</div>
@@ -9445,7 +9582,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
                       {a.url&&<a href={a.url} target="_blank" rel="noopener noreferrer" style={{fontSize:11.5,color:C.accentText,textDecoration:"none",fontWeight:600}}>Their site →</a>}
                     </div>
                     {mayApply?(
-                      <button className="bsm bsm-p" disabled={!!busy} onClick={()=>apply(a.ref)}>{busy===a.ref?"…":"Use this"}</button>
+                      <button className="bsm bsm-p" disabled={!!busy} onClick={()=>apply(a.ref,undefined,undefined,a.name,a.url)}>Use this</button>
                     ):maySuggest?(
                       <button className="bsm" disabled={!!busy} onClick={()=>suggest(a.ref)}>{busy===a.ref?"…":"Suggest"}</button>
                     ):null}
@@ -9502,8 +9639,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
           </>
         )}
         {said&&<div style={{fontSize:12.5,color:C.amber,marginTop:10,lineHeight:1.5}}>{said}</div>}
-      </div>
-    </div>
+    </Sheet>
   );
 }
 
@@ -9955,9 +10091,12 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
   const [failed,setFailed]=useState(false);
   const [done,setDone]=useState([]);
   const [busy,setBusy]=useState(null);
-  // The payer's "Mark as paid" closes the line on their word alone, so it
-  // asks once first (the line's key while it is asking).
-  const [confirming,setConfirming]=useState(null);
+  // "Mark as paid" and "Mark received" take the line off at once, with Undo
+  // for five seconds before the one request goes (lib/undo.ts). That window
+  // replaces the "are you sure?" the payer's mark used to ask: it closes the
+  // line on their word alone, and a mistap is now one tap to take back.
+  // Lines waiting on their Undo, by lineKeyPart.
+  const [marked,setMarked]=useState(()=>new Set());
   // One key per line, minted when it is drawn and sent on every tap.
   const keys=useRef({});
   const keyFor=line=>{const k=lineKeyPart(line);if(!keys.current[k])keys.current[k]=`${k}.${newSettleKey()}`;return keys.current[k];};
@@ -10002,18 +10141,42 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
   const act=async(id,fn)=>{if(busy)return;setBusy(id);try{await fn();}finally{setBusy(null);}await load();};
   // A mark that landed is done with its key: the same line drawn again (the
   // payee said it never arrived) is a new mark, not a replay of that one.
-  const markPaid=line=>act(`paid:${line.with}`,async()=>{
-    setConfirming(null);
-    const ok=line.pending
-      ?await send("PATCH",{id:line.pending.id,status:"paid"})
-      :await send("POST",{toUserId:line.with,amountCents:line.amountCents,method:"other",status:"paid",idempotencyKey:keyFor(line)});
-    if(ok){delete keys.current[lineKeyPart(line)];toast(`Marked as paid — ${nameOf(line.with)} can say if it never arrived`);}
+  // Marking a payment made elsewhere is a record, not a payment — Reach
+  // moves no money here — so it can be shown at once and taken back.
+  const markLater=(line,{msg,what,body})=>{
+    const k=lineKeyPart(line);
+    haptic();
+    undoable(toast,{
+      msg,what,
+      apply:()=>setMarked(m=>new Set(m).add(k)),
+      revert:()=>{setMarked(m=>{const n=new Set(m);n.delete(k);return n;});load();},
+      commit:async()=>{
+        const [method,payload]=body();
+        const r=await fetch(`/api/plans/${planId}/settlements`,{method,keepalive:true,
+          headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){console.error("[settle] not recorded",{planId,status:r.status,reason:d.reason});throw new Error(settleRefusal(r.status,d));}
+        delete keys.current[k];
+        await load();
+        setMarked(m=>{const n=new Set(m);n.delete(k);return n;});
+      },
+    });
+  };
+  // A mark that landed is done with its key: the same line drawn again (the
+  // payee said it never arrived) is a new mark, not a replay of that one.
+  const markPaid=line=>markLater(line,{
+    msg:`Marked as paid — ${nameOf(line.with)} can say if it never arrived`,
+    what:`what you owe ${nameOf(line.with)}`,
+    body:()=>line.pending
+      ?["PATCH",{id:line.pending.id,status:"paid"}]
+      :["POST",{toUserId:line.with,amountCents:line.amountCents,method:"other",status:"paid",idempotencyKey:keyFor(line)}],
   });
-  const markReceived=line=>act(`got:${line.with}`,async()=>{
-    const ok=line.pending
-      ?await send("PATCH",{id:line.pending.id,status:"paid"})
-      :await send("POST",{fromUserId:line.with,amountCents:line.amountCents,method:"other",status:"paid",idempotencyKey:keyFor(line)});
-    if(ok){delete keys.current[lineKeyPart(line)];toast(`Marked as received from ${nameOf(line.with)}`);}
+  const markReceived=line=>markLater(line,{
+    msg:`Marked as received from ${nameOf(line.with)}`,
+    what:`what ${nameOf(line.with)} owes you`,
+    body:()=>line.pending
+      ?["PATCH",{id:line.pending.id,status:"paid"}]
+      :["POST",{fromUserId:line.with,amountCents:line.amountCents,method:"other",status:"paid",idempotencyKey:keyFor(line)}],
   });
   // The payee's answer to a line the payer closed alone: it never came. The
   // server lets only the payee withdraw a paid row; the line comes back owed.
@@ -10051,8 +10214,11 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
   };
 
   const ua=typeof navigator!=="undefined"?navigator.userAgent:"";
-  const lines=openLines(l?.lines);
-  const headline=l?settleHeadline(l.lines,l.people):null;
+  // A line waiting on its Undo is already off the screen, and out of the
+  // headline with it, so the two cannot disagree.
+  const shownRaw=(Array.isArray(l?.lines)?l.lines:[]).filter(x=>!marked.has(lineKeyPart(x)));
+  const lines=openLines(shownRaw);
+  const headline=l?settleHeadline(shownRaw,l.people):null;
   const marking=l?.settlementsAvailable!==false;
   const btn={padding:"10px 12px",borderRadius:12,fontSize:13,fontWeight:700,textDecoration:"none",textAlign:"center",cursor:"pointer"};
   const primary={...btn,background:C.accent,color:C.onAccent,border:"none"};
@@ -10123,23 +10289,13 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
                   )}
                   {marking&&(
                     <div style={{display:"flex",gap:8,marginTop:10}}>
-                      {line.direction==="you_owe"?(confirming===lineKeyPart(line)?(
-                        <div style={{flex:1}}>
-                          <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:8}}>
-                            Only once it's sent: {name} will see it marked as paid, and can say if it never arrived.
-                          </div>
-                          <div style={{display:"flex",gap:8}}>
-                            <button style={{...primary,flex:1}} disabled={!!busy} onClick={()=>markPaid(line)}>{busy===`paid:${k}`?"…":"Yes, I've paid"}</button>
-                            <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>setConfirming(null)}>Cancel</button>
-                          </div>
-                        </div>
-                      ):(
+                      {line.direction==="you_owe"?(
                         <>
-                          <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>setConfirming(lineKeyPart(line))}>Mark as paid</button>
+                          <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>markPaid(line)}>Mark as paid</button>
                           {line.pending&&<button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>withdraw(line)}>{busy===`undo:${k}`?"…":"It didn't go through"}</button>}
                         </>
-                      )):(
-                        <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>markReceived(line)}>{busy===`got:${k}`?"…":"Mark received"}</button>
+                      ):(
+                        <button style={{...quiet,flex:1}} disabled={!!busy} onClick={()=>markReceived(line)}>Mark received</button>
                       )}
                     </div>
                   )}
@@ -10274,6 +10430,26 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const setSkip=async(item,optOut,{confirm=false}={})=>{
     if(skipping)return;
     if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
+    // Sitting out a dinner or an activity: shown at once, Undo for five
+    // seconds, then the one request (lib/undo.ts). Not a flight — coming off
+    // one reprices the seats for everybody on it and can take it off the
+    // plan, so that one waits for the server.
+    if(item.vertical!=="flight"){
+      const was=share;
+      undoable(toast,{
+        msg:optOut?`You're sitting out ${item.title}`:`You're in for ${item.title}`,
+        what:item.title,
+        apply:()=>setShare(s=>s&&{...s,items:(s.items||[]).map(i=>i.ref!==item.ref?i:{...i,imIn:!optOut,
+          inCount:Math.max(0,(i.inCount||0)+(optOut?-1:1)),myCents:optOut?0:i.myCents})}),
+        revert:()=>{setShare(was);loadShare();},
+        commit:async key=>{
+          await sendOnce(`/api/plans/${planId}/participation`,{body:{itemRef:item.ref,optOut},key});
+          await loadShare();
+        },
+      });
+      return;
+    }
+    if(isTempId(planId))return;
     setSkipping(item.ref);
     try{
       const r=await fetch(`/api/plans/${planId}/participation`,{
@@ -10771,6 +10947,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
    * made-up reference is worse than none.
    */
   const markGot=async(row)=>{
+    haptic();
     const next=(plan.itinerary||[]).map(r=>r===row?{...r,filled:true}:r);
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:next}:p)}));
     const ok=await saveItineraryToServer(planId,next);
@@ -10792,12 +10969,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   // Who may open Change on a line. The server decides what a tap does
   // (`right`); this only keeps the button off where it could do nothing:
-  // after Lock it in, a line is the organiser's to change (decision 14), and
-  // a hotel or flight with nothing priced yet has nothing to compare with.
+  // after Lock it in, a line is the organiser's to change (decision 14) —
+  // and the change is also theirs who booked that line on the seller's own
+  // site, which the server already allows (lib/itinerary-change.ts bookedBy,
+  // the same rule) and the button hid from them — and a hotel or flight
+  // with nothing priced yet has nothing to compare with.
   const lockedNow=lockedIn(plan.status,planBookings,funding?.collectedCents||0);
   const organiserHere=!!me&&isOrganiser({role:group.role,createdBy:plan.createdBy||null,userId:me});
+  const bookedItMyself=item=>!!me&&planBookings.some(b=>String(b.itinerary_item_id)===String(item?.id)&&bookedBy(b,me));
   const mayChange=item=>!booked&&!!item?.id&&!isTempId(planId)&&CHANGEABLE_TYPES.has(item.type)
-    &&(soloTrip||!lockedNow||organiserHere)
+    &&(soloTrip||!lockedNow||organiserHere||bookedItMyself(item))
     &&(!PRICED_TYPES.has(item.type)||!!bookingFor(item,planBookings));
   const ChangeLink=({item})=>mayChange(item)?(
     <button onClick={()=>setChanging(item)}
@@ -10865,6 +11046,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     // the screen went on saying "✓ Your vote" and "your vote has been
     // recorded" under a toast explaining it had not been, and the count stayed
     // up by one for as long as the screen was open.
+    haptic();
     setMyVote(opt);
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:{...p.votes,[opt]:(p.votes[opt]||0)+1}}:p)}));
     const ok=castVoteOnServer?await castVoteOnServer(planId,opt):true;
@@ -11800,9 +11982,15 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               // of, a dinner you sit out. "What you're in for" leaves them
               // out of your trip, and this is your budget too.
               const youreOff=linesYoureOff(planBookings,share?.items);
-              const notYours=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0&&youreOff.has(String(i.id)));
-              const fixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0&&!youreOff.has(String(i.id)))
-                .map(i=>({l:i.title,d:i.time,c:i.cost_cents,it:i}));
+              // Yours and everybody's, from the booking rows' own party and
+              // who is on each (lib/budget.ts lineCosts): a flyer's share is
+              // the fare split among those flying, a driver's is nothing,
+              // and "altogether" is the party price — never the per-person
+              // fare times every head.
+              const costs=lineCosts(items,planBookings,share?.items,plan.participants.length||1);
+              const notYours=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0&&(youreOff.has(String(i.id))||costs.get(String(i.id))?.off));
+              const fixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0&&!youreOff.has(String(i.id))&&!costs.get(String(i.id))?.off)
+                .map(i=>{const k=costs.get(String(i.id));return {l:i.title,d:i.time,c:k?k.mine:i.cost_cents,g:k?k.group:null,it:i};});
               // Everything you pay for yourself, as it happens.
               const variable=items.filter(i=>i.booking_mode!=="reach"&&i.cost_cents>0)
                 .map(i=>({l:i.title,d:i.time,c:i.cost_cents,pay:i.payment_note,it:i}));
@@ -11817,6 +12005,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               const sum=a=>a.reduce((t,x)=>t+(x.c||0),0);
               const fixedTotal=sum(fixed), varTotal=sum(variable);
               const heads=plan.participants.length||1;
+              // Everybody's: each Reach line at what it costs the people on
+              // it, including the lines you came off, plus the day-to-day
+              // estimates for every head.
+              const groupFixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0)
+                .reduce((t,i)=>{const k=costs.get(String(i.id));return t+(k?k.group:i.cost_cents*heads);},0);
+              const altogether=groupFixed+varTotal*heads;
 
               if(!fixed.length&&!variable.length&&!unpriced.length&&!notYours.length)return(
                 <div style={{fontSize:13,color:C.t2,lineHeight:1.6,padding:"4px 0 8px"}}>
@@ -11942,7 +12136,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   {heads>1&&(
                     <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:C.t3}}>
                       <span>{heads} of you</span>
-                      <span>{money((fixedTotal+varTotal)*heads)} altogether</span>
+                      <span>{money(altogether)} altogether</span>
                     </div>
                   )}
                   {plan.budget>0&&(
@@ -12006,9 +12200,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
   return(
     <div className="sc">
       {confirmLeave&&(
-        <div className="ov" onClick={()=>setConfirmLeave(false)}>
-          <div className="sh" onClick={e=>e.stopPropagation()}>
-            <div className="sh-hdl"/>
+        <Sheet onClose={()=>setConfirmLeave(false)} label="Keep what you wrote?">
             <div style={{padding:"18px 20px 24px",textAlign:"center"}}>
               <div style={{fontSize:28,marginBottom:10}}>✍️</div>
               <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:6}}>
@@ -12026,15 +12218,14 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
                 Throw them away
               </button>
             </div>
-          </div>
-        </div>
+        </Sheet>
       )}
       <div style={{padding:"12px 20px 14px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <ScreenHeader onBack={leave} label="Back"/>
           <button className="bsm bsm-p" disabled={saving} onClick={save}>{saving?"Saving…":"Save"}</button>
         </div>
-        <div className="pt" style={{fontSize:24,marginTop:12}}>Edit Itinerary</div>
+        <div className="pt" style={{fontSize:24,marginTop:12}}>Edit itinerary</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>{plan.title}</div>
       </div>
       {items.map((item,i)=>(
@@ -12074,7 +12265,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
       ):(
         <div style={{padding:"8px 20px 14px"}}><button className="bs" onClick={()=>setAdding(true)}>+ Add flight, hotel, activity, or restaurant…</button></div>
       )}
-      <div style={{padding:"0 20px 30px"}}><button className="bp" onClick={save}>Save Itinerary</button></div>
+      <div style={{padding:"0 20px 30px"}}><button className="bp" onClick={save}>Save itinerary</button></div>
     </div>
   );
 }
@@ -12157,6 +12348,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // end of the money path would have been the one place you could not tick
   // anything off.
   const markGot=async(row)=>{
+    haptic();
     const next=(plan?.itinerary||[]).map(r=>r===row?{...r,filled:true}:r);
     updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:next}:p)}));
     const ok=await saveItineraryToServer?.(planId,next);
@@ -12374,6 +12566,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
 
   const confirmPay=async()=>{
     if(busy||!stripeRef.current)return;
+    haptic();
     // Guarded again here rather than relying on startPayment: this is the call
     // that follows the money leaving someone's account.
     if(isTempId(planId)){ toast("This trip is still saving — try again in a moment"); return; }
@@ -12741,9 +12934,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // Only reached with the payments just read again (refresh), so the bar is
   // what has been collected, not what this visit guessed it would be.
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
-    <div style={{fontSize:40,marginBottom:12}}>🤝</div>
-    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>You're in!</div>
-    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>Your part is paid. A few people still need to chip in. The moment the last share lands we'll email everyone, and anyone on the trip can open checkout and press Book it.</div>
+    <div style={{marginBottom:12}}><PinDrop size={36} label="Paid"/></div>
+    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Your part is paid</div>
+    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in. The moment the last share lands we'll email everyone, and anyone on the trip can open checkout and press Book it.</div>
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents||0)/Math.max(funding.targetCents||0,1))*100));
       return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
@@ -14565,12 +14758,14 @@ export default function ReachApp({realUser,onSignOut}={}){
       // pings.ts planUrl), the plan itself, which is what the ping is about.
       if(params.get("group")){
         const groupId=params.get("group"), planId=params.get("plan");
-        params.delete("group");params.delete("plan");
+        // From the invite page, the moment somebody joins (app/invite).
+        const justJoined=params.get("joined")==="1";
+        params.delete("group");params.delete("plan");params.delete("joined");
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         if(/^[0-9a-f-]{36}$/i.test(groupId)){
           if(/^[0-9a-f-]{36}$/i.test(planId||""))push("planDetail",{planId,groupId});
-          else push("groupDetail",{groupId});
+          else push("groupDetail",{groupId,justJoined});
         }
       }
     }
@@ -14965,15 +15160,24 @@ export default function ReachApp({realUser,onSignOut}={}){
 
   // Leaving is the same call aimed at yourself, but the group then has to
   // disappear from this device rather than just lose a member.
-  const leaveGroup=async(groupId)=>{
-    if(!user?.id)throw new Error("Still signing you in — try again in a moment");
-    await removeGroupMember(groupId,user.id);
-    setGroups(gs=>{
-      const left=gs.filter(g=>g.id!==groupId);
-      purgeStaleDraft(left.map(g=>g.id));
-      return left;
+  // Gone from this device at once, with Undo for five seconds; the one
+  // request goes when the toast runs out (lib/undo.ts). A refusal — the last
+  // admin cannot leave — brings the group back and says why.
+  const leaveGroup=(groupId)=>{
+    if(!user?.id){showToast("Still signing you in — try again in a moment");return;}
+    if(isTempId(groupId)){showToast("That group is still saving — try again in a moment");return;}
+    const kept=groups.find(g=>g.id===groupId);
+    const name=kept?.name||"the group";
+    undoable(showToast,{
+      msg:`You left ${name}`,
+      what:`your place in ${name}`,
+      apply:()=>{setGroups(gs=>gs.filter(g=>g.id!==groupId));setStack([]);setTab("groups");},
+      revert:()=>{if(kept)setGroups(gs=>gs.some(g=>g.id===groupId)?gs:[...gs,kept]);},
+      commit:async key=>{
+        await sendOnce(`/api/groups/${groupId}/members`,{method:"DELETE",body:{userId:user.id},key});
+        setGroups(gs=>{purgeStaleDraft(gs.map(g=>g.id));return gs;});
+      },
     });
-    setStack([]);setTab("groups");
   };
 
   // Admin only, and the database cascades: the group's plans, members and
@@ -15397,7 +15601,7 @@ export default function ReachApp({realUser,onSignOut}={}){
               )}
           </>
         </div>
-        {toastMsg&&<Toast msg={toastMsg} onDone={()=>setToastMsg(null)}/>}
+        {toastMsg&&<Toast key={typeof toastMsg==="object"?`${toastMsg.undoId||""}:${toastMsg.msg}`:toastMsg} msg={toastMsg} onDone={()=>setToastMsg(null)}/>}
       </div>
     </>
   );

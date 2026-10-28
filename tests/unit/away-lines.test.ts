@@ -296,7 +296,7 @@ test('the card and the saved-idea fallback use these, not their own', () => {
   const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
   assert.match(app, /awayCardRows\(away,\{solo\}\)/);
   assert.match(app, /<AwayLinesCard away=\{away\} solo=\{groupSize<=1\}\/>/);
-  assert.match(app, /savedIdeaLines\(trip\|\|\{\},\{\.\.\.opts,nights\}\)/);
+  assert.match(app, /oldIdeaLines\(trip\|\|\{\},\{\.\.\.opts,nights,km\}\)/);
   assert.doesNotMatch(app, /awayEstimate\(trip\|\|\{\},\{nights\}\)/);
 });
 

@@ -83,9 +83,12 @@ test('a line the payer closed alone reads as marked, never as received, and the 
   assert.match(screen, /send\("PATCH",\{id:row\.id,status:"cancelled"\}\)/, 'the payee withdraws the paid row, which the server allows only them');
   assert.match(screen, /"It never arrived"/);
   assert.doesNotMatch(screen, /`\$\{nameOf\(s\.from_user_id\)\} paid you/, 'no "paid you" written over a row the payee never confirmed');
-  // The payer's Mark as paid asks once before closing the line on their word.
-  assert.match(screen, /onClick=\{\(\)=>setConfirming\(lineKeyPart\(line\)\)\}>Mark as paid</);
-  assert.match(screen, /"Yes, I've paid"/);
+  // The payer's Mark as paid closes the line on their word, so it can be
+  // taken back: Undo for five seconds before the one request goes
+  // (lib/undo.ts), in place of the "are you sure?" it used to ask.
+  assert.match(screen, /onClick=\{\(\)=>markPaid\(line\)\}>Mark as paid</);
+  assert.match(screen, /const markPaid=line=>markLater\(/);
+  assert.match(screen, /undoable\(toast,/);
 });
 
 test('"already planning" is said for the group, and never names "Where next?"', () => {

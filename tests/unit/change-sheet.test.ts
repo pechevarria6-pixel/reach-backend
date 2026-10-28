@@ -21,10 +21,12 @@ const between = (from: string, to: string) => {
 
 test('the days open with the server\'s away lines; the client no longer builds its own', () => {
   assert.doesNotMatch(app, /function fixedCostRows|fixedCostRows\(/, 'the cents>0 builder that dropped an unpriced flight is gone');
-  const rows = between('function awayRows(', '\n}\n');
+  const rows = between('async function awayRows(', '\n}\n');
   assert.match(rows, /if\(Array\.isArray\(fixed\)\)return fixed;/, 'the server\'s fixed rows win whenever they came back');
   assert.match(rows, /awayLines\(trip\.away,opts\)\.map\(rowOf\)/);
-  assert.match(rows, /savedIdeaLines\(trip\|\|\{\},\{\.\.\.opts,nights\}\)\.map\(rowOf\)/);
+  // An idea saved before away lines: measured, and the drive rule decides
+  // (lib/away-lines.ts oldIdeaLines, tests/unit/polish.test.ts).
+  assert.match(rows, /oldIdeaLines\(trip\|\|\{\},\{\.\.\.opts,nights,km\}\)\.map\(rowOf\)/);
   // Both days-stage calls pass the server's `fixed` through.
   assert.equal((app.match(/awayRows\(trip,\{fixed:(d|data)\.fixed,/g) ?? []).length, 2);
 });
@@ -78,8 +80,8 @@ test('suggestions are never offered on a trip for one', () => {
   assert.match(app, /const loadSuggestions=async\(\)=>\{\n\s*if\(!planId\|\|isTempId\(planId\)\|\|\(group\?\.memberIds\|\|\[\]\)\.length<=1\)return;/);
 });
 
-test('after Lock it in, Change is the organiser\'s, and a priced swap asks first', () => {
-  assert.match(app, /&&\(soloTrip\|\|!lockedNow\|\|organiserHere\)/);
+test('after Lock it in, Change is the organiser\'s (and the booker\'s), and a priced swap asks first', () => {
+  assert.match(app, /&&\(soloTrip\|\|!lockedNow\|\|organiserHere\|\|bookedItMyself\(item\)\)/);
   assert.match(app, /confirmFirst=\{locked\}/);
   const panel = between('function ChoicePanel(', '\nfunction ');
   assert.match(panel, /confirmFirst\?setAsking\(o\.key\):choose\(o\.key\)/);

@@ -166,7 +166,9 @@ test('the Budget tab leaves out what you are not in for', () => {
   assert.deepEqual([...linesYoureOff(bookings, null)], [], 'unknown is nothing taken out');
   const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
   assert.match(app, /const youreOff=linesYoureOff\(planBookings,share\?\.items\)/);
-  assert.match(app, /booking_mode==="reach"&&i\.cost_cents>0&&!youreOff\.has\(String\(i\.id\)\)\)/);
+  // And what is left is your share off the booking rows (lib/budget.ts
+  // lineCosts, tests/unit/polish.test.ts), not the line's per-person fare.
+  assert.match(app, /booking_mode==="reach"&&i\.cost_cents>0&&!youreOff\.has\(String\(i\.id\)\)&&!costs\.get\(String\(i\.id\)\)\?\.off\)/);
 });
 
 test('a flyer is shown the quote\'s own per-seat fare for the seats flying now, marked', () => {

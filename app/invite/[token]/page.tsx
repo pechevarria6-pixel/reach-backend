@@ -75,7 +75,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
       if (!r.ok) throw new Error(body?.error || 'Could not join that group.');
       // Straight to the group they just joined. Plain /home dropped them on
       // a generic screen whose first thing was somebody else's "Pay".
-      router.push(body?.groupId ? `/home?group=${encodeURIComponent(body.groupId)}` : '/home');
+      router.push(body?.groupId ? `/home?group=${encodeURIComponent(body.groupId)}&joined=1` : '/home');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not join that group.');
       setBusy(false);

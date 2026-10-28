@@ -79,3 +79,84 @@ export function linesYoureOff(
   }
   return lines;
 }
+
+// ─── What a Reach-booked line costs you, and the group ───────────────────
+// A line's cost_cents is per person — the price for somebody flying — and
+// the Budget tab used it for everybody: "altogether" was that fare times
+// every head, drivers included. What each person really pays is on the
+// booking rows: who is on each one (the participation route's inCount /
+// imIn, from the opt-outs) and what the row costs the people on it now
+// (priceCents, the party figure). A flight split per departure airport is
+// several rows on one line; they add up.
+//
+// Before any booking row exists there is no opt-out yet, so nobody is known
+// to be driving: the line's own per-person figure stands for you, and the
+// group figure is the line's party_cents (per person × those flying, from
+// lib/away-lines.ts) when it carries one — never cost × everyone.
+
+export interface ShareItemLike {
+  ref?: unknown; imIn?: unknown; dropped?: unknown;
+  priceCents?: unknown; myCents?: unknown; inCount?: unknown; held?: unknown;
+}
+export interface LineLike { id?: unknown; cost_cents?: unknown; party_cents?: unknown; flying?: unknown }
+export interface LineCost {
+  /** Yours, in cents. 0 when you are off every booking on the line. */
+  mine: number;
+  /** Everybody's on it together, in cents. */
+  group: number;
+  /** You are not in for any of it. */
+  off: boolean;
+  /** Read off the booking rows, or the line's own estimate. */
+  from: 'bookings' | 'line';
+}
+
+const cents = (v: unknown): number | null => {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n) : null;
+};
+
+export function lineCosts(
+  lines: LineLike[] | null | undefined,
+  bookings: { id?: unknown; itinerary_item_id?: unknown; status?: unknown }[] | null | undefined,
+  shareItems: ShareItemLike[] | null | undefined,
+  heads: number,
+): Map<string, LineCost> {
+  const people = Math.max(1, Math.round(heads) || 1);
+  const listed = new Map((shareItems ?? []).filter(s => !s.dropped).map(s => [String(s.ref), s]));
+  const rowsOf = new Map<string, ShareItemLike[]>();
+  for (const b of bookings ?? []) {
+    if (['failed', 'cancelled'].includes(String(b.status)) || !b.itinerary_item_id) continue;
+    const s = listed.get(String(b.id));
+    if (!s) continue;
+    const k = String(b.itinerary_item_id);
+    rowsOf.set(k, [...(rowsOf.get(k) ?? []), s]);
+  }
+  const out = new Map<string, LineCost>();
+  for (const line of lines ?? []) {
+    const id = String(line.id);
+    const per = cents(line.cost_cents) ?? 0;
+    const rows = rowsOf.get(id);
+    if (rows?.length) {
+      let mine = 0, group = 0, inAny = false;
+      for (const s of rows) {
+        const price = cents(s.priceCents) ?? 0;
+        const on = Math.max(0, cents(s.inCount) ?? 0);
+        group += price;
+        if (s.imIn === false) continue;
+        inAny = true;
+        // A held row is in nobody's charge yet (myCents 0); its share is
+        // still what it would cost you, which is what a budget is for.
+        const my = cents(s.myCents) ?? 0;
+        mine += my > 0 ? my : on > 0 ? Math.round(price / on) : 0;
+      }
+      out.set(id, { mine, group, off: !inAny, from: 'bookings' });
+      continue;
+    }
+    const party = cents(line.party_cents);
+    const flying = cents(line.flying);
+    const group = party != null && flying != null ? party : per * people;
+    out.set(id, { mine: per, group, off: false, from: 'line' });
+  }
+  return out;
+}

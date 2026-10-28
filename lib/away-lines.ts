@@ -544,6 +544,45 @@ export function savedIdeaLines(trip: AwayTripLike, opts: {
 }
 
 /**
+ * An idea saved before away estimates, with the distance measured now.
+ *
+ * savedIdeaLines cannot tell a flight from a drive, so a cabin 150 miles
+ * away whose model priced a flight anyway still came back "Round-trip
+ * flights · Booked through Reach" — a flight checkout would go and quote for
+ * somewhere you drive to. With the distance from home (lib/away.ts), the
+ * server's own drive rule decides it (isNear, DRIVE_KM): a drive gets the
+ * road and no flight line at all; a long way gets the flight. Without one —
+ * either end could not be placed — nothing can say it is not a drive, so no
+ * flight line is written either: getting there is said to be theirs to
+ * arrange, which is true whichever it turns out to be.
+ */
+export function oldIdeaLines(trip: AwayTripLike, opts: {
+  nights: number; town: string; start?: string | null; end?: string | null;
+  party: number; solo: boolean; km: number | null;
+}): FixedLine[] {
+  const { km, ...rest } = opts;
+  if (typeof km === 'number' && Number.isFinite(km)) {
+    return awayLines(awayEstimate(trip, { nights: opts.nights, km }), rest);
+  }
+  const c = trip.costs ?? {};
+  return savedIdeaLines({ ...trip, costs: { ...c, flights: { per_person: 0 } } }, rest);
+}
+
+/**
+ * How many of the seats the preview should look for on a flight. A drive
+ * away (the road) has nobody flying, so no flight is searched for and the
+ * screen is never shown fares for a trip nobody flies to; otherwise the
+ * people the plan's own flight line counts as flying when it has one, else
+ * everybody.
+ */
+export function previewFlying(away: Partial<AwayEstimate> | null | undefined, seats: number, lineFlying?: number | null): number {
+  const all = Math.max(1, Math.round(seats) || 1);
+  if (away?.transport?.kind === 'ground') return 0;
+  if (typeof lineFlying === 'number' && Number.isFinite(lineFlying)) return Math.max(0, Math.min(all, Math.round(lineFlying)));
+  return all;
+}
+
+/**
  * A fixed line as the client's itinerary rows are shaped (`time`, `sub`) —
  * the shape afterRebuild and the itinerary PUT already take — so the screen
  * uses the server's lines instead of building its own from the costs.
