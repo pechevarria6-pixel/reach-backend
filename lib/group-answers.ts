@@ -440,12 +440,21 @@ export function notYetAnswered(names: string[], then: string): string {
  * so "my buddy who loves Thai food" reached the first build and not the
  * eight after it. The organiser's first, then anybody's.
  */
-export function nightPrefsFrom(read: Pick<GroupAnswers, 'byUser'>, organiser?: string | null): { food?: string[]; kind?: string[]; energy?: string } {
+export function nightPrefsFrom(read: Pick<GroupAnswers, 'byUser'>, organiser?: string | null): { food?: string[]; kind?: string[]; energy?: string; time?: string; timeOf?: string | null } {
   const people = Object.entries(read.byUser ?? {});
   people.sort(([a], [b]) => Number(b === organiser) - Number(a === organiser));
-  const out: { food?: string[]; kind?: string[]; energy?: string } = {};
+  const out: { food?: string[]; kind?: string[]; energy?: string; time?: string; timeOf?: string | null } = {};
   for (const [, u] of people) {
     const a = u.answers ?? {};
+    // The time they set, with what it was the time of — together, from one
+    // person, because "19:30" means the dinner to one question and the
+    // start of the night to another. "+ New plan → Dinner out" stores it
+    // here and a plan opened from there sends no nightPrefs, so without
+    // this the dinner was asked for at no time while the person had set one.
+    if (!out.time && typeof a.nightTime === 'string' && a.nightTime.trim()) {
+      out.time = a.nightTime.trim();
+      out.timeOf = typeof a.nightTimeOf === 'string' ? a.nightTimeOf : null;
+    }
     if (!out.food) { const f = list(a.nightFood); if (f.length) out.food = f; }
     if (!out.kind) { const k = list(a.nightKind); if (k.length) out.kind = k; }
     if (!out.energy && a.nightEnergy) out.energy = word(a.nightEnergy);

@@ -106,21 +106,37 @@ export function attachTicket(days: GenDay[], realEvent: RealEvent | null): boole
  * starts. It went into the prompt and no further, so the dinner line said
  * "The main event" and the table was asked for at a time nobody chose.
  *
- * Which slot the time belongs to is decided by what the plan is, never by
- * the model:
- *   a dinner out   the first slot at a place to eat (its cited kind)
- *   a concert      the slot holding the ticket
- *   any other      the first slot: the evening starts then
- * When that slot is not there — a dinner out whose dinner names no verified
- * place, a gig we found no ticket for — no slot gets the time. A time on the
- * wrong slot is a table booked for when the show starts.
+ * Which slot the time belongs to is what the person was asked, never the
+ * model's guess and never the plan's type. `of` says which question it
+ * answered (stored beside it as `nightTimeOf`):
+ *   'dinner'  "Dinner out" asked the dinner's time: the first place to eat
+ *   'show'    a concert asked the show's time: the slot holding the ticket
+ *   'start'   the night quiz's "What time": the evening's first slot
+ * The plan's type cannot say this on its own. Every night out is saved as
+ * type 'restaurant' — the database has no night-out type — so reading
+ * 'restaurant' as "a dinner out" pinned the evening's start to the meal,
+ * and a dinner the model put last went out as a table for the hour the
+ * group was meant to be at the bar.
+ *
+ * When `of` is not known (a time stored before it was recorded), only a
+ * slot both readings agree on gets it: on a 'restaurant' plan, the first
+ * slot when it is the meal; on a concert, the ticket; on anything else, the
+ * first slot. When that slot is not there — a dinner whose dinner names no
+ * verified place, a gig we found no ticket for — no slot gets the time. A
+ * time on the wrong slot is a table booked for when the show starts.
  *
  * Anything already in `time` is cleared first: only this writes it.
  * Returns whether a slot took the time.
  */
+export type TimeOf = 'dinner' | 'show' | 'start';
+/** Which question a stored night time answered, or null when nothing says. */
+export function timeOf(v: unknown): TimeOf | null {
+  return v === 'dinner' || v === 'show' || v === 'start' ? v : null;
+}
+
 export function stampStatedTime(
   days: GenDay[],
-  opts: { time: unknown; planType?: unknown },
+  opts: { time: unknown; of?: unknown; planType?: unknown },
 ): boolean {
   const slots = days.flatMap(d => [d.morning, d.afternoon, d.evening, ...(d.daytime ?? [])]).filter(Boolean) as GenSlot[];
   for (const sl of slots) sl.time = null;
@@ -129,11 +145,15 @@ export function stampStatedTime(
   const hhmm = `${m[1].padStart(2, '0')}:${m[2]}`;
   // The evening itself, in order — never the offered day around it.
   const evening = days.flatMap(d => [d.morning, d.afternoon, d.evening]).filter(sl => sl && sl.plan) as GenSlot[];
-  const target = opts.planType === 'restaurant'
-    ? evening.find(sl => typeForKind(sl.kind) === 'restaurant')
-    : opts.planType === 'concert'
-      ? evening.find(sl => !!sl.ticket_url)
-      : evening[0];
+  const isMeal = (sl: GenSlot | undefined) => !!sl && typeForKind(sl.kind) === 'restaurant';
+  const of = timeOf(opts.of);
+  const target = of === 'dinner' ? evening.find(isMeal)
+    : of === 'show' ? evening.find(sl => !!sl.ticket_url)
+    : of === 'start' ? evening[0]
+    // Not recorded: only where "the dinner" and "the start" are one slot.
+    : opts.planType === 'restaurant' ? (isMeal(evening[0]) ? evening[0] : undefined)
+    : opts.planType === 'concert' ? evening.find(sl => !!sl.ticket_url)
+    : evening[0];
   if (!target) return false;
   target.time = hhmm;
   return true;

@@ -208,6 +208,10 @@ export async function POST(req: NextRequest) {
   // `let`, because a saved plan can correct a caller that did not say — see
   // the detail branch below.
   let isNightPlan = mode === 'night';
+  // What the plan is, from its own row when there is one. groupPlan is null
+  // when a plan's days are built from PlanDetailScreen, which sends the plan
+  // as detailTripId alone — so reading only groupPlan lost it there.
+  let planType: unknown = null;
 
   // This reads every member's dietary needs, budget and preferences, so the
   // caller has to actually be in the group.
@@ -436,7 +440,7 @@ export async function POST(req: NextRequest) {
       if (isNightPlan && !Object.keys(nightPrefs).length) {
         const a = framing.answers;
         nightPrefs = {
-          time: a.nightTime || '', where: a.nightWhere || '',
+          time: a.nightTime || '', timeOf: a.nightTimeOf ?? null, where: a.nightWhere || '',
           kind: Array.isArray(a.nightKind) ? a.nightKind : [],
           food: Array.isArray(a.nightFood) ? a.nightFood : [],
           energy: a.nightEnergy || null,
@@ -810,6 +814,7 @@ export async function POST(req: NextRequest) {
       if (!planRow || String(planRow.group_id) !== String(groupId)) {
         return NextResponse.json({ error: 'That trip is not in this group.' }, { status: 404 });
       }
+      planType = planRow.type ?? null;
 
       // A group trip nobody has picked a destination for has no place to
       // write days about — its title is "Where next?" or somebody's sentence.
@@ -878,6 +883,14 @@ export async function POST(req: NextRequest) {
       if (!(nightPrefs.food || []).length && stored.food) nightPrefs.food = stored.food;
       if (!(nightPrefs.kind || []).length && stored.kind) nightPrefs.kind = stored.kind;
       if (!nightPrefs.energy && stored.energy) nightPrefs.energy = stored.energy;
+      // The time they set, and what it was the time of. A plan opened from
+      // "+ New plan" and every rebuild send no nightPrefs, so the 19:30 set
+      // for the dinner never reached the line and the card said no time was
+      // set. Only filled when the request did not bring one of its own.
+      if (!String(nightPrefs.time ?? '').trim() && stored.time) {
+        nightPrefs.time = stored.time;
+        nightPrefs.timeOf = stored.timeOf ?? null;
+      }
       if (read.lowestBudget && !body.budgetPerPerson) effectiveBudget = read.lowestBudget;
     }
     const here = splitVetoes([...new Set([...allVetoes, ...weatherNos, ...tripVetoes.map(v => String(v).replace(/^custom:/, '').trim())])]);
@@ -1357,9 +1370,10 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // out, the ticket on a concert, the start of any other evening. A trip
       // of days was given no times, and gets none.
       const statedTime = isNightPlan ? nightPrefs.time : null;
-      if (!stampStatedTime(days, { time: statedTime, planType: groupPlan?.type }) && statedTime) {
+      const typeHere = planType ?? groupPlan?.type ?? null;
+      if (!stampStatedTime(days, { time: statedTime, of: nightPrefs.timeOf, planType: typeHere }) && statedTime) {
         console.log('[trips itinerary] a time was set and no slot is plainly what it is for, so no line carries it', {
-          plan: groupPlan?.id ?? null, type: groupPlan?.type ?? null,
+          plan: groupPlan?.id ?? (isUuid ? String(detailTripId) : null), type: typeHere, of: nightPrefs.timeOf ?? null,
         });
       }
       if (!days.length) {

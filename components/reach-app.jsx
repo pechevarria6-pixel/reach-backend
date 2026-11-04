@@ -4163,7 +4163,7 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refre
     const {nights:_n,...said}=prefs||{};
     const answers={...previous,...said,
       budgetPerPerson:parseInt(budgetNum)||null,
-      ...(extra.mode==="night"&&extra.nightPrefs?.time?{nightTime:extra.nightPrefs.time}:{})};
+      ...(extra.mode==="night"&&extra.nightPrefs?.time?{nightTime:extra.nightPrefs.time,nightTimeOf:extra.nightPrefs.timeOf||"start"}:{})};
     // Typed into the hard-no box now, so not also kept as the old field.
     delete answers.noWay;
     try{
@@ -5787,7 +5787,10 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
       // rather than picked, and the server leads on it.
       {...merged,nights:isNight?1:nights,goalBlurb:(merged.goalBlurb||"").trim()},
       isNight?{mode:"night",nightPrefs:{
-        time:nightTime,where:merged.nightWhere||"",
+        // "What time" here is when the evening starts — unless it is the
+        // time they already gave for the dinner or the show, left as it was.
+        time:nightTime,timeOf:nightTime&&nightTime===initial?.nightTime&&initial?.nightTimeOf?initial.nightTimeOf:"start",
+        where:merged.nightWhere||"",
         kind:merged.nightKind||[],food:merged.nightFood||[],energy:merged.nightEnergy||null,
       }}:{mode:"trip"},
     );
@@ -7405,7 +7408,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     // Exactly what every other member's answers look like, so the reader
     // on the server treats the organiser's the same as theirs.
     const stored={...prefs,budgetPerPerson:budgetNum,
-      ...(night?{nightTime:extra.nightPrefs?.time||null}:{})};
+      ...(night?{nightTime:extra.nightPrefs?.time||null,nightTimeOf:extra.nightPrefs?.time?(extra.nightPrefs.timeOf||"start"):null}:{})};
     const np={
       id:"p"+Date.now(),title,status:"planning",
       dates:night?formatDates(dates.start):formatDates(dates.start,dates.end),
@@ -8250,7 +8253,10 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       tripAnswers:(()=>{const t={
         ...(planType==="restaurant"&&cuisine&&cuisine!=="any"?{nightFood:[cuisine]}:{}),
         ...(planType==="concert"&&concertGenre?{nightKind:["live music",concertGenre]}:{}),
-        ...(isEvent&&eventTime?{nightTime:eventTime}:{}),
+        // And what it is the time of: "Dinner out" asked when dinner is, a
+        // concert when the show is. Every night out is saved as type
+        // "restaurant", so the type alone cannot say this.
+        ...(isEvent&&eventTime?{nightTime:eventTime,nightTimeOf:planType==="concert"?"show":"dinner"}:{}),
       };return Object.keys(t).length?t:null;})(),
       participants:selGroup?.memberIds||[],
       itinerary:[],

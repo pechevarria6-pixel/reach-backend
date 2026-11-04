@@ -19,6 +19,7 @@ import { asRequest, type BookableLine } from '../../lib/booking/line-request.ts'
 import { tableReservations } from '../../lib/booking/providers/rest.ts';
 import { datedLink, reservationUrl } from '../../lib/booking/reservations.ts';
 import { stampStatedTime, asGenSlot, type GenDay } from '../../lib/itinerary-readback.ts';
+import { nightPrefsFrom } from '../../lib/group-answers.ts';
 import { findLinks } from '../../lib/find-links.ts';
 import { getNextAction, type NextActionInput } from '../../lib/next-action.ts';
 import { isJourney } from '../../lib/travel-slot.ts';
@@ -229,7 +230,7 @@ const raleighEvening = (): GenDay => ({
 
 test('a dinner out puts its time on the dinner, a concert on the ticket, any other evening on its start', () => {
   const dinner = [raleighEvening()];
-  assert.equal(stampStatedTime(dinner, { time: '19:30', planType: 'restaurant' }), true);
+  assert.equal(stampStatedTime(dinner, { time: '19:30', of: 'dinner', planType: 'restaurant' }), true);
   assert.deepEqual([dinner[0].morning.time, dinner[0].afternoon.time, dinner[0].evening.time], [null, '19:30', null]);
   const gig = [raleighEvening()];
   stampStatedTime(gig, { time: '20:00', planType: 'concert' });
@@ -241,7 +242,7 @@ test('a dinner out puts its time on the dinner, a concert on the ticket, any oth
 
 test('no plain slot for the time, no time anywhere — and never one the model wrote', () => {
   const noDinner = [{ ...raleighEvening(), afternoon: s('Somewhere to eat in Glenwood South') }];
-  assert.equal(stampStatedTime(noDinner, { time: '19:30', planType: 'restaurant' }), false);
+  assert.equal(stampStatedTime(noDinner, { time: '19:30', of: 'dinner', planType: 'restaurant' }), false);
   assert.ok([noDinner[0].morning, noDinner[0].afternoon, noDinner[0].evening].every(sl => sl.time === null));
   const written = [{ ...raleighEvening(), afternoon: s('Dinner at Bida Manda', { kind: 'restaurant', time: '18:00' }) }];
   assert.equal(stampStatedTime(written, { time: null }), false);
@@ -255,7 +256,7 @@ test('the screen\'s builders put the time in the line and give it its date', () 
   const { itineraryRows } = new Function('isJourney', 'typeForKind', 'lineWhen', 'labelWithClock',
     `${src}; return { itineraryRows };`)(isJourney, typeForKind, lineWhen, labelWithClock);
   const day = raleighEvening();
-  stampStatedTime([day], { time: '19:30', planType: 'restaurant' });
+  stampStatedTime([day], { time: '19:30', of: 'dinner', planType: 'restaurant' });
   const rows = itineraryRows([day], true, { startDate: '2026-11-06', endDate: '2026-11-06' });
   const dinner = rows.find((r: { title: string }) => r.title === 'Dinner at Bida Manda');
   assert.equal(dinner.time, 'The main event · 7:30 PM');
@@ -268,6 +269,63 @@ test('the screen\'s builders put the time in the line and give it its date', () 
   const trip = itineraryRows([{ ...raleighEvening(), day: 3 }], false, MOAB);
   assert.equal(trip[2].time, 'Day 3 · Evening');
   assert.equal(trip[2].date, '2026-09-19');
+});
+
+// Every night out is saved as type 'restaurant' — the night quiz's plans
+// included — and that quiz's "What time" is when the evening starts.
+test("a night out's start time is not the dinner's, whatever the plan's type", () => {
+  // Bar, then jazz, then dinner last: the prompt allows it.
+  const dinnerLast = (): GenDay => ({
+    day: 1, title: 'Saturday', cost_today: 90, daytime: [],
+    morning: s('Cocktails at Foundation', { kind: 'bar' }),
+    afternoon: s('Jazz at C. Grace', { kind: 'bar' }),
+    evening: s('Dinner at Bida Manda', { kind: 'restaurant' }),
+  });
+  const quiz = [dinnerLast()];
+  assert.equal(stampStatedTime(quiz, { time: '19:00', of: 'start', planType: 'restaurant' }), true);
+  assert.deepEqual([quiz[0].morning.time, quiz[0].afternoon.time, quiz[0].evening.time], ['19:00', null, null],
+    'the group is at the bar at 7; nobody gave the dinner a time');
+  // A time stored before what it was of was recorded: only a slot both
+  // readings agree on. Dinner last is not the start, so nothing carries it.
+  const old = [dinnerLast()];
+  assert.equal(stampStatedTime(old, { time: '19:00', planType: 'restaurant' }), false);
+  assert.ok([old[0].morning, old[0].afternoon, old[0].evening].every(sl => sl.time === null));
+  // Dinner first is both the start and the dinner.
+  const first = [{ ...dinnerLast(), morning: s('Dinner at Bida Manda', { kind: 'restaurant' }), evening: s('Late drinks at Foundation', { kind: 'bar' }) }];
+  assert.equal(stampStatedTime(first, { time: '19:00', planType: 'restaurant' }), true);
+  assert.equal(first[0].morning.time, '19:00');
+  // "Dinner out" said dinner is at 19:30, wherever the model put it.
+  const said = [dinnerLast()];
+  stampStatedTime(said, { time: '19:30', of: 'dinner', planType: 'restaurant' });
+  assert.deepEqual([said[0].morning.time, said[0].afternoon.time, said[0].evening.time], [null, null, '19:30']);
+});
+
+test('the clients say what a stored time is the time of', () => {
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(app, /nightTime:eventTime,nightTimeOf:planType==="concert"\?"show":"dinner"/, '"Dinner out" asks the dinner\'s time');
+  assert.match(app, /nightTime:extra\.nightPrefs\.time,nightTimeOf:extra\.nightPrefs\.timeOf\|\|"start"/, 'the quiz\'s "What time" is the start');
+  const quiz = app.slice(app.indexOf('isNight?{mode:"night",nightPrefs:{'), app.indexOf('}}:{mode:"trip"}'));
+  assert.match(quiz, /timeOf:/, 'the night quiz sends what its time is of');
+});
+
+// "+ New plan → Dinner out" stores the time with the plan, and the plan opens
+// in PlanDetailScreen, which builds its days sending no nightPrefs.
+test('a plan built from its stored answers keeps the time that was set, and what it was of', () => {
+  const out = nightPrefsFrom({ byUser: {
+    sam: { summary: null, answers: { nightTime: '21:00', nightTimeOf: 'start' } },
+    peter: { summary: null, answers: { nightFood: ['custom:Thai'], nightTime: '19:30', nightTimeOf: 'dinner' } },
+  } }, 'peter');
+  assert.equal(out.time, '19:30');
+  assert.equal(out.timeOf, 'dinner');
+  const none = nightPrefsFrom({ byUser: { peter: { summary: null, answers: { nightFood: ['Thai'] } } } }, 'peter');
+  assert.equal(none.time, undefined);
+  // An older row: the time, with nothing saying what of.
+  assert.equal(nightPrefsFrom({ byUser: { p: { summary: null, answers: { nightTime: '19:30' } } } }).timeOf, null);
+
+  const route = readFileSync('app/api/trips/generate/route.ts', 'utf8');
+  assert.match(route, /nightPrefs\.time = stored\.time;\s*nightPrefs\.timeOf = stored\.timeOf/, 'the stored time reaches the stamp');
+  assert.match(route, /planType = planRow\.type/, "the plan's type comes from its own row, not only groupPlan");
+  assert.match(route, /stampStatedTime\(days, \{ time: statedTime, of: nightPrefs\.timeOf, planType: typeHere \}\)/);
 });
 
 test('"The main event · 7:30 PM" is still the main event to "Something else…"', () => {
