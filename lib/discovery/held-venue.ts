@@ -21,6 +21,14 @@ export interface HeldVenue {
   reservation_platform: string | null;
   reservation_url: string | null;
   phone: string | null;
+  /**
+   * The venue's mapped hours and where it is, for the reservation assistant,
+   * which may ring only while a place is plainly open
+   * (lib/reservations/policy.ts). Optional so a row built elsewhere need not
+   * carry them.
+   */
+  opening_hours?: string | null;
+  lng?: number | null;
 }
 
 /**
@@ -35,7 +43,7 @@ export function likeExactly(name: string): string {
 const same = (a: string, b: string) =>
   a.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim() === b.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
 
-type Row = HeldVenue & { name: string; lat: number | null; lng: number | null; region?: string | null; countries?: string[] | null };
+type Row = HeldVenue & { name: string; lat: number | null; lng: number | null; opening_hours?: string | null; region?: string | null; countries?: string[] | null };
 type ReadError = { code?: string; message?: string } | null;
 
 /**
@@ -69,7 +77,7 @@ export async function heldVenueNear(
   const read = (migrated: boolean, withCountries = false) => {
     let q = db
       .from('discovery_venues')
-      .select(`name, lat, lng, reservation_platform, reservation_url, phone${migrated ? ', region' : ''}${withCountries ? ', countries' : ''}`)
+      .select(`name, lat, lng, reservation_platform, reservation_url, phone, opening_hours${migrated ? ', region' : ''}${withCountries ? ', countries' : ''}`)
       .ilike('name', likeExactly(wanted))
       // The weekly map load holds hotels too. A table line is never a
       // hotel's front desk, even when the two share a name.
@@ -88,7 +96,7 @@ export async function heldVenueNear(
   // it nothing is gone, and no row has a region (so none is across a border).
   if (error && (error.code === '42703' || /gone_at|region/.test(error.message || ''))) ({ data, error } = await read(false));
   if (error) {
-    const pending = /reservation_platform|reservation_url|phone|schema cache/i.test(error.message || '');
+    const pending = /reservation_platform|reservation_url|phone|opening_hours|schema cache/i.test(error.message || '');
     return { venue: null, error: pending ? null : error };
   }
 
@@ -103,6 +111,8 @@ export async function heldVenueNear(
       reservation_platform: best.reservation_platform ?? null,
       reservation_url: best.reservation_url ?? null,
       phone: best.phone ?? null,
+      opening_hours: best.opening_hours ?? null,
+      lng: Number(best.lng),
     },
     error: null,
   };
