@@ -11,7 +11,8 @@
 //      and a provider whose keys are all present;
 //   2. a restaurant booking the person books themselves (never one Reach buys);
 //   3. every fact from what we hold — no default date, no default time;
-//   4. the date inside the trip and not already past where the venue is;
+//   4. the date inside the trip, and the date and clock time still to come
+//      where the venue is — by more than the longitude estimate can be off;
 //   5. a +1 number we can read;
 //   6. no earlier call that skipped the disclosure (that stops everything);
 //   7. not on the do-not-call list, which is forever;
@@ -32,7 +33,7 @@ import { gate, dialTarget, type Env, type Gate } from './gate.ts';
 import { checkFacts, opening, instructions, type CallFacts, type FactProblem } from './script.ts';
 import { settle, type Outcome, type Settled } from './outcome.ts';
 import { callWording, type WordingContext, type Wording } from './wording.ts';
-import { toE164, dialable, openForCalls, type LineLookup, type LineType } from './policy.ts';
+import { toE164, dialable, openForCalls, localMinute, HOURS_MARGIN, type LineLookup, type LineType } from './policy.ts';
 import type { Provider, CallEnded } from './providers.ts';
 import { dayWhere } from '../calendar.ts';
 
@@ -46,7 +47,7 @@ const DISCLOSURE_LOOKBACK_DAYS = 3650;
 export type Refusal =
   | 'calls_off' | 'live_not_approved' | 'no_test_number' | 'no_provider'
   | 'not_a_table' | 'reach_buys' | 'already_settled_booking'
-  | 'missing_facts' | 'date_past' | 'date_outside_trip'
+  | 'missing_facts' | 'date_past' | 'time_past' | 'date_outside_trip'
   | 'number_unreadable' | 'not_north_american'
   | 'disclosure_failed_before'
   | 'do_not_call'
@@ -68,6 +69,7 @@ export const REFUSAL_COPY: Record<Refusal, string> = {
   already_settled_booking: 'This table is already settled.',
   missing_facts: 'Pick a date, a time and how many people first.',
   date_past: 'That date has already gone.',
+  time_past: "That time has gone, or is too soon for Reach to ask — call them instead.",
   date_outside_trip: "That date isn't on this trip.",
   number_unreadable: "We don't hold a number for this restaurant we can be sure of.",
   not_north_american: 'Reach can only call restaurants in the US and Canada.',
@@ -221,6 +223,13 @@ export async function placeCall(input: PlaceInput, deps: PlaceDeps): Promise<Pla
 
   // 4. A night on this trip, still to come where the restaurant is.
   if (facts.date < dayWhere(input.venue?.lng, now)) return no('date_past');
+  // The date alone lets a 6 p.m. table be asked for at 9 p.m. the same night.
+  // The venue's clock is estimated from longitude, so a time inside the
+  // margin may already be gone there: hand it to the person instead.
+  // Without a longitude there is no clock to read; check 9 refuses that
+  // call (openForCalls needs one too), so nothing rings without this check.
+  const soonest = localMinute(input.venue?.lng, new Date(now.getTime() + HOURS_MARGIN * 3_600_000));
+  if (soonest && `${facts.date}T${facts.time}` <= soonest) return no('time_past');
   const { start_date: start, end_date: end } = input.plan;
   if (start && (facts.date < start || facts.date > (end || start))) return no('date_outside_trip');
 
@@ -337,7 +346,9 @@ export async function settleCall(event: CallEnded, providerName: string, store: 
   // Somebody else's delivery of this same event settled it first.
   if (!wrote.value) return { ok: false, why: 'already_settled' };
 
-  if (!settled.disclosed) {
+  // Only a call whose assistant spoke without the disclosure. One nobody
+  // answered, or that the assistant never spoke on, is null and stops nothing.
+  if (settled.disclosed === false) {
     console.error('[reservation call] THE CALL DID NOT OPEN WITH THE DISCLOSURE — every later call is refused until this is looked at', { id: row.id, provider: providerName });
   }
 

@@ -3,7 +3,8 @@
 // before a write (CLAUDE.md: a double-tap is two concurrent requests):
 //
 //   one call per reservation  — unique (booking_id, mode)
-//   fifty a day               — unique (call_day, day_slot), slot 1..50
+//   fifty a day               — unique (call_day, day_slot), slot 1..50;
+//                               a released claim's slot is taken again
 //   one settle per call       — update … where settled_at is null
 //
 // Before sql/reservation-calls-2026-11-04.sql runs, every read says
@@ -47,20 +48,26 @@ export function supabaseStore(db: SupabaseClient, send: Sender | null): Store {
     },
 
     async claim(row): Promise<Claim> {
-      // The next free slot of the day. Two requests may read the same count;
-      // the unique index lets one have the slot and sends the other on to the next.
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const { count, error: countErr } = await db.from('reservation_calls')
-          .select('id', { count: 'exact', head: true }).eq('call_day', row.call_day);
-        if (countErr) { const f = fail(countErr, 'could not count today\'s calls'); return { ok: false, why: f.why }; }
-        const slot = (count ?? 0) + 1 + attempt;
+      // The lowest free slot of the day. Not count + 1: a claim the provider
+      // refused is deleted (release), and the hole it leaves must be reused,
+      // or five holes below the top would fail every later call that day.
+      // Two requests may read the same free slot; the unique index lets one
+      // have it, and the other remembers it as taken and reads again.
+      const lost = new Set<number>();
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const { data: taken, error: readErr } = await db.from('reservation_calls')
+          .select('day_slot').eq('call_day', row.call_day);
+        if (readErr) { const f = fail(readErr, 'could not read today\'s calls'); return { ok: false, why: f.why }; }
+        const used = new Set<number>([...lost, ...(taken ?? []).map(r => Number((r as { day_slot: unknown }).day_slot))]);
+        let slot = 1;
+        while (used.has(slot)) slot++;
         if (slot > DAILY_CAP) return { ok: false, why: 'cap' };
         const { data, error } = await db.from('reservation_calls')
           .insert({ ...row, day_slot: slot, status: 'placing' }).select(COLUMNS).single();
         if (!error && data) return { ok: true, row: data as CallRow };
         const text = `${error?.message ?? ''} ${error?.details ?? ''}`;
         if (error?.code === '23505' && /one_per_booking/.test(text)) return { ok: false, why: 'already' };
-        if (error?.code === '23505' && /day_slot/.test(text)) continue;
+        if (error?.code === '23505' && /day_slot/.test(text)) { lost.add(slot); continue; }
         const f = fail(error, 'could not claim a call');
         return { ok: false, why: f.why };
       }

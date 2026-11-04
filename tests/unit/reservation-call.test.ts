@@ -6,7 +6,7 @@ import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gate, dialTarget, modeFrom } from '../../lib/reservations/gate.ts';
 import { checkFacts, opening, instructions, clock, spokenDate, type CallFacts } from '../../lib/reservations/script.ts';
-import { settle, mentionsTime, asClock, disclosedIn, type Turn } from '../../lib/reservations/outcome.ts';
+import { settle, mentionsTime, mentionsParty, asClock, disclosedIn, type Turn } from '../../lib/reservations/outcome.ts';
 import { callWording, nextOptions, type WordingContext } from '../../lib/reservations/wording.ts';
 import { toE164, dialable, openForCalls, lineTypeOf, twilioLookup } from '../../lib/reservations/policy.ts';
 import { retell, vapi, senderOf } from '../../lib/reservations/providers.ts';
@@ -347,9 +347,34 @@ test('confirmed only on the staff saying yes, never the assistant', () => {
 
   assert.equal(settle(FACTS, [OPEN, S('Yes we can do that')], { outcome: 'confirmed' }).outcome, 'unclear', 'no staff words given');
   assert.equal(settle(FACTS, [OPEN, S("Sorry, we're full at 7:30")], { outcome: 'confirmed', staff_quote: "Sorry, we're full at 7:30" }).outcome, 'unclear');
-  assert.equal(settle(FACTS, [OPEN, S('Yes, no problem, see you then')], { outcome: 'confirmed', staff_quote: 'Yes, no problem, see you then' }).outcome, 'confirmed', '"no problem" is a yes');
+  assert.equal(settle(FACTS, [OPEN, S('Yes, no problem, see you then')], { outcome: 'confirmed', staff_quote: 'Yes, no problem, see you then', held_time: '19:30', held_party: 4 }).outcome, 'confirmed', '"no problem" is a yes');
   assert.equal(settle(FACTS, [OPEN, S('Sure, for two')], { outcome: 'confirmed', staff_quote: 'Sure, for two', held_party: 2 }).outcome, 'unclear', 'not the party asked for');
   assert.equal(settle(FACTS, [OPEN, S('Sure, at 9')], { outcome: 'confirmed', staff_quote: 'Sure, at 9', held_time: '21:00' }).outcome, 'unclear', 'not the time asked for');
+});
+
+test('a yes to holding, a yes followed by a no, or a yes to nothing said is not confirmed', () => {
+  const held = { held_time: '19:30', held_party: 4 };
+  // "Sure, one moment" then "fully booked": the LLM's quote is a real staff word, and still no table.
+  const hold = settle(FACTS, [OPEN, S('Sure, one moment.'), S('Sorry, we are fully booked Friday night.')], { outcome: 'confirmed', staff_quote: 'Sure' });
+  assert.equal(hold.outcome, 'unclear');
+  assert.equal(hold.held, undefined);
+  assert.equal(settle(FACTS, [OPEN, S('Sure, one moment.'), S('Sorry, we are fully booked Friday night.')], { outcome: 'confirmed', staff_quote: 'Sure', ...held }).outcome, 'unclear', 'a no after the yes');
+  assert.equal(settle(FACTS, [OPEN, S('Sure, one moment please.')], { outcome: 'confirmed', staff_quote: 'Sure', ...held }).outcome, 'unclear', 'a yes to holding');
+  // The no in the same turn as the quoted word.
+  assert.equal(settle(FACTS, [OPEN, S('Okay, so unfortunately we have nothing at 7:30.')], { outcome: 'confirmed', staff_quote: 'Okay', ...held }).outcome, 'unclear');
+  // Nothing defaults the time or party held to what was asked.
+  assert.equal(settle(FACTS, [OPEN, S('Yes, we can do that.')], { outcome: 'confirmed', staff_quote: 'Yes, we can do that.' }).outcome, 'unclear', 'no held time or party given');
+  assert.equal(settle(FACTS, [OPEN, S('Yes, we can do that.')], { outcome: 'confirmed', staff_quote: 'Yes, we can do that.', held_time: '19:30' }).outcome, 'unclear', 'no held party given');
+  // The time and party have to have been said, by staff or in the question the yes answers.
+  assert.equal(settle(FACTS, [OPEN, S('What can I do for you?'), A('Are you open on Friday?'), S('Yes we are.')], { outcome: 'confirmed', staff_quote: 'Yes we are.', ...held }).outcome, 'unclear', 'a yes to another question');
+  assert.equal(settle(FACTS, [OPEN, S('Yes, we can do that.')], { outcome: 'confirmed', staff_quote: 'Yes, we can do that.', ...held }).outcome, 'confirmed', 'a yes straight to the question asked');
+  assert.equal(settle(FACTS, [OPEN, S('Hold on.'), A('Thank you.'), S('Yes, 7:30 for four works.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four works.', ...held }).outcome, 'confirmed', 'staff said the time and party themselves');
+  assert.equal(settle(FACTS, [OPEN, S('Yes.'), S('Oh wait, sorry, we are fully booked.')], { outcome: 'confirmed', staff_quote: 'Yes.', ...held }).outcome, 'unclear', 'a plain yes, then a no');
+  assert.equal(settle(FACTS, [OPEN, S('What can I do for you?'), A('Do you take parties of 4?'), S('Yes we do.')], { outcome: 'confirmed', staff_quote: 'Yes we do.', ...held }).outcome, 'unclear', 'the party was said, the time never');
+  assert.equal(settle(FACTS, [OPEN, S('What can I do for you?'), A('Is 7:30 a busy time?'), S('Yes it is.')], { outcome: 'confirmed', staff_quote: 'Yes it is.', ...held }).outcome, 'unclear', 'the time was said, the party never');
+  assert.equal(mentionsParty('a table for four', 4), true);
+  assert.equal(mentionsParty('7:30 for 14', 4), false);
+  assert.equal(mentionsParty('the 4th', 4), false);
 });
 
 test('an offered time counts only when the restaurant said it', () => {
@@ -381,7 +406,7 @@ test('refused and "stop calling" both stop calling, whatever the extraction says
   assert.equal(stop.stopCalling, true);
   const flagged = settle(FACTS, [OPEN, S('Not tonight.')], { outcome: 'no_availability', asked_not_to_call: 'true' });
   assert.equal(flagged.stopCalling, true);
-  const yesButStop = settle(FACTS, [OPEN, S('Yes, 7:30 is fine. But stop calling us with these.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 is fine.' });
+  const yesButStop = settle(FACTS, [OPEN, S('Yes, 7:30 is fine. But stop calling us with these.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 is fine.', held_time: '19:30', held_party: 4 });
   assert.equal(yesButStop.outcome, 'confirmed', 'a yes is still a yes');
   assert.equal(yesButStop.stopCalling, true, 'and the number is still never called again');
 });
@@ -390,7 +415,8 @@ test('the disclosure is checked in what the assistant actually said first', () =
   assert.equal(disclosedIn([OPEN, S('yes')]), true);
   assert.equal(disclosedIn([A('Hi, I would like a table for 4.'), S('yes')]), false);
   assert.equal(disclosedIn([S('Hello?'), A('Hi, this is an automated AI assistant from Reach. This call is recorded.')]), true);
-  assert.equal(disclosedIn([S('Hello?')]), false);
+  assert.equal(disclosedIn([S('Hello?')]), null, 'the assistant never spoke: not applicable, not a failure');
+  assert.equal(disclosedIn([]), null);
 });
 
 // ── settling ────────────────────────────────────────────────────────────
@@ -407,7 +433,7 @@ const ended = (turns: Turn[], extraction: any, signals = {}) =>
 
 test('a confirmed live call confirms the booking, says so exactly, once', async () => {
   const m = await placedLive();
-  const ev = ended([OPEN, S('Yes, 7:30 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four is fine.' });
+  const ev = ended([OPEN, S('Yes, 7:30 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four is fine.', held_time: '19:30', held_party: 4 });
   const first = await settleCall(ev, 'retell', m.store);
   assert.equal(first.ok, true);
   const b = m.bookings.get(booking().id)!;
@@ -422,7 +448,7 @@ test('a confirmed live call confirms the booking, says so exactly, once', async 
 
 test('two deliveries of the same event at the same moment settle it once', async () => {
   const m = await placedLive();
-  const ev = ended([OPEN, S('Yes, 7:30 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four is fine.' });
+  const ev = ended([OPEN, S('Yes, 7:30 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four is fine.', held_time: '19:30', held_party: 4 });
   const results = await Promise.all([settleCall(ev, 'retell', m.store), settleCall(ev, 'retell', m.store)]);
   assert.equal(results.filter(r => r.ok).length, 1);
   assert.equal(m.notes.length, 1, 'one notification, not two');
@@ -462,7 +488,7 @@ test('"stop calling" on a live call is listed forever; on a test call nothing is
   const y = memoryStore();
   y.bookings.set(booking().id, { status: 'pending' });
   await placeCall(input({ booking: booking({ status: 'pending' }) }), deps(TEST_ENV, y.store));
-  await settleCall(ended([OPEN, S('Yes, 7:30 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four is fine.' }), 'retell', y.store);
+  await settleCall(ended([OPEN, S('Yes, 7:30 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four is fine.', held_time: '19:30', held_party: 4 }), 'retell', y.store);
   assert.deepEqual(y.bookings.get(booking().id), { status: 'pending' });
   assert.deepEqual(t.notes[0].to, ['u1']);
   assert.match(t.notes[0].title, /^Test call — /);
@@ -483,6 +509,40 @@ test('an undisclosed call is recorded as such, and the next call is refused', as
   assert.equal(m.calls[0].disclosed, false);
   const next = await placeCall(input({ booking: booking({ id: 'b-2' }) }), deps(LIVE_ENV, m.store));
   assert.equal(next.ok === false && next.refusal, 'disclosure_failed_before');
+});
+
+test('a call nobody answered, or the assistant never spoke on, is not an undisclosed call', async () => {
+  for (const [name, turns, signals] of [
+    ['no answer', [], { noAnswer: true }],
+    ['busy, nothing said', [], {}],
+    ['a voicemail the assistant never spoke to', [], { voicemail: true }],
+    ['staff said hello and hung up', [S('Hello?')], {}],
+  ] as Array<[string, Turn[], any]>) {
+    const m = await placedLive();
+    const r = await settleCall(ended(turns, null, signals), 'retell', m.store);
+    assert.equal(r.ok, true, name);
+    assert.equal(m.calls[0].disclosed, null, `${name}: not applicable, not false`);
+    const next = await placeCall(input({ booking: booking({ id: 'b-2' }) }), deps(LIVE_ENV, m.store));
+    assert.equal(next.ok, true, `${name}: the next call is still placed`);
+  }
+});
+
+test('a clock time already gone where the venue is, or too close to tell, is refused', async () => {
+  // 21:00 in Raleigh by the estimate (UTC-5), on the night itself, open till 23:00.
+  const nine = new Date('2026-11-07T02:00:00Z');
+  const venue = { ...input().venue!, opening_hours: 'Mo-Su 11:00-23:30' };
+  for (const [time, want] of [['18:00', 'time_past'], ['21:00', 'time_past'], ['22:30', 'time_past']] as const) {
+    const m = memoryStore();
+    const prov = fakeProvider();
+    const r = await placeCall(input({ now: nine, venue, chosen: { date: '2026-11-06', time, partySize: 4 } }), deps(LIVE_ENV, m.store, {}, prov));
+    assert.equal(r.ok === false && r.refusal, want, time);
+    assert.equal(prov.placed.length, 0, `${time}: nothing rang`);
+    assert.ok(r.ok === false && r.handoff.phone, `${time}: their number is there instead`);
+  }
+  // Tomorrow's 18:00 is still to come.
+  const m = memoryStore();
+  const ok = await placeCall(input({ now: nine, venue, chosen: { date: '2026-11-07', time: '18:00', partySize: 4 } }), deps(LIVE_ENV, m.store));
+  assert.equal(ok.ok, true);
 });
 
 // ── wording ─────────────────────────────────────────────────────────────
@@ -593,7 +653,9 @@ function claimDb(rows: Array<{ booking_id: string; mode: string; call_day: strin
         insert(row: any) { inserting = row; return b; },
         then(resolve: (v: unknown) => void) {
           // A count read before another request's insert landed is `stale` behind.
-          resolve({ count: Math.max(0, rows.filter(r => r.call_day === b.day).length - (opts.stale ?? 0)), error: null });
+          const seen = rows.filter(r => r.call_day === b.day);
+          const read = seen.slice(0, Math.max(0, seen.length - (opts.stale ?? 0)));
+          resolve({ data: read.map(r => ({ day_slot: r.day_slot })), count: read.length, error: null });
         },
         async single() {
           if (rows.some(r => r.booking_id === inserting.booking_id && r.mode === inserting.mode)) {
@@ -631,4 +693,18 @@ test('the database holds the cap, the one call, and a slot two requests both wan
   const full = Array.from({ length: DAILY_CAP }, (_, i) => ({ booking_id: `x${i}`, mode: 'live', call_day: '2026-11-04', day_slot: i + 1 }));
   const capped = await supabaseStore(claimDb(full), null).claim(claimRow('late'));
   assert.equal(capped.ok === false && capped.why, 'cap');
+});
+
+test('a slot a refused placement released is taken again, so holes never cap the day early', async () => {
+  // Slots 1-5 released after provider refusals; 6-15 in use: ten calls of fifty.
+  const rows = Array.from({ length: 10 }, (_, i) => ({ booking_id: `x${i}`, mode: 'live', call_day: '2026-11-04', day_slot: i + 6 }));
+  const r = await supabaseStore(claimDb(rows), null).claim(claimRow('after-holes'));
+  assert.equal(r.ok, true);
+  assert.equal(rows.at(-1)!.day_slot, 1, 'the lowest free slot');
+  // And with six more holes taken one by one, the day still reaches fifty.
+  const store = supabaseStore(claimDb(rows), null);
+  for (let i = 0; i < DAILY_CAP - 11; i++) assert.equal((await store.claim(claimRow(`fill${i}`))).ok, true, `call ${i + 12}`);
+  const full = await store.claim(claimRow('fifty-first'));
+  assert.equal(full.ok === false && full.why, 'cap');
+  assert.equal(new Set(rows.map(r => r.day_slot)).size, DAILY_CAP);
 });

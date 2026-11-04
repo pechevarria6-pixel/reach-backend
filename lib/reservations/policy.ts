@@ -74,6 +74,13 @@ export function lineTypeOf(t: unknown): LineType {
   }
 }
 
+/** The venue's estimated local "YYYY-MM-DDTHH:MM" at a moment, from longitude; null without one. */
+export function localMinute(lng: number | null | undefined, at: Date): string | null {
+  if (typeof lng !== 'number' || !Number.isFinite(lng)) return null;
+  const offset = Math.max(-12, Math.min(14, Math.round(lng / 15)));
+  return new Date(at.getTime() + offset * 3_600_000).toISOString().slice(0, 16);
+}
+
 /** Hours either side of now the venue must be plainly open, to absorb the longitude estimate. */
 export const HOURS_MARGIN = 2;
 

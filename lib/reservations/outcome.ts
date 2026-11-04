@@ -4,11 +4,16 @@
 // extraction is treated as a claim, and only two outcomes need proof:
 //
 //   confirmed            — the staff's own words, found in a STAFF turn of
-//                          the transcript, say yes, and nothing the
-//                          extraction reports contradicts the time or party
-//                          that was asked for. The assistant's turns are
-//                          never evidence: it was told not to say "booked",
-//                          and if it did anyway that proves nothing.
+//                          the transcript, say yes; that turn and every
+//                          staff turn after it say nothing like no; the
+//                          time and party asked for were said in that turn
+//                          or in the question it answers; and the
+//                          extraction names the same time and party (it is
+//                          never defaulted to what was asked). The
+//                          assistant's turns are never evidence of a yes:
+//                          it was told not to say "booked", and if it did
+//                          anyway that proves nothing. The question a yes
+//                          answers is read only to know what the yes was to.
 //   alternative_offered  — the time offered appears in a staff turn.
 //
 // Every other outcome means "not booked", which is safe to say even when the
@@ -68,8 +73,12 @@ export interface Settled {
   offeredTime?: string;
   /** The staff words the outcome rests on, when there are any. */
   staffQuote?: string | null;
-  /** Whether the first assistant turn carried the full disclosure. */
-  disclosed: boolean;
+  /**
+   * Whether the first assistant turn carried the full disclosure. null when
+   * the assistant never spoke (no answer, busy, a voicemail it never spoke
+   * to): nothing was said, so nothing was said without the disclosure.
+   */
+  disclosed: boolean | null;
   /** Why a claim was not believed, for the log and the row. */
   doubt?: string;
 }
@@ -80,6 +89,19 @@ const STOP_CALLING = /\b(don'?t|do not|stop|never|quit)\s+(call|calling|ring|rin
 const REFUSES_AI = /\b(don'?t|do not|won'?t|will not|not going to|can'?t)\s+(talk|speak|deal)\s+(to|with)\s+(a |an )?(robot|machine|ai|bot|computer)s?\b|\bno (robots|bots|ai|machines)\b|\b(don'?t|do not) (consent|agree) to (being |this |the )?record|\b(don'?t|do not) (want|like) (to be |being )?record/;
 const AFFIRM = /\b(yes|yeah|yep|yup|sure|absolutely|of course|confirmed|booked|you'?re (all )?set|you'?re booked|we (have|got|can fit) (you|that)|got (you|it) (down|in)|see you (then|on|at)|that works|we can do (that|it)|perfect|great|certainly|okay|ok)\b/;
 const NEGATE = /\b(no|not|sorry|unfortunately|can'?t|cannot|fully booked|booked up|don'?t have|nothing (at|for|available)|unavailable|we'?re full|no tables?)\b/;
+/** "Sure, one moment" is a yes to holding, not to the table. */
+const HOLDING = /\b(one|a) (moment|minute|min|sec|second)\b|\bhold (on|please)\b|\bplease hold\b|\bjust a (moment|minute|sec|second)\b|\blet me (check|see|look|ask)\b|\bhang on\b|\bbear with\b/;
+const POLITE = /\b(no problem|not a problem|no worries)\b/g;
+
+const PARTY_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+  'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+/** Whether a party size is said: "4", "four", "party of four". */
+export function mentionsParty(text: string, n: number): boolean {
+  const t = norm(text);
+  const forms = [String(n)];
+  if (PARTY_WORDS[n]) forms.push(PARTY_WORDS[n]);
+  return forms.some(f => new RegExp(`(^|[^0-9:a-z])${f}($|[^0-9:a-z])`).test(t));
+}
 
 /** A clock time, said any of the ways a transcript writes it. "19:30" matches "7:30", "seven thirty", "half past seven". */
 export function mentionsTime(text: string, hhmm: string): boolean {
@@ -119,9 +141,9 @@ export function asClock(raw: unknown, near: string): string | null {
 const truthy = (v: unknown) => v === true || /^(true|yes|1)$/i.test(String(v ?? ''));
 
 /** Whether the first assistant turn said every part of the disclosure. */
-export function disclosedIn(turns: Turn[]): boolean {
-  const first = turns.find(t => t.speaker === 'assistant');
-  if (!first) return false;
+export function disclosedIn(turns: Turn[]): boolean | null {
+  const first = turns.find(t => t.speaker === 'assistant' && t.text.trim());
+  if (!first) return null;
   const said = norm(first.text);
   return DISCLOSURE_PARTS.every(p => said.includes(norm(p)));
 }
@@ -154,11 +176,32 @@ export function settle(facts: CallFacts, turns: Turn[], x: Extraction | null | u
     const doubt = (why: string): Settled => ({ ...base, outcome: stopCalling ? 'do_not_call' : 'unclear', staffQuote: quote || null, doubt: why });
     if (!quoted) return doubt('no staff words given for the confirmation');
     if (!quoteIsStaff) return doubt('the confirming words are not in anything the restaurant said');
-    const withoutPolite = quoted.replace(/\b(no problem|not a problem|no worries)\b/g, ' ');
-    if (!AFFIRM.test(withoutPolite) || NEGATE.test(withoutPolite)) return doubt('the restaurant\'s words do not say yes');
-    const heldTime = ext.held_time == null || ext.held_time === '' ? facts.time : asClock(ext.held_time, facts.time);
+    const withoutPolite = (s: string) => s.replace(POLITE, ' ');
+    if (!AFFIRM.test(withoutPolite(quoted)) || NEGATE.test(withoutPolite(quoted))) return doubt('the restaurant\'s words do not say yes');
+    // The turn the quote sits in — the last one, so a later turn is never
+    // hidden behind an earlier "sure" — and everything staff said after it.
+    let at = -1;
+    turns.forEach((t, i) => { if (t.speaker === 'staff' && norm(t.text).includes(quoted)) at = i; });
+    const turn = norm(turns[at].text);
+    if (NEGATE.test(withoutPolite(turn))) return doubt('the rest of the restaurant\'s answer says no');
+    if (HOLDING.test(turn)) return doubt('the restaurant\'s words agree to hold, not to the table');
+    if (turns.slice(at + 1).some(t => t.speaker === 'staff' && NEGATE.test(withoutPolite(norm(t.text))))) {
+      return doubt('the restaurant said no after the words given as a yes');
+    }
+    // A yes is to the time and party only when they were said: by staff in
+    // that turn, or in the question that turn answers.
+    let asked = '';
+    for (let i = at - 1; i >= 0; i--) {
+      if (turns[i].speaker === 'assistant') { asked = turns[i].text; break; }
+    }
+    if (!mentionsTime(turns[at].text, facts.time) && !mentionsTime(asked, facts.time)) return doubt('the time asked for was not said before the yes');
+    if (!mentionsParty(turns[at].text, facts.partySize) && !mentionsParty(asked, facts.partySize)) return doubt('the party asked for was not said before the yes');
+    // The extraction must name what was held; a missing one is not a match.
+    if (ext.held_time == null || ext.held_time === '') return doubt('no time held was given');
+    const heldTime = asClock(ext.held_time, facts.time);
     if (heldTime !== facts.time) return doubt(`the time held (${String(ext.held_time)}) is not the time asked for`);
-    const heldParty = ext.held_party == null || ext.held_party === '' ? facts.partySize : Number(ext.held_party);
+    if (ext.held_party == null || ext.held_party === '') return doubt('no party held was given');
+    const heldParty = Number(ext.held_party);
     if (heldParty !== facts.partySize) return doubt(`the party held (${String(ext.held_party)}) is not the party asked for`);
     return {
       ...base, outcome: 'confirmed', staffQuote: quote,
