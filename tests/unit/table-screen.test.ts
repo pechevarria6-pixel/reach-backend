@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   readTableAnswer, offeredTitle, feeSaid, holdLeft, leftSaid, callShown, callWords, MAY_BE_BOOKED,
+  tableControls, answerShown, bookItCovers,
 } from '../../lib/reservations/table-screen.ts';
 
 const HOLD = {
@@ -100,7 +101,7 @@ test('"Have Reach call" only when the server offered a call and the call route s
 
 test('a call is told in the research\'s words, from the call itself', () => {
   const info = { available: true, call: { status: 'settled', title: "Luigi's confirmed on the call: 7:30 for 4, under Maria.", body: "The group's table on Saturday, November 7 is on the plan." } };
-  assert.deepEqual(callWords({ path: 'call', title: "Luigi's confirmed on the call: Sat, Nov 7 at 7:30 PM for 4.", body: '' }, info),
+  assert.deepEqual(callWords({ path: 'call', state: 'confirmed', title: "Luigi's confirmed on the call: Sat, Nov 7 at 7:30 PM for 4.", body: '' }, { ...info, call: { ...info.call, outcome: 'confirmed' } }),
     { title: "Luigi's confirmed on the call: 7:30 for 4, under Maria.", body: "The group's table on Saturday, November 7 is on the plan." });
   assert.deepEqual(callWords({ path: 'instant', title: 'Confirmed by OpenTable · ref 4821', body: 'x' }, info), { title: 'Confirmed by OpenTable · ref 4821', body: 'x' });
 });
@@ -115,4 +116,79 @@ test('the screen books a table only through the one path, and shows what it was 
   assert.match(app, /holdId:hold\.holdId,accept:\{terms:hold\.terms\?\.version\?\?null,policy:true\}/);
   // The button's words are the server's.
   assert.match(app, /busy\?"Booking…":answer\.button/);
+});
+
+test('a call that got no table never speaks for a table booked another way', () => {
+  const info = { available: true, call: { status: 'settled', outcome: 'no_availability', title: "Not booked. Luigi's had no table at 7:30", body: '' } };
+  // Booked by the person afterwards: the row's words, not the call's.
+  assert.deepEqual(callWords({ path: 'call', state: 'confirmed', title: 'You entered ABC123', body: 'b' }, info), { title: 'You entered ABC123', body: 'b' });
+  assert.deepEqual(callWords({ path: 'call', state: null, title: 'You entered ABC123', body: 'b' }, info), { title: 'You entered ABC123', body: 'b' });
+  // Still where the call left it: the call's words.
+  assert.equal(callWords({ path: 'call', state: 'not_booked', title: 'row', body: '' }, info)?.title, info.call.title);
+});
+
+const OPEN_INSTANT = {
+  open: true, path: 'instant', status: 'awaiting_approval', state: null, needs: [] as ('date' | 'time')[],
+  alternatives: ALTS, ownAccount: { label: 'Book on your own OpenTable', href: 'https://www.opentable.com/r/luigis' },
+};
+
+test('a confirmed press leaves nothing else to book with, even before the row is read again', () => {
+  const done = readTableAnswer(200, { outcome: 'confirmed', title: 'Confirmed by OpenTable · ref 4821', body: '' });
+  const c = tableControls(OPEN_INSTANT, done, {});
+  assert.equal(c.primary, null);
+  assert.equal(c.ownAccount, false, 'their own OpenTable beside a confirmation is a second table');
+  assert.deepEqual(c.alternatives, []);
+  assert.deepEqual(c.pickers, []);
+  // The row read again says it itself; the answer goes.
+  assert.equal(answerShown(done, { ...OPEN_INSTANT, open: false, state: 'confirmed' }), null);
+  assert.equal(answerShown(done, OPEN_INSTANT), done, 'a row not yet read again still shows it');
+});
+
+test('a table Book it handed over or left owing a card offers no Book it, from a list read before', () => {
+  for (const outcome of ['handed_off', 'card_owed']) {
+    const seed = readTableAnswer(200, { outcome, title: 'Not booked yet', body: '', href: 'https://www.opentable.com/booking/card/88', alternatives: ALTS.slice(0, 1) });
+    // tables.list as read before Book it: open, instant, nothing on it yet.
+    const c = tableControls(OPEN_INSTANT, seed, {});
+    assert.equal(c.primary, null, `${outcome}: approval would only answer "already dealt with"`);
+    assert.equal(c.ownAccount, false);
+    assert.equal(c.showWhat, false, '"Reach books Luigi\'s on OpenTable" is not what happened');
+    assert.deepEqual(c.alternatives, ALTS.slice(0, 1));
+    // Once the row says the same thing, it is said once.
+    assert.equal(answerShown(seed, { ...OPEN_INSTANT, path: 'handoff', state: outcome }), null);
+  }
+});
+
+test('checkout\'s Book it covers only the tables its loop sends', () => {
+  assert.equal(bookItCovers(OPEN_INSTANT, 'book'), true);
+  assert.equal(bookItCovers(OPEN_INSTANT, 'pay'), false);
+  assert.equal(bookItCovers({ ...OPEN_INSTANT, status: 'failed', state: 'not_booked' }, 'book'), false, 'approval refuses a failed row');
+  assert.equal(bookItCovers({ ...OPEN_INSTANT, status: 'redirected' }, 'book'), false);
+  assert.equal(bookItCovers({ ...OPEN_INSTANT, needs: ['time'] }, 'book'), false, 'Book it sends no time');
+  assert.equal(bookItCovers({ ...OPEN_INSTANT, path: 'call' }, 'book'), false);
+  // A failed instant row keeps its own Book it in checkout.
+  const failed = { ...OPEN_INSTANT, status: 'failed', state: 'not_booked' };
+  assert.equal(tableControls(failed, null, { noPrimary: bookItCovers(failed, 'book') }).primary, 'book');
+  // The loop and the row read the same rule.
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(app, /if\(!bookItCovers\(t,"book"\)\)continue;/);
+  assert.match(app, /noPrimary=\{bookItCovers\(it\.table,checkout\.step\)\}/);
+  assert.match(app, /forgetTables\(planId\);\s*await tables\.reload\(\);/, 'the problems screen reads the tables as they now stand');
+});
+
+test('a night or time is asked for only where a press sends it', () => {
+  const handoff = { open: true, path: 'handoff', status: null, state: null, needs: ['time'] as ('date' | 'time')[], alternatives: ALTS, ownAccount: null };
+  assert.deepEqual(tableControls(handoff, null, {}).pickers, [], 'a link and a number built without it');
+  assert.deepEqual(tableControls({ ...OPEN_INSTANT, needs: ['time'] }, null, {}).pickers, ['time']);
+  assert.deepEqual(tableControls({ ...OPEN_INSTANT, needs: ['time'] }, null, { noPrimary: true }).pickers, []);
+  const call = { ...handoff, path: 'call' };
+  assert.deepEqual(tableControls(call, null, { mayCall: true }).pickers, ['time']);
+  assert.deepEqual(tableControls(call, null, { mayCall: false }).pickers, []);
+});
+
+test('a number typed on a line with no booking row is kept on a row, or said not kept', () => {
+  const app = readFileSync('components/reach-app.jsx', 'utf8');
+  const got = app.slice(app.indexOf('const gotIt=async()=>{'), app.indexOf('const askCancel=async'));
+  assert.match(got, /if\(!bid&&n&&makeRow\)/, 'a row is set up for the number');
+  assert.match(got, /saySorted\(bid,n\)/);
+  assert.match(got, /couldn't keep \$\{n\}/, 'never dropped in silence');
 });

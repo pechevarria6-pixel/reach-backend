@@ -244,7 +244,7 @@ export function decide(f: TableFacts, a: Availability, row?: DecideRow | null, n
       bookingId: f.bookingId, itemId: f.itemId, restaurant: f.restaurant,
       when: { ...booked, said: tableWhen(booked.date, booked.time) || 'No night or time set yet' },
       partySize: mark?.partySize ?? f.partySize,
-      path: mark?.path ?? (row?.status === 'pending' ? 'call' : name ? 'instant' : 'handoff'),
+      path: settled.path ?? mark?.path ?? (row?.status === 'pending' ? 'call' : name ? 'instant' : 'handoff'),
       what: settled.title, needs: [], open: false, alternatives: settled.alternatives ?? [], terms: null, ownAccount: null,
       status: row?.status ?? null, state: settled.state, offeredTimes: [],
       title: settled.title, body: settled.body,
@@ -262,6 +262,23 @@ export function decide(f: TableFacts, a: Availability, row?: DecideRow | null, n
   let what: string;
   const alternatives: ReserveOption[] = [];
   let terms: TermsView | null = null;
+
+  // Handed to them for a reason Reach gave — the slot wants a card — is
+  // theirs from here: Reach's own Book it would only hold it again and hand
+  // it back for the same reason. Their link (the platform's page for the
+  // slot, where it gave one) and their number are the ways on.
+  const handedOver = row?.status === 'redirected' && mark?.state === 'handed_off' && !!mark.reason;
+  if (handedOver) {
+    const theirs = handoffOptions({ ...f, reserveUrl: row?.redirect_url ?? f.reserveUrl });
+    return {
+      bookingId: f.bookingId, itemId: f.itemId, restaurant: f.restaurant,
+      when: { date: f.date, time: f.time, said: tableWhen(f.date, f.time) || 'No night or time set yet' },
+      partySize: f.partySize, path: 'handoff', what: mark!.reason!, needs: [],
+      open: true, alternatives: theirs, terms: null, ownAccount: null,
+      status: row?.status ?? null, state: 'handed_off', offeredTimes: [],
+      title: mark!.reason!, body: nextSaid(f), manage: null,
+    };
+  }
 
   if (a.instant) {
     const on = PLATFORM_LABEL[a.instant.provider.platform];
@@ -344,12 +361,19 @@ export function tableInDoubt(row: DecideRow, mark: ReserveMark | null, now: Date
 }
 
 /** Words for a table nothing more may be done to, or null when it is still open. */
-function settledWords(f: TableFacts, row: DecideRow | null, mark: ReserveMark | null, now: Date): (Words & { state: ReserveState | null; alternatives?: ReserveOption[] }) | null {
+function settledWords(f: TableFacts, row: DecideRow | null, mark: ReserveMark | null, now: Date): (Words & { state: ReserveState | null; alternatives?: ReserveOption[]; path?: ReservePath }) | null {
   if (!row) return null;
   const name = platformName(mark?.platform ?? f.platform);
+  const own = String(row.confirmation_number ?? '').trim();
   if (row.status === 'confirmed') {
-    const w = mark?.state === 'confirmed' ? stateWords(f, mark) : null;
-    return { ...(w ?? { title: `${f.restaurant} is booked.`, body: `It's on ${whose(f.solo)} plan.` }), state: 'confirmed' };
+    // Confirmed only from a platform's reference or staff's yes on a call
+    // (the mark). Anything else confirmed is somebody saying so through
+    // "I've got it" — said as that, never as a booking Reach saw, and with
+    // no state of 'confirmed' for a screen to put a green tick on. A row a
+    // platform gave an id to before marks were written keeps the old words.
+    if (mark?.state === 'confirmed') return { ...stateWords(f, mark)!, state: 'confirmed' };
+    if (!own && row.provider_ref) return { title: `${f.restaurant} is booked.`, body: `It's on ${whose(f.solo)} plan.`, state: 'confirmed' };
+    return { ...saidBooked(f, own), state: null, path: 'handoff' };
   }
   if (midClaim(row)) {
     if (tableInDoubt(row, mark, now)) return { ...stateWords(f, { ...(mark ?? { path: 'instant' }), state: 'in_doubt' } as ReserveMark)!, state: 'in_doubt' };
@@ -362,17 +386,20 @@ function settledWords(f: TableFacts, row: DecideRow | null, mark: ReserveMark | 
     // Not booked, and not Reach's to book again: the card on their page is the one way on.
     return { ...stateWords(f, mark)!, state: 'card_owed', alternatives: cardOptions(f, row, mark.platform) };
   }
-  const own = String(row.confirmation_number ?? '').trim();
-  // Where the confirmation came from, said as that: a number a person typed
-  // in, not one a platform or a call gave Reach. On a group's plan the
-  // reader may not be the one who typed it.
-  if (own) {
-    return {
-      title: f.solo ? `You entered ${own}` : `Someone in the group entered ${own}`,
-      body: `${f.restaurant} was booked outside Reach. It's on ${whose(f.solo)} plan.`, state: mark?.state ?? null,
-    };
-  }
+  // A number typed in on a row not yet marked confirmed: the same words.
+  if (own) return { ...saidBooked(f, own), state: null, path: 'handoff' };
   return null;
+}
+
+/**
+ * Where the confirmation came from, said as that: a number a person typed
+ * in, or only their word, never one a platform or a call gave Reach. On a
+ * group's plan the reader may not be the one who said it.
+ */
+function saidBooked(f: TableFacts, own: string): Words {
+  const body = `${f.restaurant} was booked outside Reach. It's on ${whose(f.solo)} plan.`;
+  if (own) return { title: f.solo ? `You entered ${own}` : `Someone in the group entered ${own}`, body };
+  return { title: f.solo ? `You marked ${f.restaurant} as booked.` : `Someone in the group marked ${f.restaurant} as booked.`, body };
 }
 
 function callOption(f: TableFacts): ReserveOption {
@@ -613,7 +640,11 @@ export async function reserveTable(input: ReserveInput, deps: ReserveDeps): Prom
   // clears its hold), so press two on it moves the table, change or not.
   const changing = b.status === 'confirmed' && (input.chosen.change === true || !!held);
   if (b.status === 'confirmed' && !changing) {
-    const w = stateWords(f, mark) ?? { title: `${f.restaurant} is booked.`, body: `It's on ${whose(f.solo)} plan.` };
+    // The same words GET …/reservations gives this row (settledWords).
+    const own = String(b.confirmation_number ?? '').trim();
+    const w = mark?.state === 'confirmed' ? stateWords(f, mark)!
+      : !own && b.provider_ref ? { title: `${f.restaurant} is booked.`, body: `It's on ${whose(f.solo)} plan.` }
+        : saidBooked(f, own);
     return { ok: true, outcome: 'confirmed', already: true, row: b as unknown as Record<string, unknown>, title: w.title, body: w.body, alternatives: [] };
   }
   if (changing && !(bookedOn && b.provider_ref && b.mode === 'native')) {

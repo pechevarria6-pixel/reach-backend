@@ -39,7 +39,7 @@ import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { bookingTracker } from "@/lib/plan-steps";
 import { getNextAction } from "@/lib/next-action";
-import { readTableAnswer, feeSaid, holdLeft, leftSaid, callShown, callWords, timeLabel } from "@/lib/reservations/table-screen";
+import { readTableAnswer, feeSaid, holdLeft, leftSaid, callShown, callWords, timeLabel, tableControls, answerShown, bookItCovers } from "@/lib/reservations/table-screen";
 import { buildIcs } from "@/lib/ics";
 import { inTimeOrder, bookingFor, referenceLine, whereOf, calendarEvents, calendarFileName, moneyLines, celebrationTitle, claimWasFirst, celebratedKey, bookedDetail, bookedContacts, bookedForMe, celebrationDue, mapEmptyLine } from "@/lib/booked-trip";
 import { kindOf as planKind } from "@/lib/one-active";
@@ -9180,7 +9180,7 @@ const tableLink={display:"inline-flex",alignItems:"center",gap:6,border:`1px sol
  */
 function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null,onMarkLine,makeRow,noPrimary=false}){
   const [answer,setAnswer]=useState(seed);
-  const [warning,setWarning]=useState(null);
+  const [warning,setWarning]=useState(seed?.warning||null);
   const [busy,setBusy]=useState(false);
   const [pick,setPick]=useState({date:entry?.when?.date||"",time:entry?.when?.time||""});
   const [notes,setNotes]=useState("");
@@ -9261,18 +9261,30 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
     const need=new Set([...(entry.needs||[]),...(answer?.kind==="needs"?answer.missing:[])]);
     return {...(need.has("date")&&pick.date?{date:pick.date}:{}),...(need.has("time")&&pick.time?{time:pick.time}:{})};
   };
-  const needs=[...new Set([...(entry.open?entry.needs||[]:[]),...(answer?.kind==="needs"?answer.missing:[])])];
-  const missing=needs.some(n=>!pick[n]);
 
   const gotIt=async()=>{
     const n=String(number||"").trim();
-    if(!id){if(onMarkLine&&entry.itemId){await onMarkLine(entry.itemId);setNumber(null);}return;}
+    let bid=id;
     setBusy(true);
+    // A line with no booking row yet: a number is kept on a row, so one is
+    // set up first. Without one, the line is marked and the toast says the
+    // number went nowhere — never dropped in silence.
+    if(!bid&&n&&makeRow){
+      const list=await makeRow().catch(e=>{console.error("[tables] could not set the table up",{itemId:entry.itemId},e);return null;});
+      bid=tableFor(list,{itemId:entry.itemId})?.bookingId||null;
+    }
+    if(!bid){
+      if(onMarkLine&&entry.itemId){
+        await onMarkLine(entry.itemId);setNumber(null);
+        if(n)toast(`Saved as booked — Reach couldn't keep ${n} just now, so note it somewhere`);
+      }
+      setBusy(false);return;
+    }
     try{
-      await saySorted(id,n);
+      await saySorted(bid,n);
       toast(n?(solo?`Saved · you entered ${n}`:`Saved · ${n} is on the plan`):"Saved as booked");
       setNumber(null);forgetTables(planId);forgetNext(planId);await onChanged?.();
-    }catch(e){console.error("[tables] could not record it as booked",{bookingId:id},e);toast(e.message);}
+    }catch(e){console.error("[tables] could not record it as booked",{bookingId:bid},e);toast(e.message);}
     setBusy(false);
   };
   const askCancel=async(confirm)=>{
@@ -9300,14 +9312,18 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
   // is a call, else the row's, else what Reach will do.
   const words=callWords(entry,callInfo);
   const mayCall=callShown(entry,callInfo);
-  const shownAnswer=answer;
+  // An answer the row has caught up with is said once, in the row's words.
+  const shownAnswer=answerShown(answer,entry);
   const settled=!entry.open;
-  // While a press's answer stands, its own next options replace the row's,
-  // so the same option is never on screen twice.
-  const alternatives=shownAnswer&&"alternatives" in shownAnswer&&shownAnswer.alternatives.length?shownAnswer.alternatives
-    :shownAnswer?.kind==="unknown"?[]:entry.alternatives||[];
+  // What the row offers (lib/reservations/table-screen.ts tableControls):
+  // nothing more to book with beside a confirmation or a hand-off; a press's
+  // own next options in place of the row's, so none is on screen twice;
+  // night and time inputs only where a press sends them.
+  const ctl=tableControls(entry,shownAnswer,{noPrimary,mayCall});
+  const alternatives=ctl.alternatives;
+  const needs=ctl.pickers;
+  const missing=needs.some(n=>!pick[n]);
   const phoneAlt=(entry.alternatives||[]).find(a=>a.kind==="phone")||null;
-  const offeredHere=entry.open&&entry.state==="offered"&&(entry.offeredTimes||[]).length>0;
   const inDoubt=shownAnswer?.kind==="unknown"||entry.state==="in_doubt";
   const quiet={fontSize:12,color:C.t2,lineHeight:1.5};
 
@@ -9336,13 +9352,13 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
           </div>
           {words.body&&<div style={{...quiet,marginTop:2}}>{words.body}</div>}
         </div>
-      ):(
+      ):ctl.showWhat?(
         <div style={{fontSize:12.5,color:C.t1,lineHeight:1.5}}>{entry.what}</div>
-      )}
+      ):null}
       {warning&&<div style={{...quiet,color:C.amber,marginTop:4}}>{warning}</div>}
 
       {/* What is needed before anything can go: never defaulted. */}
-      {needs.length>0&&!inDoubt&&(
+      {needs.length>0&&(
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
           {needs.includes("date")&&(
             <input className="inp" type="date" aria-label={`Which night for ${name}`} value={pick.date}
@@ -9464,34 +9480,32 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
       )}
 
       {/* Open: the one thing Reach will do, then every other way in. */}
-      {entry.open&&!inDoubt&&shownAnswer?.kind!=="hold"&&(
+      {(ctl.primary||ctl.ownAccount)&&(
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8,alignItems:"center"}}>
-          {noPrimary&&!shownAnswer?null:offeredHere?(
-            entry.path==="instant"
-              ?entry.offeredTimes.map(t=>(
-                <button key={t} className="bsm bsm-p" disabled={busy} onClick={()=>press({...chosen(),time:t})}>Take {timeLabel(t)}</button>
-              ))
-              // Reach makes one call per table, and never takes another time
-              // on its own: they ring to take it.
-              :phoneAlt&&<a href={phoneAlt.href} style={tableLink}>📞 Call to take {timeLabel(entry.offeredTimes[0])}</a>
-          ):entry.path==="instant"&&!["other_time","hold_again","ask_first","busy"].includes(shownAnswer?.kind)?(
+          {ctl.primary==="take"?entry.offeredTimes.map(t=>(
+            <button key={t} className="bsm bsm-p" disabled={busy} onClick={()=>press({...chosen(),time:t})}>Take {timeLabel(t)}</button>
+          ))
+          // Reach makes one call per table, and never takes another time
+          // on its own: they ring to take it.
+          :ctl.primary==="call_take"?<a href={phoneAlt.href} style={tableLink}>📞 Call to take {timeLabel(entry.offeredTimes[0])}</a>
+          :ctl.primary==="book"?(
             <button className="bsm bsm-p" disabled={busy||missing||(!id&&!makeRow)} onClick={()=>press(chosen())}>
               {busy?"Holding it…":"Book it"}
             </button>
-          ):entry.path==="call"&&mayCall&&!["ask_first","busy"].includes(shownAnswer?.kind)?(
+          ):ctl.primary==="call"?(
             <button className="bsm bsm-p" disabled={busy||missing} onClick={()=>press({path:"call",...chosen()})}>
               {busy?"Asking…":"📞 Have Reach call"}
             </button>
           ):null}
-          {entry.ownAccount&&(
+          {ctl.ownAccount&&(
             <a href={entry.ownAccount.href} target="_blank" rel="noopener noreferrer" style={tableLink}>{entry.ownAccount.label} →</a>
           )}
         </div>
       )}
-      {entry.open&&!inDoubt&&entry.ownAccount?.perk&&shownAnswer?.kind!=="hold"&&(
+      {ctl.ownAccount&&entry.ownAccount?.perk&&(
         <div style={{fontSize:11,color:C.t3,lineHeight:1.5,marginTop:4}}>{entry.ownAccount.perk}</div>
       )}
-      {!inDoubt&&shownAnswer?.kind!=="hold"&&(entry.open||entry.state==="card_owed")&&alternatives.length>0&&(
+      {alternatives.length>0&&(
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>{alternatives.map(option)}</div>
       )}
       {number!==null&&(
@@ -13339,7 +13353,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         const t=tableFor(tablesNow,{bookingId:b.id});
         // A platform hold only: a call rings a business, and is pressed on
         // its own row, once the call route says Reach may ring.
-        if(!t||!t.open||t.path!=="instant")continue;
+        // The same rows the Dinner section stops offering their own Book it
+        // for (bookItCovers): one with a night or time to pick is pressed on
+        // its own row, where the inputs are.
+        if(!bookItCovers(t,"book"))continue;
         let status=0,json=null;
         try{
           const r=await fetchWithin(`/api/bookings/${b.id}/approve`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"},70000,"the table");
@@ -13351,7 +13368,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         found.push({bookingId:b.id,row:b,kind:o.kind,code:o.code,who:[],seed,
           message:seed.error||seed.title||o.message||"",step:nextStepFor(o,"restaurant")});
       }
+      // The tables as they stand now: a table handed over or owing a card
+      // must not be drawn on the next screen from the list read before.
       forgetTables(planId);
+      await tables.reload();
       // The list fetched before approving says "Quoted" for everything, because
       // that is what it was. Read it again so the screen shows what happened.
       const now=await refresh(fresh);
@@ -14062,7 +14082,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
               <div style={{fontSize:12.5,color:C.t1,fontWeight:600,lineHeight:1.4}}>{it.l}</div>
               {/* Book it, below, books these too: the row does not offer it again. */}
               <TableReserve entry={it.table} planId={planId} solo={participants<=1} toast={toast} onChanged={tablesChanged}
-                noPrimary={checkout.step==="book"&&it.table.path==="instant"}/>
+                noPrimary={bookItCovers(it.table,checkout.step)}/>
             </div>
           ))}
         </div>

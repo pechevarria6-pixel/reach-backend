@@ -179,14 +179,105 @@ export function callShown(entry: { open?: boolean; path?: string; alternatives?:
  * under Maria.") where the call route has it, else the row's.
  */
 export function callWords(
-  entry: { path?: string; title?: string | null; body?: string | null } | null, info: CallInfo | null,
+  entry: { path?: string; state?: string | null; title?: string | null; body?: string | null } | null, info: CallInfo | null,
 ): { title: string; body: string } | null {
   const c = info?.call;
-  if (entry?.path === 'call' && c && str(c.title) && info?.test !== true) return { title: String(c.title), body: str(c.body) ?? '' };
+  // Only while the row still stands where the call left it: a table booked
+  // some other way after a call that got none is the row's to tell, never
+  // the call's "no table" beside a tick. Confirmed on both, or on neither.
+  const agrees = !!entry?.state && (entry.state === 'confirmed') === (c?.outcome === 'confirmed');
+  if (entry?.path === 'call' && c && agrees && str(c.title) && info?.test !== true) return { title: String(c.title), body: str(c.body) ?? '' };
   return str(entry?.title) ? { title: String(entry!.title), body: str(entry!.body) ?? '' } : null;
 }
 
 /** "7:30 PM", for a button. */
 export function timeLabel(hhmm: string): string {
   return clockSaid(hhmm) ?? hhmm;
+}
+
+// ─── What one row offers ────────────────────────────────────────────────
+
+export interface TableEntry {
+  open?: boolean;
+  path?: string;
+  status?: string | null;
+  state?: string | null;
+  needs?: ('date' | 'time')[];
+  offeredTimes?: string[];
+  alternatives?: Option[];
+  ownAccount?: { label: string; href: string; perk?: string | null } | null;
+}
+
+/**
+ * Whether checkout's Book it sends this table, so the row need not offer its
+ * own button: the same rows its loop sends to approval and no others — open,
+ * Reach's to book on a platform, still awaiting approval (approval refuses
+ * anything else), and with nothing to pick first (Book it sends no night or
+ * time). A table that fails any of these keeps its own Book it.
+ */
+export function bookItCovers(entry: TableEntry | null, step: string | null): boolean {
+  return step === 'book' && !!entry?.open && entry.path === 'instant'
+    && entry.status === 'awaiting_approval' && !(entry.needs ?? []).length;
+}
+
+/**
+ * Whether a press's answer is still the thing to show, or the row has
+ * caught up and says it in its own words. A row read before the press (a
+ * list nobody re-read, a seed on checkout's problems) still shows it.
+ */
+export function answerShown(answer: TableAnswer | null, entry: TableEntry | null): TableAnswer | null {
+  if (!answer || !entry) return answer;
+  if (answer.kind === 'done') return entry.open && entry.state !== 'confirmed' ? answer : null;
+  if (answer.kind === 'not_yet') {
+    const caught = answer.outcome === 'calling' ? entry.state === 'calling' || entry.state === 'requested' : entry.state === answer.outcome;
+    return caught ? null : answer;
+  }
+  return answer;
+}
+
+export interface TableControls {
+  /** The one thing Reach does: Book it, take an offered time, ring to take it, or call. */
+  primary: 'book' | 'take' | 'call_take' | 'call' | null;
+  ownAccount: boolean;
+  alternatives: Option[];
+  /** Night and time inputs: only where a press below sends what is picked. */
+  pickers: ('date' | 'time')[];
+  /** Show the row's "what Reach will do" — not while an answer says where it stands. */
+  showWhat: boolean;
+}
+
+const NOT_AFTER_BOOK = new Set(['other_time', 'hold_again', 'ask_first', 'busy']);
+
+/**
+ * What one table row offers, given its reservation and the answer to the
+ * last press. Booked, or handed over by that answer, offers nothing more to
+ * book with: a second way in beside a confirmation is a second table.
+ */
+export function tableControls(
+  entry: TableEntry, answer: TableAnswer | null, ctx: { noPrimary?: boolean; mayCall?: boolean } = {},
+): TableControls {
+  const none: TableControls = { primary: null, ownAccount: false, alternatives: [], pickers: [], showWhat: true };
+  const inDoubt = answer?.kind === 'unknown' || entry.state === 'in_doubt';
+  if (inDoubt || answer?.kind === 'hold') return none;
+  if (answer?.kind === 'done') return { ...none, showWhat: false };
+  if (answer?.kind === 'not_yet') return { ...none, alternatives: answer.alternatives, showWhat: false };
+
+  const answerAlts = answer && 'alternatives' in answer && answer.alternatives.length ? answer.alternatives : null;
+  if (!entry.open) {
+    return { ...none, alternatives: entry.state === 'card_owed' ? answerAlts ?? entry.alternatives ?? [] : [] };
+  }
+
+  const offered = entry.state === 'offered' && (entry.offeredTimes ?? []).length > 0;
+  const hasPhone = (entry.alternatives ?? []).some(a => a.kind === 'phone' && a.href);
+  let primary: TableControls['primary'] = null;
+  if (ctx.noPrimary && !answer) primary = null;
+  else if (offered) primary = entry.path === 'instant' ? 'take' : hasPhone ? 'call_take' : null;
+  else if (entry.path === 'instant' && !NOT_AFTER_BOOK.has(answer?.kind ?? '')) primary = 'book';
+  else if (entry.path === 'call' && ctx.mayCall && answer?.kind !== 'ask_first' && answer?.kind !== 'busy') primary = 'call';
+
+  const alternatives = answerAlts ?? entry.alternatives ?? [];
+  const callAlt = !!ctx.mayCall && entry.path !== 'call' && alternatives.some(a => a.kind === 'call');
+  const needs = [...new Set([...(entry.needs ?? []), ...(answer?.kind === 'needs' ? answer.missing : [])])];
+  const sends = primary === 'book' || primary === 'call' || callAlt;
+  return { primary, ownAccount: !!entry.ownAccount, alternatives, pickers: sends ? needs : [], showWhat: true };
 }

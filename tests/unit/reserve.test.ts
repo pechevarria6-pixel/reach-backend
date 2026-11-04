@@ -1009,6 +1009,46 @@ test('a table that is booked, or may be, offers nothing more, and says the time 
   assert.equal(decide(facts(), a, { status: 'awaiting_approval' }).open, true);
 });
 
+test('a number somebody typed in is said as theirs, on the row the confirmation route actually writes', () => {
+  const a = { instant: platform().instant, call: { ok: true } as CallCheck };
+  // POST /api/bookings/[id]/confirmation writes status 'confirmed' and the number, and no mark.
+  const typed = decide(facts(), a, { status: 'confirmed', confirmation_number: 'ABC123' });
+  assert.equal(typed.title, 'Someone in the group entered ABC123');
+  assert.equal(decide({ ...facts(), solo: true }, a, { status: 'confirmed', confirmation_number: 'ABC123' }).title, 'You entered ABC123');
+  assert.notEqual(typed.state, 'confirmed', 'a green tick is for a platform reference or a yes on a call');
+  assert.equal(typed.open, false);
+  assert.deepEqual(typed.alternatives, []);
+  assert.equal(typed.manage, null);
+  // No number: still their word, not a booking Reach saw.
+  const word = decide({ ...facts(), solo: true }, a, { status: 'confirmed' });
+  assert.equal(word.title, "You marked Luigi's as booked.");
+  assert.notEqual(word.state, 'confirmed');
+  // After a call that got no table: theirs, not the call's.
+  const afterCall = decide(facts(), a, { status: 'confirmed', confirmation_number: 'ABC123', response_payload: { reserve: { state: 'not_booked', path: 'call', time: '19:30', partySize: 4 } } });
+  assert.equal(afterCall.path, 'handoff');
+  assert.equal(afterCall.title, 'Someone in the group entered ABC123');
+});
+
+test('a table handed over because the slot wants a card is not offered back to Reach', async () => {
+  const m = memory();
+  const p = platform({ hold: { ok: false, code: 'needs_card', error: 'This time needs a card.', handoffUrl: 'https://www.opentable.com/booking/card/88' } });
+  const r = await reserveTable(input(m.get()), deps(m.store, p.p));
+  assert.equal(r.ok && r.outcome, 'handed_off');
+  const view = decide(facts(), { instant: p.instant, call: { ok: true } as CallCheck }, m.get(), NOW);
+  assert.equal(view.path, 'handoff', "Reach's Book it would hold it and hand it back again");
+  assert.equal(view.open, true);
+  assert.equal(view.ownAccount, null);
+  assert.equal(view.state, 'handed_off');
+  assert.ok(!view.alternatives.some(o => o.kind === 'call'), 'the restaurant wants a card, which a call cannot give');
+  assert.equal(view.alternatives[0].href, 'https://www.opentable.com/booking/card/88', "the platform's page for the slot");
+  assert.match(view.title ?? '', /wants a card/);
+  assert.equal(view.what, view.title);
+  // Pressing Book it anyway books nothing: no new hold.
+  const again = await reserveTable(input(m.get(), { chosen: { path: 'instant', notBookedElsewhere: true } }), deps(m.store, p.p));
+  assert.equal(again.ok === false && again.code, 'path_unavailable');
+  assert.equal(p.calls.holds.length, 1);
+});
+
 test('a confirmed table says how it is changed or cancelled, from where it was confirmed', () => {
   const a = { instant: null, call: CLOSED };
   const on = (platform: string) => decide(facts(), a, {
