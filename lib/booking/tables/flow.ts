@@ -246,8 +246,11 @@ export async function settlePending(ctx: TableCtx): Promise<TableCtx> {
   const at = (ctx.now ?? new Date()).toISOString();
   let patch: Record<string, unknown>;
   if (s.cancelled) {
+    // No longer Reach's booking: 'native' would say it is (charged.ts
+    // reachBooked), and "I've got it" and a call would both be refused over
+    // a table nothing holds. Handed back as the hand-off row it was.
     patch = {
-      status: 'failed', provider_ref: null, redirect_url: null,
+      status: 'failed', mode: 'redirect', provider_ref: null, redirect_url: null,
       error: `${PLATFORM_LABEL[p.platform]} let this table go before a card was added. Nothing is booked.`,
       response_payload: { ...(row.response_payload ?? {}), booked: { ...booked, lapsedAt: at } },
     };

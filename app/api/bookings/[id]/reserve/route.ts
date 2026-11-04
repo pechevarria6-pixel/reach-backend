@@ -5,7 +5,8 @@
 // checkout (/approve) runs the same code and gives the same answers. To read
 // how each table will go, without holding or ringing anything: GET
 // /api/plans/[planId]/reservations. To cancel a table Reach booked: POST
-// /api/bookings/[id]/cancel. There is no other table route.
+// /api/bookings/[id]/cancel. POST /api/bookings/[id]/call, with calls live,
+// is this same code with { path: 'call' }. There is no other table route.
 //
 // Body (all optional):
 //   { path?: 'instant' | 'call' | 'handoff',   // default: what GET …/reservations said
@@ -19,6 +20,9 @@
 // Instant is two presses, and nothing is booked by the first:
 //   1. POST {}                     → 409 terms_required: the exact slot is HELD (five minutes), not booked
 //   2. POST { holdId, accept }     → 200 confirmed, with the platform's reservation id
+//      Press two books the hold's own night and time: nothing from press one
+//      (time, date, change) needs sending again. On a table Reach booked, a
+//      hold taken with { change: true } is a move, and press two moves it.
 //
 // 200 { outcome, already?, booking, title, body, href?, warning?, alternatives }
 //       confirmed   — the platform's reservation id is on the row (provider_ref), or staff said yes

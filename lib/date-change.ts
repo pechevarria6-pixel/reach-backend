@@ -13,6 +13,7 @@
 // Relative, with the extension: the @/ alias does not resolve under node's
 // test runner, and a module the tests cannot load is a module without tests.
 import { tidyLegacy } from './checkout.ts';
+import { midClaim } from './booking/claim.ts';
 
 export interface BookingLike {
   id?: string;
@@ -24,6 +25,11 @@ export interface BookingLike {
   /** Who reserved it, for the rows a member booked themselves. */
   fulfilled_by?: string | null;
   booked_by?: string | null;
+  /** The claim's stamp (claim.ts midClaim) and the version a write is held to. */
+  approved_at?: string | null;
+  updated_at?: string | null;
+  /** response_payload.table.reserving: a table sent to its platform, answered or not. */
+  response_payload?: unknown;
 }
 
 export type Consequence =
@@ -33,6 +39,11 @@ export type Consequence =
   | 'rebook_through_reach'
   /** A price for dates that no longer exist. Asked again, not honoured. */
   | 'requote'
+  /**
+   * Being booked this minute, or sent to the provider and never answered:
+   * it may be booked for the old dates. Nothing moves until it is checked.
+   */
+  | 'held_up'
   /** Failed, cancelled, or otherwise nothing to disturb. */
   | 'none';
 
@@ -42,6 +53,19 @@ export interface Impact {
   consequence: Consequence;
   /** The member who must act, when it is one person's to do. */
   whose?: string | null;
+  /** The row's updated_at as read: a requote cancels it only at this version. */
+  version?: string | null;
+}
+
+/**
+ * Claimed by an approval or the table platform's reserve step, or sent and
+ * never answered (lib/booking/tables/flow.ts keeps the claim's stamp then).
+ * Its status still reads awaiting_approval, which is not "only priced".
+ */
+function mayBeBooked(b: BookingLike): boolean {
+  if (midClaim(b)) return true;
+  const t = (b.response_payload as { table?: { reserving?: unknown } } | null | undefined)?.table;
+  return !!(t && typeof t === 'object' && t.reserving);
 }
 
 // 'booking' is at the provider right now: as good as bought for the old dates.
@@ -91,6 +115,8 @@ export function impactOfDateChange(bookings: BookingLike[]): Impact[] {
     const status = String(b.status ?? '');
     const what = nameOf(b);
 
+    if (mayBeBooked(b)) return { bookingId: b.id, what, consequence: 'held_up' };
+
     if (!SETTLED.has(status) && !PROVISIONAL.has(status)) {
       return { bookingId: b.id, what, consequence: 'none' };
     }
@@ -98,7 +124,7 @@ export function impactOfDateChange(bookings: BookingLike[]): Impact[] {
     if (PROVISIONAL.has(status)) {
       // A price for dates that are being changed is not a price for the new
       // ones. Nobody is charged against it, so it can simply be asked again.
-      return { bookingId: b.id, what, consequence: 'requote' };
+      return { bookingId: b.id, what, consequence: 'requote', version: b.updated_at ?? null };
     }
 
     const bookedThemselves = b.mode === 'redirect'
@@ -123,11 +149,17 @@ export function describeImpact(impacts: Impact[]): string[] {
     rebook_yourself: what => `${what} was booked on the restaurant's own platform — whoever reserved it has to move it there.`,
     rebook_through_reach: what => `${what} is held for the old dates and has to be booked again.`,
     requote: what => `${what} was only priced, not booked — we'll price it again for the new dates.`,
+    held_up: what => `${what} is being booked right now, or we can't yet tell whether it was booked — the dates can't move until that's settled.`,
     none: what => `${what} is not affected.`,
   };
   return impacts
     .filter(i => i.consequence !== 'none')
     .map(i => say[i.consequence](i.what));
+}
+
+/** Whether the dates may not move at all yet: something may be booked for the old ones. */
+export function blocksDateChange(impacts: Impact[]): boolean {
+  return impacts.some(i => i.consequence === 'held_up');
 }
 
 /** Is this a change worth warning about at all? */

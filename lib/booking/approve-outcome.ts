@@ -104,10 +104,44 @@ export type NextStep =
    */
   | 'answer';
 
+// ─── A table's answer, in approval's words ──────────────────────────────
+// A table goes through lib/reservations/reserve.ts, whose codes are finer
+// than approval's. Folding every one of them into 'unavailable' made an
+// expired hold, OpenTable rate-limiting us and a missing phone number all
+// read as "the restaurant has no table" and pointed at the plan. Only the
+// codes approval already has a name for are renamed; the rest are kept, and
+// 'unavailable' stays the one answer that is a fact about the restaurant.
+const TABLE_RENAMED: Record<string, string> = {
+  in_progress: 'already_in_progress', calling: 'already_in_progress',
+};
+
+export function tableApproveCode(reserveCode: string, status: number): string {
+  return TABLE_RENAMED[reserveCode] ?? (reserveCode || (status >= 500 ? 'provider_failed' : 'refused'));
+}
+
+/** Where each of reserve's own refusals goes next (the rest: approval's own rules below). */
+const TABLE_STEP: Record<string, NextStep> = {
+  // Held and lost: approving again holds it afresh.
+  hold_expired: 'retry', hold_missing: 'retry', slot_gone: 'retry',
+  // Our side, or the platform's, never the restaurant's.
+  rate_limited: 'retry', provider_failed: 'retry', platform_down: 'retry', store_error: 'retry',
+  details_missing: 'details',
+  // Something to answer before it can go: a time, the terms, "booked it yourself?".
+  missing_facts: 'answer', terms_not_accepted: 'answer', ask_first: 'answer',
+  // Somebody else's, or it may be booked: look again, never book again.
+  booked_elsewhere: 'recheck', already_settled: 'recheck', pending_card: 'recheck',
+  // Not Reach's to book as it stands, and pressing again would not change
+  // that: the plan holds the hand-off — their page, their number.
+  path_unavailable: 'plan', not_bookable_here: 'plan', not_on_platform: 'plan', disabled: 'plan', auth: 'plan',
+  needs_card: 'plan', call_refused: 'plan', no_change: 'plan', duplicate: 'plan', not_a_table: 'plan',
+  date_outside_trip: 'plan', date_past: 'plan', time_past: 'plan', party_size: 'plan', bad_request: 'plan',
+};
+
 export function nextStepFor(o: ApproveOutcome, vertical: string | null | undefined): NextStep {
   if (o.kind === 'busy' || o.kind === 'unknown' || o.code === 'changed') return 'recheck';
   if (o.kind === 'terms' || o.kind === 'otherTime') return 'answer';
   if (o.code === 'travellers_missing') return 'details';
+  if (vertical === 'restaurant' && o.code && TABLE_STEP[o.code]) return TABLE_STEP[o.code];
   if (o.code === 'unavailable' || o.kind === 'reprice') {
     return vertical === 'hotel' || vertical === 'flight' ? 'other_options' : 'plan';
   }

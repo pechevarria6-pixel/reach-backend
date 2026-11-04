@@ -39,9 +39,11 @@
 // mid-claim — not failed, which would let it be booked a second time.
 //
 // The routes: GET /api/plans/[planId]/reservations (decide, read only), POST
-// /api/bookings/[id]/reserve and approval's "Book it" (reserveTable), and
+// /api/bookings/[id]/reserve, approval's "Book it" and a live POST
+// /api/bookings/[id]/call (reserveTable — the last with path 'call'), and
 // POST /api/bookings/[id]/cancel (cancelStep). There is no other way to book
-// a table.
+// a table. placeCall itself also refuses a row the instant path has claimed
+// or never heard back about, so nothing reaching it can ring over one.
 import { midClaim } from '../booking/claim.ts';
 import { PLATFORM_LABEL, type TableGuest, type TableHold, type TableProvider } from '../booking/tables/types.ts';
 import {
@@ -539,7 +541,7 @@ const OPEN = new Set(['awaiting_approval', 'redirected', 'pending', 'failed']);
 const RESERVE_STATUS: Partial<Record<Refusal, number>> = {
   calls_off: 503, live_not_approved: 503, no_test_number: 503, no_provider: 503, not_migrated: 503,
   disclosure_failed_before: 503, store_error: 503,
-  already_called: 409, already_settled_booking: 409, do_not_call: 409, reach_buys: 409, not_a_table: 409,
+  already_called: 409, already_settled_booking: 409, booking_in_progress: 409, do_not_call: 409, reach_buys: 409, not_a_table: 409,
   daily_cap: 429, provider_unknown: 502, provider_refused: 502,
 };
 
@@ -563,8 +565,19 @@ export async function reserveTable(input: ReserveInput, deps: ReserveDeps): Prom
   }
   const mark = reserveMarkOf(b);
 
+  // Press two books the hold that was shown: its night, its time, and — on a
+  // table Reach already booked — the move it was held for. Never what the
+  // line or press one's body said: a press two sent as the contract says,
+  // { holdId, accept }, carries neither, and a time taken instead of the
+  // line's is the hold's, not the line's.
+  const pressTwo = typeof input.chosen.holdId === 'string' && input.chosen.holdId ? input.chosen.holdId : null;
+  const shownHold = tableStateOf(b as unknown as FlowRow)?.hold ?? null;
+  const held = pressTwo && shownHold?.holdId === pressTwo ? shownHold : null;
+
   // ── Already done: the same answer, nothing sent again ──
-  const changing = b.status === 'confirmed' && input.chosen.change === true;
+  // A confirmed row holding a hold of its own was held for a move (a booking
+  // clears its hold), so press two on it moves the table, change or not.
+  const changing = b.status === 'confirmed' && (input.chosen.change === true || !!held);
   if (b.status === 'confirmed' && !changing) {
     const w = stateWords(f, mark) ?? { title: `${f.restaurant} is booked.`, body: `It's on ${whose(f.solo)} plan.` };
     return { ok: true, outcome: 'confirmed', already: true, row: b as unknown as Record<string, unknown>, title: w.title, body: w.body, alternatives: [] };
@@ -627,9 +640,11 @@ export async function reserveTable(input: ReserveInput, deps: ReserveDeps): Prom
     others = [...view.alternatives.filter(a => a.kind === 'call' && path !== 'call'), ...handoffOptions(f)];
   }
 
-  // ── The night and the time: the line's own, or what the person picked ──
-  const date = input.chosen.date ?? f.date;
-  const time = usableTime(input.chosen.time ?? f.time);
+  // ── The night and the time: the hold's, the line's own, or what the person picked ──
+  // A press two whose hold is not on the row books nothing, whatever else it says.
+  if (pressTwo && !held) return no('hold_missing', 409, TABLE_COPY.holdMissing, { alternatives: others });
+  const date = held?.date ?? input.chosen.date ?? f.date;
+  const time = usableTime(held?.time ?? input.chosen.time ?? f.time);
   const missing = [...(date ? [] : ['date']), ...(time ? [] : ['time'])];
   if (missing.length) return no('missing_facts', 422, `Pick ${missing.length === 2 ? 'a night and a time' : `a ${missing[0] === 'date' ? 'night' : 'time'}`} first.`, { missing, alternatives: others });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date!)) return no('missing_facts', 422, 'Pick a night first.', { missing: ['date'], alternatives: others });
@@ -645,6 +660,14 @@ export async function reserveTable(input: ReserveInput, deps: ReserveDeps): Prom
   if (path === 'call') return viaCall(input, deps, f, b, others);
   return viaPlatform(input, deps, f, b, instant!, others, false);
 }
+
+/**
+ * A row still 'native' with no reservation on it: a table the platform let go
+ * before a card was added (flow.ts settlePending), from before that step put
+ * the mode back. Nothing Reach booked is live on it.
+ */
+const lapsedNative = (r: { mode?: string | null; provider_ref?: string | null; status: string }) =>
+  r.mode === 'native' && !r.provider_ref && r.status !== 'confirmed' && r.status !== 'pending';
 
 /** Who hears about it: the person, on a plan for one; everybody on a group's. */
 async function tell(deps: ReserveDeps, input: ReserveInput, w: Words) {
@@ -680,20 +703,21 @@ async function viaCall(input: ReserveInput, deps: ReserveDeps, f: TableFacts, b:
   // and the platform is never asked. Reading "nobody is booking it" is not
   // enough: two requests both read that before either writes.
   const calling: ReserveMark = { state: 'calling', path: 'call', platform: null, date: f.date, time: f.time, partySize: f.partySize, at: stamp() };
+  const mode = lapsedNative(b) ? 'redirect' : b.mode;
   const held = await deps.store.write(b.id, b.status, b.updated_at, {
-    status: 'pending', error: null, detail: f.restaurant, response_payload: withMark(b.response_payload, calling), updated_at: stamp(),
+    status: 'pending', mode, error: null, detail: f.restaurant, response_payload: withMark(b.response_payload, calling), updated_at: stamp(),
   });
   if (!held) return { ok: false, code: 'changed', status: 409, error: 'This changed while you were looking — nobody was called. Open it again.', alternatives };
   const version = (held.updated_at as string | null | undefined) ?? null;
 
   const placed = await placeCall({
-    booking: { ...b, status: 'pending', request_payload: b.request_payload as never },
+    booking: { ...b, mode, status: 'pending', approved_at: null, updated_at: version, response_payload: held.response_payload as never, request_payload: b.request_payload as never },
     // A call that ends with no table opens the row again, whatever it was before.
     previousStatus: 'awaiting_approval',
     plan: input.plan,
     requester: { id: input.requester.id, firstName: input.requester.firstName },
     venue: input.venue,
-    chosen: { date: f.date!, time: f.time!, partySize: f.partySize, notes: null },
+    chosen: { date: f.date!, time: f.time!, partySize: f.partySize, notes: input.chosen.notes?.slice(0, 300) ?? null },
     now: input.now,
   }, deps.call);
   if (placed.ok === false) {
@@ -768,12 +792,28 @@ async function viaPlatform(
   // that found nothing) is reopened first, on its version: the claim's stamp
   // is only read on an awaiting row, and the one-live-booking index answers
   // before any platform is asked rather than after a table is booked.
+  //
+  // A table whose platform let it go before a card was added is nobody's
+  // booking any more: it is reopened as a hand-off row ('redirect'), never
+  // left 'native', which says "Reach booked this" (charged.ts reachBooked).
   let row = b;
+  let reopened = false;
   if (!changing && row.status !== 'awaiting_approval') {
-    const re = await deps.store.reopen(row.id, row.status, row.updated_at, { error: null, updated_at: stamp() });
+    const mode = lapsedNative(row) ? 'redirect' : row.mode;
+    const re = await deps.store.reopen(row.id, row.status, row.updated_at, { mode, error: null, updated_at: stamp() });
     if (!re.ok) return { ok: false, code: 'changed', status: 409, error: 'This changed while you were looking — nothing was booked. Open it again.', alternatives };
-    row = { ...row, status: 'awaiting_approval', error: null, updated_at: re.version };
+    row = { ...row, mode, status: 'awaiting_approval', error: null, updated_at: re.version };
+    reopened = true;
   }
+  // Our failure, or the platform's, before anything was held: the row goes
+  // back to what it said, so a press nobody answered changes nothing.
+  const giveBack = async (a: FlowAnswer): Promise<ReserveResult> => {
+    if (reopened && (a.status >= 500 || a.status === 429)) {
+      const back = await deps.store.write(row.id, 'awaiting_approval', row.updated_at, { status: b.status, error: b.error ?? null, updated_at: stamp() });
+      if (!back) console.error('[reserve] a press the platform never answered could not give its row back', { booking: b.id, code: a.body.code });
+    }
+    return fromFlow(a, alternatives, name);
+  };
   const ctx = flowCtx(input, deps, row, changing ? null : instant, changing ? instant.provider : null);
 
   // ── Press two: book the hold that was shown ──
@@ -801,7 +841,7 @@ async function viaPlatform(
     if (o.status !== 200 && o.body.code === 'needs_card') return card(o.body.platformUrl as string | null);
     if (o.status !== 200) {
       if (o.status >= 500) console.error('[reserve] the platform did not give its openings', { booking: b.id, platform: instant.provider.platform, code: o.body.code });
-      return fromFlow(o, alternatives, name);
+      return giveBack(o);
     }
     const read = readSlots((o.body.slots ?? []) as SlotSeen[], f.date!, f.time!);
     if (read.kind === 'card') return card(read.handoffUrl);
@@ -833,7 +873,7 @@ async function viaPlatform(
   if (h.status !== 200) {
     // A hold the platform refused because it wants a card: the restaurant's way of taking it.
     if (h.body.code === 'needs_card' && !changing) return card(h.body.platformUrl as string | null);
-    return fromFlow(h, alternatives, name);
+    return giveBack(h);
   }
   return {
     ok: false, code: 'terms_required', status: 409, alternatives,

@@ -37,6 +37,7 @@ import { toE164, dialable, openForCalls, localMinute, HOURS_MARGIN, type LineLoo
 import type { Provider, CallEnded } from './providers.ts';
 import { dayWhere } from '../calendar.ts';
 import type { ReserveMark } from './reserve-state.ts';
+import { midClaim } from '../booking/claim.ts';
 
 export { gate, settle, callWording };
 export type { Outcome, Settled, Wording, CallFacts };
@@ -47,7 +48,7 @@ const DISCLOSURE_LOOKBACK_DAYS = 3650;
 
 export type Refusal =
   | 'calls_off' | 'live_not_approved' | 'no_test_number' | 'no_provider'
-  | 'not_a_table' | 'reach_buys' | 'already_settled_booking'
+  | 'not_a_table' | 'reach_buys' | 'already_settled_booking' | 'booking_in_progress'
   | 'missing_facts' | 'date_past' | 'time_past' | 'date_outside_trip'
   | 'number_unreadable' | 'not_north_american'
   | 'disclosure_failed_before'
@@ -68,6 +69,7 @@ export const REFUSAL_COPY: Record<Refusal, string> = {
   not_a_table: 'Only a table can be asked for on a call.',
   reach_buys: 'This one is booked by Reach directly, not by a call.',
   already_settled_booking: 'This table is already settled.',
+  booking_in_progress: "Reach is booking this table on a platform, or waiting to hear whether it did, so it won't call as well.",
   missing_facts: 'Pick a date, a time and how many people first.',
   date_past: 'That date has already gone.',
   time_past: "That time has gone, or is too soon for Reach to ask — call them instead.",
@@ -157,6 +159,21 @@ export interface BookingRow {
   status: string;
   redirect_url?: string | null;
   request_payload?: { restaurant?: { name?: string; partySize?: number; notes?: string; externalUrl?: string } } | null;
+  /** Read for the instant path's claim (claim.ts midClaim) and its in-flight mark. */
+  approved_at?: string | null;
+  updated_at?: string | null;
+  response_payload?: unknown;
+}
+
+/**
+ * A table the instant path has claimed, is booking, or sent and never heard
+ * back about (lib/booking/tables/flow.ts reserveStep): it may be booked, so
+ * nobody rings the restaurant for it as well.
+ */
+function platformBusy(b: BookingRow): boolean {
+  if (midClaim(b)) return true;
+  const t = (b.response_payload as { table?: { reserving?: unknown } } | null | undefined)?.table;
+  return !!(t && typeof t === 'object' && t.reserving);
 }
 
 export interface PlaceInput {
@@ -216,6 +233,7 @@ export async function placeCall(input: PlaceInput, deps: PlaceDeps): Promise<Pla
   if (b.vertical !== 'restaurant') return no('not_a_table');
   if (isReachBuys(b)) return no('reach_buys');
   if (TERMINAL.has(b.status)) return no('already_settled_booking');
+  if (platformBusy(b)) return no('booking_in_progress');
 
   // 3. Facts we hold, and nothing else.
   const checked = checkFacts({

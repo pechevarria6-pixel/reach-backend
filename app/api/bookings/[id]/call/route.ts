@@ -13,10 +13,16 @@
 //        Show call.title / call.body once there is a call. Keep the
 //        "Reserve online" and "Call them" buttons on screen in every state.
 //
-// POST body { date: 'YYYY-MM-DD', time: 'HH:MM', partySize?: number, notes?: string }
-//   The person picks the date and clock time. Nothing is defaulted: the
-//   bookable route sends the trip's first day and '19:00' when it has
-//   nothing better, and a call must never ask a restaurant for a guess.
+// POST body { date?: 'YYYY-MM-DD', time?: 'HH:MM', notes?: string, notBookedElsewhere?: true }
+//   A real call to a restaurant is a way to book a table, and there is one
+//   way to book a table: with the gate live, this is POST
+//   /api/bookings/[id]/reserve with { path: 'call' } — the same code, the
+//   same checks (a claim or an in-doubt instant booking refuses it, the row
+//   is taken before anything rings) and the same answers, whose contract is
+//   that route's header. The party is the row's; the date and time are the
+//   line's unless the person picked them, never defaulted.
+//   In test mode it rings Reach's own test number, changes no booking and
+//   books nothing (lib/reservations/call.ts), and answers as it always did:
 //   → 200 { call, title, body }                         — ringing now
 //   → 409/422/429/503 { refusal, error, missing?, handoff } — not called;
 //     `error` is the sentence to show, `handoff` the buttons to show with it.
@@ -31,8 +37,14 @@ import { placeCall, callWording, wordingFor, REFUSAL_COPY, type BookingRow, type
 import { supabaseStore, MIGRATION } from '@/lib/reservations/store';
 import { providerFor } from '@/lib/reservations/providers';
 import { twilioLookup } from '@/lib/reservations/policy';
+import { reserveTable, type TableRow } from '@/lib/reservations/reserve';
+import { TABLE_ROW, chosenFrom, lineOf, placeOf, planOf, requesterOf, reserveDeps, tableFacts } from '@/lib/reservations/reserve-server';
 
-const BOOKING = 'id, plan_id, vertical, mode, provider, status, redirect_url, request_payload';
+export const maxDuration = 60;
+
+// Everything: the instant path's claim (approved_at, updated_at) and its
+// in-flight mark (response_payload) are what refuse a call over it.
+const BOOKING = TABLE_ROW;
 
 const STATUS: Partial<Record<Refusal, number>> = {
   calls_off: 503, live_not_approved: 503, no_test_number: 503, no_provider: 503, not_migrated: 503,
@@ -95,12 +107,31 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = await req.json().catch(() => ({})) as { date?: unknown; time?: unknown; partySize?: unknown; notes?: unknown };
+  const body = await req.json().catch(() => ({})) as Record<string, unknown>;
   const booking = await load(params.id);
   if (!booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
   const ctx = await requirePlanMember(booking.plan_id);
   if (isFail(ctx)) return ctx.error;
   const plan = ctx.plan as Record<string, any>;
+
+  // A live call books a table: through the orchestrator, never around it.
+  if (gate(process.env).mode === 'live') {
+    const row = booking as unknown as TableRow & { itinerary_item_id?: string | null };
+    const [line, where, requester] = await Promise.all([
+      lineOf(ctx.db, row.itinerary_item_id), placeOf(plan), requesterOf(ctx.db, ctx.user.id),
+    ]);
+    const { facts, venue } = await tableFacts(ctx.db, plan, row, line, where);
+    const result = await reserveTable(
+      { booking: row, facts, plan: planOf(plan), requester, chosen: { ...chosenFrom(body), path: 'call', holdId: undefined, accept: null, change: false }, venue, line },
+      reserveDeps(ctx.db),
+    );
+    if (result.ok === false) {
+      const { ok: _ok, status, ...rest } = result;
+      return NextResponse.json(rest, { status });
+    }
+    const { ok: _ok, row: written, ...rest } = result;
+    return NextResponse.json({ ...rest, booking: written });
+  }
 
   const { data: me, error: meErr } = await ctx.db.from('users').select('first_name, name').eq('id', ctx.user.id).maybeSingle();
   if (meErr) console.error('[booking call] could not read the caller', { code: meErr.code });

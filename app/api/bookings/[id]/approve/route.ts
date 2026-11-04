@@ -17,6 +17,9 @@
 //                                                 policy and terms; approve again with
 //                                                 { holdId: hold.holdId, accept: { terms: hold.terms?.version ?? null, policy: true } }
 //   409 { code: 'other_time', offeredTimes }      not at that time; approve again with { time }
+//   Every other table refusal keeps reserve's own code (hold_expired,
+//   details_missing, rate_limited…), never 'unavailable' unless the platform
+//   itself listed no table: lib/booking/approve-outcome.ts tableApproveCode.
 // and 401/403/404 from sign-in and lookup, 500 when our own database fails.
 // Every response except 200 and outcome_unknown means nothing was bought.
 //
@@ -66,6 +69,7 @@ import { pinQuoted, termsChanged } from '@/lib/booking/pin';
 import { withClaims, isMissingTable, type ContributionRow, type RefundClaim } from '@/lib/refunds';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { reserveTable, type TableRow } from '@/lib/reservations/reserve';
+import { tableApproveCode } from '@/lib/booking/approve-outcome';
 import { chosenFrom, lineOf, placeOf, planOf, requesterOf, reserveDeps, tableFacts } from '@/lib/reservations/reserve-server';
 
 const supabase = createServerClient;
@@ -123,11 +127,6 @@ async function recordRise(db: SupabaseClient, booking: Row, newCents: number): P
   if (error) console.error('[approve] could not record a price rise', { bookingId: booking.id, code: error.code });
 }
 
-const TABLE_CODES: Record<string, string> = {
-  in_progress: 'already_in_progress', calling: 'already_in_progress',
-  terms_required: 'terms_required', other_time: 'other_time', changed: 'changed',
-  provider_failed: 'provider_failed', outcome_unknown: 'outcome_unknown',
-};
 
 /**
  * "Book it" for a table. The answer is approval's contract (codes as at the
@@ -148,7 +147,7 @@ async function approveTable(booking: Row, ctx: { db: SupabaseClient; user: { id:
   );
   if (result.ok === false) {
     const { ok: _ok, status, code, ...rest } = result;
-    return refuse(status, { ...rest, code: TABLE_CODES[code] ?? (status >= 500 ? 'provider_failed' : 'unavailable'), reserveCode: code });
+    return refuse(status, { ...rest, code: tableApproveCode(code, status), reserveCode: code });
   }
   let updated = result.row;
   if (!updated) {

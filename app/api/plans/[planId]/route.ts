@@ -5,7 +5,8 @@ import { tidyLegacy } from '@/lib/checkout';
 import { holdsSomething } from '@/lib/booking/claim';
 import { netCollectedCents } from '@/lib/booking/approval';
 import { refundsOpen } from '@/lib/refunds';
-import { impactOfDateChange, describeImpact, needsConfirmation, stillWorksFor } from '@/lib/date-change';
+import { impactOfDateChange, describeImpact, needsConfirmation, stillWorksFor, blocksDateChange } from '@/lib/date-change';
+import { atVersion } from '@/lib/booking/claim';
 import { z } from 'zod';
 import { track } from '@/lib/track';
 import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
@@ -305,7 +306,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
 
     const [{ data: existing }, { data: windows }] = await Promise.all([
       supabase.from('bookings')
-        .select('id, vertical, status, mode, provider, detail, fulfilled_by, booked_by')
+        .select('id, vertical, status, mode, provider, detail, fulfilled_by, booked_by, approved_at, updated_at, response_payload')
         .eq('plan_id', params.planId),
       supabase.from('availability_windows')
         .select('user_id, start_date, end_date').eq('plan_id', params.planId),
@@ -318,6 +319,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
         nextStart, nextEnd,
       )
       : { works: [], out: [] };
+
+    // A booking mid-claim, or sent and never answered, may be booked for the
+    // old nights. It is not "only priced", and confirming cannot make it so:
+    // cancelling it freed the line for a second table while the first may
+    // still be live at the restaurant.
+    if (blocksDateChange(impacts)) {
+      const held = describeImpact(impacts.filter(i => i.consequence === 'held_up'));
+      return NextResponse.json({ error: held.join(' '), code: 'booking_in_progress', consequences: held }, { status: 409 });
+    }
 
     // Shown before anything is written. The organiser confirms with
     // { confirmDateChange: true }, having read what it costs.
@@ -336,15 +346,30 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     // A price for dates that no longer exist is not a price. Cancelled
     // rather than deleted: the trip's history is worth keeping, and the
     // bridge treats a cancelled row as a line it may quote again.
-    const stale = impacts.filter(i => i.consequence === 'requote' && i.bookingId).map(i => i.bookingId as string);
-    if (stale.length) {
-      const { error: invalidated } = await supabase.from('bookings')
+    //
+    // Each only as it was read: a row claimed since (a table being booked
+    // this minute moves its updated_at) is not cancelled under the claim, and
+    // the dates do not move over it.
+    const stale = impacts.filter(i => i.consequence === 'requote' && i.bookingId);
+    let moved = 0;
+    for (const i of stale) {
+      const { data: gone, error: invalidated } = await atVersion(supabase.from('bookings')
         .update({ status: 'cancelled', itinerary_item_id: null, updated_at: new Date().toISOString() })
-        .in('id', stale);
+        .eq('id', i.bookingId as string)
+        .in('status', ['quoted', 'awaiting_approval']), i.version)
+        .select('id');
       if (invalidated) {
         console.error('[plans PATCH] could not invalidate quotes for the old dates',
           { planId: params.planId, code: invalidated.code });
+      } else if (!gone?.length) {
+        moved++;
       }
+    }
+    if (moved) {
+      return NextResponse.json(
+        { error: 'Something on this trip changed while you were looking — maybe a booking that has just started. Open it again before moving the dates.', code: 'changed' },
+        { status: 409 },
+      );
     }
   }
 
