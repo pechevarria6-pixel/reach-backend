@@ -57,7 +57,39 @@ begin
   end if;
 end $$;
 
--- The 60 rows settled before today were all read off the restaurant's page.
+-- A settled row with no source was settled before this file ran. That is
+-- the 60 the old cron read off restaurants' pages — and, if the new code ran
+-- a night or more before this file, every answer it took from the map then,
+-- because before this column there was nowhere to say so. So the map's own
+-- answers are found first, by the same tags lib/booking/osm-reservation.ts
+-- reads, and only what the map does not say is put down to the page.
+-- A row the map and the page agree on is marked 'osm': the map does say it.
+update public.discovery_venues
+   set reservation_source = 'osm'
+ where reservation_method is not null
+   and reservation_source is null
+   and (
+        (reservation_method = 'walk_in'
+          and lower(trim(split_part(coalesce(osm_tags->>'reservation', ''), ';', 1))) = 'no')
+     or (reservation_method = 'phone'
+          and nullif(trim(coalesce(osm_tags->>'reservation:phone', '')), '') is not null)
+     or (reservation_method = 'own_form'
+          and substring(reservation_url from '^https?://(?:www\.)?([^/?#]+)') is not null
+          and position(lower(substring(reservation_url from '^https?://(?:www\.)?([^/?#]+)'))
+                in lower(concat_ws(' ', osm_tags->>'reservation:website', osm_tags->>'reservation:url'))) > 0)
+     or (reservation_method = 'third_party'
+          and concat_ws(' ', osm_tags->>'reservation:website', osm_tags->>'reservation:url', website) ~* (
+            case reservation_platform
+              when 'resy'       then '(^|[/.])resy\.com'
+              when 'opentable'  then '(^|[/.])opentable\.'
+              when 'tock'       then '(^|[/.])exploretock\.com'
+              when 'sevenrooms' then '(^|[/.])sevenrooms\.com'
+              when 'yelp'       then '(^|[/.])yelp\.'
+              when 'thefork'    then '(^|[/.])(thefork\.|lafourchette\.com|eltenedor\.)'
+              else '$^'
+            end))
+   );
+
 update public.discovery_venues
    set reservation_source = 'site'
  where reservation_method is not null
@@ -69,6 +101,14 @@ update public.discovery_venues
 create index if not exists discovery_venues_reservation_queue
   on public.discovery_venues (reservation_checked_at nulls first)
   where kind = 'restaurant' and reservation_method is null;
+
+-- Restaurants never looked at, by id: the cron reads them from a random id
+-- each night (windowFrom in lib/discovery/reservation-crawl.ts), so a row
+-- one night passes over is not at the front of the next.
+create index if not exists discovery_venues_reservation_fresh
+  on public.discovery_venues (id)
+  where kind = 'restaurant' and reservation_method is null and reservation_checked_at is null
+    and website is not null;
 
 create index if not exists discovery_venues_reservation_osm
   on public.discovery_venues (id)

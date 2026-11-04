@@ -168,6 +168,50 @@ export function onePerSite<T extends CrawlVenue>(venues: T[], perRun: number): A
   return out;
 }
 
+/** One page of a window: rows with an id after `after` (or from the start), up to `upTo`, by id. */
+export type WindowRead<T> = (after: string | null, upTo: string | null, limit: number) =>
+  PromiseLike<{ data: T[] | null; error: { code?: string; message?: string } | null }>;
+
+/**
+ * Up to `limit` rows by id, starting just after `start` and wrapping round
+ * to the beginning when the end comes first.
+ *
+ * A query with no order gives back the same leading rows every night, and
+ * any row a night leaves unrecorded — a map entry that settles nothing
+ * before the migration, a second restaurant on one host that `onePerSite`
+ * passes over — is at the front again the next night, until they are all
+ * the crawl ever sees. Starting each night somewhere new is what stops it.
+ * A start key, not an offset: an offset of 20,000 into this table times out
+ * (measured 2026-11-04), while a start key is one step down an index.
+ */
+export async function windowFrom<T>(read: WindowRead<T>, start: string, limit: number) {
+  const first = await read(start, null, limit);
+  if (first.error) return { data: [] as T[], error: first.error };
+  const rows = [...(first.data ?? [])];
+  if (rows.length >= limit) return { data: rows, error: null };
+  const rest = await read(null, start, limit - rows.length);
+  if (rest.error) return { data: rows, error: rest.error };
+  return { data: [...rows, ...(rest.data ?? [])], error: null };
+}
+
+/**
+ * The order tonight's sites are offered to `onePerSite` in. Map entries the
+ * tags left unsettled are read first, but take at most half the slots: the
+ * rest belong to the window, so a run of map rows that settle nothing can
+ * never fill the night on their own. Each row appears once.
+ */
+export function siteQueue<T extends CrawlVenue>(mapLeft: T[], rest: T[], perRun: number): T[] {
+  const half = Math.ceil(perRun / 2);
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const v of [...mapLeft.slice(0, half), ...rest]) {
+    if (seen.has(v.id)) continue;
+    seen.add(v.id);
+    out.push(v);
+  }
+  return out;
+}
+
 /** Run `work` over `items`, `width` at a time, stopping new work at `deadline`. */
 export async function inPool<T>(items: T[], width: number, deadline: number, work: (item: T) => Promise<void>): Promise<number> {
   let next = 0;

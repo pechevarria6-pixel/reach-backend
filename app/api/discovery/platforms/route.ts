@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { getText, robotsAllows } from '@/lib/discovery/harvest';
 import {
-  awaitingMigration, inPool, onePerSite, reservationDueFilter, rowUpdate, settleVenue,
+  awaitingMigration, inPool, onePerSite, reservationDueFilter, rowUpdate, settleVenue, siteQueue, windowFrom,
   type CrawlVenue, type Settlement,
 } from '@/lib/discovery/reservation-crawl';
 
@@ -79,12 +79,23 @@ export async function GET(req: NextRequest) {
   // 176k filed under "places to eat" — and only ones not settled.
   const unsettled = (cols: string) => db.from('discovery_venues').select(cols)
     .eq('kind', 'restaurant').is('reservation_method', null);
+  // Every list below starts at a random id and wraps (windowFrom): a list
+  // with no order hands back the same leading rows each night, and the rows
+  // a night leaves unrecorded would be the only ones the crawl ever saw.
+  const window = (build: () => ReturnType<typeof unsettled>, limit: number) =>
+    windowFrom<CrawlVenue>((after, upTo, n) => {
+      let q = build();
+      if (after) q = q.gt('id', after);
+      if (upTo) q = q.lte('id', upTo);
+      return q.order('id').limit(n) as unknown as PromiseLike<{ data: CrawlVenue[] | null; error: { code?: string } | null }>;
+    }, randomUUID(), limit);
 
   // 1. Restaurants whose map entry may answer it.
-  let mapQ = unsettled(BASE_COLUMNS)
-    .or('osm_tags->>reservation.eq.no,osm_tags->>"reservation:website".not.is.null,osm_tags->>"reservation:phone".not.is.null');
-  if (migrated) mapQ = mapQ.is('reservation_checked_at', null);
-  const mapRead = await mapQ.limit(MAP_ROWS_PER_RUN);
+  const mapRead = await window(() => {
+    const q = unsettled(BASE_COLUMNS)
+      .or('osm_tags->>reservation.eq.no,osm_tags->>"reservation:website".not.is.null,osm_tags->>"reservation:phone".not.is.null');
+    return migrated ? q.is('reservation_checked_at', null) : q;
+  }, MAP_ROWS_PER_RUN);
   // A slow scan of the tags is not a reason to skip the crawl.
   if (mapRead.error) console.error('[discovery/platforms] could not read the map tags', { code: mapRead.error.code });
 
@@ -92,7 +103,7 @@ export async function GET(req: NextRequest) {
   let siteRows: CrawlVenue[] = [];
   if (migrated) {
     const [fresh, due] = await Promise.all([
-      unsettled(BASE_COLUMNS).not('website', 'is', null).is('reservation_checked_at', null).limit(sitesPerRun * 3),
+      window(() => unsettled(BASE_COLUMNS).not('website', 'is', null).is('reservation_checked_at', null), sitesPerRun * 3),
       unsettled(BASE_COLUMNS).not('website', 'is', null).or(reservationDueFilter())
         .order('reservation_checked_at', { ascending: true }).limit(sitesPerRun),
     ]);
@@ -100,17 +111,14 @@ export async function GET(req: NextRequest) {
     if (due.error) console.error('[discovery/platforms] could not read due restaurants', { code: due.error.code });
     const half = Math.ceil(sitesPerRun / 2);
     const dueRows = (due.data ?? []) as unknown as CrawlVenue[];
-    siteRows = [...dueRows.slice(0, half), ...((fresh.data ?? []) as unknown as CrawlVenue[])];
+    siteRows = [...dueRows.slice(0, half), ...fresh.data];
   } else {
-    // Before the migration nothing records a look, so a window that starts
-    // in a different place each night is what stops the same rows coming
-    // round for ever. It starts at a random id rather than a random offset:
-    // an offset of 20,000 into this table times out (measured 2026-11-04),
-    // while a start key is one step down the primary key's index.
-    const window = await unsettled(BASE_COLUMNS).not('website', 'is', null)
-      .gt('id', randomUUID()).order('id').limit(sitesPerRun * 3);
-    if (window.error) console.error('[discovery/platforms] could not read restaurants', { code: window.error.code });
-    siteRows = (window.data ?? []) as unknown as CrawlVenue[];
+    // Before the migration nothing records a look, so the window starting
+    // in a different place each night is all that stops the same rows
+    // coming round for ever.
+    const read = await window(() => unsettled(BASE_COLUMNS).not('website', 'is', null), sitesPerRun * 3);
+    if (read.error) console.error('[discovery/platforms] could not read restaurants', { code: read.error.code });
+    siteRows = read.data;
   }
 
   const deps = { allowed: robotsAllows, read: getText };
@@ -140,13 +148,16 @@ export async function GET(req: NextRequest) {
   };
 
   // The map first: no fetch, so these are cheap and never count as sites.
-  for (const venue of (mapRead.data ?? []) as unknown as CrawlVenue[]) {
+  // What the tags leave unsettled goes to the front of the sites, but never
+  // more than half of them (siteQueue).
+  const mapLeft: CrawlVenue[] = [];
+  for (const venue of mapRead.data) {
     const s = await settleVenue(venue, deps, { fetch: false });
     if (s.outcome === 'settled') await store(venue, s);
-    else siteRows.unshift(venue);
+    else mapLeft.push(venue);
   }
 
-  const sites = onePerSite(siteRows.filter((v, i, all) => all.findIndex(w => w.id === v.id) === i), sitesPerRun);
+  const sites = onePerSite(siteQueue(mapLeft, siteRows, sitesPerRun), sitesPerRun);
   const deadline = started + STOP_STARTING_MS;
   const read = await inPool(sites, AT_ONCE, deadline, async ({ rows }) => {
     const s = await settleVenue(rows[0], deps);
@@ -157,7 +168,7 @@ export async function GET(req: NextRequest) {
 
   const body = {
     migrated,
-    map_rows: (mapRead.data ?? []).length,
+    map_rows: mapRead.data.length,
     sites_read: read,
     outcomes,
     found,

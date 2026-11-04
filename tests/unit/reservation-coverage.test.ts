@@ -3,13 +3,14 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { ownBookingUrl, platformBookingUrl } from '../../lib/booking/booking-links.ts';
 import {
   bookingChannel, platformFromHtml, reservationFromHtml, reservationUrl, usableStoredUrl,
 } from '../../lib/booking/reservations.ts';
 import { reservationFromOsm } from '../../lib/booking/osm-reservation.ts';
 import {
-  awaitingMigration, onePerSite, reservationDueFilter, rowUpdate, settleVenue,
+  awaitingMigration, onePerSite, reservationDueFilter, rowUpdate, settleVenue, siteQueue, windowFrom,
 } from '../../lib/discovery/reservation-crawl.ts';
 
 // ─── Links that book nothing (each one was stored as a booking link) ────
@@ -251,4 +252,90 @@ test('the four answers a person needs', () => {
   assert.equal(bookingChannel('walk_in'), 'walk_in');
   assert.equal(bookingChannel('waitlist'), 'walk_in');
   assert.equal(bookingChannel(null), 'unknown');
+});
+
+// ─── OpenTable's own profile page ───────────────────────────────────────
+test("OpenTable's profile page for one restaurant, by its id, is that restaurant on OpenTable", () => {
+  const page = '<a href="https://www.opentable.com/restaurant/profile/123456/reserve">Reserve</a>';
+  assert.equal(platformFromHtml(page).platform, 'opentable');
+  assert.equal(platformFromHtml(page).url, 'https://www.opentable.com/restaurant/profile/123456/reserve');
+  assert.ok(platformBookingUrl('https://www.opentable.co.uk/restaurant/profile/98765'));
+  assert.ok(usableStoredUrl('opentable', 'https://www.opentable.com/restaurant/profile/123456/reserve'),
+    'a stored profile link is kept, not swapped for a name search');
+  assert.equal(platformBookingUrl('https://www.opentable.com/restaurant/profile/'), null, 'no id is no restaurant');
+  assert.equal(platformBookingUrl('https://www.opentable.com/restaurant/profile/123456/photos'), null);
+});
+
+// ─── Not going round in circles ─────────────────────────────────────────
+const ids = (n: number) => Array.from({ length: n }, (_, i) => ({ id: String(i).padStart(4, '0') }));
+const reader = (rows: Array<{ id: string }>) => async (after: string | null, upTo: string | null, limit: number) => ({
+  data: rows.filter(r => (after === null || r.id > after) && (upTo === null || r.id <= upTo)).slice(0, limit),
+  error: null,
+});
+
+test('each night starts somewhere new, and wraps round rather than coming up short', async () => {
+  const rows = ids(1000);
+  const a = await windowFrom(reader(rows), '0100', 50);
+  const b = await windowFrom(reader(rows), '0700', 50);
+  assert.equal(a.data[0].id, '0101');
+  assert.equal(b.data[0].id, '0701');
+  assert.equal(a.data.filter(r => b.data.includes(r)).length, 0, 'two starts, two different nights');
+  const end = await windowFrom(reader(rows), '0990', 50);
+  assert.equal(end.data.length, 50, 'near the end it carries on from the start');
+  assert.equal(new Set(end.data.map(r => r.id)).size, 50, 'and never takes a row twice');
+  assert.equal(end.data[8].id, '0999');
+  assert.equal(end.data[9].id, '0000');
+});
+
+test('restaurants a night leaves unrecorded are not at the front of the next one', async () => {
+  // Twenty rows on one shared host: onePerSite reads one and passes over
+  // the rest, and nothing records the ones it passed over.
+  const rows = Array.from({ length: 400 }, (_, i) => venue({
+    id: String(i).padStart(4, '0'),
+    website: i < 20 ? `https://www.facebook.com/page${i}` : `https://r${i}.example/`,
+  }));
+  const read = reader(rows) as unknown as Parameters<typeof windowFrom<ReturnType<typeof venue>>>[0];
+  const night1 = onePerSite((await windowFrom(read, '0000', 60)).data, 60);
+  const night2 = onePerSite((await windowFrom(read, '0200', 60)).data, 60);
+  const fb = (n: typeof night1) => n.filter(s => s.website.includes('facebook')).length;
+  assert.ok(night2.length >= 50, `a night still reads most of its sites (${night2.length})`);
+  assert.ok(fb(night1) <= 1 && fb(night2) === 0, 'the shared host does not follow the crawl round');
+});
+
+test('map entries that settle nothing never take more than half the sites', () => {
+  const mapLeft = Array.from({ length: 77 }, (_, i) => venue({ id: `m${i}`, website: `https://m${i}.example/` }));
+  const window = Array.from({ length: 180 }, (_, i) => venue({ id: `w${i}`, website: `https://w${i}.example/` }));
+  const sites = onePerSite(siteQueue(mapLeft, window, 60), 60);
+  assert.equal(sites.length, 60);
+  assert.equal(sites.filter(s => s.rows[0].id.startsWith('m')).length, 30);
+  assert.equal(sites.filter(s => s.rows[0].id.startsWith('w')).length, 30, 'the window always gets its half');
+  const twice = siteQueue([venue({ id: 'a' })], [venue({ id: 'a' }), venue({ id: 'b' })], 60);
+  assert.deepEqual(twice.map(v => v.id), ['a', 'b'], 'a row is offered once');
+});
+
+test('the route reads every list from a random start and never lets the map rows jump the whole queue', () => {
+  const route = readFileSync(new URL('../../app/api/discovery/platforms/route.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(route, /\.unshift\(/);
+  assert.match(route, /const mapRead = await window\(/);
+  assert.match(route, /window\(\(\) => unsettled\(BASE_COLUMNS\)\.not\('website', 'is', null\)\.is\('reservation_checked_at', null\)/);
+  assert.match(route, /onePerSite\(siteQueue\(mapLeft, siteRows, sitesPerRun\), sitesPerRun\)/);
+  const sql = readFileSync(new URL('../../sql/reservation-coverage-2026-11-04.sql', import.meta.url), 'utf8');
+  assert.match(sql, /discovery_venues_reservation_fresh\s+on public\.discovery_venues \(id\)\s+where kind = 'restaurant' and reservation_method is null and reservation_checked_at is null/);
+});
+
+// ─── Where an answer came from ──────────────────────────────────────────
+test("the migration puts the map's own answers down to the map before it calls the rest the page's", () => {
+  const sql = readFileSync(new URL('../../sql/reservation-coverage-2026-11-04.sql', import.meta.url), 'utf8');
+  const osm = sql.search(/set reservation_source = 'osm'/);
+  const site = sql.search(/set reservation_source = 'site'/);
+  assert.ok(osm > 0 && site > osm, "the map's answers are found first");
+  const clause = sql.slice(osm, site);
+  // Every answer lib/booking/osm-reservation.ts can give is recognised.
+  for (const method of ['walk_in', 'phone', 'own_form', 'third_party']) {
+    assert.match(clause, new RegExp(`reservation_method = '${method}'`), method);
+  }
+  for (const platform of ['resy', 'opentable', 'tock', 'sevenrooms', 'yelp', 'thefork']) {
+    assert.match(clause, new RegExp(`when '${platform}'`), platform);
+  }
+  assert.match(clause, /reservation_source is null/, 'and nothing already labelled is relabelled');
 });

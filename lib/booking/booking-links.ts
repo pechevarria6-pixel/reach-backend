@@ -80,6 +80,11 @@ export function namesAVenue(platform: LinkPlatform, url: URL): boolean {
     case 'opentable':
       if (/^\d+$/.test(param(url, 'rid') ?? '') || /^\d+$/.test(param(url, 'restref') ?? '')) return true;
       if (parts[0] === 'r' && parts[1]) return true;
+      // OpenTable's own profile page for one restaurant, by its id:
+      // /restaurant/profile/<rid>, or /restaurant/profile/<rid>/reserve.
+      if (parts[0]?.toLowerCase() === 'restaurant' && parts[1]?.toLowerCase() === 'profile' && /^\d+$/.test(parts[2] ?? '')) {
+        return parts.length === 3 || (parts.length === 4 && parts[3].toLowerCase() === 'reserve');
+      }
       return parts.length === 1 && parts[0].includes('-') && !OT_NOT_A_VENUE.has(parts[0].toLowerCase());
     case 'tock':
       return !!parts[0] && !TOCK_NOT_A_VENUE.has(parts[0].toLowerCase());
