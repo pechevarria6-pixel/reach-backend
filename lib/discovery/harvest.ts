@@ -196,7 +196,8 @@ export function shorten(when: string, max = 90): string {
   return `${when.slice(0, max - 1).trimEnd()}…`;
 }
 
-async function getText(url: string): Promise<string | null> {
+/** One HTML page, as the harvester reads it: its User-Agent, its timeout, nothing that is not HTML. */
+export async function getText(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': UA, Accept: 'text/html' },

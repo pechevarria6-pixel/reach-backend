@@ -26,6 +26,7 @@ import { noteArea, milesBetween } from './cache.ts';
 import { canTurnUp } from './rules.ts';
 import { normalise } from './verify.ts';
 import { dialable } from './phone.ts';
+import { usableStoredUrl } from '../booking/reservations.ts';
 import { closedThroughout, neverOpen, windowFor } from './hours.ts';
 import { regionCountries, geocoderNames } from './regions.ts';
 import { siteTown } from './world-destinations.ts';
@@ -445,7 +446,9 @@ export async function placesFor(
         cuisine: String((v.osm_tags ?? {}).cuisine ?? ''),
         reservation: takesBookings((v.osm_tags ?? {}).reservation),
         phone: dialable(v.phone || (v.osm_tags ?? {}).phone || (v.osm_tags ?? {})['contact:phone'], countryCode),
-        reserveUrl: /^https?:\/\//i.test(String(v.reservation_url || '')) ? String(v.reservation_url) : null,
+        // Through the same check as the booking screen: rows stored before
+        // 2026-11-04 include a stylesheet and a hotel's room booking.
+        reserveUrl: usableStoredUrl('none', v.reservation_url as string | null, v.website as string | null),
         photo: (() => { const p = rowPhoto(v); return p ? { url: p.url, credit: p.credit, link: p.link ?? null } : null; })(),
       };
     }

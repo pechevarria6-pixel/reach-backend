@@ -12,13 +12,30 @@
 // annoyance; "Reserve on Resy" for a place that has never been on Resy is
 // the same lie as offering tickets to a wine bar.
 
-export type Platform = 'resy' | 'opentable' | 'tock' | 'none';
+import {
+  LINK_PLATFORMS, linksIn, ownBookingUrl, platformBookingUrl, platformOfHost,
+  type LinkPlatform,
+} from './booking-links.ts';
+
+/**
+ * SevenRooms, Yelp and TheFork arrive with sql/reservation-coverage-2026-11-04.sql,
+ * which widens the column's check. Until it runs the database refuses them
+ * and the platforms cron leaves those restaurants unsettled rather than
+ * filing them under a platform they are not on.
+ */
+export type Platform = LinkPlatform | 'none';
 
 export const PLATFORM_NAME: Record<Exclude<Platform, 'none'>, string> = {
   resy: 'Resy',
   opentable: 'OpenTable',
   tock: 'Tock',
+  sevenrooms: 'SevenRooms',
+  yelp: 'Yelp',
+  thefork: 'TheFork',
 };
+
+/** The platforms the database accepted before 2026-11-04. */
+export const FIRST_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>(['resy', 'opentable', 'tock', 'none']);
 
 /**
  * The card perk worth mentioning, if any.
@@ -67,9 +84,18 @@ export function usableParty(value: number | null | undefined): number {
  */
 export function reservationUrl(platform: Platform, req: TableRequest): string | null {
   if (platform === 'none') return null;
-  // A link the restaurant published beats anything we can construct — with
-  // its night made this line's (datedLink).
-  if (req.knownUrl && /^https?:\/\//i.test(req.knownUrl)) return datedLink(req.knownUrl, req);
+  // A link the restaurant published beats anything we can construct — once
+  // it is checked. Rows stored before 2026-11-04 include a stylesheet and
+  // Resy links that open on a night in 2022; a stored link that names no
+  // restaurant is passed over for the search below rather than handed on.
+  // A link that is kept carries this line's night, not its own (datedLink).
+  const known = usableStoredUrl(platform, req.knownUrl);
+  if (known) return datedLink(withNightKeys(String(req.knownUrl), known), req);
+  // Only the three platforms with a search page we know the shape of get a
+  // constructed link. SevenRooms, Yelp and TheFork are reached through the
+  // restaurant's own link or not at all; a guessed URL that 404s is the
+  // same dead end as no link, with a worse feeling.
+  if (platform !== 'resy' && platform !== 'opentable' && platform !== 'tock') return null;
 
   const name = (req.name || '').trim();
   if (!name) return null;
@@ -133,6 +159,46 @@ export function datedLink(url: string, req: Pick<TableRequest, 'date' | 'time' |
   return u.toString();
 }
 
+/**
+ * The night parameters the published link carried, put back on the cleaned
+ * one so datedLink can move them onto this line's night. Cleaning takes a
+ * stale date out (usableStoredUrl); this is what lets the line's own date
+ * go back in where the restaurant's link had a place for one.
+ */
+function withNightKeys(original: string, cleaned: string): string {
+  let from: URL; let to: URL;
+  try { from = new URL(original); to = new URL(cleaned); } catch { return cleaned; }
+  if (from.hostname !== to.hostname) return cleaned;
+  for (const k of ['date', 'seats', 'dateTime', 'datetime', 'covers']) {
+    const v = from.searchParams.get(k);
+    if (v !== null && !to.searchParams.has(k)) to.searchParams.set(k, v);
+  }
+  return to.toString();
+}
+
+/**
+ * A stored booking link, if it is still one worth sending somebody to: a
+ * restaurant on this platform with yesterday's search taken out, or the
+ * restaurant's own page. The rows written before booking-links.ts existed
+ * are read through this, so they are corrected without a migration.
+ */
+export function usableStoredUrl(
+  platform: Platform,
+  stored: string | null | undefined,
+  /** The venue's website, when the caller holds it: then an own page must be on it (or a booking engine). */
+  website?: string | null,
+): string | null {
+  const raw = String(stored ?? '').trim();
+  if (!/^https?:\/\//i.test(raw)) return null;
+  let host: string;
+  try { host = new URL(raw).hostname; } catch { return null; }
+  if (platformOfHost(host)) {
+    const found = platformBookingUrl(raw);
+    return found && (platform === 'none' || found.platform === platform) ? found.url : null;
+  }
+  return ownBookingUrl(raw, website || raw);
+}
+
 /** "Reserve on Resy" — the button, in the platform's own name. */
 export function reserveLabel(platform: Platform): string {
   if (platform === 'none') return 'Call to book';
@@ -161,35 +227,41 @@ export function chargesUpfront(platform: Platform, priceCents?: number | null): 
 // pages before it was written: Poole's Diner reads opentable, Desert Bistro
 // in Moab reads tock, and two small-town restaurants read none — which is
 // the correct answer for places that take bookings by telephone.
-const PLATFORM_HOSTS: [Exclude<Platform, 'none'>, RegExp][] = [
-  ['resy', /resy\.com/i],
-  ['opentable', /opentable\.(com|co\.uk)/i],
-  ['tock', /exploretock\.com/i],
-];
-
 export interface PlatformFinding {
   platform: Platform;
   /** The booking page they linked, which always beats one we construct. */
   url: string | null;
 }
 
+/** Resy and SevenRooms widgets name the restaurant in script, not in a link. */
+const RESY_WIDGET = /resyWidget\.addButton\([\s\S]{0,300}?venueId["']?\s*:\s*["']?(\d+)/i;
+const SEVENROOMS_WIDGET = /SevenroomsWidget\.init\(\s*\{[^}]*venueId\s*:\s*["']([a-z0-9_-]+)["']/i;
+
 /**
  * What a page says about where it takes bookings.
  *
- * Deliberately only looks for the platform's own domain. Matching the word
- * "resy" anywhere would find it in "nursery" and in prose about somebody's
- * reservation policy; a link to resy.com is a fact.
+ * Only a link that names one restaurant on the platform counts. Matching the
+ * word "resy" anywhere would find it in "nursery"; matching the domain
+ * anywhere found "https://widgets.resy.com" — Resy's script, naming nobody —
+ * and stored it as Mission on the Bay's booking page. A widget that carries
+ * the restaurant's id in its config is proof of the platform even with no
+ * link, and then the link is left empty rather than invented.
  */
-export function platformFromHtml(html: string | null | undefined): PlatformFinding {
+export function platformFromHtml(html: string | null | undefined, base?: string, name?: string | null): PlatformFinding {
   const text = String(html ?? '');
   if (!text) return { platform: 'none', url: null };
+  const links = linksIn(text);
 
-  for (const [platform, host] of PLATFORM_HOSTS) {
-    if (!host.test(text)) continue;
-    // The specific link, if one is sitting in an href.
-    const href = new RegExp(`https?://[^"'\\s<>]*${host.source}[^"'\\s<>]*`, 'i').exec(text);
-    return { platform, url: href ? href[0].replace(/&amp;/g, '&') : null };
+  for (const platform of LINK_PLATFORMS) {
+    for (const raw of links) {
+      const found = platformBookingUrl(raw, base, name);
+      if (found && found.platform === platform) return { platform, url: found.url };
+    }
   }
+  const unescaped = text.replace(/\\\//g, '/');
+  if (RESY_WIDGET.test(unescaped)) return { platform: 'resy', url: null };
+  const seven = SEVENROOMS_WIDGET.exec(unescaped);
+  if (seven) return { platform: 'sevenrooms', url: `https://www.sevenrooms.com/reservations/${seven[1]}` };
   return { platform: 'none', url: null };
 }
 
@@ -238,8 +310,6 @@ export interface ReservationFinding {
 /** Said plainly enough to be believed. */
 const NO_BOOKINGS = /(we (do not|don't) (take|accept) reservations|no reservations (are )?(taken|accepted)|walk[- ]?ins? only|first[- ]come,? first[- ]served)/i;
 const WAITLIST = /(join (the )?waitlist|waitlist only|add your name)/i;
-/** A link to their own booking page — by its address or by its words. */
-const OWN_FORM = /href=["']([^"']*\/(reservations?|reserve|book[a-z-]*|bookings?)[^"']*)["']/i;
 /**
  * The page pairing a booking with a telephone, in so many words. The earlier
  * version accepted a number anywhere on a page that said "reservation"
@@ -249,8 +319,18 @@ const OWN_FORM = /href=["']([^"']*\/(reservations?|reserve|book[a-z-]*|bookings?
  */
 const PHONE_BOOKING = /(for reservations[^.<]{0,40}?(call|ring|phone|telephone)|(call|ring|phone|telephone)[^.<]{0,40}?(for|to (make|book))[^.<]{0,20}?(a )?reservation|reservations?[:\s]{1,4}(\+?[\d()\-.\s]{9,})|to (book|reserve)[^.<]{0,30}?(call|phone))/i;
 
-/** A link to their own booking page, which is worth following. */
-const FOLLOW_FORM = /href=["']([^"']*\/(reservations?|reserve|book[a-z-]*|bookings?)[^"']*)["']/i;
+/**
+ * Their own booking page: the first href that is about tables, on their own
+ * site or a booking engine (booking-links.ts says which). Not a stylesheet,
+ * not "/book-an-event", not a hotel's room booking.
+ */
+function ownFormIn(html: string, base?: string): string | null {
+  for (const m of html.matchAll(/href\s*=\s*["']([^"']{1,600})["']/gi)) {
+    const url = ownBookingUrl(m[1], base);
+    if (url) return url;
+  }
+  return null;
+}
 
 /**
  * Everything needed to get a table here, or the honest absence of it.
@@ -263,12 +343,12 @@ const FOLLOW_FORM = /href=["']([^"']*\/(reservations?|reserve|book[a-z-]*|bookin
  * booking; a number on its own is just a number, and saying "call to book"
  * about a place that may not take bookings is the guess this exists to stop.
  */
-export function reservationFromHtml(html: string | null | undefined): ReservationFinding {
+export function reservationFromHtml(html: string | null | undefined, base?: string, name?: string | null): ReservationFinding {
   const text = String(html ?? '');
   const phone = phoneFromHtml(text);
   if (!text) return { method: 'unknown', platform: 'none', url: null, phone };
 
-  const third = platformFromHtml(text);
+  const third = platformFromHtml(text, base, name);
   if (third.platform !== 'none') {
     return { method: 'third_party', platform: third.platform, url: third.url, phone };
   }
@@ -276,10 +356,8 @@ export function reservationFromHtml(html: string | null | undefined): Reservatio
   if (WAITLIST.test(text)) return { method: 'waitlist', platform: 'none', url: null, phone };
   if (NO_BOOKINGS.test(text)) return { method: 'walk_in', platform: 'none', url: null, phone };
 
-  const form = OWN_FORM.exec(text);
-  if (form) {
-    return { method: 'own_form', platform: 'none', url: form[1].replace(/&amp;/g, '&'), phone };
-  }
+  const form = ownFormIn(text, base);
+  if (form) return { method: 'own_form', platform: 'none', url: form, phone };
 
   if (phone && PHONE_BOOKING.test(text)) return { method: 'phone', platform: 'none', url: null, phone };
 
@@ -302,13 +380,7 @@ export function isCertain(finding: ReservationFinding): boolean {
 
 /** Where a page points for its own booking, so the crawl can follow it. */
 export function bookingPageLink(html: string | null | undefined, base: string): string | null {
-  const m = FOLLOW_FORM.exec(String(html ?? ''));
-  if (!m) return null;
-  try {
-    return new URL(m[1].replace(/&amp;/g, '&'), base).toString();
-  } catch {
-    return null;
-  }
+  return ownFormIn(String(html ?? ''), base);
 }
 
 /**
@@ -324,9 +396,11 @@ export function bookingPageLink(html: string | null | undefined, base: string): 
 export async function resolveReservation(
   website: string,
   read: (url: string) => Promise<string | null>,
+  /** The restaurant's name, so a link to a different restaurant on the platform is not taken for theirs. */
+  name?: string | null,
 ): Promise<ReservationFinding> {
   const home = await read(website);
-  const first = reservationFromHtml(home);
+  const first = reservationFromHtml(home, website, name);
   // A platform link on the front page is already proof.
   if (first.method === 'third_party') return first;
 
@@ -336,7 +410,7 @@ export async function resolveReservation(
   const page = await read(link);
   if (!page) return first;
 
-  const second = reservationFromHtml(page);
+  const second = reservationFromHtml(page, link, name);
   if (second.method === 'third_party') return { ...second, phone: second.phone ?? first.phone };
   // Their own page, confirmed by having one — the link is where to send them.
   if (first.method === 'own_form' || second.method === 'own_form') {
@@ -369,4 +443,19 @@ export function methodNote(method: ReservationMethod, phone: string | null): str
     // at the door. Reach settles this and the line changes when it has.
     default: return 'We are checking how this one takes bookings.';
   }
+}
+
+/**
+ * The four answers a person needs, from the five ways in: book it online
+ * (on a platform or their own page), ring them, just turn up, or Reach does
+ * not know yet. A waitlist is turning up with your name down, not a table.
+ * "unknown" is never stored — it is a null, asked again on a schedule.
+ */
+export type BookingChannel = 'online' | 'phone' | 'walk_in' | 'unknown';
+
+export function bookingChannel(method: ReservationMethod | null | undefined): BookingChannel {
+  if (method === 'third_party' || method === 'own_form') return 'online';
+  if (method === 'phone') return 'phone';
+  if (method === 'walk_in' || method === 'waitlist') return 'walk_in';
+  return 'unknown';
 }
