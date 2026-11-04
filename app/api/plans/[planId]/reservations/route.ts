@@ -13,14 +13,20 @@
 //   what: string,                  // what will happen, one sentence (where it stands, when not open)
 //   needs: ('date'|'time')[],      // ask before the path runs; never defaulted
 //   alternatives: [{ kind: 'instant'|'call'|'handoff'|'link'|'phone'|'confirm', label, what, href? }],   // [] when not open
-//   terms: null | { platform, platformName, cancellationPolicy, depositCents, feeNote, termsUrl, statement },
+//   terms: null | { platform, platformName, statement },   // instant: what is shown before booking;
+//                                  //   the policy, terms and fee themselves come with the hold
+//                                  //   (POST /api/bookings/[id]/reserve → terms_required)
 //   ownAccount: null | { label: 'Book on your own OpenTable', href, perk },   // beside Reach's booking
 //   status, state, offeredTimes, title, body,   // where it stands, from the row
 // }] }
 //
 // Reads only. Nothing is held, quoted or rung from here: a platform's slot
 // hold starts a five-minute clock, and that happens on POST
-// /api/bookings/[id]/reserve, when somebody presses.
+// /api/bookings/[id]/reserve, when somebody presses — the one route that
+// books a table (its header is the contract for every press).
+//
+// state 'card_owed' (open: false): the platform holds it until a card is
+// added on its page — alternatives are that page and their number, nothing else.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { decide, type TableRow } from '@/lib/reservations/reserve';
@@ -66,7 +72,7 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
     // The call check is cheap while the gate is shut (every day until the
     // lawyer signs off) and a line-type lookup once it is open.
     const call = await deps.callCheck(facts.phone);
-    reservations.push(decide(facts, { instant: deps.instantFor(facts.platform), call }, row));
+    reservations.push(decide(facts, { instant: deps.instantFor(facts.urls), call }, row));
   }
   return NextResponse.json({ reservations });
 }

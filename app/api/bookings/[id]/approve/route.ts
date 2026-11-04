@@ -11,9 +11,12 @@
 //   502 { code: 'provider_failed', error }                  the provider refused; nothing was bought
 //   502 { code: 'outcome_unknown', error }                  sent, and no answer: it MAY be bought
 //   A table (vertical 'restaurant') goes through lib/reservations/reserve.ts
-//   instead, and adds two answers — nothing booked by either:
-//   409 { code: 'terms_required', terms }   show terms; approve again with { acceptTerms: terms.key }
-//   409 { code: 'other_time', offeredTimes } not at that time; approve again with { time }
+//   instead — the same answers as POST /api/bookings/[id]/reserve, whose
+//   header is the contract — and adds two that book nothing:
+//   409 { code: 'terms_required', hold, button }  held, not booked: show the hold's
+//                                                 policy and terms; approve again with
+//                                                 { holdId: hold.holdId, accept: { terms: hold.terms?.version ?? null, policy: true } }
+//   409 { code: 'other_time', offeredTimes }      not at that time; approve again with { time }
 // and 401/403/404 from sign-in and lookup, 500 when our own database fails.
 // Every response except 200 and outcome_unknown means nothing was bought.
 //

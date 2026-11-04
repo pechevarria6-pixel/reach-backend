@@ -1,6 +1,10 @@
 // ─── Booking a table on a booking row: openings, hold, reserve, cancel ───
-// What /api/bookings/[id]/table does, without the request around it, so
-// every state can be tested with a fake platform and a fake database.
+// The instant path of lib/reservations/reserve.ts — the one place that
+// decides how a table is reserved — and the table half of
+// /api/bookings/[id]/cancel. No route calls these steps on its own: the
+// orchestrator runs its own checks (a call ringing, a table the person said
+// they booked, the night on the trip) and then drives openings → hold →
+// reserve here, so there is one way to book a table, not two.
 //
 // The row is the one /api/bookings wrote for the itinerary's dinner line.
 // Its state lives in response_payload.table:
@@ -16,11 +20,19 @@
 // booking it. A row whose platform never answered stays marked, and is never
 // booked again from here until somebody has checked.
 //
+// The claim also stamps approved_at = updated_at, the mark lib/booking/claim.ts
+// midClaim() reads, so every other route that refuses a row mid-booking (the
+// status PATCH, options, deleting a trip, a reservation call) sees this one
+// too — a claim only this file could read was a claim nothing else honoured.
+// A claim older than any request can run is in doubt, never "in progress"
+// for good: the function holding it was killed before it could answer.
+//
 // The hand-off is in every answer: the restaurant's own platform page
 // ("Book on your own OpenTable") and its phone, so a refusal always leaves
 // the next option on screen.
 import { isOutcomeUnknown, type BookingItemResult } from '../types.ts';
 import { midClaim } from '../claim.ts';
+import { APPROVAL_WINDOW_MS } from '../../checkout.ts';
 import { platformOfHost } from '../booking-links.ts';
 import {
   type TableGuest, type TableHold, type TablePlatform, type TableProvider, type TableRefusal,
@@ -95,6 +107,11 @@ export function handoffFor(row: TableRow, venue?: TableCtx['venue']) {
   };
 }
 
+/** The platform state on a booking row (response_payload.table), or null. */
+export function tableStateOf(row: { response_payload?: Record<string, any> | null }): TableState | null {
+  return stateOf(row as TableRow);
+}
+
 function stateOf(row: TableRow): TableState | null {
   const t = row.response_payload?.table;
   return t && typeof t === 'object' && (t.platform === 'yelp' || t.platform === 'opentable') ? t as TableState : null;
@@ -132,7 +149,15 @@ function blocked(ctx: TableCtx, forChange: boolean): FlowAnswer | null {
   if (row.vertical !== 'restaurant') return answer(409, { code: 'not_a_table', error: 'This booking is not a table.' }, ctx);
   const state = stateOf(row);
   if (state?.reserving?.unknown) return answer(409, { code: 'outcome_unknown', error: TABLE_COPY.outcomeUnknown }, ctx);
-  if (state?.reserving) return answer(409, { code: 'in_progress', error: TABLE_COPY.inProgress }, ctx);
+  if (state?.reserving) {
+    // Older than any request can run: whoever held it is gone, and the
+    // platform may have booked it. Never "somebody is booking it" for ever.
+    const at = Date.parse(state.reserving.at);
+    const dead = Number.isFinite(at) && (ctx.now ?? new Date()).getTime() - at > APPROVAL_WINDOW_MS;
+    return dead
+      ? answer(409, { code: 'outcome_unknown', error: TABLE_COPY.outcomeUnknown }, ctx)
+      : answer(409, { code: 'in_progress', error: TABLE_COPY.inProgress }, ctx);
+  }
   if (row.status === 'booking' || midClaim(row)) return answer(409, { code: 'in_progress', error: TABLE_COPY.inProgress }, ctx);
   if (row.status === 'confirmed') {
     if (!ctx.bookedOn) return answer(409, { code: 'already_booked', error: 'This table is already booked.' }, ctx);
@@ -350,15 +375,32 @@ export async function reserveStep(ctx0: TableCtx, ask: ReserveAsk, guest: TableG
   if (!guest) return answer(422, { code: 'needs_guest', error: TABLE_COPY.needsGuest }, ctx);
 
   // The claim: written before the platform is called, on the row as read.
+  // approved_at = updated_at is claim.ts's stamp, so midClaim() sees it.
   const at = now.toISOString();
   const claimed = await ctx.store.write(ctx.row.id, ctx.row.updated_at ?? null, {
     response_payload: withState(ctx.row, { ...state, reserving: { at, by: ctx.userId, holdId: hold.holdId } }),
+    approved_at: at,
     updated_at: at,
   });
   if (claimed.ok === false) {
     return answer(409, { code: claimed.taken ? 'in_progress' : 'store_error', error: claimed.taken ? TABLE_COPY.inProgress : 'Could not start this booking just now. Nothing was booked.' }, ctx);
   }
   const claimedRow: TableRow = { ...ctx.row, updated_at: claimed.version, response_payload: withState(ctx.row, { ...state, reserving: { at, by: ctx.userId, holdId: hold.holdId } }) };
+
+  // It may be booked. Kept claimed, with the reason, so nothing books it
+  // twice — the stamp kept too, so every route still reads it mid-claim.
+  const unknownAnswer = async (msg: string): Promise<FlowAnswer> => {
+    const still = new Date().toISOString();
+    const kept = await ctx.store.write(ctx.row.id, claimed.version, {
+      response_payload: withState(claimedRow, { ...state, reserving: { at, by: ctx.userId, holdId: hold.holdId, unknown: msg } }),
+      error: `outcome unknown: ${msg}`,
+      approved_at: still,
+      updated_at: still,
+    });
+    if (kept.ok === false) console.error('[tables] could not note an unknown outcome', { id: ctx.row.id, error: kept.error });
+    ctx.report?.(`table outcome unknown: ${msg}`, { bookingId: ctx.row.id, platform: hold.platform });
+    return answer(502, { code: 'outcome_unknown', error: TABLE_COPY.outcomeUnknown }, ctx);
+  };
 
   let result: BookingItemResult | TableRefusal;
   try {
@@ -367,19 +409,16 @@ export async function reserveStep(ctx0: TableCtx, ask: ReserveAsk, guest: TableG
       : await provider.reserve(hold, guest, { reference: ctx.row.id });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (isOutcomeUnknown(e)) {
-      // It may be booked. Kept claimed, with the reason, so nothing books it twice.
-      const kept = await ctx.store.write(ctx.row.id, claimed.version, {
-        response_payload: withState(claimedRow, { ...state, reserving: { at, by: ctx.userId, holdId: hold.holdId, unknown: msg } }),
-        error: `outcome unknown: ${msg}`,
-        updated_at: new Date().toISOString(),
-      });
-      if (kept.ok === false) console.error('[tables] could not note an unknown outcome', { id: ctx.row.id, error: kept.error });
-      ctx.report?.(`table outcome unknown: ${msg}`, { bookingId: ctx.row.id, platform: hold.platform });
-      return answer(502, { code: 'outcome_unknown', error: TABLE_COPY.outcomeUnknown }, ctx);
-    }
+    if (isOutcomeUnknown(e)) return unknownAnswer(msg);
     result = { ok: false, code: 'platform_down', error: `${PLATFORM_LABEL[hold.platform]} couldn't be reached. Nothing was booked — try again shortly.` };
     console.error('[tables] reserve threw before anything was sent', { id: ctx.row.id, msg });
+  }
+
+  // "Confirmed" with no reservation id is an answer nobody can point at: it
+  // may be booked, so it is in doubt — never confirmed, never tried again.
+  // The providers already throw for it; this holds whatever a provider does.
+  if (!isRefusal(result) && (result.status === 'confirmed' || result.status === 'pending') && !result.providerRef) {
+    return unknownAnswer(`${result.status} with no reservation id`);
   }
 
   if (isRefusal(result) || result.status === 'failed') {
@@ -407,6 +446,13 @@ export async function reserveStep(ctx0: TableCtx, ask: ReserveAsk, guest: TableG
     price_cents: null,
     error: null,
     detail: nameOf(ctx.row),
+    // What was booked is what the request says now: a time taken instead of
+    // the line's, or a booking moved, is the night and time the restaurant expects.
+    request_payload: {
+      ...(ctx.row.request_payload ?? {}),
+      party: hold.covers,
+      restaurant: { ...(ctx.row.request_payload?.restaurant ?? {}), date: hold.date, time: hold.time, partySize: hold.covers },
+    },
     response_payload: {
       ...withState(claimedRow, { platform: state.platform, venueId: state.venueId }),
       booked: { platform: hold.platform, ref, date: hold.date, time: hold.time, covers: hold.covers, under: lead, by: ctx.userId, at, ...(result.raw as object ?? {}) },
@@ -439,7 +485,9 @@ export async function cancelStep(ctx0: TableCtx, confirm: boolean): Promise<Flow
   const { row } = ctx;
   if (row.status === 'cancelled') return answer(200, { status: 'cancelled', alreadyCancelled: true }, ctx);
   const p = ctx.bookedOn;
-  if (!p || !row.provider_ref || !['confirmed', 'pending'].includes(row.status)) {
+  // Only a table Reach booked ('native', with the platform's own number): a
+  // reference a call or a person wrote is never sent to a platform to cancel.
+  if (!p || row.mode !== 'native' || !row.provider_ref || !['confirmed', 'pending'].includes(row.status)) {
     // A booking that never answered may well be booked: never "Reach did not book this".
     const unknown = reserveUnknown(row);
     if (unknown) return answer(409, { code: 'outcome_unknown', error: TABLE_COPY.outcomeUnknownCancel(PLATFORM_LABEL[unknown]) }, ctx);

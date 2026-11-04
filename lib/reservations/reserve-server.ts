@@ -8,7 +8,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { heldVenueNear } from '@/lib/discovery/held-venue';
 import { locatePlan } from '@/lib/discovery/geocode';
 import { pushSender } from '@/lib/push';
-import { tableProvider } from '@/lib/booking/registry';
+import { tableProviderFor, tableProviderNamed } from '@/lib/booking/registry';
+import { report } from '@/lib/report';
 import { reservationUrl, usableStoredUrl, usableParty, type Platform } from '@/lib/booking/reservations';
 import { lineWhen } from '@/lib/line-when';
 import { twilioLookup } from '@/lib/reservations/policy';
@@ -66,6 +67,8 @@ export async function tableFacts(
       restaurant: name, city: r.city ?? null, platform, date, time, partySize,
       phone: venue?.phone ?? r.phone ?? line?.venue_phone ?? null,
       reserveUrl, solo: plan.solo_mode === true,
+      // Only links we hold: the line's own, the row's hand-off, the venue's.
+      urls: [r.externalUrl ?? null, row?.mode === 'redirect' ? row.redirect_url ?? null : null, venue?.reservation_url ?? null],
     },
     venue: venue ? { name, phone: venue.phone, opening_hours: venue.opening_hours ?? null, lng: venue.lng ?? null, reserveUrl } : null,
   };
@@ -88,7 +91,9 @@ export async function requesterOf(db: SupabaseClient, userId: string): Promise<R
 export function reserveDeps(db: SupabaseClient): ReserveDeps {
   const lookup = twilioLookup(process.env);
   return {
-    instantFor: platform => tableProvider(platform),
+    instantFor: urls => tableProviderFor(urls),
+    bookedOn: provider => tableProviderNamed(provider),
+    report: (message, extra) => report(new Error(message), { where: 'reservations/reserve', extra }),
     callCheck: phone => callCheck(process.env, phone, lookup),
     store: supabaseTableStore(db, pushSender()),
     call: {
@@ -120,9 +125,14 @@ export async function lineOf(db: SupabaseClient, itemId: string | null | undefin
 export function chosenFrom(body: Record<string, unknown>) {
   const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
   const path = str(body.path);
+  const accept = body.accept && typeof body.accept === 'object' ? body.accept as { terms?: unknown; policy?: unknown } : null;
   return {
     path: path === 'instant' || path === 'call' || path === 'handoff' ? path : undefined,
-    time: str(body.time), date: str(body.date), acceptTerms: str(body.acceptTerms),
+    time: str(body.time), date: str(body.date),
+    holdId: str(body.holdId),
+    accept: accept ? { terms: str(accept.terms) ?? null, policy: accept.policy === true } : null,
+    notes: str(body.notes),
+    change: body.change === true,
     notBookedElsewhere: body.notBookedElsewhere === true,
   } as const;
 }

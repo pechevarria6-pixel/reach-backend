@@ -114,13 +114,6 @@ export interface BookingItemRequest {
     platform?: 'resy' | 'opentable' | 'tock' | 'sevenrooms' | 'yelp' | 'thefork' | 'none';
     // For the places with no platform at all: the number you ring.
     phone?: string | null;
-    /**
-     * The slot a table platform held for this table at quote time (Yelp's
-     * hold id, OpenTable's slot lock), the quote's own `providerRef`, handed
-     * back to book() so the table booked is the one whose terms were shown.
-     * Set only by lib/reservations/reserve.ts.
-     */
-    holdRef?: string;
   };
 }
 
@@ -151,13 +144,6 @@ export interface BookingItemResult {
 export interface BookingProvider {
   vertical: Vertical;
   name: string;
-  /**
-   * Whether every key this provider needs is present. Optional for the
-   * providers that answer "X not set" from quote() instead; a table platform
-   * (lib/booking/registry.ts TABLE_PROVIDERS) is only ever offered when this
-   * says yes, so absent keys mean "not offered", never "try anyway".
-   */
-  enabled?(): boolean;
   /** Price/availability check. Should never charge. */
   quote(req: BookingItemRequest): Promise<BookingItemResult>;
   /** Commit the booking (or produce redirect/concierge ticket). */
@@ -179,47 +165,29 @@ export interface BookingProvider {
 }
 
 /**
- * What a table platform's quote() leaves in `raw`, read by
- * lib/reservations/reserve.ts (tableQuoteOf). Every field is optional: a
- * platform that says nothing about deposits has said nothing, and the screen
- * says so rather than reading silence as "free".
+ * What a table platform's quote() leaves in `raw` when it cannot quote the
+ * exact night and time (lib/booking/tables/steps.ts quoteWith, from the one
+ * reading of a platform's openings, readSlots). Reach itself books a table
+ * through lib/reservations/reserve.ts, which reads the same openings and then
+ * holds the slot (lib/booking/tables/flow.ts); a quote never holds one.
  *
- *   Yelp:      openings → hold (cancellation_policy, reserve_url, 5 minutes)
- *   OpenTable: availability → slot_lock (booking + cancellation policies,
- *              deposits and card holds through OpenTable's own processor)
- *
- * The quote is `status: 'quoted'` only when the exact date, time and party
- * asked for is held; `providerRef` is then the hold, and book() takes it
- * back as `restaurant.holdRef`. A quote with no table at that time is
- * `status: 'failed'` and lists what the platform did offer in `offeredTimes`,
- * with `noAvailability: true` when the platform said it has no table then.
- * A failure without either (a key, a rate limit, a timeout) is the
+ * `noAvailability: true` only when the platform answered and has no table
+ * that night. A failure without it (a key, a rate limit, a timeout) is the
  * provider's, and is never told to anybody as "no table".
  */
 export interface TableQuoteRaw {
   /** HH:MM, 24-hour: other times the platform offers that night, nearest first. */
   offeredTimes?: string[];
   /**
-   * The platform said, in its own answer, that it has no table at that
-   * time — Yelp's empty openings, OpenTable's no-availability. Only this
-   * lets Reach say "no table"; any other failure is the provider's, not the
-   * restaurant's.
+   * The platform said, in its own answer, that it has no table that night.
+   * Only this lets Reach say "no table"; any other failure is the
+   * provider's, not the restaurant's.
    */
   noAvailability?: boolean;
-  /** The platform's own cancellation / no-show policy, in its words. */
-  cancellationPolicy?: string | null;
-  /** A deposit, card hold or prepayment the restaurant asks for, in cents. */
-  depositCents?: number | null;
-  /** The restaurant wants a card on file — Reach never holds one, so this is handed off. */
+  /** The time asked for wants a card — Reach never holds one, so this is handed off. */
   cardRequired?: boolean;
-  /** A fee the platform says it adds (OpenTable's 2% service fee), in its words. */
-  feeNote?: string | null;
-  /** The platform's terms the diner accepts by booking (OpenTable requires them on screen). */
-  termsUrl?: string | null;
-  /** The platform's own page for this table — where a deposit or card hold is finished. */
+  /** The platform's own page for this table — where a card hold is finished. */
   reserveUrl?: string | null;
-  /** The confirmation page the platform gives back once it is booked. */
-  confirmationUrl?: string | null;
 }
 
 export interface CancelResult {
@@ -233,15 +201,6 @@ export interface CancelResult {
   raw?: unknown;
 }
 
-/**
- * A table platform's provider, only if it can book now: listed for tables,
- * and saying its keys are set. A provider with no enabled() is not offered —
- * absent keys mean "not offered", never "try anyway".
- */
-export function usableTableProvider(p: BookingProvider | null | undefined): BookingProvider | null {
-  if (!p || p.vertical !== 'restaurant') return null;
-  try { return typeof p.enabled === 'function' && p.enabled() === true ? p : null; } catch { return null; }
-}
 
 export const isConfigured = (envKey: string) =>
   typeof process.env[envKey] === 'string' && process.env[envKey]!.length > 0;

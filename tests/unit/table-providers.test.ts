@@ -525,6 +525,18 @@ test('a refused reserve frees the row, names the next option, and books nothing'
   assert.equal(f.row.response_payload?.table?.reserving, undefined);
 });
 
+test('a claim older than any request can run is in doubt, never "somebody is booking it" for good', async () => {
+  otOn();
+  const at = new Date(Date.now() - 10 * 60_000).toISOString();
+  const f = fakeStore(row({ status: 'confirmed', mode: 'native', provider: 'opentable', provider_ref: '1038007-1751',
+    response_payload: { table: { platform: 'opentable', venueId: '1038007', reserving: { at, by: 'u1', holdId: 'lock' } } } }));
+  const r = await holdStep(ctxFor(f.row, f.store, { bookedOn: openTableReservations, table: null }), { change: true, time: '20:00' });
+  assert.equal(r.body.code, 'outcome_unknown');
+  const fresh = fakeStore(row({ response_payload: { table: { platform: 'opentable', venueId: '1038007', reserving: { at: new Date().toISOString(), by: 'u1', holdId: 'lock' } } } }));
+  assert.equal((await holdStep(ctxFor(fresh.row, fresh.store), {})).body.code, 'in_progress');
+  assert.equal(calls.length, 0);
+});
+
 test('an expired hold is refused without asking the platform', async () => {
   otOn();
   on('POST', /\/slot_locks$/, { status: 200, body: O.slotLock });

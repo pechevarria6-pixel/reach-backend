@@ -20,9 +20,9 @@ import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 import { tableProviderNamed } from '@/lib/booking/registry';
-import { reserveUnknown } from '@/lib/booking/tables/flow';
-import { TABLE_COPY } from '@/lib/booking/tables/wording';
-import { PLATFORM_LABEL } from '@/lib/booking/tables/types';
+import { cancelStep, reserveUnknown, type TableRow } from '@/lib/booking/tables/flow';
+import { supabaseTableStore } from '@/lib/reservations/reserve-store';
+import { report } from '@/lib/report';
 
 /** What each lane can undo, and what to say when it cannot. */
 const CANNOT: Record<string, string> = {
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: booking, error } = await db
     .from('bookings')
-    .select('id, plan_id, vertical, provider, provider_ref, status, price_cents, response_payload')
+    .select('id, plan_id, vertical, mode, provider, provider_ref, status, price_cents, redirect_url, detail, request_payload, response_payload, approved_at, updated_at')
     .eq('id', params.id)
     .maybeSingle();
   if (error) {
@@ -61,30 +61,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }
 
   // A table Reach booked on Yelp or OpenTable is cancelled on that platform,
-  // through the same two steps (lib/booking/tables/). Only a row with the
-  // platform's own reservation id — one Reach actually booked.
-  const table = tableProviderNamed(booking.provider);
-  if (table && booking.provider_ref && booking.vertical === 'restaurant') {
-    const r = await table.cancel(String(booking.provider_ref), { confirm });
-    if (r.status === 'failed') {
-      console.error('[cancel] the platform did not cancel the table', { id: params.id, provider: booking.provider, confirm, error: r.error });
-      return NextResponse.json({ error: r.error ?? 'That table could not be cancelled.' }, { status: 502 });
-    }
-    if (r.status === 'quoted') return NextResponse.json({ status: 'quoted', refundCents: 0, currency: 'USD', paidCents: null });
-    const { error: marked } = await db.from('bookings')
-      .update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', params.id);
-    if (marked) {
-      console.error('[cancel] the table is cancelled and the row still says otherwise', { id: params.id, code: marked.code });
-      return NextResponse.json({ status: 'cancelled', refundCents: 0, currency: 'USD', warning: 'It is cancelled with the restaurant, but we could not update your plan — it may still show as booked.' });
-    }
-    return NextResponse.json({ status: 'cancelled', refundCents: 0, currency: 'USD' });
-  }
-
-  // A table whose booking never answered may be booked under their name:
-  // never "it was booked on the restaurant's own site" (lib/booking/tables/).
-  const unknown = reserveUnknown(booking);
-  if (unknown) {
-    return NextResponse.json({ code: 'outcome_unknown', error: TABLE_COPY.outcomeUnknownCancel(PLATFORM_LABEL[unknown]) }, { status: 409 });
+  // through the same two steps, by the table steps themselves
+  // (lib/booking/tables/flow.ts cancelStep): a table still held for a card is
+  // asked about first, one the platform already let go has nothing to cancel,
+  // and one whose booking never answered (reserveUnknown(booking)) may be
+  // booked under their name — never "it was booked on the restaurant's own
+  // site". This is the one way to cancel a table; there is no other route.
+  if (booking.vertical === 'restaurant' && (booking.mode === 'native' || reserveUnknown(booking))) {
+    const a = await cancelStep({
+      row: booking as unknown as TableRow,
+      table: null,
+      bookedOn: tableProviderNamed(booking.provider),
+      solo: false,
+      userId: ctx.user.id,
+      store: supabaseTableStore(db, null).flow,
+      report: (message, extra) => report(new Error(message), { where: 'bookings/cancel', extra }),
+    }, confirm);
+    if (a.status >= 500) console.error('[cancel] the platform did not cancel the table', { id: params.id, provider: booking.provider, confirm, code: a.body.code });
+    // The restaurant's link and number are on the plan already; Reach took no money for a table.
+    const { handoff: _handoff, ...body } = a.body;
+    return NextResponse.json(a.status === 200 ? { refundCents: 0, currency: 'USD', ...body } : body, { status: a.status });
   }
 
   // Only Duffel can be undone from here today. Saying which lane cannot,

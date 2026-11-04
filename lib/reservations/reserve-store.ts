@@ -1,11 +1,12 @@
 // ─── reserve.ts's writes, in Supabase ───────────────────────────────────
 // Every write is conditional on the row as it was read — its status and its
 // updated_at — so two requests that both read "open" cannot both act: the
-// second matches nothing and is told the row changed. The claim before a
-// platform booking is lib/booking/claim.ts, the same one approval takes.
+// second matches nothing and is told the row changed. The platform steps'
+// own writes (lib/booking/tables/flow.ts: the hold, the claim, the booking)
+// are conditional on updated_at alone, through `flow`.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { notifyUsers, type Sender } from '../notify-user.ts';
-import { atVersion, claimBooking, finishClaim } from '../booking/claim.ts';
+import { atVersion } from '../booking/claim.ts';
 import type { TableStore } from './reserve.ts';
 
 /** The one-live-booking-per-thing index refusing a second live row for the same line. */
@@ -26,8 +27,17 @@ export function supabaseTableStore(db: SupabaseClient, send: Sender | null): Tab
       return row ? { ok: true, version: row.updated_at ?? null } : { ok: false, taken: true };
     },
 
-    claim: (id, by, version) => claimBooking(db, id, by, version),
-    finish: (id, claim, patch) => finishClaim(db, id, claim, patch),
+    flow: {
+      async write(id, version, patch) {
+        const at = typeof patch.updated_at === 'string' ? patch.updated_at : new Date().toISOString();
+        const { data, error } = await atVersion(db.from('bookings').update({ ...patch, updated_at: at }).eq('id', id), version).select('id');
+        if (error) {
+          console.error('[reserve] a platform step could not write the booking', { id, code: error.code });
+          return { ok: false, taken: false, error: error.message };
+        }
+        return data?.length ? { ok: true, version: at } : { ok: false, taken: true };
+      },
+    },
 
     async write(id, from, version, patch) {
       const { data, error } = await atVersion(db.from('bookings')

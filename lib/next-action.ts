@@ -702,6 +702,17 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       return say({ state: 'booking_in_progress', title: `${providerName(requested.r) ?? 'The platform'} is checking with ${nameOf(requested.r)}`,
         body: `It isn't confirmed yet. ${solo ? "You'll" : "The group will"} see the answer here.`, cta: null, chip: 'Booking' });
     }
+    // Reach asked the platform and it holds the table until a card is added
+    // on its own page: not booked, and only that page finishes it.
+    const owed = marked.find(({ r, m }) => r.status === 'pending' && m?.state === 'card_owed');
+    if (owed) {
+      const where = providerName(owed.r) ?? 'the platform';
+      const tel = phoneOf(owed.r);
+      return say({ state: 'needs_attention', chip: 'Needs you', title: `${nameOf(owed.r)} isn't booked yet — ${where} needs a card`,
+        body: `${where} is holding the table until a card is added on its page. It isn't booked until then.`,
+        cta: owed.r.redirect_url ? { label: `Add the card on ${where} →`, kind: 'link', href: owed.r.redirect_url } : (tel ? { label: 'Call them', kind: 'link', href: tel } : toCheckout('Open checkout →')),
+        secondary: owed.r.redirect_url && tel ? { label: 'Call them', kind: 'link', href: tel } : null });
+    }
     const offered = marked.find(({ r, m }) => r.status === 'awaiting_approval' && m?.state === 'offered' && (m.offeredTimes?.length ?? 0) > 0);
     if (offered && offered.r.id) {
       const m = offered.m!;
