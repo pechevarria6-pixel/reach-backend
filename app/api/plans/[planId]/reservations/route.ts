@@ -6,11 +6,13 @@
 //   bookingId: string | null,      // null: no booking row yet — /bookable makes it; reserve needs one
 //   itemId, restaurant,
 //   when: { date, time, said },    // the line's own night (lib/line-when.ts); said: "Sat, Nov 7 at 7:30 PM"
+//                                  //   — or, once booked, the night and time it was booked at
 //   partySize,
 //   path: 'instant' | 'call' | 'handoff',
-//   what: string,                  // what will happen, one sentence
+//   open: boolean,                 // false: booked, maybe booked, or being booked — offer nothing
+//   what: string,                  // what will happen, one sentence (where it stands, when not open)
 //   needs: ('date'|'time')[],      // ask before the path runs; never defaulted
-//   alternatives: [{ kind: 'instant'|'call'|'handoff'|'link'|'phone'|'confirm', label, what, href? }],
+//   alternatives: [{ kind: 'instant'|'call'|'handoff'|'link'|'phone'|'confirm', label, what, href? }],   // [] when not open
 //   terms: null | { platform, platformName, cancellationPolicy, depositCents, feeNote, termsUrl, statement },
 //   ownAccount: null | { label: 'Book on your own OpenTable', href, perk },   // beside Reach's booking
 //   status, state, offeredTimes, title, body,   // where it stands, from the row

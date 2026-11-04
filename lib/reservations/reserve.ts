@@ -38,8 +38,10 @@ import type { BookingItemRequest, BookingItemResult, BookingProvider, TableQuote
 import { isOutcomeUnknown, usableTableProvider } from '../booking/types.ts';
 import type { Claim, ClaimResult } from '../booking/claim.ts';
 import { midClaim } from '../booking/claim.ts';
+import { inDoubtRow } from '../checkout.ts';
 import { PLATFORM_NAME, PLATFORM_PERK, usableTime, type Platform } from '../booking/reservations.ts';
 import { dayWhere } from '../calendar.ts';
+import { lineAt } from '../line-when.ts';
 import { gate, type Env } from './gate.ts';
 import { toE164, dialable, localMinute, type LineLookup } from './policy.ts';
 import { prettyPhone } from './wording.ts';
@@ -134,7 +136,15 @@ export interface ReservationView {
   what: string;
   /** Facts the path needs before it can run — asked of the person, never defaulted. */
   needs: Need[];
-  /** Every other way in, in order. Never empty: "I've got it" is always last. */
+  /**
+   * False when the table is booked, may be booked, or is being booked right
+   * now: nothing is offered, because anything offered would be a second table.
+   */
+  open: boolean;
+  /**
+   * Every other way in, in order. While the table is open it is never empty:
+   * "I've got it" is always last. Empty when it is not open.
+   */
   alternatives: ReserveOption[];
   /** The platform's terms, for instant. Null for a call or a hand-off: there are none to accept. */
   terms: TermsView | null;
@@ -182,9 +192,28 @@ const needsOf = (f: TableFacts): Need[] => [...(f.date ? [] : ['date' as const])
  * The way Reach takes for this table, what it will do, and every other way
  * in. Pure: the caller works out the availability (tableProvider, callCheck).
  */
-export function decide(f: TableFacts, a: Availability, row?: { status?: string | null; response_payload?: unknown } | null): ReservationView {
+export function decide(f: TableFacts, a: Availability, row?: DecideRow | null, now: Date = new Date()): ReservationView {
   const mark = reserveMarkOf(row);
   const name = platformName(f.platform);
+
+  // Booked, maybe booked, or being booked: say where it stands and offer
+  // nothing — "Reach books it", their own OpenTable or their number beside a
+  // confirmed table is an invitation to book it twice. The night and time are
+  // the ones it was booked at, not the line's.
+  const settled = settledWords(f, row ?? null, mark, now);
+  if (settled) {
+    const booked = { date: mark?.date ?? f.date, time: mark?.time ?? f.time };
+    return {
+      bookingId: f.bookingId, itemId: f.itemId, restaurant: f.restaurant,
+      when: { ...booked, said: tableWhen(booked.date, booked.time) || 'No night or time set yet' },
+      partySize: mark?.partySize ?? f.partySize,
+      path: mark?.path ?? (row?.status === 'pending' ? 'call' : name ? 'instant' : 'handoff'),
+      what: settled.title, needs: [], open: false, alternatives: [], terms: null, ownAccount: null,
+      status: row?.status ?? null, state: settled.state, offeredTimes: [],
+      title: settled.title, body: settled.body,
+    };
+  }
+
   const at = `${tableWhen(f.date, f.time) || 'the night on the plan'} for ${f.partySize}`;
   const needs = needsOf(f);
   const ownAccount = name && f.reserveUrl
@@ -234,12 +263,49 @@ export function decide(f: TableFacts, a: Availability, row?: { status?: string |
     bookingId: f.bookingId, itemId: f.itemId, restaurant: f.restaurant,
     when: { date: f.date, time: f.time, said: tableWhen(f.date, f.time) || 'No night or time set yet' },
     partySize: f.partySize, path, what, needs,
-    alternatives, terms,
+    open: true, alternatives, terms,
     // Beside Reach's own booking; when the hand-off IS the way, it is the first alternative instead.
     ownAccount: path === 'handoff' ? null : ownAccount,
     status: row?.status ?? null, state: mark?.state ?? null, offeredTimes: mark?.offeredTimes ?? [],
     title: shown?.title ?? null, body: shown?.body ?? null,
   };
+}
+
+/** The row as decide reads it. */
+export type DecideRow = {
+  status?: string | null; response_payload?: unknown;
+  approved_at?: string | null; updated_at?: string | null; error?: string | null; confirmation_number?: string | null;
+};
+
+/**
+ * Sent to the platform and no answer is coming: the in-doubt mark, approval's
+ * "outcome unknown" note, or a claim older than any request can run (the
+ * function was killed while the platform was answering, before anything
+ * could be written). Never retried: the platform may hold the table.
+ */
+export function tableInDoubt(row: DecideRow, mark: ReserveMark | null, now: Date): boolean {
+  if (!midClaim(row)) return false;
+  return mark?.state === 'in_doubt' || inDoubtRow(row as Parameters<typeof inDoubtRow>[0], now);
+}
+
+/** Words for a table nothing more may be done to, or null when it is still open. */
+function settledWords(f: TableFacts, row: DecideRow | null, mark: ReserveMark | null, now: Date): (Words & { state: ReserveState | null }) | null {
+  if (!row) return null;
+  const name = platformName(mark?.platform ?? f.platform);
+  if (row.status === 'confirmed') {
+    const w = mark?.state === 'confirmed' ? stateWords(f, mark) : null;
+    return { ...(w ?? { title: `${f.restaurant} is booked.`, body: `It's on ${whose(f.solo)} plan.` }), state: 'confirmed' };
+  }
+  if (midClaim(row)) {
+    if (tableInDoubt(row, mark, now)) return { ...stateWords(f, { ...(mark ?? { path: 'instant' }), state: 'in_doubt' } as ReserveMark)!, state: 'in_doubt' };
+    return { title: `Reach is booking ${f.restaurant}${name ? ` on ${name}` : ''} right now.`, body: 'Open the trip again in a minute to see how it went.', state: mark?.state ?? null };
+  }
+  if (row.status === 'pending' && (mark?.state === 'calling' || mark?.state === 'requested')) {
+    return { ...stateWords(f, mark)!, state: mark.state };
+  }
+  const own = String(row.confirmation_number ?? '').trim();
+  if (own) return { title: `You booked ${f.restaurant} yourself · ref ${own}`, body: `It's on ${whose(f.solo)} plan.`, state: mark?.state ?? null };
+  return null;
 }
 
 function callOption(f: TableFacts): ReserveOption {
@@ -299,7 +365,7 @@ export function stateWords(f: TableFacts, mark: ReserveMark | null): Words | nul
 // ─── The platform's answer, read ────────────────────────────────────────
 
 /** What a table quote left in `raw`, read defensively (TableQuoteRaw in lib/booking/types.ts). */
-export function tableQuoteOf(raw: unknown): Required<Pick<TableQuoteRaw, 'offeredTimes'>> & TableQuoteRaw {
+export function tableQuoteOf(raw: unknown): Required<Pick<TableQuoteRaw, 'offeredTimes' | 'noAvailability'>> & TableQuoteRaw {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
   const cents = Number(r.depositCents);
@@ -310,6 +376,7 @@ export function tableQuoteOf(raw: unknown): Required<Pick<TableQuoteRaw, 'offere
     cancellationPolicy: str(r.cancellationPolicy),
     depositCents: Number.isFinite(cents) && cents > 0 ? Math.round(cents) : null,
     cardRequired: r.cardRequired === true,
+    noAvailability: r.noAvailability === true,
     feeNote: str(r.feeNote),
     termsUrl: str(r.termsUrl) && /^https:\/\//i.test(String(r.termsUrl)) ? String(r.termsUrl) : null,
     reserveUrl: str(r.reserveUrl) && /^https:\/\//i.test(String(r.reserveUrl)) ? String(r.reserveUrl) : null,
@@ -362,6 +429,8 @@ export interface TableStore {
   write(id: string, from: string, version: string | null | undefined, patch: Record<string, unknown>): Promise<Record<string, unknown> | null>;
   /** A live call for this booking that has not settled. */
   callOpen(bookingId: string): Promise<boolean>;
+  /** Move the itinerary line to the night and time booked — only while its words are still `from`. */
+  retime(itemId: string, from: string | null, to: string): Promise<boolean>;
   members(groupId: string | null): Promise<string[]>;
   notify(userIds: string[], note: { kind: string; title: string; body: string; url: string | null; planId: string }): Promise<void>;
 }
@@ -391,6 +460,8 @@ export interface ReserveInput {
   };
   /** The held venue, as the call needs it (hours, longitude). */
   venue: PlaceInput['venue'];
+  /** The itinerary line the table is on, so a table booked at another time moves the line with it. */
+  line?: { id: string; scheduled_time: string | null } | null;
   now?: Date;
 }
 
@@ -459,14 +530,19 @@ export async function reserveTable(input: ReserveInput, deps: ReserveDeps): Prom
     return { ok: true, outcome: 'confirmed', already: true, row: b as unknown as Record<string, unknown>, title: w.title, body: w.body, alternatives: [] };
   }
   if (b.status === 'booking' || midClaim(b)) {
-    return mark?.state === 'in_doubt' || /^outcome unknown/i.test(String((b as { error?: unknown }).error ?? ''))
+    // Past the time any request can run, a claim with no answer on it is in
+    // doubt, not "booking now": the request that held it is gone.
+    return tableInDoubt(b, mark, now)
       ? no('outcome_unknown', 502, `We asked ${platformName(mark?.platform ?? f.platform) ?? 'the platform'} for this table and never heard back. Don't book it again anywhere until it has been checked.`, { alternatives: [] })
       : no('in_progress', 409, 'Reach is booking this table right now.', { alternatives: [] });
   }
   if (!OPEN.has(b.status)) return no('already_settled', 409, 'This table is already settled.');
-  // A call ringing now. The mark says so; so does an unsettled live call, in
-  // case the mark was never written.
-  if (b.status === 'pending' && (mark?.state === 'calling' || mark?.state === 'requested' || await deps.store.callOpen(b.id))) {
+  // A call ringing now. The mark says so; so does an unsettled live call,
+  // whatever the row's status, in case the mark was never written — a call
+  // whose booking move failed leaves the row awaiting approval with the
+  // restaurant on the phone.
+  const marked = b.status === 'pending' && (mark?.state === 'calling' || mark?.state === 'requested');
+  if (marked || await deps.store.callOpen(b.id)) {
     return no('calling', 409, mark?.state === 'requested'
       ? `${platformName(mark.platform) ?? 'The platform'} is still checking with ${f.restaurant}.`
       : `Reach is on the phone to ${f.restaurant} about this table now.`, { alternatives: [] });
@@ -478,7 +554,7 @@ export async function reserveTable(input: ReserveInput, deps: ReserveDeps): Prom
   // ── Which way ──
   const instant = usableTableProvider(deps.instantFor(f.platform));
   const call = await deps.callCheck(f.phone);
-  const view = decide(f, { instant: platformName(f.platform) ? instant : null, call }, b);
+  const view = decide(f, { instant: platformName(f.platform) ? instant : null, call }, b, now);
   const path = input.chosen.path ?? view.path;
   const can = path === 'handoff' || (path === 'instant' ? view.path === 'instant' : call.ok);
   if (!can) {
@@ -544,16 +620,24 @@ async function handoff(input: ReserveInput, deps: ReserveDeps, f: TableFacts, pr
 
 async function viaCall(input: ReserveInput, deps: ReserveDeps, f: TableFacts, alternatives: ReserveOption[]): Promise<ReserveResult> {
   if (!deps.call) return { ok: false, code: 'path_unavailable', status: 503, error: REFUSAL_COPY.calls_off, alternatives };
-  let b = input.booking;
-  // placeCall rings only for a row still open. A failed instant attempt, or a
-  // call that ended with no table, is opened again first — on this version only.
-  if (b.status !== 'awaiting_approval') {
-    const r = await deps.store.reopen(b.id, b.status, b.updated_at, { error: null, updated_at: stamp() });
-    if (!r.ok) return { ok: false, code: 'changed', status: 409, error: 'This changed while you were looking. Open it again.', alternatives };
-    b = { ...b, status: 'awaiting_approval', updated_at: r.version };
-  }
+  const b = input.booking;
+  // Take the row before anything rings, on the version read: 'pending' with
+  // the "calling" mark. An instant booking claimed meanwhile has moved the
+  // row, so this matches nothing and nobody is rung; one that read the row
+  // before this write holds an older version, so its claim matches nothing
+  // and the platform is never asked. Reading "nobody is booking it" is not
+  // enough: two requests both read that before either writes.
+  const calling: ReserveMark = { state: 'calling', path: 'call', platform: null, date: f.date, time: f.time, partySize: f.partySize, at: stamp() };
+  const held = await deps.store.write(b.id, b.status, b.updated_at, {
+    status: 'pending', error: null, detail: f.restaurant, response_payload: withMark(b.response_payload, calling), updated_at: stamp(),
+  });
+  if (!held) return { ok: false, code: 'changed', status: 409, error: 'This changed while you were looking — nobody was called. Open it again.', alternatives };
+  const version = (held.updated_at as string | null | undefined) ?? null;
+
   const placed = await placeCall({
-    booking: { ...b, request_payload: b.request_payload as never },
+    booking: { ...b, status: 'pending', request_payload: b.request_payload as never },
+    // A call that ends with no table opens the row again, whatever it was before.
+    previousStatus: 'awaiting_approval',
     plan: input.plan,
     requester: { id: input.requester.id, firstName: input.requester.firstName },
     venue: input.venue,
@@ -561,13 +645,20 @@ async function viaCall(input: ReserveInput, deps: ReserveDeps, f: TableFacts, al
     now: input.now,
   }, deps.call);
   if (placed.ok === false) {
+    // Something may be ringing: the row stays taken, so nothing else books it.
+    if (placed.refusal !== 'provider_unknown') {
+      const back = await deps.store.write(b.id, 'pending', version, {
+        status: b.status, error: (b as { error?: unknown }).error ?? null, response_payload: b.response_payload ?? null, updated_at: stamp(),
+      });
+      if (!back) console.error('[reserve] a call that never rang could not give its row back', { booking: b.id, refusal: placed.refusal });
+    }
     return {
       ok: false, code: 'call_refused', status: RESERVE_STATUS[placed.refusal] ?? 422, refusal: placed.refusal,
       error: `${placed.message} ${nextSaid(f)}`, missing: placed.missing, alternatives,
     };
   }
-  // placeCall moved the row to pending with the "calling" mark (a live call
-  // only) and told everybody; a test call changed nothing and said so.
+  // placeCall put the call's id on the mark (a live call only) and told
+  // everybody; a test call changed nothing and said so.
   return { ok: true, outcome: 'calling', row: null, title: placed.wording.title, body: placed.wording.body, alternatives };
 }
 
@@ -606,6 +697,16 @@ async function viaPlatform(input: ReserveInput, deps: ReserveDeps, f: TableFacts
   }
   const q = tableQuoteOf(quote.raw);
 
+  // ── 2. A deposit or a card hold is the restaurant's money, not Reach's ──
+  // Before reading a refusal too: a platform that refuses a slot because it
+  // needs a card has told us how the table is taken, not that there is none.
+  if (q.depositCents || q.cardRequired) {
+    const reason = q.depositCents
+      ? `${f.restaurant} asks for a $${(q.depositCents / 100).toFixed(2)} deposit, so Reach won't hold it — book it on ${name} with your own card.`
+      : `${f.restaurant} wants a card on file, so Reach won't hold it — book it on ${name} with your own card.`;
+    return handoff(input, deps, f, reserveMarkOf(b), reason, q.reserveUrl ?? f.reserveUrl);
+  }
+
   if (quote.status === 'failed') {
     if (q.offeredTimes.length) {
       const mark: ReserveMark = { state: 'offered', path: 'instant', platform: f.platform, date: f.date, time: f.time, partySize: f.partySize, offeredTimes: q.offeredTimes, at: stamp() };
@@ -617,6 +718,14 @@ async function viaPlatform(input: ReserveInput, deps: ReserveDeps, f: TableFacts
       await tell(deps, input, w);
       return { ok: false, code: 'other_time', status: 409, error: w.title, offeredTimes: q.offeredTimes, alternatives };
     }
+    // "No table" only when the platform said so. Any other failure — a rate
+    // limit, a key, a timeout, an error we do not know — is ours, and saying
+    // it as a fact about the restaurant would send the group elsewhere over
+    // our gap. The row is left as it was and nobody else is told.
+    if (!q.noAvailability) {
+      console.error('[reserve] the platform refused the quote', { booking: b.id, platform: f.platform, error: quote.error ?? null });
+      return { ok: false, code: 'provider_failed', status: 502, error: `Reach couldn't get an answer from ${name} just now, so nothing was booked. ${nextSaid(f)}`, alternatives };
+    }
     const reason = `${f.restaurant} has no table on ${name} ${tableWhen(f.date, f.time)} for ${f.partySize}.`;
     const mark: ReserveMark = { state: 'failed', path: 'instant', platform: f.platform, date: f.date, time: f.time, partySize: f.partySize, reason, at: stamp() };
     const row = await deps.store.write(b.id, b.status, b.updated_at, {
@@ -625,14 +734,6 @@ async function viaPlatform(input: ReserveInput, deps: ReserveDeps, f: TableFacts
     if (!row) return { ok: false, code: 'changed', status: 409, error: 'This changed while you were looking. Open it again.', alternatives };
     await tell(deps, input, stateWords(f, mark)!);
     return { ok: false, code: 'unavailable', status: 409, error: `Not booked. ${reason} ${nextSaid(f)}`, alternatives };
-  }
-
-  // ── 2. A deposit or a card hold is the restaurant's money, not Reach's ──
-  if (q.depositCents || q.cardRequired) {
-    const reason = q.depositCents
-      ? `${f.restaurant} asks for a $${(q.depositCents / 100).toFixed(2)} deposit, so Reach won't hold it — book it on ${name} with your own card.`
-      : `${f.restaurant} wants a card on file, so Reach won't hold it — book it on ${name} with your own card.`;
-    return handoff(input, deps, f, reserveMarkOf(b), reason, q.reserveUrl ?? f.reserveUrl);
   }
 
   // ── 3. The terms, shown before anything is booked ──
@@ -695,12 +796,15 @@ async function viaPlatform(input: ReserveInput, deps: ReserveDeps, f: TableFacts
     const { row, error } = await deps.store.finish(b.id, claim, {
       status: result.status, provider: f.platform, provider_ref: result.providerRef ?? null,
       redirect_url: q.confirmationUrl ?? b.redirect_url ?? null, detail: f.restaurant, error: null, price_cents: 0,
+      // What was asked for is what was booked: the night, the time, the party.
+      request_payload: { ...(b.request_payload ?? {}), party: f.partySize, restaurant: { ...(prior.restaurant ?? {}), name: f.restaurant, date: f.date, time: f.time, partySize: f.partySize } },
       response_payload: withMark(b.response_payload, mark), updated_at: stamp(),
     });
     if (error || !row) {
       console.error('[reserve] BOOKED AND NOT RECORDED', { booking: b.id, platform: f.platform, ref: result.providerRef ?? null, error });
       return { ok: false, code: 'store_error', status: 500, error: `${name} booked it (ref ${result.providerRef ?? 'not given'}) and we couldn't save that. Don't book it again — we have been told.`, alternatives: [] };
     }
+    await moveLine(input, deps, f);
     await tell(deps, input, w);
     return { ok: true, outcome: state === 'confirmed' ? 'confirmed' : 'requested', row, title: w.title, body: w.body, alternatives: state === 'confirmed' ? [] : alternatives };
   }
@@ -711,6 +815,23 @@ async function viaPlatform(input: ReserveInput, deps: ReserveDeps, f: TableFacts
   if (error) console.error('[reserve] a refused booking could not be marked failed', { booking: b.id, error });
   await tell(deps, input, stateWords(f, mark)!);
   return { ok: false, code: 'provider_failed', status: 502, error: `Not booked. ${reason} ${nextSaid(f)}`, alternatives };
+}
+
+/**
+ * A table booked at another night or time than its line — an offered time
+ * taken, a time or night somebody picked — moves the line with it. Otherwise
+ * the plan says 7:30 while the restaurant expects them at 9.
+ */
+async function moveLine(input: ReserveInput, deps: ReserveDeps, f: TableFacts) {
+  const line = input.line;
+  if (!line || (f.date === input.facts.date && f.time === input.facts.time)) return;
+  const to = lineAt(line.scheduled_time, f.date, f.time!, { startDate: input.plan.start_date, endDate: input.plan.end_date });
+  const moved = to ? await deps.store.retime(line.id, line.scheduled_time, to) : false;
+  if (!moved) {
+    console.error('[reserve] BOOKED AT ANOTHER TIME AND THE LINE STILL SAYS THE OLD ONE', {
+      booking: input.booking.id, line: line.id, was: line.scheduled_time, booked: `${f.date} ${f.time}`, wrote: to,
+    });
+  }
 }
 
 async function inDoubt(deps: ReserveDeps, b: TableRow, claim: Claim, mark: ReserveMark, msg: string, f: TableFacts, name: string): Promise<ReserveResult> {

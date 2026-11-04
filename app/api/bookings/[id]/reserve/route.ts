@@ -54,7 +54,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { facts, venue } = await tableFacts(ctx.db, plan, booking, line, where);
 
   const result = await reserveTable(
-    { booking, facts, plan: planOf(plan), requester, chosen: chosenFrom(body), venue },
+    { booking, facts, plan: planOf(plan), requester, chosen: chosenFrom(body), venue, line },
     reserveDeps(ctx.db),
   );
 

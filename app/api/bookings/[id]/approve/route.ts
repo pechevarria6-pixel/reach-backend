@@ -140,7 +140,7 @@ async function approveTable(booking: Row, ctx: { db: SupabaseClient; user: { id:
   ]);
   const { facts, venue } = await tableFacts(ctx.db, plan, row, line, where);
   const result = await reserveTable(
-    { booking: row, facts, plan: planOf(plan), requester, chosen: chosenFrom(body), venue },
+    { booking: row, facts, plan: planOf(plan), requester, chosen: chosenFrom(body), venue, line },
     reserveDeps(ctx.db),
   );
   if (result.ok === false) {

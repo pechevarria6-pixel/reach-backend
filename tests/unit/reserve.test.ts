@@ -14,6 +14,7 @@ import { approveOutcome, nextStepFor } from '../../lib/booking/approve-outcome.t
 import type { Store as CallStore, CallRow } from '../../lib/reservations/call.ts';
 import { getNextAction, type NextActionInput, type NextBooking } from '../../lib/next-action.ts';
 import { checkoutState } from '../../lib/checkout.ts';
+import { lineAt, lineWhen } from '../../lib/line-when.ts';
 
 // ── fixtures ────────────────────────────────────────────────────────────
 // 13:00 in Raleigh by the longitude estimate: the dinner is three nights off.
@@ -42,8 +43,9 @@ function row(over: Partial<TableRow> = {}): TableRow {
 }
 
 /** The bookings table, in memory, keeping the database's conditional-write rules. */
-function memory(start: TableRow = row(), opts: { members?: string[]; callOpen?: boolean } = {}) {
+function memory(start: TableRow = row(), opts: { members?: string[]; callOpen?: boolean; lines?: Record<string, string | null> } = {}) {
   const rows = new Map<string, TableRow & Record<string, unknown>>([[start.id, { ...start }]]);
+  const lines = new Map<string, string | null>(Object.entries(opts.lines ?? {}));
   const notes: { to: string[]; title: string; body: string }[] = [];
   const at = (id: string, from: string, version: unknown) => {
     const r = rows.get(id);
@@ -76,10 +78,15 @@ function memory(start: TableRow = row(), opts: { members?: string[]; callOpen?: 
       return { ...r };
     },
     async callOpen() { return opts.callOpen === true; },
+    async retime(itemId, from, to) {
+      if (!lines.has(itemId) || lines.get(itemId) !== from) return false;
+      lines.set(itemId, to);
+      return true;
+    },
     async members() { return opts.members ?? ['u1', 'u2', 'u3']; },
     async notify(to, note) { notes.push({ to, title: note.title, body: note.body }); },
   };
-  return { store, rows, notes, get: (id = start.id) => rows.get(id)! };
+  return { store, rows, notes, lines, get: (id = start.id) => rows.get(id)! };
 }
 
 type Answer = BookingItemResult | (() => BookingItemResult | Promise<BookingItemResult>);
@@ -339,7 +346,7 @@ test('another time offered: nothing booked, the row says so, and taking it books
 
 test('no table and nothing offered: failed with the reason, and the next options with it', async () => {
   const m = memory();
-  const p = platform({ quote: { vertical: 'restaurant', mode: 'native', status: 'failed', provider: 'opentable', error: 'No availability', raw: {} } });
+  const p = platform({ quote: { vertical: 'restaurant', mode: 'native', status: 'failed', provider: 'opentable', error: 'No availability', raw: { noAvailability: true } } });
   const r = await reserveTable(input(m.get()), deps(m.store, p.p));
   assert.equal(r.ok === false && r.code, 'unavailable');
   assert.deepEqual(r.ok === false && r.alternatives.map(a => a.kind), ['link', 'phone', 'confirm']);
@@ -635,4 +642,198 @@ test('"Book it" has the tables to send to approval, kept apart from what is paid
   assert.deepEqual(s.waiting.map(r => r.id), ['b-hotel']);
   assert.deepEqual(s.tables.map(r => r.id), ['b1']);
   assert.equal(s.totalCents, 60000, 'a table adds nothing to what anybody pays');
+});
+
+// ── the defects found in review, each held here ─────────────────────────
+
+/** A promise and the function that settles it, for holding a request mid-flight. */
+function latch() {
+  let open!: () => void;
+  const done = new Promise<void>(r => { open = r; });
+  return { done, open };
+}
+
+test('a call being placed takes the row first: "Book it" pressed meanwhile never reaches the platform', async () => {
+  const m = memory();
+  const p = platform();
+  const shown = await reserveTable(input(m.get()), deps(m.store, p.p));
+  const key = shown.ok === false ? shown.terms!.key : '';
+  const before = { ...m.get() };
+  const ringing = latch();
+  const inPlace = latch();
+  const d = deps(m.store, p.p, { ok: true }, {
+    call: {
+      env: LIVE, store: callStore(m), lookup: async () => 'landline',
+      provider: () => ({ name: 'retell', async place() { inPlace.open(); await ringing.done; return { ok: true, providerCallId: 'call_1' }; }, verify: () => true, parse: () => null }),
+    },
+  });
+  const call = reserveTable(input(before, { chosen: { path: 'call' } }), d);
+  await inPlace.done;
+  // Somebody who read the row before the call took it presses "Book it".
+  const stale = await reserveTable(input(before, { chosen: { path: 'instant', acceptTerms: key } }), deps(m.store, p.p));
+  assert.equal(stale.ok, false);
+  assert.equal(p.books.length, 0, 'the restaurant is on the phone; the platform is never asked as well');
+  // Somebody who reads it now is told Reach is calling.
+  const fresh = await reserveTable(input(m.get(), { chosen: { path: 'instant', acceptTerms: key, notBookedElsewhere: true } }), deps(m.store, p.p));
+  assert.equal(fresh.ok === false && fresh.code, 'calling');
+  ringing.open();
+  const r = await call;
+  assert.equal(r.ok && r.outcome, 'calling');
+  assert.equal(m.get().status, 'pending');
+  assert.equal(reserveMarkOf(m.get())?.callId, 'c1');
+});
+
+test('an instant booking in flight refuses a call pressed from the row as it was, and nothing rings', async () => {
+  const m = memory();
+  const answering = latch();
+  const inBook = latch();
+  const p = platform({ book: async () => { inBook.open(); await answering.done; return { vertical: 'restaurant', mode: 'native', status: 'confirmed', provider: 'opentable', providerRef: '4821' }; } });
+  const shown = await reserveTable(input(m.get()), deps(m.store, p.p));
+  const key = shown.ok === false ? shown.terms!.key : '';
+  const before = { ...m.get() };
+  const booking = reserveTable(input(before, { chosen: { acceptTerms: key } }), deps(m.store, p.p));
+  await inBook.done;
+  const placed: string[] = [];
+  const d = deps(m.store, null, { ok: true }, {
+    call: {
+      env: LIVE, store: callStore(m), lookup: async () => 'landline',
+      provider: () => ({ name: 'retell', async place(a) { placed.push(a.to); return { ok: true, providerCallId: 'call_x' }; }, verify: () => true, parse: () => null }),
+    },
+  });
+  const call = await reserveTable(input(before, { chosen: { path: 'call' } }), d);
+  assert.equal(call.ok === false && call.code, 'changed');
+  assert.deepEqual(placed, [], 'nobody is rung about a table the platform is booking');
+  answering.open();
+  assert.equal((await booking).ok, true);
+  assert.equal(m.get().status, 'confirmed');
+});
+
+test('a live call with no mark on the row refuses "Book it" whatever the row\'s status', async () => {
+  const m = memory(row(), { callOpen: true });
+  const p = platform();
+  const r = await reserveTable(input(m.get(), { chosen: { acceptTerms: 'x' } }), deps(m.store, p.p));
+  assert.equal(r.ok === false && r.code, 'calling');
+  assert.equal(p.quotes.length, 0);
+});
+
+test('a call that never rang gives the row back as it was', async () => {
+  const m = memory(row({ status: 'failed', response_payload: { reserve: { state: 'failed', path: 'instant', reason: 'No table.' } } }));
+  const d = deps(m.store, null, { ok: true }, {
+    call: { env: LIVE, store: callStore(m), lookup: async () => 'landline', provider: () => { throw new Error('must not ring'); } },
+  });
+  const r = await reserveTable(input(m.get(), { venue: { name: "Luigi's", phone: '(919) 555-0100', opening_hours: 'Mo-Su 23:00-23:30', lng: -78.64, reserveUrl: OT_LINK } }), d);
+  assert.equal(r.ok === false && r.code, 'call_refused');
+  assert.equal(m.get().status, 'failed');
+  assert.equal(reserveMarkOf(m.get())?.state, 'failed', 'no "calling" left on a row nobody rang');
+});
+
+test('a table that is booked, or may be, offers nothing more, and says the time it was booked at', () => {
+  const a = { instant: platform().p, call: { ok: true } as CallCheck };
+  const confirmed = decide(facts(), a, { status: 'confirmed', response_payload: { reserve: { state: 'confirmed', path: 'instant', platform: 'opentable', date: '2026-11-07', time: '21:00', partySize: 4, ref: 'OT-1' } } });
+  assert.equal(confirmed.open, false);
+  assert.deepEqual(confirmed.alternatives, []);
+  assert.equal(confirmed.ownAccount, null);
+  assert.equal(confirmed.terms, null);
+  assert.equal(confirmed.what, 'Confirmed by OpenTable · ref OT-1');
+  assert.equal(confirmed.when.said, 'Sat, Nov 7 at 9:00 PM');
+  assert.doesNotMatch(JSON.stringify(confirmed), /7:30|Reach books|your own/, 'one card, one time, nothing to book again');
+
+  const doubt = decide(facts(), { instant: null, call: CLOSED }, { status: 'booking', error: 'outcome unknown: timeout', response_payload: { reserve: { state: 'in_doubt', path: 'instant', platform: 'opentable' } } });
+  assert.equal(doubt.open, false);
+  assert.deepEqual(doubt.alternatives, []);
+  assert.equal(doubt.state, 'in_doubt');
+  assert.match(doubt.what, /can't tell yet whether Luigi's is booked/);
+  assert.doesNotMatch(JSON.stringify(doubt), /Reserve on|Book it on/);
+
+  const calling = decide(facts(), a, { status: 'pending', response_payload: { reserve: { state: 'calling', path: 'call', time: '19:30', partySize: 4 } } });
+  assert.equal(calling.open, false);
+  assert.deepEqual(calling.alternatives, []);
+
+  const theirs = decide(facts(), a, { status: 'redirected', confirmation_number: 'ABC123' });
+  assert.equal(theirs.open, false);
+  assert.match(theirs.what, /ABC123/);
+
+  assert.equal(decide(facts(), a, { status: 'awaiting_approval' }).open, true);
+});
+
+test('a claim nobody answered is "booking now" for a minute, then in doubt — never "booking now" for good', async () => {
+  const at = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
+  const fresh = row({ status: 'booking', approved_at: at(30_000), updated_at: at(30_000) });
+  const stuck = row({ status: 'booking', approved_at: at(10 * 60_000), updated_at: at(10 * 60_000) });
+  const p = platform();
+  const r1 = await reserveTable(input(fresh), deps(memory(fresh).store, p.p));
+  assert.equal(r1.ok === false && r1.code, 'in_progress');
+  const r2 = await reserveTable(input(stuck), deps(memory(stuck).store, p.p));
+  assert.equal(r2.ok === false && r2.code, 'outcome_unknown');
+  assert.equal(p.quotes.length + p.books.length, 0, 'never sent again');
+
+  assert.equal(decide(facts(), { instant: p.p, call: CLOSED }, fresh, NOW).state, null);
+  assert.equal(decide(facts(), { instant: p.p, call: CLOSED }, stuck, NOW).state, 'in_doubt');
+
+  const now = na([tableRow({ status: 'booking', approved_at: at(30_000), updated_at: at(30_000) })]);
+  assert.equal(now.state, 'booking_in_progress');
+  const later = na([tableRow({ status: 'booking', approved_at: at(10 * 60_000), updated_at: at(10 * 60_000) })]);
+  assert.equal(later.state, 'needs_attention');
+  assert.match(later.title, /can't tell yet whether Luigi's is booked/);
+  assert.match(later.cta && later.cta.kind === 'link' ? later.cta.href : '', /^mailto:/, 'somebody to ask, not a dead end');
+});
+
+test('a table booked at an offered time moves its line and its request to that time', async () => {
+  const words = 'Day 3 · Evening · 7:30 PM';
+  const m = memory(row(), { lines: { 'l-dinner': words } });
+  const line = { id: 'l-dinner', scheduled_time: words };
+  const noTable: BookingItemResult = { vertical: 'restaurant', mode: 'native', status: 'failed', provider: 'opentable', raw: { offeredTimes: ['21:00'] } };
+  let first = true;
+  const p = platform({ quote: () => (first ? (first = false, noTable) : { vertical: 'restaurant', mode: 'native', status: 'quoted', provider: 'opentable', providerRef: 'lock_9', raw: {} }) });
+  const offered = await reserveTable(input(m.get(), { line }), deps(m.store, p.p));
+  assert.equal(offered.ok === false && offered.code, 'other_time');
+  assert.equal(m.lines.get('l-dinner'), words, 'nothing booked, nothing moved');
+
+  const took = await bookWithTerms(m, p.p, { line, chosen: { time: '21:00' } });
+  assert.equal(took.ok && took.outcome, 'confirmed');
+  assert.equal(m.lines.get('l-dinner'), 'Day 3 · Evening · 9:00 PM');
+  const plan = { startDate: '2026-11-05', endDate: '2026-11-08' };
+  assert.deepEqual([lineWhen(m.lines.get('l-dinner'), plan).date, lineWhen(m.lines.get('l-dinner'), plan).clock], ['2026-11-07', '21:00']);
+  const req = m.get().request_payload as { restaurant?: { time?: string; date?: string } };
+  assert.equal(req.restaurant?.time, '21:00');
+  assert.equal(req.restaurant?.date, '2026-11-07');
+});
+
+test('a table booked at the line\'s own time leaves the line alone', async () => {
+  const words = 'Day 3 · Evening · 7:30 PM';
+  const m = memory(row(), { lines: { 'l-dinner': words } });
+  const r = await bookWithTerms(m, platform().p, { line: { id: 'l-dinner', scheduled_time: words } });
+  assert.equal(r.ok && r.outcome, 'confirmed');
+  assert.equal(m.lines.get('l-dinner'), words);
+});
+
+test('lineAt writes only words that read back as the night and time booked', () => {
+  const plan = { startDate: '2026-11-05', endDate: '2026-11-08' };
+  assert.equal(lineAt('Day 3 · Evening', '2026-11-07', '20:15', plan), 'Day 3 · Evening · 8:15 PM');
+  assert.equal(lineAt('Evening', '2026-11-06', '20:15', plan), 'Day 2 · Evening · 8:15 PM', 'a night somebody picked is written as its day');
+  assert.equal(lineAt('The main event', '2026-11-05', '21:00', { startDate: '2026-11-05' }), 'The main event · 9:00 PM', 'a night out keeps no day number');
+  assert.equal(lineAt('Day 3 · Dinner at 7:30', '2026-11-07', '21:00', plan), null, 'never two times on one line');
+  assert.equal(lineAt('Day 3', '2026-11-20', '21:00', plan), null, 'a night off the trip is not written');
+  assert.equal(lineAt('Day 3', '2026-11-07', 'soon', plan), null);
+});
+
+test('a quote that failed for our reasons is never told to anybody as "no table"', async () => {
+  for (const error of ['rate limited', 'YELP_API_KEY not set', undefined]) {
+    const m = memory();
+    const p = platform({ quote: { vertical: 'restaurant', mode: 'native', status: 'failed', provider: 'yelp', error, raw: {} } });
+    const r = await reserveTable(input(m.get()), deps(m.store, p.p));
+    assert.equal(r.ok === false && r.code, 'provider_failed');
+    assert.doesNotMatch(r.ok === false ? r.error : '', /has no table/);
+    assert.match(r.ok === false ? r.error : '', /Reach couldn't get an answer from OpenTable just now, so nothing was booked/);
+    assert.deepEqual(r.ok === false && r.alternatives.map(a => a.kind), ['link', 'phone', 'confirm']);
+    assert.equal(m.get().status, 'awaiting_approval', 'the row is left open');
+    assert.equal(reserveMarkOf(m.get()), null);
+    assert.equal(m.notes.length, 0, 'nobody is told the restaurant is full');
+  }
+  // A slot refused because it needs a card is the restaurant's way of taking it: handed off.
+  const m = memory();
+  const p = platform({ quote: { vertical: 'restaurant', mode: 'native', status: 'failed', provider: 'yelp', error: 'card required', raw: { cardRequired: true } } });
+  const r = await reserveTable(input(m.get()), deps(m.store, p.p));
+  assert.equal(r.ok && r.outcome, 'handed_off');
+  assert.match(r.ok ? r.title : '', /wants a card on file/);
 });

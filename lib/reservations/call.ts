@@ -167,6 +167,12 @@ export interface PlaceInput {
   venue: { name: string; phone: string | null; opening_hours: string | null; lng: number | null; reserveUrl: string | null } | null;
   /** What the person chose for this call. */
   chosen: { date?: string; time?: string; partySize?: number; notes?: string | null };
+  /**
+   * The status a call that books nothing puts the row back to, when the
+   * caller already took the row for this call (reserve.ts marks it 'pending'
+   * before anything rings). The row's own status otherwise.
+   */
+  previousStatus?: string;
   now?: Date;
 }
 
@@ -273,7 +279,7 @@ export async function placeCall(input: PlaceInput, deps: PlaceDeps): Promise<Pla
   const to = dialTarget(g, facts.venuePhone);
   if (!to) return no('calls_off');
   const request: StoredRequest = {
-    ...facts, solo: input.plan.solo, reserveUrl, previousStatus: b.status, groupId: input.plan.group_id,
+    ...facts, solo: input.plan.solo, reserveUrl, previousStatus: input.previousStatus ?? b.status, groupId: input.plan.group_id,
   };
   const claim = await deps.store.claim({
     booking_id: b.id, plan_id: input.plan.id, requested_by: input.requester.id,

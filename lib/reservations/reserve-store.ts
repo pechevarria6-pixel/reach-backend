@@ -55,6 +55,13 @@ export function supabaseTableStore(db: SupabaseClient, send: Sender | null): Tab
       return (data ?? []).length > 0;
     },
 
+    async retime(itemId, from, to) {
+      const q = db.from('itinerary_items').update({ scheduled_time: to }).eq('id', itemId);
+      const { data, error } = await (from === null ? q.is('scheduled_time', null) : q.eq('scheduled_time', from)).select('id');
+      if (error) { console.error('[reserve] could not move the line', { itemId, code: error.code }); return false; }
+      return (data ?? []).length > 0;
+    },
+
     async members(groupId) {
       if (!groupId) return [];
       const { data, error } = await db.from('group_members').select('user_id').eq('group_id', groupId);

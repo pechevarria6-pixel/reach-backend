@@ -62,7 +62,7 @@
 // `waiting_on_payments` are unreachable when memberCount is 1, and the copy
 // for one person is singular. tests/unit/next-action.test.ts holds both.
 import {
-  checkoutState, bookedClaim, bookedWording, dedupe, itemTitle, supportMailto,
+  checkoutState, bookedClaim, bookedWording, dedupe, inDoubtRow, itemTitle, supportMailto,
   type BookedClaim, type CheckoutRow, type CheckoutStep, type FundingView,
 } from './checkout.ts';
 import { reachBuys } from './booking/charged.ts';
@@ -674,7 +674,11 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     const marked = tables.map(r => ({ r, m: reserveMarkOf(r) }));
 
     // Sent, and no answer: it may be booked. Never offered again from here.
-    const doubt = marked.find(({ r, m }) => (r.status === 'booking' || midClaim(r)) && (m?.state === 'in_doubt' || /^outcome unknown/i.test(errorOf(r))));
+    // A claim older than any request can run is the same: the function that
+    // held it was killed before it could write an answer, and "Booking it
+    // now" would be said for ever, with nothing to press.
+    const doubt = marked.find(({ r, m }) => (r.status === 'booking' || midClaim(r))
+      && (m?.state === 'in_doubt' || /^outcome unknown/i.test(errorOf(r)) || inDoubtRow(r, input.now ?? new Date())));
     if (doubt) {
       return attention(`We can't tell yet whether ${nameOf(doubt.r)} is booked`,
         "It was sent to be booked and no answer came back, so it isn't tried again from here. Don't book it anywhere else — write to us.",

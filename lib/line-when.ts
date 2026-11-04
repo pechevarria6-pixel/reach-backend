@@ -103,6 +103,36 @@ export function labelWithClock(label: unknown, hhmm: unknown): string {
   return base ? `${base} · ${said}` : said;
 }
 
+/**
+ * The line's words moved to another night and time — what a booking was
+ * actually made at, written back where every reader of the line looks. The
+ * part of the day is kept ("Evening"); the day number and the clock are
+ * replaced. Null when the words would not read back as exactly that night
+ * and time (a night off the trip, words this cannot rewrite): the caller
+ * leaves the line alone rather than write something that says otherwise.
+ */
+export function lineAt(scheduledTime: unknown, date: string | null, hhmm: string, plan: PlanDates): string | null {
+  const said = clockSaid(hhmm);
+  if (!said) return null;
+  const now = lineWhen(scheduledTime, plan);
+  let prefix = '';
+  const start = validDay(plan.startDate);
+  if (date && start && !(oneDay(plan) && now.day === null)) {
+    const n = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86_400_000) + 1;
+    if (!Number.isInteger(n) || n < 1) return null;
+    prefix = `Day ${n}`;
+  } else if (now.day !== null) {
+    prefix = `Day ${now.day}`;
+  }
+  // Words that still carry the old time ("Dinner at 7:30") would say two times.
+  if (now.part && /\d{1,2}:\d{2}|\b\d{1,2}\s*(?:am|pm)\b/i.test(now.part)) return null;
+  const out = [prefix, now.part, said].filter(Boolean).join(' · ');
+  const back = lineWhen(out, plan);
+  if (back.clock !== hhmm) return null;
+  if (date && back.date !== date) return null;
+  return out;
+}
+
 /** "Sat, Nov 7", from a date. Counted in UTC so no server zone moves the weekday. */
 export function dateSaid(day: unknown): string | null {
   const d = validDay(day);

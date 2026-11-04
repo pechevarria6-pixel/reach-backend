@@ -191,11 +191,21 @@ export interface BookingProvider {
  * The quote is `status: 'quoted'` only when the exact date, time and party
  * asked for is held; `providerRef` is then the hold, and book() takes it
  * back as `restaurant.holdRef`. A quote with no table at that time is
- * `status: 'failed'` and lists what the platform did offer in `offeredTimes`.
+ * `status: 'failed'` and lists what the platform did offer in `offeredTimes`,
+ * with `noAvailability: true` when the platform said it has no table then.
+ * A failure without either (a key, a rate limit, a timeout) is the
+ * provider's, and is never told to anybody as "no table".
  */
 export interface TableQuoteRaw {
   /** HH:MM, 24-hour: other times the platform offers that night, nearest first. */
   offeredTimes?: string[];
+  /**
+   * The platform said, in its own answer, that it has no table at that
+   * time — Yelp's empty openings, OpenTable's no-availability. Only this
+   * lets Reach say "no table"; any other failure is the provider's, not the
+   * restaurant's.
+   */
+  noAvailability?: boolean;
   /** The platform's own cancellation / no-show policy, in its words. */
   cancellationPolicy?: string | null;
   /** A deposit, card hold or prepayment the restaurant asks for, in cents. */
