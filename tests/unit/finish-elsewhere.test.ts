@@ -268,7 +268,7 @@ test('bookable logs slot_unfilled for a search that found nothing', () => {
 test('"I\'ve got it" still works before the column exists', () => {
   assert.match(confirmation, /confirmationColumnMissing\(res\.error\)/);
   assert.match(confirmation, /res = await write\(base\)/);
-  assert.match(confirmation, /reachBuys\(booking\)/, 'Reach\'s own purchases are never marked done by somebody saying so');
+  assert.match(confirmation, /settledByReach\(booking\)/, 'Reach\'s own purchases are never marked done by somebody saying so');
 });
 
 test('readiness gives every member a status', () => {

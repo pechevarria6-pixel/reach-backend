@@ -235,11 +235,13 @@ export const yelpReservations: TableProvider = {
     const res = await readFetch(`${BASE()}/v3/bookings/reservation/${encodeURIComponent(ref)}/status?covers=${opts.covers}`, { headers: headers() });
     if (!res) return refuse('platform_down', "Yelp didn't answer.");
     const json = await bodyOf(res) as Record<string, unknown> | null;
-    if (codeOf(json) === 'RESERVATION_CANCELED') return { ok: true, active: false, date: null, time: null, covers: null, fee: null };
+    if (codeOf(json) === 'RESERVATION_CANCELED') return { ok: true, active: false, date: null, time: null, covers: null, fee: null, owesCard: null, cancelled: true };
     if (!res.ok) return yelpRefusal(res.status, json);
     return {
       ok: true, active: json?.active === true, date: dayOf(json?.date), time: clockOf(json?.time),
-      covers: Number(json?.covers) || null, fee: null, raw: json,
+      // Reach never books a Yelp slot that wants a card (it is handed to
+      // Yelp's page), so a table it booked there owes nothing.
+      covers: Number(json?.covers) || null, fee: null, owesCard: false, cancelled: false, raw: json,
     };
   },
 

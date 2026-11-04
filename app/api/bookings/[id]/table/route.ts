@@ -48,6 +48,13 @@
 // POST { action: 'cancel', confirm?: true }
 //   without confirm → 200 { status: 'quoted', refundCents: 0, cancellationPolicy, cancelBy, body }
 //   with confirm    → 200 { status: 'cancelled' } | 502 { code: 'cancel_failed', error }
+//   → 409 outcome_unknown when a booking never answered: it MAY be booked, and
+//     Reach holds no number to cancel it with — the error says where to look.
+//
+// A table left pending (OpenTable wants a card) is checked with the platform
+// at the start of every step: cancelled there → failed and bookable again;
+// card added → confirmed. Still owed, or no answer → 409 { code: 'pending_card',
+// error, platformUrl } where platformUrl is OpenTable's card page.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';

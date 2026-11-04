@@ -369,7 +369,8 @@ test('approval does not mark an unknown outcome failed, and PATCH cannot unstick
   assert.ok(unknown < src.indexOf("status: 'failed', error: msg"), 'unknown must be decided before failed');
   assert.match(src, /code: 'outcome_unknown'/);
   const patch = read('app/api/bookings/[id]/route.ts');
-  assert.match(patch, /reachBuys\(booking\)/);
+  // settledByReach asks reachBuys, and also refuses a table Reach booked (free, so reachBuys is false).
+  assert.match(patch, /settledByReach\(booking\)/);
   assert.match(patch, /midClaim\(booking\)/);
 });
 

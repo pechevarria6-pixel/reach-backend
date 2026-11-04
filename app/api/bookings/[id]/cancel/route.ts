@@ -20,6 +20,9 @@ import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
 import { tableProviderNamed } from '@/lib/booking/registry';
+import { reserveUnknown } from '@/lib/booking/tables/flow';
+import { TABLE_COPY } from '@/lib/booking/tables/wording';
+import { PLATFORM_LABEL } from '@/lib/booking/tables/types';
 
 /** What each lane can undo, and what to say when it cannot. */
 const CANNOT: Record<string, string> = {
@@ -75,6 +78,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ status: 'cancelled', refundCents: 0, currency: 'USD', warning: 'It is cancelled with the restaurant, but we could not update your plan — it may still show as booked.' });
     }
     return NextResponse.json({ status: 'cancelled', refundCents: 0, currency: 'USD' });
+  }
+
+  // A table whose booking never answered may be booked under their name:
+  // never "it was booked on the restaurant's own site" (lib/booking/tables/).
+  const unknown = reserveUnknown(booking);
+  if (unknown) {
+    return NextResponse.json({ code: 'outcome_unknown', error: TABLE_COPY.outcomeUnknownCancel(PLATFORM_LABEL[unknown]) }, { status: 409 });
   }
 
   // Only Duffel can be undone from here today. Saying which lane cannot,

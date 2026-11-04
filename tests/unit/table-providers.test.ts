@@ -16,7 +16,7 @@ import { pickTable } from '../../lib/booking/tables/pick.ts';
 import { holdStep, openingsStep, reserveStep, cancelStep, type TableRow, type TableStore, type TableCtx } from '../../lib/booking/tables/flow.ts';
 import { isRefusal, type TableHold, type TableGuest } from '../../lib/booking/tables/types.ts';
 import { isOutcomeUnknown, type BookingItemResult } from '../../lib/booking/types.ts';
-import { reachBuys } from '../../lib/booking/charged.ts';
+import { reachBuys, reachBooked, settledByReach } from '../../lib/booking/charged.ts';
 
 const REC = JSON.parse(readFileSync('tests/unit/fixtures/tables/recorded.json', 'utf8'));
 const Y = REC.yelp, O = REC.opentable;
@@ -579,6 +579,120 @@ test('cancelling a table Reach booked asks first, then cancels on the platform a
   const c = await cancelStep(ctxFor(f.row, f.store, { bookedOn: yelpReservations }), true);
   assert.equal(c.body.status, 'cancelled');
   assert.equal(f.row.status, 'cancelled');
+});
+
+// ─── Found in review: what a Reach-booked table must not let happen ──────
+
+test('a table Reach booked cannot be set by hand — free to the group is not "not Reach\'s"', () => {
+  const live = { mode: 'native', provider: 'opentable', status: 'confirmed' };
+  assert.equal(reachBuys(live), false, 'a free table started counting as money');
+  assert.equal(reachBooked(live), true);
+  assert.match(String(settledByReach(live)), /Reach booked this table on OpenTable/);
+  assert.match(String(settledByReach({ mode: 'native', provider: 'yelp', status: 'pending' })), /on Yelp/);
+  // A table that lapsed or failed is the person's again, to book any way they like.
+  assert.equal(settledByReach({ mode: 'native', provider: 'opentable', status: 'failed' }), null);
+  assert.equal(settledByReach({ mode: 'redirect', provider: 'restaurant_handoff', status: 'redirected' }), null);
+  // What Reach buys is still refused, as before.
+  assert.match(String(settledByReach({ mode: 'native', provider: 'duffel', status: 'confirmed' })), /Reach books this one itself/);
+  for (const f of ['app/api/bookings/[id]/route.ts', 'app/api/bookings/[id]/confirmation/route.ts']) {
+    const src = readFileSync(f, 'utf8');
+    assert.match(src, /settledByReach\(booking\)/, `${f} lets a member set a table Reach booked`);
+    assert.doesNotMatch(src, /if \(reachBuys\(booking\)\)/, `${f} still asks the money question`);
+  }
+});
+
+const PENDING_REF = '1038007-7646';
+function pendingRow(): TableRow {
+  return row({
+    status: 'pending', mode: 'native', provider: 'opentable', provider_ref: PENDING_REF,
+    redirect_url: O.reservationOwesCard.payment.payment_page_url,
+    response_payload: {
+      table: { platform: 'opentable', venueId: '1038007' },
+      booked: { platform: 'opentable', ref: PENDING_REF, covers: 4, manage_reservation_url: O.reservationOwesCard.manage_reservation_url },
+    },
+  });
+}
+const pendingCtx = (f: { row: TableRow; store: TableStore }) => ctxFor(f.row, f.store, { bookedOn: openTableReservations });
+
+test('a pending table OpenTable let go is booked again, not "somebody is booking it" for ever', async () => {
+  otOn();
+  on('GET', /\/reservations\/1038007-7646$/, { status: 200, body: { ...O.getReservation, confirmation_number: 7646, status: 'CancelledWeb' } });
+  on('POST', /\/slot_locks$/, { status: 200, body: O.slotLock });
+  on('GET', /\/booking-policies\//, { status: 200, body: O.bookingPolicies });
+  const f = fakeStore(pendingRow());
+  const held = await holdStep(pendingCtx(f), {});
+  assert.equal(held.status, 200, String(held.body.error));
+  assert.equal(f.row.status, 'failed');
+  assert.equal(f.row.provider_ref, null);
+  assert.equal(f.row.response_payload?.booked?.ref, PENDING_REF, 'the old number left the record');
+  assert.equal(settledByReach(f.row), null);
+});
+
+test('a pending table whose card was added is confirmed — and only when OpenTable says so', async () => {
+  otOn();
+  on('GET', /\/reservations\/1038007-7646$/, { status: 200, body: { ...O.getReservation, confirmation_number: 7646, status: 'Pending', payment: { status: 'Completed' }, post_booking_required_action: 'None' } });
+  const f = fakeStore(pendingRow());
+  const o = await openingsStep(pendingCtx(f), {});
+  assert.equal(f.row.status, 'confirmed');
+  assert.equal(f.row.redirect_url, O.reservationOwesCard.manage_reservation_url, 'still pointing at the card page');
+  assert.equal(o.body.code, 'already_booked');
+});
+
+test('a pending table OpenTable says nothing about stays pending, and says why — not "somebody is booking it"', async () => {
+  otOn();
+  on('GET', /\/reservations\/1038007-7646$/, { status: 200, body: { ...O.getReservation, confirmation_number: 7646, status: 'Pending' } });
+  const f = fakeStore(pendingRow());
+  const o = await openingsStep(pendingCtx(f), {});
+  assert.equal(f.row.status, 'pending', 'an answer without payment fields was read as paid');
+  assert.equal(o.status, 409);
+  assert.equal(o.body.code, 'pending_card');
+  assert.match(String(o.body.error), /holding this table until a card is added/);
+  assert.equal(o.body.platformUrl, O.reservationOwesCard.payment.payment_page_url);
+  // And with OpenTable not answering at all, the same.
+  routes = []; otOn();
+  on('GET', /\/reservations\/1038007-7646$/, 'drop');
+  const again = await openingsStep(pendingCtx(f), {});
+  assert.equal(again.body.code, 'pending_card');
+  assert.equal(f.row.status, 'pending');
+});
+
+test('cancelling a table whose booking never answered never says Reach did not book it', async () => {
+  otOn();
+  on('POST', /\/slot_locks$/, { status: 200, body: O.slotLock });
+  on('GET', /\/booking-policies\//, { status: 200, body: O.bookingPolicies });
+  on('POST', /\/reservations$/, 'drop');
+  const f = fakeStore(row({ provider: 'restaurant_handoff', provider_ref: null }));
+  const held = await holdStep(ctxFor(f.row, f.store), {});
+  const h = held.body.hold as { holdId: string; terms: { version: string } };
+  await reserveStep(ctxFor(f.row, f.store), { holdId: h.holdId, accept: { terms: h.terms.version, policy: true } }, GUEST);
+  for (const confirm of [false, true]) {
+    const c = await cancelStep(ctxFor(f.row, f.store), confirm);
+    assert.equal(c.status, 409);
+    assert.equal(c.body.code, 'outcome_unknown');
+    assert.doesNotMatch(String(c.body.error), /did not book/);
+    assert.match(String(c.body.error), /never heard back.*OpenTable's confirmation email/);
+  }
+  const route = readFileSync('app/api/bookings/[id]/cancel/route.ts', 'utf8');
+  assert.ok(route.indexOf('reserveUnknown(booking)') > 0 && route.indexOf('reserveUnknown(booking)') < route.indexOf('CANNOT[String(booking.vertical)]'),
+    'the cancel route tells an unanswered booking it was booked on the restaurant\'s own site');
+});
+
+test('a pending table is never answered booked: true, even when our row could not be updated', async () => {
+  otOn();
+  on('POST', /\/slot_locks$/, { status: 200, body: O.slotLock });
+  on('GET', /\/booking-policies\//, { status: 200, body: O.bookingPolicies });
+  on('POST', /\/reservations$/, { status: 201, body: O.reservationOwesCard });
+  const f = fakeStore(row());
+  const reported: string[] = [];
+  const failing: TableStore = { write: (id, v, patch) => patch.status === 'pending' ? Promise.resolve({ ok: false, taken: true }) : f.store.write(id, v, patch) };
+  const held = await holdStep(ctxFor(f.row, failing), {});
+  const h = held.body.hold as { holdId: string; terms: { version: string } };
+  const r = await reserveStep(ctxFor(f.row, failing, { report: m => reported.push(m) }), { holdId: h.holdId, accept: { terms: h.terms.version, policy: true } }, GUEST);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.booked, false);
+  assert.equal(r.body.pending, true);
+  assert.doesNotMatch(String(r.body.warning), /is booked/);
+  assert.equal(reported.length, 1);
 });
 
 // ─── Wiring ─────────────────────────────────────────────────────────────

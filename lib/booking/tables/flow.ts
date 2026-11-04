@@ -141,6 +141,11 @@ function blocked(ctx: TableCtx, forChange: boolean): FlowAnswer | null {
     return null;
   }
   if (forChange) return answer(409, { code: 'not_booked', error: 'There is no booked table to change yet.' }, ctx);
+  if (row.status === 'pending' && ctx.bookedOn && row.provider_ref) {
+    // Reach's own table, waiting on a card at the platform: not "somebody is
+    // booking it". settlePending has already asked the platform where it can.
+    return answer(409, { code: 'pending_card', error: TABLE_COPY.pendingCard(PLATFORM_LABEL[ctx.bookedOn.platform]), platformUrl: row.redirect_url ?? null }, ctx);
+  }
   if (row.status === 'pending') {
     return answer(409, { code: 'in_progress', error: 'Something is already asking this restaurant for the table. Wait for it to finish, or use the links below.' }, ctx);
   }
@@ -180,9 +185,65 @@ function askOf(ctx: TableCtx, given: { date?: unknown; time?: unknown; covers?: 
   return { date: date as string, time: time as string, covers };
 }
 
+/** The platform this row's unanswered booking was sent to, when one never answered. */
+export function reserveUnknown(row: { response_payload?: Record<string, any> | null }): TablePlatform | null {
+  const t = row.response_payload?.table;
+  return t && typeof t === 'object' && t.reserving?.unknown && (t.platform === 'yelp' || t.platform === 'opentable') ? t.platform : null;
+}
+
+// ─── A table left pending at the platform ────────────────────────────────
+// OpenTable answers some bookings with "add a card on our page", and the row
+// is stored 'pending' — not booked. Nothing else moves it: the person adds
+// the card on OpenTable, or doesn't and OpenTable lets it go (15 minutes, in
+// its own example). Without asking, the row said "not booked yet" after the
+// card was added, and "somebody is booking it" for ever after OpenTable had
+// cancelled it, so the dinner could never be booked again.
+//
+// So every step asks the platform first. Only what it says moves the row:
+// cancelled → failed (bookable again, the old number kept on the record);
+// a card no longer owed → confirmed. An answer that says neither, or none,
+// leaves it pending.
+
+export async function settlePending(ctx: TableCtx): Promise<TableCtx> {
+  const { row } = ctx;
+  const p = ctx.bookedOn;
+  if (row.status !== 'pending' || !p || !row.provider_ref || stateOf(row)?.reserving || !p.enabled()) return ctx;
+  const booked = (row.response_payload?.booked ?? {}) as Record<string, any>;
+  const covers = Math.floor(Number(booked.covers ?? booked.party_size ?? row.request_payload?.party)) || 1;
+  let s;
+  try {
+    s = await p.status(String(row.provider_ref), { covers });
+  } catch (e) {
+    console.error('[tables] could not check a pending table', { id: row.id, msg: e instanceof Error ? e.message : String(e) });
+    return ctx;
+  }
+  if (isRefusal(s)) return ctx;
+  const at = (ctx.now ?? new Date()).toISOString();
+  let patch: Record<string, unknown>;
+  if (s.cancelled) {
+    patch = {
+      status: 'failed', provider_ref: null, redirect_url: null,
+      error: `${PLATFORM_LABEL[p.platform]} let this table go before a card was added. Nothing is booked.`,
+      response_payload: { ...(row.response_payload ?? {}), booked: { ...booked, lapsedAt: at } },
+    };
+  } else if (s.owesCard === false) {
+    patch = {
+      status: 'confirmed', error: null,
+      redirect_url: typeof booked.manage_reservation_url === 'string' ? booked.manage_reservation_url : row.redirect_url ?? null,
+      response_payload: { ...(row.response_payload ?? {}), booked: { ...booked, cardAddedAt: at } },
+    };
+  } else {
+    return ctx;
+  }
+  const w = await ctx.store.write(row.id, row.updated_at ?? null, { ...patch, updated_at: at });
+  if (w.ok === false) return ctx;
+  return { ...ctx, row: { ...row, ...patch, updated_at: w.version } as TableRow };
+}
+
 // ─── GET: what the screen shows ──────────────────────────────────────────
 
-export async function openingsStep(ctx: TableCtx, given: { date?: unknown; time?: unknown; covers?: unknown; change?: boolean }): Promise<FlowAnswer> {
+export async function openingsStep(ctx0: TableCtx, given: { date?: unknown; time?: unknown; covers?: unknown; change?: boolean }): Promise<FlowAnswer> {
+  const ctx = await settlePending(ctx0);
   const b = blocked(ctx, !!given.change);
   if (b) return b;
   const p = providerFor(ctx, !!given.change);
@@ -208,7 +269,8 @@ export async function openingsStep(ctx: TableCtx, given: { date?: unknown; time?
 
 // ─── POST hold ───────────────────────────────────────────────────────────
 
-export async function holdStep(ctx: TableCtx, given: { date?: unknown; time?: unknown; covers?: unknown; change?: boolean }): Promise<FlowAnswer> {
+export async function holdStep(ctx0: TableCtx, given: { date?: unknown; time?: unknown; covers?: unknown; change?: boolean }): Promise<FlowAnswer> {
+  const ctx = await settlePending(ctx0);
   const change = !!given.change;
   const b = blocked(ctx, change);
   if (b) return b;
@@ -262,7 +324,8 @@ export interface ReserveAsk {
   accept?: { terms?: unknown; policy?: unknown } | null;
 }
 
-export async function reserveStep(ctx: TableCtx, ask: ReserveAsk, guest: TableGuest | null): Promise<FlowAnswer> {
+export async function reserveStep(ctx0: TableCtx, ask: ReserveAsk, guest: TableGuest | null): Promise<FlowAnswer> {
+  const ctx = await settlePending(ctx0);
   const change = ctx.row.status === 'confirmed';
   const b = blocked(ctx, change);
   if (b) return b;
@@ -355,9 +418,12 @@ export async function reserveStep(ctx: TableCtx, ask: ReserveAsk, guest: TableGu
     // Booked at the platform, and our row does not say so: the one fault a
     // retry cannot fix. Said loudly, and the person is told it IS booked.
     ctx.report?.('table booked and not recorded', { bookingId: ctx.row.id, platform: hold.platform, ref });
+    // Pending is not booked here either: the platform still wants a card.
     return answer(200, {
-      booked: true, pending, ref, confirmationUrl: result.redirectUrl ?? null, title: copy.title, body: copy.body,
-      warning: 'It is booked with the restaurant, but we could not update your plan — it may not show as booked here yet.',
+      booked: !pending, pending, ref, platform: hold.platform, confirmationUrl: result.redirectUrl ?? null, title: copy.title, body: copy.body,
+      warning: pending
+        ? `${PLATFORM_LABEL[hold.platform]} is holding it until a card is added, but we could not update your plan — it may not show here yet.`
+        : 'It is booked with the restaurant, but we could not update your plan — it may not show as booked here yet.',
     }, ctx);
   }
   return answer(200, {
@@ -368,11 +434,18 @@ export async function reserveStep(ctx: TableCtx, ask: ReserveAsk, guest: TableGu
 
 // ─── POST cancel ─────────────────────────────────────────────────────────
 
-export async function cancelStep(ctx: TableCtx, confirm: boolean): Promise<FlowAnswer> {
+export async function cancelStep(ctx0: TableCtx, confirm: boolean): Promise<FlowAnswer> {
+  const ctx = await settlePending(ctx0);
   const { row } = ctx;
   if (row.status === 'cancelled') return answer(200, { status: 'cancelled', alreadyCancelled: true }, ctx);
   const p = ctx.bookedOn;
   if (!p || !row.provider_ref || !['confirmed', 'pending'].includes(row.status)) {
+    // A booking that never answered may well be booked: never "Reach did not book this".
+    const unknown = reserveUnknown(row);
+    if (unknown) return answer(409, { code: 'outcome_unknown', error: TABLE_COPY.outcomeUnknownCancel(PLATFORM_LABEL[unknown]) }, ctx);
+    if (row.status === 'failed' && row.response_payload?.booked?.lapsedAt) {
+      return answer(200, { status: 'failed', alreadyCancelled: true, body: `${PLATFORM_LABEL[row.response_payload.table?.platform as TablePlatform] ?? 'The platform'} already let this table go, so there is nothing to cancel.` }, ctx);
+    }
     return answer(409, { code: 'not_booked', error: 'Reach did not book this table, so it is cancelled wherever it was booked. Their link and number are below.' }, ctx);
   }
   const policy = (row.response_payload?.policy ?? {}) as { cancellation?: string | null; cancelBy?: string | null };

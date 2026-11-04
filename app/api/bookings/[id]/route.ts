@@ -19,7 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
-import { reachBuys } from '@/lib/booking/charged';
+import { settledByReach } from '@/lib/booking/charged';
 import { atVersion, midClaim } from '@/lib/booking/claim';
 
 const supabase = createServerClient;
@@ -42,9 +42,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (midClaim(booking)) {
     return NextResponse.json({ error: 'Somebody is booking this right now.' }, { status: 409 });
   }
-  if (reachBuys(booking)) {
-    return NextResponse.json({ error: 'Reach books this one itself, so how it went comes from the booking, not from here.' }, { status: 409 });
-  }
+  // Not reachBuys: that is about money, and a table Reach booked costs nothing.
+  const settled = settledByReach(booking);
+  if (settled) return NextResponse.json({ error: settled }, { status: 409 });
 
   const { data, error } = await atVersion(ctx.db
     .from('bookings')

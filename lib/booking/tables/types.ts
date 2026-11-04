@@ -124,7 +124,20 @@ export type TableErrorCode =
 export type Openings = { ok: true; slots: TableSlot[]; minParty?: number | null; maxParty?: number | null } | TableRefusal;
 export type HoldResult = { ok: true; hold: TableHold } | TableRefusal;
 export type StatusResult =
-  | { ok: true; active: boolean; date: string | null; time: string | null; covers: number | null; fee: TableFee | null; raw?: unknown }
+  | {
+      ok: true; active: boolean; date: string | null; time: string | null; covers: number | null; fee: TableFee | null;
+      /**
+       * Whether the platform still wants a card on its own page before the
+       * table is booked: true or false only when its answer says so, null
+       * when it does not — and null never moves a row either way.
+       */
+      owesCard: boolean | null;
+      /** The platform says this reservation is cancelled — by the diner, the restaurant, or itself for an unpaid card. */
+      cancelled: boolean;
+      /** Where the card is added, when the platform gave the page. */
+      cardUrl?: string | null;
+      raw?: unknown;
+    }
   | TableRefusal;
 
 export interface OpeningsAsk { date: string; time: string; covers: number }

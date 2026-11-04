@@ -70,5 +70,15 @@ export const TABLE_COPY = {
   holdMissing: 'That hold has gone — nothing was booked. Pick the time again.',
   termsNotAccepted: "Accept the platform's terms and the restaurant's policy first — nothing was booked.",
   needsTime: 'Pick a time first. Reach only asks a restaurant for a time somebody chose.',
+  /** A table Reach asked for that OpenTable still holds until a card is added. Not booked, and not "somebody is booking it". */
+  pendingCard: (platform: string) =>
+    `${platform} is holding this table until a card is added on its page — it isn't booked yet. Add the card there, or cancel it; if ${platform} lets it go, Reach can book the dinner again.`,
+  /**
+   * Cancelling a table whose booking never answered. Reach may have booked
+   * it, so it never says it did not — and it cannot cancel what it holds no
+   * reservation number for.
+   */
+  outcomeUnknownCancel: (platform: string) =>
+    `We asked ${platform} for this table and never heard back, so we can't tell whether it was booked — and without ${platform}'s reservation number Reach can't cancel it. Look for ${platform}'s confirmation email under your name and cancel it from there, or ring the restaurant.`,
   needsGuest: 'We need your first and last name, email and phone number on your profile before a table can be booked under them.',
 } as const;

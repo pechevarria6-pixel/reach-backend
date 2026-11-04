@@ -354,10 +354,11 @@ export const openTableReservations: TableProvider = {
     const json = await bodyOf(res) as Record<string, unknown> | null;
     if (!res.ok) return otRefusal(res.status, json);
     const st = String(json?.status ?? '');
+    const owed = owesOf(json);
     return {
       ok: true, active: st === 'Pending' || st === 'Seated' || st === 'AssumedSeated',
       date: dayOf(json?.date_time), time: clockOf(json?.date_time), covers: Number(json?.party_size) || null,
-      fee: otServiceFee(json), raw: json,
+      fee: otServiceFee(json), owesCard: owed.owes, cardUrl: owed.url, cancelled: st.startsWith('Cancelled'), raw: json,
     };
   },
 
@@ -394,6 +395,23 @@ export const openTableReservations: TableProvider = {
  * card page, an action) is pending, never booked; a 2xx with no number is
  * an outcome nobody can know.
  */
+/**
+ * Whether OpenTable's answer says a card is still owed. Only what it says:
+ * an answer with neither the payment nor the required action in it is
+ * null, not "paid" — a reservation read without those fields is not proof
+ * the card was added.
+ */
+export function owesOf(json: Record<string, unknown> | null): { owes: boolean | null; url: string | null } {
+  const payment = json?.payment as { status?: string; payment_page_url?: string } | undefined | null;
+  const action = json?.post_booking_required_action;
+  const url = typeof payment?.payment_page_url === 'string' ? payment.payment_page_url : null;
+  const payOwes = payment && typeof payment.status === 'string' ? payment.status !== 'Completed' : null;
+  const actOwes = typeof action === 'string' ? action !== 'None' : null;
+  if (payOwes === true || actOwes === true) return { owes: true, url };
+  if (payOwes === false || actOwes === false) return { owes: false, url };
+  return { owes: null, url };
+}
+
 function settled(hold: TableHold, json: Record<string, unknown> | null, step: 'reserve' | 'modify', ref?: string): BookingItemResult {
   if (json === null) {
     // Modify answers with a body in OpenTable's docs; reserve always does.

@@ -38,6 +38,41 @@ export function reachBuys(row: { mode?: unknown; provider?: unknown }): boolean 
   return true;
 }
 
+// ─── …and what Reach booked itself, whatever it cost ─────────────────────
+// reachBuys is about money, and a table Reach books on Yelp or OpenTable
+// costs nothing — but it is still Reach's booking, with a live reservation
+// at the platform under somebody's name. The status PATCH and "I've got it"
+// used reachBuys as "Reach booked this one", so the day tables stopped
+// counting as money they also became settable by hand: "Not booked after
+// all" moved a live OpenTable table to pending, "Couldn't book" moved it to
+// failed and the table route booked a second one, "cancelled" marked it
+// cancelled without telling OpenTable (a no-show), and "I've got it" called
+// a table that still owed OpenTable a card confirmed. Two questions, two
+// functions.
+//
+// Only a live one: a table that lapsed or failed is the person's to book
+// again any way they like, so it goes back to being settable by hand.
+
+/** Whether Reach itself holds a live booking for this row at a platform — never settled by somebody saying so. */
+export function reachBooked(row: { mode?: unknown; provider?: unknown; status?: unknown }): boolean {
+  if (row.mode !== 'native') return false;
+  if (row.provider !== 'yelp' && row.provider !== 'opentable') return false;
+  return row.status !== 'failed' && row.status !== 'cancelled' && row.status !== 'quoted';
+}
+
+/**
+ * Why a member may not set how this booking went by hand, or null when they
+ * may. The status PATCH and the confirmation route both read this.
+ */
+export function settledByReach(row: { mode?: unknown; provider?: unknown; status?: unknown }): string | null {
+  if (reachBooked(row)) {
+    const p = row.provider === 'yelp' ? 'Yelp' : 'OpenTable';
+    return `Reach booked this table on ${p}, so it is changed or cancelled there through Reach, not marked here.`;
+  }
+  if (reachBuys(row)) return 'Reach books this one itself, so how it went comes from the booking, not from here.';
+  return null;
+}
+
 /**
  * The rows that count towards what a plan owes. The caller has already
  * filtered on NOT_CHARGED in the query; this takes out what Reach does not buy.
