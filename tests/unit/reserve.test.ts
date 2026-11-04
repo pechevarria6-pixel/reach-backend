@@ -657,6 +657,8 @@ function callStore(m: ReturnType<typeof memory>): CallStore {
     },
     async planMembers() { return ['u1', 'u2']; },
     async notify() { /* the call's own words; tested in reservation-call.test.ts */ },
+    async lineOf() { return null; },
+    async retime() { return false; },
   };
 }
 
@@ -1000,8 +1002,27 @@ test('a table that is booked, or may be, offers nothing more, and says the time 
   const theirs = decide(facts(), a, { status: 'redirected', confirmation_number: 'ABC123' });
   assert.equal(theirs.open, false);
   assert.match(theirs.what, /ABC123/);
+  // Where the confirmation came from: a number somebody typed in, said as that.
+  assert.equal(decide({ ...facts(), solo: true }, a, { status: 'redirected', confirmation_number: 'ABC123' }).title, 'You entered ABC123');
+  assert.equal(theirs.title, facts().solo ? 'You entered ABC123' : 'Someone in the group entered ABC123');
 
   assert.equal(decide(facts(), a, { status: 'awaiting_approval' }).open, true);
+});
+
+test('a confirmed table says how it is changed or cancelled, from where it was confirmed', () => {
+  const a = { instant: null, call: CLOSED };
+  const on = (platform: string) => decide(facts(), a, {
+    status: 'confirmed', provider_ref: 'R-4821',
+    response_payload: { reserve: { state: 'confirmed', path: 'instant', platform, ref: '4821', time: '19:30', partySize: 4 } },
+  }).manage;
+  assert.deepEqual(on('opentable'), { by: 'platform', platform: 'opentable', platformName: 'OpenTable', canChange: true });
+  const yelp = on('yelp');
+  assert.equal(yelp?.by === 'platform' && yelp.canChange, false, 'Yelp is cancel and book again');
+  const call = decide(facts(), a, { status: 'confirmed', provider_ref: 'reach-call:c1', response_payload: { reserve: { state: 'confirmed', path: 'call', ref: 'reach-call:c1', time: '19:30', partySize: 4 } } });
+  assert.equal(call.manage?.by, 'restaurant', 'confirmed on the call: theirs to change, by phone');
+  // A number somebody typed in, and an open table: nothing to manage from here.
+  assert.equal(decide(facts(), a, { status: 'redirected', confirmation_number: 'ABC123' }).manage, null);
+  assert.equal(decide(facts(), a, { status: 'awaiting_approval' }).manage, null);
 });
 
 test('a claim nobody answered is "booking now" for a minute, then in doubt — never "booking now" for good', async () => {

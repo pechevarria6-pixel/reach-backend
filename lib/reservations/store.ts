@@ -142,6 +142,31 @@ export function supabaseStore(db: SupabaseClient, send: Sender | null): Store {
       return (data ?? []).length > 0;
     },
 
+    async lineOf(bookingId) {
+      const { data: b, error } = await db.from('bookings').select('itinerary_item_id, plan_id').eq('id', bookingId).maybeSingle();
+      if (error) { console.error('[reservation calls] could not read the booking for its line', { bookingId, code: error.code }); return null; }
+      const row = b as { itinerary_item_id?: string | null; plan_id?: string | null } | null;
+      if (!row?.itinerary_item_id || !row.plan_id) return null;
+      const [line, plan] = await Promise.all([
+        db.from('itinerary_items').select('id, scheduled_time').eq('id', row.itinerary_item_id).maybeSingle(),
+        db.from('plans').select('start_date, end_date').eq('id', row.plan_id).maybeSingle(),
+      ]);
+      if (line.error || plan.error) {
+        console.error('[reservation calls] could not read the line or its plan', { bookingId, code: line.error?.code ?? plan.error?.code });
+        return null;
+      }
+      const l = line.data as { id: string; scheduled_time: string | null } | null;
+      const p = plan.data as { start_date: string | null; end_date: string | null } | null;
+      return l ? { id: l.id, scheduled_time: l.scheduled_time ?? null, startDate: p?.start_date ?? null, endDate: p?.end_date ?? null } : null;
+    },
+
+    async retime(itemId, from, to) {
+      const q = db.from('itinerary_items').update({ scheduled_time: to }).eq('id', itemId);
+      const { data, error } = await (from === null ? q.is('scheduled_time', null) : q.eq('scheduled_time', from)).select('id');
+      if (error) { console.error('[reservation calls] could not move the line', { itemId, code: error.code }); return false; }
+      return (data ?? []).length > 0;
+    },
+
     async planMembers(_planId, groupId) {
       if (!groupId) return [];
       const { data, error } = await db.from('group_members').select('user_id').eq('group_id', groupId);

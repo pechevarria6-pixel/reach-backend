@@ -54,11 +54,13 @@ function input(over: Partial<PlaceInput> = {}): PlaceInput {
 }
 
 /** The store, in memory, keeping the same limits the database keeps. */
-function memoryStore(opts: { migrated?: boolean; members?: string[] } = {}) {
+function memoryStore(opts: { migrated?: boolean; members?: string[]; line?: { id: string; scheduled_time: string | null; startDate: string | null; endDate: string | null } | null } = {}) {
   const calls: CallRow[] = [];
   const dnc = new Map<string, string>();
   const bookings = new Map<string, { status: string; detail?: string | null; provider_ref?: string | null }>();
   const notes: Array<{ to: string[]; title: string; body: string }> = [];
+  const line = opts.line ? { ...opts.line } : null;
+  const retimed: Array<{ itemId: string; from: string | null; to: string }> = [];
   let seq = 0;
   const migrated = opts.migrated !== false;
   const gone = { ok: false as const, why: 'not_migrated' as const };
@@ -98,8 +100,14 @@ function memoryStore(opts: { migrated?: boolean; members?: string[] } = {}) {
     },
     async planMembers() { return opts.members ?? ['u1', 'u2', 'u3']; },
     async notify(to, note) { notes.push({ to, title: note.title, body: note.body }); },
+    async lineOf() { return line ? { ...line } : null; },
+    async retime(itemId, from, to) {
+      if (!line || line.id !== itemId || line.scheduled_time !== from) return false;
+      line.scheduled_time = to; retimed.push({ itemId, from, to });
+      return true;
+    },
   };
-  return { store, calls, dnc, bookings, notes };
+  return { store, calls, dnc, bookings, notes, line, retimed };
 }
 
 function fakeProvider(answer: Awaited<ReturnType<Provider['place']>> = { ok: true, providerCallId: 'call_abc' }) {
@@ -420,8 +428,8 @@ test('the disclosure is checked in what the assistant actually said first', () =
 });
 
 // ── settling ────────────────────────────────────────────────────────────
-async function placedLive(env = LIVE_ENV, over: Partial<PlaceInput> = {}) {
-  const m = memoryStore();
+async function placedLive(env: Record<string, string> = LIVE_ENV, over: Partial<PlaceInput> = {}, opts: Parameters<typeof memoryStore>[0] = {}) {
+  const m = memoryStore(opts);
   m.bookings.set(booking().id, { status: 'awaiting_approval' });
   const r = await placeCall(input(over), deps(env, m.store));
   assert.equal(r.ok, true);
@@ -444,6 +452,41 @@ test('a confirmed live call confirms the booking, says so exactly, once', async 
   const again = await settleCall(ev, 'retell', m.store);
   assert.equal(again.ok === false && again.why, 'already_settled');
   assert.equal(m.notes.length, 1, 'a retried webhook tells nobody twice');
+});
+
+test('a time confirmed on a call moves the itinerary line, exactly as a platform booking does', async () => {
+  const YES = ended([OPEN, S('Yes, 7:30 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four is fine.', held_time: '19:30', held_party: 4 });
+  // The line had no clock: the call asked for 7:30 on Day 2, and staff said yes.
+  const line = { id: 'i1', scheduled_time: 'Day 2 · Dinner', startDate: '2026-11-05', endDate: '2026-11-08' };
+  const m = await placedLive(LIVE_ENV, {}, { line });
+  await settleCall(YES, 'retell', m.store);
+  assert.equal(m.line!.scheduled_time, 'Day 2 · Dinner · 7:30 PM', 'the plan says the time the restaurant now expects');
+
+  // Already at that night and time: nothing written.
+  const same = await placedLive(LIVE_ENV, {}, { line: { ...line, scheduled_time: 'Day 2 · Dinner · 7:30 PM' } });
+  await settleCall(YES, 'retell', same.store);
+  assert.equal(same.retimed.length, 0);
+
+  // Asked for 9:00 on the third night (an offered time taken): the line moves day and time.
+  const moved = await placedLive(LIVE_ENV, { chosen: { date: '2026-11-07', time: '21:00', partySize: 4 } }, { line: { ...line, scheduled_time: 'Day 2 · Dinner · 7:30 PM' } });
+  await settleCall(ended([OPEN, S('Yes, 9:00 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 9:00 for four is fine.', held_time: '21:00', held_party: 4 }), 'retell', moved.store);
+  assert.equal(moved.line!.scheduled_time, 'Day 3 · Dinner · 9:00 PM');
+
+  // Same time, another night: the night moves.
+  const night = await placedLive(LIVE_ENV, { chosen: { date: '2026-11-07', time: '19:30', partySize: 4 } }, { line: { ...line, scheduled_time: 'Day 2 · Dinner · 7:30 PM' } });
+  await settleCall(YES, 'retell', night.store);
+  assert.equal(night.line!.scheduled_time, 'Day 3 · Dinner · 7:30 PM');
+
+  // Not booked: the line is the plan's, and stays as it was.
+  const no = await placedLive(LIVE_ENV, {}, { line });
+  await settleCall(ended([OPEN, S("We don't have 7:30, but we could do 9:00.")], { outcome: 'alternative_offered', offered_time: '9:00' }), 'retell', no.store);
+  assert.equal(no.line!.scheduled_time, 'Day 2 · Dinner');
+  assert.equal(no.retimed.length, 0);
+
+  // A test call books nothing, so it moves nothing.
+  const t = await placedLive(TEST_ENV, {}, { line });
+  await settleCall(YES, 'retell', t.store);
+  assert.equal(t.retimed.length, 0);
 });
 
 test('two deliveries of the same event at the same moment settle it once', async () => {

@@ -63,6 +63,12 @@ export const ItineraryItemRow = z.object({
   venue_website: z.string().nullish(),
   venue_name: z.string().nullish(),
   venue_phone: z.string().nullish(),
+  /**
+   * The discovery_venues row the line cites, by id
+   * (sql/line-venue-ref-2026-11-04.sql). A table is booked only through
+   * this row — never one found by the line's name near the trip.
+   */
+  venue_ref: z.string().nullish(),
   /** What is on there, in the venue's own words, read off their page. */
   venue_note: z.string().nullish(),
   venue_note_credit: z.string().nullish(),
@@ -108,6 +114,7 @@ export interface ItineraryItem {
   venue_website: string | null;
   venue_name: string | null;
   venue_phone: string | null;
+  venue_ref: string | null;
   venue_note: string | null;
   venue_note_credit: string | null;
   venue_image_url: string | null;
@@ -123,6 +130,10 @@ export interface ItineraryItem {
  * optimisation and it silently removes a fact from every screen downstream.
  * One list, next to the shape it fills.
  */
+// venue_ref is read by `*` (the plan read, reserve's line read) and is not
+// listed here: sql/line-venue-ref-2026-11-04.sql may not have run, and a
+// named column that does not exist fails the whole read. Its round trip is
+// held by its own test in tests/unit/itinerary-contract.test.ts.
 export const ITEM_COLUMNS = [
   'id', 'scheduled_time', 'title', 'subtitle', 'type', 'confirmation_number',
   'is_confirmed', 'cost_cents', 'booking_mode', 'payment_note', 'because',
@@ -147,7 +158,7 @@ export const ITEM_COLUMNS = [
  */
 export const ABOUT_THE_PLACE = [
   'title', 'subtitle', 'type', 'booking_mode', 'payment_note', 'because',
-  'venue_website', 'venue_name', 'venue_phone', 'venue_note', 'venue_note_credit',
+  'venue_website', 'venue_name', 'venue_phone', 'venue_ref', 'venue_note', 'venue_note_credit',
   'venue_image_url', 'venue_image_credit', 'venue_image_of', 'venue_image_link',
   'confirmation_number', 'is_confirmed',
   'verified_at', 'verified_status', 'verified_source',
@@ -181,6 +192,7 @@ export function itemFromRow(row: Record<string, unknown>, plan: PlanDates = {}):
     venue_website: r.venue_website ?? null,
     venue_name: r.venue_name ?? null,
     venue_phone: r.venue_phone ?? null,
+    venue_ref: r.venue_ref ?? null,
     venue_note: r.venue_note ?? null,
     venue_note_credit: r.venue_note_credit ?? null,
     // Never the picture without its credit.
@@ -295,6 +307,8 @@ export function rowFromItem(item: Record<string, unknown>, sortOrder: number): R
     venue_website: item.venue_website ?? null,
     venue_name: item.venue_name ?? null,
     venue_phone: item.venue_phone ?? null,
+    // Only an id: anything else would fail the whole save on the uuid column.
+    venue_ref: typeof item.venue_ref === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.venue_ref) ? item.venue_ref : null,
     venue_note: item.venue_note ?? null,
     ...photoPair(item.venue_image_url, item.venue_image_credit, item.venue_image_of, item.venue_image_link),
     sort_order: sortOrder,

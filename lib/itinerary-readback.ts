@@ -59,6 +59,8 @@ export function clearPhotos(days: GenDay[]): void {
   for (const day of days) {
     for (const slot of slotsOf(day)) {
       if (slot) { slot.place_photo = null; slot.place_photo_credit = null; slot.place_photo_of = null; slot.place_photo_link = null; }
+      // Nor the venue row's id: attached only from the row the slot cites.
+      if (slot) slot.place_venue = null;
     }
   }
 }
@@ -282,6 +284,9 @@ export function readBackDays(input: GenDay[], env: ReadBackEnv): GenDay[] {
       // on whether the sentence happened to include it. If we do not
       // tell somebody there is a quiz on Wednesday, they do not know.
       if (cited?.whatsOn?.length) slot.whats_on = cited.whatsOn.slice(0, 2).join(' · ');
+      // The row itself, by id: the one thing a table may be booked through
+      // (lib/reservations/table-venue.ts). Only from the row the slot cites.
+      slot.place_venue = cited && !slot.ticket_url ? cited.venueId ?? null : null;
 
       const honest = bookingFor(slot.booking, cited, !!slot.ticket_url);
       // A table to book gets the way to book it: the venue's own booking
@@ -347,6 +352,7 @@ export function readBackDays(input: GenDay[], env: ReadBackEnv): GenDay[] {
         }
         // A reference to a place we just removed is not a reference.
         slot.place_ref = null;
+        slot.place_venue = null;
       }
       // Text that came back broken — "…near the pub.morplinsert1" —
       // is cut back to its last whole sentence, or dropped.
@@ -515,6 +521,7 @@ export function oneSlotReadBack(input: {
   // them survives.
   fresh.ticket_url = null; fresh.place_url = null; fresh.whats_on = null; fresh.place_phone = null; fresh.venue = null; fresh.kind = null;
   fresh.place_photo = null; fresh.place_photo_credit = null; fresh.place_photo_of = null; fresh.place_photo_link = null;
+  fresh.place_venue = null;
   const before = clone(input.day);
   const withNew = clone(input.day);
   put(withNew, fresh);

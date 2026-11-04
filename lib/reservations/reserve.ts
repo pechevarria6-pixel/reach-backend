@@ -179,7 +179,22 @@ export interface ReservationView {
   /** The title and body to show for the state, when there is one. */
   title: string | null;
   body: string | null;
+  /**
+   * How a confirmed table is changed or cancelled, from where it was
+   * confirmed. A table Reach booked on a platform is cancelled there through
+   * POST /api/bookings/[id]/cancel, and moved with { change: true } only
+   * where the platform can move one (OpenTable; Yelp is cancel and book
+   * again, said plainly). A table confirmed on a call is the restaurant's to
+   * change: their number. Null for anything else — a number somebody typed
+   * in is theirs, and an open table has nothing to change.
+   */
+  manage: null
+    | { by: 'platform'; platform: string; platformName: string; canChange: boolean }
+    | { by: 'restaurant'; phone: string | null };
 }
+
+/** Which platforms move a booking in place. Yelp cannot: TABLE_COPY.yelpNoChange. */
+const MOVES_IN_PLACE: Record<string, boolean> = { opentable: true, yelp: false };
 
 const platformName = (p: string | null | undefined) =>
   (p && p !== 'none' && (PLATFORM_NAME as Record<string, string>)[p]) || null;
@@ -233,6 +248,7 @@ export function decide(f: TableFacts, a: Availability, row?: DecideRow | null, n
       what: settled.title, needs: [], open: false, alternatives: settled.alternatives ?? [], terms: null, ownAccount: null,
       status: row?.status ?? null, state: settled.state, offeredTimes: [],
       title: settled.title, body: settled.body,
+      manage: manageOf(f, row ?? null, mark),
     };
   }
 
@@ -286,8 +302,18 @@ export function decide(f: TableFacts, a: Availability, row?: DecideRow | null, n
     // Beside Reach's own booking; when the hand-off IS the way, it is the first alternative instead.
     ownAccount: path === 'handoff' ? null : ownAccount,
     status: row?.status ?? null, state: mark?.state ?? null, offeredTimes: mark?.offeredTimes ?? [],
-    title: shown?.title ?? null, body: shown?.body ?? null,
+    title: shown?.title ?? null, body: shown?.body ?? null, manage: null,
   };
+}
+
+/** How a confirmed table is changed or cancelled (ReservationView.manage). */
+function manageOf(f: TableFacts, row: DecideRow | null, mark: ReserveMark | null): ReservationView['manage'] {
+  if (row?.status !== 'confirmed' || mark?.state !== 'confirmed') return null;
+  if (mark.path === 'call') return { by: 'restaurant', phone: f.phone ?? null };
+  const platform = mark.platform ?? null;
+  const name = platformName(platform);
+  if (mark.path !== 'instant' || !platform || !name || !row.provider_ref) return null;
+  return { by: 'platform', platform, platformName: name, canChange: MOVES_IN_PLACE[platform] === true };
 }
 
 /** The row as decide reads it. */
@@ -337,7 +363,15 @@ function settledWords(f: TableFacts, row: DecideRow | null, mark: ReserveMark | 
     return { ...stateWords(f, mark)!, state: 'card_owed', alternatives: cardOptions(f, row, mark.platform) };
   }
   const own = String(row.confirmation_number ?? '').trim();
-  if (own) return { title: `You booked ${f.restaurant} yourself · ref ${own}`, body: `It's on ${whose(f.solo)} plan.`, state: mark?.state ?? null };
+  // Where the confirmation came from, said as that: a number a person typed
+  // in, not one a platform or a call gave Reach. On a group's plan the
+  // reader may not be the one who typed it.
+  if (own) {
+    return {
+      title: f.solo ? `You entered ${own}` : `Someone in the group entered ${own}`,
+      body: `${f.restaurant} was booked outside Reach. It's on ${whose(f.solo)} plan.`, state: mark?.state ?? null,
+    };
+  }
   return null;
 }
 

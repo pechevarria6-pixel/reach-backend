@@ -38,6 +38,7 @@ import type { Provider, CallEnded } from './providers.ts';
 import { dayWhere } from '../calendar.ts';
 import type { ReserveMark } from './reserve-state.ts';
 import { midClaim } from '../booking/claim.ts';
+import { lineAt, lineWhen } from '../line-when.ts';
 
 export { gate, settle, callWording };
 export type { Outcome, Settled, Wording, CallFacts };
@@ -148,6 +149,15 @@ export interface Store {
   moveBooking(bookingId: string, from: string[], to: { status: string; detail?: string | null; provider_ref?: string | null; mark?: ReserveMark }): Promise<boolean>;
   planMembers(planId: string, groupId: string | null): Promise<string[]>;
   notify(userIds: string[], note: { kind: string; title: string; body: string; url: string | null; planId: string }): Promise<void>;
+  /**
+   * The itinerary line a booking was made from, as it stands, with the
+   * plan's dates — so a table confirmed on a call moves its line exactly as
+   * one booked on a platform does (reserve.ts moveLine). Null when the
+   * booking has no line any more.
+   */
+  lineOf(bookingId: string): Promise<{ id: string; scheduled_time: string | null; startDate: string | null; endDate: string | null } | null>;
+  /** Write the line's time, only while it still says `from`; false when it did not. */
+  retime(itemId: string, from: string | null, to: string): Promise<boolean>;
 }
 
 export interface BookingRow {
@@ -346,6 +356,27 @@ export async function placeCall(input: PlaceInput, deps: PlaceDeps): Promise<Pla
   return { ok: true, call: { ...row, status: 'calling', provider_call_id: placed.providerCallId }, wording };
 }
 
+/**
+ * Move a booking's line to the night and time a call confirmed. Nothing to
+ * do when the line already says them; logged loudly when it could not be
+ * moved, because then the plan says 7:30 while the restaurant expects 9.
+ */
+export async function moveLineTo(store: Store, bookingId: string, date: string, time: string): Promise<boolean> {
+  const line = await store.lineOf(bookingId);
+  if (!line) return false;
+  const plan = { startDate: line.startDate, endDate: line.endDate };
+  const now = lineWhen(line.scheduled_time, plan);
+  if (now.clock === time && now.date === date) return false;
+  const to = lineAt(line.scheduled_time, date, time, plan);
+  const moved = to ? await store.retime(line.id, line.scheduled_time, to) : false;
+  if (!moved) {
+    console.error('[reservation call] CONFIRMED ON THE CALL AT ANOTHER TIME AND THE LINE STILL SAYS THE OLD ONE', {
+      booking: bookingId, line: line.id, was: line.scheduled_time, booked: `${date} ${time}`, wrote: to,
+    });
+  }
+  return moved;
+}
+
 async function tell(store: Store, planId: string, req: StoredRequest, requester: string, mode: 'test' | 'live', w: Wording) {
   // A test call speaks only to whoever ran it. A live one to the person on a
   // solo plan, and to everybody on a group's — it is the group's dinner.
@@ -412,6 +443,10 @@ export async function settleCall(event: CallEnded, providerName: string, store: 
       : { status: req.previousStatus, detail: req.restaurant, mark };
     const moved = await store.moveBooking(row.booking_id, ['pending'], to);
     if (!moved) console.error('[reservation call] booking was not pending when the call settled; left as it is', { booking: row.booking_id, outcome: settled.outcome });
+    // Confirmed at the night and time asked — which may be a time somebody
+    // picked, or one the restaurant offered on an earlier call — so the line
+    // says what the restaurant now expects, as the instant path's does.
+    if (moved && settled.outcome === 'confirmed') await moveLineTo(store, row.booking_id, req.date, req.time);
   }
   await tell(store, row.plan_id, req, row.requested_by, row.mode, wording);
   return { ok: true, settled, wording, row };

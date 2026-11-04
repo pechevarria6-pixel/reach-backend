@@ -30,7 +30,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { decide, type TableRow } from '@/lib/reservations/reserve';
-import { TABLE_ROW, placeOf, reserveDeps, tableFacts, type Line } from '@/lib/reservations/reserve-server';
+import { LINE_COLUMNS, TABLE_ROW, placeOf, reserveDeps, tableFacts, type Line } from '@/lib/reservations/reserve-server';
 
 export async function GET(_req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -38,7 +38,7 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
   const plan = ctx.plan as Record<string, any>;
 
   const [lines, rows] = await Promise.all([
-    ctx.db.from('itinerary_items').select('id, type, title, scheduled_time, venue_name, venue_phone, sort_order')
+    ctx.db.from('itinerary_items').select(LINE_COLUMNS)
       .eq('plan_id', params.planId).eq('type', 'restaurant').order('sort_order', { ascending: true }),
     ctx.db.from('bookings').select(TABLE_ROW).eq('plan_id', params.planId).eq('vertical', 'restaurant')
       .not('status', 'in', '("cancelled")').order('created_at', { ascending: false }),

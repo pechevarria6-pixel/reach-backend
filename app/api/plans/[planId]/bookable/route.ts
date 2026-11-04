@@ -28,8 +28,7 @@ import { findProduct } from '@/lib/booking/providers/viator-search';
 import { lineWhen } from '@/lib/line-when';
 import { asRequest, BOOKABLE, type BookableLine as Item } from '@/lib/booking/line-request';
 import { failuresByLine, lockedByPayment, TRY_NEARBY_DATES } from '@/lib/booking/failures';
-import { heldVenueNear } from '@/lib/discovery/held-venue';
-import { locatePlan } from '@/lib/discovery/geocode';
+import { heldVenueByRef } from '@/lib/discovery/held-venue';
 import { byDepartureAirport, departureWhy } from '@/lib/airports';
 import { flightSearchUrl } from '@/lib/booking/duffel-map';
 import { track } from '@/lib/track';
@@ -74,7 +73,10 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     // sentence somebody reads — "Dinner at the bar counter at Vinny's Italian
     // Grill in the Warehouse District" — and matching a venue list against
     // that found nothing, ever.
-    .select('id, type, title, subtitle, scheduled_time, cost_cents, booking_mode, venue_name, venue_phone')
+    // `*`: venue_ref — the venue row the line cites — arrives in
+    // sql/line-venue-ref-2026-11-04.sql, and a named column would fail the
+    // whole read before it.
+    .select('*')
     .eq('plan_id', params.planId)
     .order('sort_order');
   if (itemsError) {
@@ -316,11 +318,6 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     }),
   })).filter(s => s.url);
 
-  // Where the trip is on the map, for finding its restaurants in our venue
-  // table. Asked once, and only when there is a restaurant line to look up.
-  let placed: Promise<{ lat: number; lng: number; countryCode?: string | null } | null> | null = null;
-  const tripPoint = () => (placed ??= locatePlan(plan).catch(() => null));
-
   for (const item of candidates as Item[]) {
     // An activity has to become a real product before it can be quoted. The
     // itinerary says "brewery tour"; Viator sells product 5638853P1. When
@@ -346,35 +343,20 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     // decides how fast the screen is.
     let table: { platform?: string; url?: string | null; phone?: string | null } | null = null;
     if (item.type === 'restaurant') {
-      // The venue's own name, as a source spells it, not the sentence the
-      // itinerary wrote around it. This looked up `item.title` — the whole
-      // line — against a list of venue names, so it matched nothing on any
-      // real itinerary and every restaurant fell through with no platform
-      // and no phone number, which is what "provider: none" meant.
-      //
-      // Near this trip, still open, and that exact name. By name alone it
-      // was the first row anywhere in the world with a matching name — and
-      // the weekly map load holds every "The Crown" in thirty-odd regions —
-      // so the number offered could ring a restaurant in another state.
-      // See lib/discovery/held-venue.ts. A stay line is priced by the hotel
-      // provider (asRequest) and never reads this table.
-      const venueName = (item.venue_name || '').trim();
-      const at = venueName ? await tripPoint() : null;
-      if (venueName && !at) console.error('[bookable] could not place this trip, so no venue details are offered', { planId: params.planId });
-      // And in the trip's country: El Paso's restaurants, not the Juárez
-      // branch a mile across the river. The geocoder's code first, as the
-      // menu uses it; the stored country only when it is a code.
-      const tripCountry = at?.countryCode || (/^[A-Z]{2}$/.test(countryCode) ? countryCode : null);
-      const { venue, error: venueError } = await heldVenueNear(ctx.db, venueName, at, { country: tripCountry });
+      // The platform, its booking link and the number come from the exact
+      // venue row the line cites, never from a row found by its name near
+      // the trip: a chain's other branch is near the trip and has the same
+      // name, and its OpenTable id would book the wrong address. A line that
+      // cites no row keeps its own number, and no platform is guessed.
+      // (lib/reservations/table-venue.ts; reserve reads the same row again.)
+      const ref = (item as Item & { venue_ref?: string | null }).venue_ref ?? null;
+      const { venue, error: venueError } = await heldVenueByRef(ctx.db, ref);
       // A column that does not exist yet means the migration is pending, and
       // every restaurant falls to the phone lane — which is the honest
-      // degraded state, not an error (heldVenueNear reports those as none).
+      // degraded state, not an error (heldVenueByRef reports those as none).
       if (venueError) console.error('[bookable] could not read the venue', { code: venueError.code });
       // A number somebody can ring is a real answer, and it is the one we
-      // have most often: the map records phone numbers for venues nobody has
-      // worked out a booking platform for. Kept even when the venue is not in
-      // our own list at all, so the screen can offer a call rather than
-      // nothing.
+      // have most often. The line's own number, when no row is cited.
       const phone = venue?.phone ?? item.venue_phone ?? null;
       if (venue || phone) {
         table = {

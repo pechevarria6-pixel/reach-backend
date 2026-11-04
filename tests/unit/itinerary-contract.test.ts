@@ -46,6 +46,18 @@ test('every fact survives the round trip', () => {
   }
 });
 
+test('the venue row a line cites survives the round trip, and only an id is written', () => {
+  // A table is booked only through this row. Dropped on the way to the
+  // screen, the next save of the itinerary would wipe it, and the dinner
+  // would quietly stop being bookable.
+  const ref = '3f2b1c9e-8d7a-4c6b-9e5f-0a1b2c3d4e5f';
+  const item = itemFromRow({ ...ROW, venue_ref: ref });
+  assert.equal(item.venue_ref, ref);
+  assert.equal(rowFromItem(item as unknown as Record<string, unknown>, 0).venue_ref, ref);
+  assert.equal(rowFromItem({ title: 'x', venue_ref: "Luigi's" }, 0).venue_ref, null, 'a name is not a ref');
+  assert.equal(itemFromRow(ROW).venue_ref, null);
+});
+
 test('the ticket url specifically — the one that shipped broken', () => {
   const item = itemFromRow(ROW);
   assert.equal(item.venue_website, ROW.venue_website);

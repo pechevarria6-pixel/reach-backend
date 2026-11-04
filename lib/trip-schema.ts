@@ -139,6 +139,8 @@ export const SlotSchema = z.object({
   whats_on: z.string().nullish(),
   /** The place's number, dialable. Attached by the route from the row, never by the model. */
   place_phone: z.string().nullish(),
+  /** The id of the venue row the slot cites. Attached by the route, never by the model. */
+  place_venue: z.string().nullish(),
   /**
    * A photo of the place or act this line names, and whose it is. Attached
    * by the route from the row it cited or the listing that sells the

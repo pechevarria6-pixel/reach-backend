@@ -117,3 +117,56 @@ export async function heldVenueNear(
     error: null,
   };
 }
+
+// ─── The venue a line cites, by the row itself ──────────────────────────
+// For booking a table, near the trip and the same name is still not enough:
+// a chain's other branch is near the trip and has the same name, and its
+// OpenTable or Yelp id would book a table at the wrong address. So the
+// platform id, the booking link and the number Reach acts on come only from
+// the exact row the line cites (itinerary_items.venue_ref, the
+// discovery_venues id the generator's menu named) — never from a name.
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A line's venue_ref, if it is one. */
+export function venueRefOf(ref: unknown): string | null {
+  const s = typeof ref === 'string' ? ref.trim() : '';
+  return UUID.test(s) ? s.toLowerCase() : null;
+}
+
+/**
+ * The live venue row with exactly this id, or null. No ref, no lookup:
+ * a line that cites no row has no platform id to book with.
+ */
+export async function heldVenueByRef(
+  db: SupabaseClient,
+  ref: unknown,
+): Promise<{ venue: (HeldVenue & { id: string; name: string }) | null; error: ReadError }> {
+  const id = venueRefOf(ref);
+  if (!id) return { venue: null, error: null };
+  const read = (migrated: boolean) => {
+    let q = db.from('discovery_venues')
+      .select('id, name, lng, reservation_platform, reservation_url, phone, opening_hours')
+      .eq('id', id);
+    if (migrated) q = q.is('gone_at', null);
+    return q.maybeSingle() as unknown as Promise<{ data: (Row & { id: string }) | null; error: ReadError }>;
+  };
+  let { data, error } = await read(true);
+  if (error && (error.code === '42703' || /gone_at/.test(error.message || ''))) ({ data, error } = await read(false));
+  if (error) {
+    const pending = /reservation_platform|reservation_url|phone|opening_hours|schema cache/i.test(error.message || '');
+    return { venue: null, error: pending ? null : error };
+  }
+  if (!data) return { venue: null, error: null };
+  return {
+    venue: {
+      id: String(data.id), name: String(data.name ?? ''),
+      reservation_platform: data.reservation_platform ?? null,
+      reservation_url: data.reservation_url ?? null,
+      phone: data.phone ?? null,
+      opening_hours: data.opening_hours ?? null,
+      lng: data.lng != null && Number.isFinite(Number(data.lng)) ? Number(data.lng) : null,
+    },
+    error: null,
+  };
+}

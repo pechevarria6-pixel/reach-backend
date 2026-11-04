@@ -14,7 +14,7 @@ import { lockedByPayment } from '../../lib/booking/failures.ts';
 import { offerTotal, liteApiHotels } from '../../lib/booking/providers/hotels.liteapi.ts';
 import { duffelFlights } from '../../lib/booking/providers/flights.duffel.ts';
 import { overMax, commitFetch, isOutcomeUnknown, OutcomeUnknown } from '../../lib/booking/types.ts';
-import { approveOutcome } from '../../lib/booking/approve-outcome.ts';
+import { approveOutcome, nextStepFor } from '../../lib/booking/approve-outcome.ts';
 import { airlineSite } from '../../lib/booking/duffel-map.ts';
 
 const read = (f: string) => readFileSync(f, 'utf8');
@@ -378,6 +378,14 @@ test('approval does not mark an unknown outcome failed, and PATCH cannot unstick
 
 test('each approval answer goes to its own screen', () => {
   assert.equal(approveOutcome(200, {}).kind, 'booked');
+  // A table's 200 is a booking only when it says so.
+  assert.equal(approveOutcome(200, { outcome: 'confirmed' }).kind, 'booked');
+  for (const outcome of ['card_owed', 'calling', 'handed_off']) {
+    const o = approveOutcome(200, { outcome, title: 'Not booked yet — OpenTable needs a card' });
+    assert.equal(o.kind, 'tableOpen', `${outcome} is not booked`);
+    assert.equal(o.message, 'Not booked yet — OpenTable needs a card');
+    assert.equal(nextStepFor(o, 'restaurant'), 'answer');
+  }
   assert.equal(approveOutcome(402, { code: 'not_funded' }).kind, 'notFunded');
   assert.equal(approveOutcome(409, { code: 'price_changed' }).kind, 'priceUp');
   assert.equal(approveOutcome(409, { code: 'party_changed' }).kind, 'reprice');

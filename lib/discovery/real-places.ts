@@ -39,6 +39,12 @@ const LODGING_KIND = /\b(hotel|guest ?house|hostel|motel|apartment)s?\b/i;
 export interface RealPlace {
   /** What the model cites. Short on purpose — it is typed back to us. */
   ref: string;
+  /**
+   * The discovery_venues row this is, by id. Carried onto the line that
+   * cites it (itinerary_items.venue_ref), because a table is booked only
+   * through the exact row the line names — never a row found by name.
+   */
+  venueId?: string | null;
   name: string;
   /** The food somebody asked for that this place serves, when it was pinned for that. */
   forFood?: string;
@@ -525,7 +531,7 @@ export async function placesFor(
   }
 
   const asPlace = (r: typeof rows[number], ref: string, forFood?: string): RealPlace => ({
-    ref, name: r.name, kind: r.kind, interest: r.interest, url: r.url, city: r.city, source: 'osm',
+    ref, venueId: r.id ?? null, name: r.name, kind: r.kind, interest: r.interest, url: r.url, city: r.city, source: 'osm',
     street: r.street, hours: r.hours,
     lat: r.lat, lng: r.lng, miles: r.miles,
     reservation: r.reservation, phone: r.phone, reserveUrl: r.reserveUrl,

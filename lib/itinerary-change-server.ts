@@ -141,7 +141,9 @@ export async function menuFor(db: SupabaseClient, plan: PlanRow): Promise<RealPl
 
 /** The verifier's columns arrived in a migration; without them a swap still lands. */
 const VERIFIER = ['verified_at', 'verified_status', 'verified_source', 'subtitle_unverified',
-  'subtitle_claims', 'title_claims', 'payment_note_unverified'];
+  'subtitle_claims', 'title_claims', 'payment_note_unverified',
+  // sql/line-venue-ref-2026-11-04.sql: without it the line simply cites no row.
+  'venue_ref'];
 const missingColumn = (detail: string) => /could not find the .* column|column .* does not exist/i.test(detail);
 
 export type SwapReason = 'organiser' | 'booker' | 'solo' | 'suggestion';

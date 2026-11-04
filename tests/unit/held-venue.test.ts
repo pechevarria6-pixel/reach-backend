@@ -140,10 +140,13 @@ test('a Frankfurt (Oder) restaurant filed under Poland\'s file is still Frankfur
   assert.equal((await heldVenueNear(fakeDb([slubice], { noCountries: true }), 'Ratskeller', FRANKFURT, { country: 'de' })).venue?.phone, '+48957582000');
 });
 
-test('the booking screen hands the lookup the trip\'s country', () => {
-  const route = readFileSync('app/api/plans/[planId]/bookable/route.ts', 'utf8');
-  const calls = route.match(/heldVenueNear\([^;]*\)/g) ?? [];
-  assert.ok(calls.length > 0, 'the route still looks venues up');
-  for (const call of calls) assert.match(call, /country:/, `no country passed: ${call}`);
-  assert.match(route, /at\?\.countryCode/, 'the geocoder\'s code, as the menu uses it');
+test('a table\'s venue is never found by name: the booking routes read the row the line cites', () => {
+  // A chain's other branch is near the trip and has the same name; its
+  // OpenTable id would book the wrong address. bookable and every reserve
+  // route (through reserve-server) read the venue by its id and nothing else.
+  for (const f of ['app/api/plans/[planId]/bookable/route.ts', 'lib/reservations/reserve-server.ts']) {
+    const src = readFileSync(f, 'utf8').split('\n').filter(l => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+    assert.doesNotMatch(src, /heldVenueNear\(/, `${f} finds a venue by name`);
+    assert.match(src, /heldVenueByRef\(/, `${f} reads the cited row`);
+  }
 });

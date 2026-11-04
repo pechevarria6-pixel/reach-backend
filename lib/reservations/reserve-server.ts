@@ -5,12 +5,13 @@
 // the dependencies wired to Supabase, the registry and the calling gate.
 // Read once here so the three cannot disagree about a table.
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { heldVenueNear } from '@/lib/discovery/held-venue';
+import { heldVenueByRef } from '@/lib/discovery/held-venue';
 import { locatePlan } from '@/lib/discovery/geocode';
 import { pushSender } from '@/lib/push';
 import { tableProviderFor, tableProviderNamed } from '@/lib/booking/registry';
 import { report } from '@/lib/report';
-import { reservationUrl, usableStoredUrl, usableParty, type Platform } from '@/lib/booking/reservations';
+import { usableParty } from '@/lib/booking/reservations';
+import { tableVenueFacts } from '@/lib/reservations/table-venue';
 import { lineWhen } from '@/lib/line-when';
 import { twilioLookup } from '@/lib/reservations/policy';
 import { providerFor } from '@/lib/reservations/providers';
@@ -22,10 +23,15 @@ import type { PlaceInput } from '@/lib/reservations/call';
 /** Every column reserve reads. `*` so confirmation_number arrives once its migration has run. */
 export const TABLE_ROW = '*';
 
-export type Line = { id: string; type: string; title: string | null; scheduled_time: string | null; venue_name?: string | null; venue_phone?: string | null };
+export type Line = {
+  id: string; type: string; title: string | null; scheduled_time: string | null;
+  venue_name?: string | null; venue_phone?: string | null; venue_website?: string | null;
+  /** The discovery_venues row the line cites (sql/line-venue-ref-2026-11-04.sql); absent before that migration. */
+  venue_ref?: string | null;
+};
+/** `*`, so venue_ref arrives once its migration has run and nothing breaks before. */
+export const LINE_COLUMNS = '*';
 type Plan = Record<string, any>;
-
-const PLATFORMS = new Set(['resy', 'opentable', 'tock', 'sevenrooms', 'yelp', 'thefork']);
 
 /** Where the trip is, once per request, for finding the venue near it. */
 export async function placeOf(plan: Plan): Promise<{ at: { lat: number; lng: number; countryCode: string | null } | null; country: string | null }> {
@@ -40,35 +46,37 @@ export async function placeOf(plan: Plan): Promise<{ at: { lat: number; lng: num
 /** The facts for one table, and the venue as the calling assistant needs it. */
 export async function tableFacts(
   db: SupabaseClient, plan: Plan, row: TableRow | null, line: Line | null,
-  where: Awaited<ReturnType<typeof placeOf>>,
+  // Where the trip is. No longer used to find the venue — a name near the
+  // trip is how a chain's other branch got in — and kept so the callers'
+  // shape does not move.
+  _where: Awaited<ReturnType<typeof placeOf>>,
 ): Promise<{ facts: TableFacts; venue: PlaceInput['venue'] }> {
   const payload = (row?.request_payload ?? {}) as { party?: unknown; restaurant?: Record<string, unknown> };
-  const r = (payload.restaurant ?? {}) as { name?: string; city?: string; date?: string; time?: string | null; partySize?: number; platform?: string; externalUrl?: string; phone?: string | null };
+  const r = (payload.restaurant ?? {}) as { name?: string; city?: string; date?: string; time?: string | null; partySize?: number; phone?: string | null };
   const name = String(r.name || line?.venue_name || line?.title || '').trim() || 'The restaurant';
-  const { venue, error } = await heldVenueNear(db, name, where.at, { country: where.country });
-  if (error) console.error('[reserve] could not read the venue', { name, code: error.code });
+  // The exact row the line cites — never a row found by its name near the
+  // trip, which a chain's other branch also is (lib/reservations/table-venue.ts).
+  const { venue, error } = await heldVenueByRef(db, line?.venue_ref);
+  if (error) console.error('[reserve] could not read the venue', { ref: line?.venue_ref ?? null, code: error.code });
 
   // The line's own night, worked out from the plan's dates as they are now:
   // a quote stored before the dates moved carries the old night.
   const when = line ? lineWhen(line.scheduled_time, { startDate: plan.start_date, endDate: plan.end_date }) : null;
   const date = when ? when.date : (/^\d{4}-\d{2}-\d{2}$/.test(String(r.date ?? '')) ? String(r.date) : null);
   const time = when ? when.clock : (r.time ?? null);
-  const stated = String(r.platform ?? '');
-  const held = String(venue?.reservation_platform ?? '');
-  const platform = (PLATFORMS.has(stated) ? stated : PLATFORMS.has(held) ? held : 'none') as Platform;
   const partySize = usableParty(Number(payload.party ?? r.partySize));
-  const known = venue?.reservation_url ?? r.externalUrl ?? null;
-  const reserveUrl = reservationUrl(platform, { name, city: r.city ?? null, date, time, partySize, knownUrl: known })
-    ?? usableStoredUrl('none', known) ?? row?.redirect_url ?? null;
+  const v = tableVenueFacts({ venue, line, stored: r, restaurant: name, city: r.city ?? null, date, time, partySize });
+  const platform = v.platform;
+  const reserveUrl = v.reserveUrl;
 
   return {
     facts: {
       bookingId: row?.id ?? null, itemId: line?.id ?? (row as { itinerary_item_id?: string | null } | null)?.itinerary_item_id ?? null,
       restaurant: name, city: r.city ?? null, platform, date, time, partySize,
-      phone: venue?.phone ?? r.phone ?? line?.venue_phone ?? null,
+      phone: v.phone,
       reserveUrl, solo: plan.solo_mode === true,
-      // Only links we hold: the line's own, the row's hand-off, the venue's.
-      urls: [r.externalUrl ?? null, row?.mode === 'redirect' ? row.redirect_url ?? null : null, venue?.reservation_url ?? null],
+      // Only the cited row's link: the one place a platform id may come from.
+      urls: v.urls,
     },
     venue: venue ? { name, phone: venue.phone, opening_hours: venue.opening_hours ?? null, lng: venue.lng ?? null, reserveUrl } : null,
   };
@@ -116,7 +124,7 @@ export function planOf(plan: Plan) {
 export async function lineOf(db: SupabaseClient, itemId: string | null | undefined): Promise<Line | null> {
   if (!itemId) return null;
   const { data, error } = await db.from('itinerary_items')
-    .select('id, type, title, scheduled_time, venue_name, venue_phone').eq('id', itemId).maybeSingle();
+    .select(LINE_COLUMNS).eq('id', itemId).maybeSingle();
   if (error) console.error('[reserve] could not read the line', { itemId, code: error.code });
   return (data as Line | null) ?? null;
 }

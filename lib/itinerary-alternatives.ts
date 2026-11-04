@@ -420,6 +420,8 @@ export function swappedLine(
     venue_name: place.name,
     venue_website: site,
     venue_phone: place.phone ?? null,
+    // The new row itself: a table on this line is booked through it and nothing else.
+    venue_ref: place.venueId ?? null,
     venue_note: place.whatsOn?.length ? place.whatsOn.slice(0, 2).join(' · ') : null,
     venue_image_url: photo?.url ?? null,
     venue_image_credit: photo?.credit ?? null,

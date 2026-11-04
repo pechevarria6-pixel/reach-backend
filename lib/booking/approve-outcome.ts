@@ -16,6 +16,7 @@ export type ApproveKind =
   | 'unknown'       // 502 outcome_unknown, or no answer: it may be bought
   | 'terms'         // 409 terms_required: a table held, not booked — show its policy and terms, approve with holdId + accept
   | 'otherTime'     // 409 other_time: a table — not at that time; approve with one of offeredTimes
+  | 'tableOpen'     // 200 for a table that is NOT booked: a card owed on the platform's page, a call ringing, handed to them
   | 'refused';      // anything else: not booked, and here is why
 
 export interface ApproveOutcome {
@@ -44,7 +45,7 @@ const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 
 export function approveOutcome(status: number, body: unknown): ApproveOutcome {
   const b = (body && typeof body === 'object' ? body : {}) as {
     code?: unknown; error?: unknown; who?: unknown; oldCents?: unknown; newCents?: unknown;
-    hold?: unknown; button?: unknown; offeredTimes?: unknown;
+    hold?: unknown; button?: unknown; offeredTimes?: unknown; outcome?: unknown; title?: unknown;
   };
   const said = typeof b.error === 'string' && b.error.trim() ? b.error.trim() : null;
   const out = (kind: ApproveKind, message: string | null): ApproveOutcome => ({
@@ -54,7 +55,15 @@ export function approveOutcome(status: number, body: unknown): ApproveOutcome {
     oldCents: num(b.oldCents),
     newCents: num(b.newCents),
   });
-  if (status >= 200 && status < 300) return out('booked', null);
+  // A table answers 200 for things that are not a booking: the platform
+  // holding it until a card is added, Reach on the phone, a hand-off. Read
+  // as 'booked' they ended the run on the done screen with no table.
+  if (status >= 200 && status < 300) {
+    if (b.outcome === 'card_owed' || b.outcome === 'calling' || b.outcome === 'handed_off') {
+      return out('tableOpen', typeof b.title === 'string' && b.title.trim() ? b.title.trim() : 'Not booked yet.');
+    }
+    return out('booked', null);
+  }
   if (status === 402) return out('notFunded', said);
   if (b.code === 'price_changed') return out('priceUp', said);
   if (b.code === 'party_changed') return out('reprice', said);
@@ -139,7 +148,7 @@ const TABLE_STEP: Record<string, NextStep> = {
 
 export function nextStepFor(o: ApproveOutcome, vertical: string | null | undefined): NextStep {
   if (o.kind === 'busy' || o.kind === 'unknown' || o.code === 'changed') return 'recheck';
-  if (o.kind === 'terms' || o.kind === 'otherTime') return 'answer';
+  if (o.kind === 'terms' || o.kind === 'otherTime' || o.kind === 'tableOpen') return 'answer';
   if (o.code === 'travellers_missing') return 'details';
   if (vertical === 'restaurant' && o.code && TABLE_STEP[o.code]) return TABLE_STEP[o.code];
   if (o.code === 'unavailable' || o.kind === 'reprice') {
