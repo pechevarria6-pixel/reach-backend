@@ -84,7 +84,24 @@ export function rowWhen(scheduledTime: unknown, startDate: unknown): { date: str
   const date = m ? tripDay(startDate, parseInt(m[1], 10)) : validDay(startDate);
   if (!date) return null;
   const rest = m ? m[2] : text;
-  return { date, time: clockOf(rest) ? rest.trim() : null };
+  return { date, time: clockIn(rest) };
+}
+
+/**
+ * The clock a line's words carry, as written, or null.
+ *
+ * Either the whole of what is left ("7:30 PM", "19:30") or its last
+ * "·"-separated part: a generated line keeps the part of the day it is in and
+ * adds the time somebody actually gave — "Day 3 · Evening · 7:30 PM",
+ * "To start · 7:30 PM" — so the screen still says "Evening" and the booking
+ * still gets half past seven. A part of the day alone is never a clock.
+ */
+export function clockIn(text: unknown): string | null {
+  if (typeof text !== 'string') return null;
+  const t = text.trim();
+  if (clockOf(t)) return t;
+  const last = t.split('·').pop()?.trim() ?? '';
+  return t.includes('·') && clockOf(last) ? last : null;
 }
 
 type Clock = { h: number; m: number };

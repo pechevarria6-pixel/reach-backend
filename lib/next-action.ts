@@ -67,6 +67,7 @@ import {
 } from './checkout.ts';
 import { reachBuys } from './booking/charged.ts';
 import { bookingTracker, type TrackLine } from './plan-steps.ts';
+import { dateSaid, clockSaid } from './line-when.ts';
 
 export const NEXT_STATES = [
   'needs_trip_input',
@@ -146,7 +147,25 @@ export type NextLine = TrackLine & {
   title?: string | null;
   venue_name?: string | null;
   venue_phone?: string | null;
+  /** The line's own night and clock (lib/contracts/itinerary-item.ts). */
+  date?: string | null;
+  clock?: string | null;
 };
+
+/**
+ * Which night a table is for, as a sentence — the line's own, never the
+ * trip's first. A dinner on day three was asked for on day one; saying the
+ * night is how the person checks the booking they are about to make.
+ * Nothing for anything that is not a table.
+ */
+function tableNight(line: NextLine | null | undefined, vertical?: string | null): string {
+  const isTable = vertical === 'restaurant' || line?.type === 'restaurant';
+  if (!isTable || !line) return '';
+  const night = dateSaid(line.date);
+  if (!night) return " Which night it's for isn't set yet, so check it when you book.";
+  const at = clockSaid(line.clock);
+  return at ? ` It's for ${night} at ${at}.` : ` It's for ${night}, and no time is set yet — choose one when you book.`;
+}
 
 export interface NextPlan {
   id: string;
@@ -609,9 +628,10 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     const r = unfinished[0];
     const where = providerName(r);
     const name = itemTitle(r);
+    const night = tableNight(lines.find(l => !!l.id && l.id === r.itinerary_item_id), r.vertical);
     return say({
       state: 'finish_elsewhere', title: where ? `Finish on ${where}` : `Finish ${name}`,
-      body: `${name} is booked on ${where ? `${where}'s` : 'the seller\'s'} own site, not through Reach. Say once you've got it.`,
+      body: `${name} is booked on ${where ? `${where}'s` : 'the seller\'s'} own site, not through Reach.${night} Say once you've got it.`,
       cta: r.redirect_url ? { label: where ? `Finish on ${where} →` : 'Finish it →', kind: 'link', href: r.redirect_url } : toCheckout('Open checkout →'),
       secondary: r.id ? { label: "I've got it ✓", kind: 'confirm', bookingId: r.id } : null,
       chip: 'Almost there',
@@ -637,7 +657,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
         : { label: 'Open the list →', ...nav('planDetail', 'bookings') };
     return say({
       state: 'finish_elsewhere', title: `Book ${name}`,
-      body: `Reach can't book this one. ${line.venue_website ? "It's booked on their own site" : line.venue_phone ? 'They take bookings by phone' : 'It needs booking ahead'} — say once it's done.`,
+      body: `Reach can't book this one. ${line.venue_website ? "It's booked on their own site" : line.venue_phone ? 'They take bookings by phone' : 'It needs booking ahead'} — say once it's done.${tableNight(line)}`,
       cta, secondary: line.id ? { label: "I've got it ✓", kind: 'confirm', itemId: line.id } : null,
       chip: 'Almost there',
     });

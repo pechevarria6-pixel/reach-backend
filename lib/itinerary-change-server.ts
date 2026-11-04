@@ -111,7 +111,8 @@ export async function readLine(ctx: PlanCtx, itemId: string): Promise<{ fail: Ne
   return {
     line: {
       ...state,
-      item: itemFromRow(r),
+      // The plan's dates, so the line comes back on its own date.
+      item: itemFromRow(r, { startDate: plan.start_date, endDate: plan.end_date }),
       asRead: { title: (r.title as string | null) ?? null, venue_name: (r.venue_name as string | null) ?? null },
       lines: (all ?? []) as PlanLine[],
       booking,
@@ -215,7 +216,7 @@ export async function swapLine(
   console.log('[itinerary item] swapped', { plan: lc.plan.id, item: itemId, from: oldPlace?.name ?? lc.item.venue_name ?? null, to: place.name, by: ctx.user.id, reason });
 
   return NextResponse.json({
-    item: itemFromRow(out.row),
+    item: itemFromRow(out.row, { startDate: lc.plan.start_date, endDate: lc.plan.end_date }),
     retiredBookingId: retired,
     // Said only when it is true: the old place's booking went, and this one
     // is booked from the Book tab like any other line.

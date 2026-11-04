@@ -23,6 +23,7 @@ import { isFiller, fillerClaim, corruptionAt, beforeCorruption } from './filler.
 import { oneMealPerEvening } from './generation-rules.ts';
 import { withoutVetoed } from './vetoes.ts';
 import { within } from './deadline.ts';
+import { typeForKind } from './contracts/itinerary-item.ts';
 
 /**
  * A slot as the day holds it, whatever shape it arrived in: a saved idea's
@@ -95,6 +96,47 @@ export function attachTicket(days: GenDay[], realEvent: RealEvent | null): boole
     }
   }
   return attached;
+}
+
+/**
+ * The time somebody gave, on the slot it is about — and nowhere else.
+ *
+ * A night out is planned "around 19:30" because the person set that time:
+ * the dinner they booked the evening around, the gig, or when the night
+ * starts. It went into the prompt and no further, so the dinner line said
+ * "The main event" and the table was asked for at a time nobody chose.
+ *
+ * Which slot the time belongs to is decided by what the plan is, never by
+ * the model:
+ *   a dinner out   the first slot at a place to eat (its cited kind)
+ *   a concert      the slot holding the ticket
+ *   any other      the first slot: the evening starts then
+ * When that slot is not there — a dinner out whose dinner names no verified
+ * place, a gig we found no ticket for — no slot gets the time. A time on the
+ * wrong slot is a table booked for when the show starts.
+ *
+ * Anything already in `time` is cleared first: only this writes it.
+ * Returns whether a slot took the time.
+ */
+export function stampStatedTime(
+  days: GenDay[],
+  opts: { time: unknown; planType?: unknown },
+): boolean {
+  const slots = days.flatMap(d => [d.morning, d.afternoon, d.evening, ...(d.daytime ?? [])]).filter(Boolean) as GenSlot[];
+  for (const sl of slots) sl.time = null;
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(opts.time ?? '').trim());
+  if (!m) return false;
+  const hhmm = `${m[1].padStart(2, '0')}:${m[2]}`;
+  // The evening itself, in order — never the offered day around it.
+  const evening = days.flatMap(d => [d.morning, d.afternoon, d.evening]).filter(sl => sl && sl.plan) as GenSlot[];
+  const target = opts.planType === 'restaurant'
+    ? evening.find(sl => typeForKind(sl.kind) === 'restaurant')
+    : opts.planType === 'concert'
+      ? evening.find(sl => !!sl.ticket_url)
+      : evening[0];
+  if (!target) return false;
+  target.time = hhmm;
+  return true;
 }
 
 /**

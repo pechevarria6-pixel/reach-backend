@@ -12,6 +12,13 @@
 
 export interface FindLink { label: string; url: string }
 
+/** "&dateTime=2026-11-07T19%3A30" when both are real, or nothing at all. */
+function nightOf(input: { date?: string | null; clock?: string | null }): string {
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(String(input.date ?? '')) ? input.date : null;
+  const t = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(input.clock ?? '')) ? input.clock : null;
+  return d && t ? `&dateTime=${enc(`${d}T${t}`)}` : '';
+}
+
 const enc = encodeURIComponent;
 
 /** The words worth searching for, from a line written as a sentence. */
@@ -22,7 +29,15 @@ function gist(title: string): string {
     .replace(/\s+/g, ' ').trim().split(' ').slice(0, 6).join(' ');
 }
 
-export function findLinks(input: { title?: string | null; type?: string | null; city?: string | null }): FindLink[] {
+/**
+ * `date` and `clock` are the line's own night and time (lib/line-when.ts).
+ * OpenTable takes the two together or neither, so a table with no time set
+ * gets a search with no night in it rather than one at a time nobody chose.
+ */
+export function findLinks(input: {
+  title?: string | null; type?: string | null; city?: string | null;
+  date?: string | null; clock?: string | null;
+}): FindLink[] {
   const city = String(input.city || '').trim();
   const what = gist(String(input.title || ''));
   if (!what) return [];
@@ -30,7 +45,7 @@ export function findLinks(input: { title?: string | null; type?: string | null; 
   const maps = { label: 'Search the map', url: `https://www.google.com/maps/search/?api=1&query=${enc(q)}` };
   if (input.type === 'restaurant') {
     return [
-      { label: 'Find a table on OpenTable', url: `https://www.opentable.com/s?term=${enc(q)}` },
+      { label: 'Find a table on OpenTable', url: `https://www.opentable.com/s?term=${enc(q)}${nightOf(input)}` },
       maps,
     ];
   }

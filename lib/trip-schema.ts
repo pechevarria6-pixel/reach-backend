@@ -175,6 +175,14 @@ export const SlotSchema = z.object({
    * its position, which typed a bar "restaurant" for being the evening.
    */
   kind: z.string().nullish(),
+  /**
+   * The clock time this slot is at, 24-hour "HH:MM" — only a time the person
+   * gave: the time they set for their dinner, their gig or their evening.
+   * Attached by the route (lib/itinerary-readback.ts stampStatedTime), never
+   * by the model, and on at most one slot. Absent means nobody said, and a
+   * dinner with no time is asked for with none rather than at seven.
+   */
+  time: z.string().nullish(),
 });
 
 export const ItineraryDaySchema = z.object({

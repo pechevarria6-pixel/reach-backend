@@ -22,7 +22,7 @@
 //     one figure that is certainly not what anything cost.
 //   - Times are the wall clock the row was written in, on the plan's own
 //     dates (lib/ics.ts, lib/calendar.ts). "Evening" is not seven o'clock.
-import { rowWhen, clockOf, type IcsEvent } from './ics.ts';
+import { rowWhen, clockOf, clockIn, type IcsEvent } from './ics.ts';
 import { reachBuys } from './booking/charged.ts';
 
 export interface BookedItem {
@@ -81,7 +81,7 @@ export function slotMinutes(time: unknown): number | null {
   if (typeof time !== 'string') return null;
   const rest = time.replace(/^\s*day\s*\d+\s*(?:[·\-–—:,]|\bat\b)?\s*/i, '').trim();
   if (!rest) return null;
-  const c = clockOf(rest);
+  const c = clockOf(clockIn(rest));
   if (c) return c.h * 60 + c.m;
   for (const [re, at] of PART_OF_DAY) if (re.test(rest)) return at;
   return null;

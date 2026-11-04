@@ -23,9 +23,10 @@ import { repricing } from '@/lib/booking/resize';
 import { readParty } from '@/lib/booking/reprice';
 import { tripTiming, today } from '@/lib/calendar';
 import { rentalLine } from '@/lib/ground';
-import type { BookingItemRequest, Vertical } from '@/lib/booking/types';
+import type { BookingItemRequest } from '@/lib/booking/types';
 import { findProduct } from '@/lib/booking/providers/viator-search';
-import { roomsFor } from '@/lib/booking/party';
+import { lineWhen } from '@/lib/line-when';
+import { asRequest, BOOKABLE, type BookableLine as Item } from '@/lib/booking/line-request';
 import { failuresByLine, lockedByPayment, TRY_NEARBY_DATES } from '@/lib/booking/failures';
 import { heldVenueNear } from '@/lib/discovery/held-venue';
 import { locatePlan } from '@/lib/discovery/geocode';
@@ -35,27 +36,6 @@ import { track } from '@/lib/track';
 
 export const maxDuration = 60;
 
-// What a provider can actually find from a line of an itinerary.
-//
-// A generated itinerary says "Two nights at a small hotel near the harbour"
-// and "Kayak tour of the bay". A provider needs a rate to sell: LiteAPI will
-// search a city and dates, so a hotel line is enough to quote. Viator needs
-// its own productCode and Ticketmaster its own eventId — neither exists on a
-// line nobody picked from a provider's catalogue, so those are reported as
-// needing a choice rather than quoted from prose. Restaurants go to the
-// concierge lane, which is a person reading the name.
-const BOOKABLE: Record<string, Vertical> = {
-  hotel: 'hotel',
-  restaurant: 'restaurant',
-  // An activity is bookable once the line has been matched to a real product
-  // in the provider's catalogue — see findProduct below. Until that match
-  // exists there is nothing to sell.
-  activity: 'activity',
-  // A flight is bookable once three things are true: everybody on the trip
-  // has their travel essentials, the destination resolves to an airport, and
-  // somebody has told us where they are flying from.
-  flight: 'flight',
-};
 
 /** Why a line cannot be quoted, in words the screen can show. */
 const CANNOT: Record<string, string> = {
@@ -77,127 +57,6 @@ type Skipped = {
   searches?: { airport: string; userIds: string[]; url: string | null }[];
 };
 
-type Item = {
-  id: string;
-  type: string;
-  title: string;
-  subtitle: string | null;
-  scheduled_time: string | null;
-  cost_cents: number;
-  booking_mode?: string | null;
-  /** The venue's own name and number, from the verification pass. Null until
-   *  it has run, which is why both are optional and neither is relied on. */
-  venue_name?: string | null;
-  venue_phone?: string | null;
-};
-
-/**
- * What a provider needs, from what the itinerary knows. Deliberately thin:
- * these are quotes, and the provider's own quote step fills in the rest.
- */
-function asRequest(
-  item: Item,
-  plan: { start_date?: string | null; end_date?: string | null },
-  ctxIds: { planId: string; groupId: string },
-  city: string,
-  countryCode: string,
-  partySize: number,
-  product: { productCode: string; title: string; priceCents: number | null } | null,
-  flight: { from: string | null; to: string | null },
-  table: { platform?: string; url?: string | null; phone?: string | null } | null,
-): (BookingItemRequest & { itineraryItemId: string; title: string }) | null {
-  const vertical = BOOKABLE[item.type];
-  if (!vertical) return null;
-
-  const base = {
-    vertical,
-    planId: ctxIds.planId,
-    groupId: ctxIds.groupId,
-    // Filled at approval, from whoever is actually travelling. A quote needs
-    // none of it, and holding traveller details here would copy them into a
-    // request payload for no reason.
-    travelers: [],
-    itineraryItemId: item.id,
-    title: item.title,
-  };
-
-  if (vertical === 'hotel') {
-    // Dates and a place are the whole quote. Without either, LiteAPI has
-    // nothing to price and answers with an error rather than a rate.
-    if (!plan.start_date || !plan.end_date || !city || !countryCode) return null;
-    return {
-      ...base,
-      hotel: {
-        city,
-        countryCode,
-        checkin: plan.start_date,
-        checkout: plan.end_date,
-        // One room per two people, rounded up: the group can change it, and
-        // a quote for one room when six are going is a misleading number.
-        rooms: roomsFor(partySize),
-      },
-    } as BookingItemRequest & { itineraryItemId: string; title: string };
-  }
-
-  if (vertical === 'activity') {
-    // A date is required to check availability, and the trip's first day is
-    // the honest default until somebody says otherwise.
-    if (!product || !plan.start_date) return null;
-    return {
-      ...base,
-      // The product's own title, not the itinerary's wording: this is what
-      // was actually booked and what the confirmation will say.
-      title: product.title,
-      activity: { productCode: product.productCode, date: plan.start_date },
-    } as BookingItemRequest & { itineraryItemId: string; title: string };
-  }
-
-  if (vertical === 'flight') {
-    // Both ends and a date, or there is nothing to price. Each of these is
-    // reported separately by the caller, because "we could not find an
-    // airport for Moab" and "tell us your home airport" send somebody to
-    // completely different places.
-    if (!flight.from || !flight.to || !plan.start_date) return null;
-    return {
-      ...base,
-      flight: {
-        origin: flight.from,
-        destination: flight.to,
-        departDate: plan.start_date,
-        // Nobody is named at quote time, and a quote sized off an empty list
-        // priced every group's flights for one seat.
-        seats: partySize,
-        // A trip with an end date is a return. Booking two one-ways when
-        // somebody meant a return is both dearer and harder to change.
-        ...(plan.end_date && plan.end_date !== plan.start_date
-          ? { returnDate: plan.end_date }
-          : {}),
-      },
-    } as BookingItemRequest & { itineraryItemId: string; title: string };
-  }
-
-  // A table, booked by the member on the platform the restaurant uses.
-  return {
-    ...base,
-    restaurant: {
-      name: item.title,
-      city,
-      date: plan.start_date ?? '',
-      // scheduled_time holds prose on generated itineraries — "Day 3 ·
-      // Evening" — which is not a time. The link builder refuses anything
-      // that is not a clock, so a bad value costs the prefill and nothing
-      // more.
-      time: item.scheduled_time || '19:00',
-      partySize,
-      notes: item.subtitle ?? undefined,
-      // Where this restaurant actually takes bookings. Absent means we do
-      // not know, and the member gets the phone number rather than a guess.
-      platform: (table?.platform as 'resy' | 'opentable' | 'tock' | 'none') ?? 'none',
-      externalUrl: table?.url ?? undefined,
-      phone: table?.phone ?? null,
-    },
-  } as BookingItemRequest & { itineraryItemId: string; title: string };
-}
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -563,7 +422,14 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
                    ? 'this trip has no dates yet'
                    : CANNOT.flight))
         : BOOKABLE[item.type]
-          ? (!city || !countryCode ? 'this trip has no destination saved yet' : 'this trip has no dates yet')
+          ? (!city || !countryCode ? 'this trip has no destination saved yet'
+             : !plan.start_date ? 'this trip has no dates yet'
+             // Dated, and this line does not say which of the days it is.
+             // Booking it for the first one is how a day-three tour became a
+             // day-one tour.
+             : item.type === 'activity' && !lineWhen(item.scheduled_time, { startDate: plan.start_date, endDate: plan.end_date }).date
+               ? "this line doesn't say which day of the trip it's on — set its day in Edit itinerary and it can be booked"
+               : 'this trip has no dates yet')
           : (CANNOT[item.type] ?? `nothing books a ${item.type} yet`),
     });
   }

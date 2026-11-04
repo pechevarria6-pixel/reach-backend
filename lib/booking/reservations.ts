@@ -67,8 +67,9 @@ export function usableParty(value: number | null | undefined): number {
  */
 export function reservationUrl(platform: Platform, req: TableRequest): string | null {
   if (platform === 'none') return null;
-  // A link the restaurant published beats anything we can construct.
-  if (req.knownUrl && /^https?:\/\//i.test(req.knownUrl)) return req.knownUrl;
+  // A link the restaurant published beats anything we can construct — with
+  // its night made this line's (datedLink).
+  if (req.knownUrl && /^https?:\/\//i.test(req.knownUrl)) return datedLink(req.knownUrl, req);
 
   const name = (req.name || '').trim();
   if (!name) return null;
@@ -93,6 +94,43 @@ export function reservationUrl(platform: Platform, req: TableRequest): string | 
   // Tock has no documented search parameters worth guessing at, so this is
   // its search page and the name. Better than a constructed URL that 404s.
   return `https://www.exploretock.com/search?query=${encodeURIComponent(name)}`;
+}
+
+/**
+ * A published booking link, carrying this table's night rather than its own.
+ *
+ * Restaurants link their Resy or OpenTable page with whatever date was in the
+ * address bar when somebody copied it: Rosie's and Nick's are stored with
+ * 2022 and 2025 dates in them. Handed over as it is, the person lands on a
+ * night long gone — or worse, on a real night that is not theirs. Only the
+ * date, time and party parameters a link already carries are touched: set to
+ * this line's when we know them, removed when we do not, so the page asks
+ * rather than showing a stale night. Every other link is returned untouched.
+ */
+export function datedLink(url: string, req: Pick<TableRequest, 'date' | 'time' | 'partySize'>): string {
+  let u: URL;
+  try { u = new URL(url); } catch { return url; }
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.date ?? '')) ? String(req.date) : null;
+  const time = usableTime(req.time);
+  const party = req.partySize ? String(usableParty(req.partySize)) : null;
+  const q = u.searchParams;
+  // A night we do not know takes the stale one out; a party we do not know
+  // leaves theirs alone — two seats is a guess, not a stale fact.
+  const put = (k: string, v: string | null, dropIfUnknown = true) => {
+    if (!q.has(k)) return;
+    if (v) q.set(k, v); else if (dropIfUnknown) q.delete(k);
+  };
+  if (/(^|\.)resy\.com$/i.test(u.hostname)) {
+    put('date', date);
+    put('seats', party, false);
+  } else if (/(^|\.)opentable\.(com|co\.uk)$/i.test(u.hostname)) {
+    put('dateTime', date && time ? `${date}T${time}` : null);
+    put('datetime', date && time ? `${date}T${time}` : null);
+    put('covers', party, false);
+  } else {
+    return url;
+  }
+  return u.toString();
 }
 
 /** "Reserve on Resy" — the button, in the platform's own name. */

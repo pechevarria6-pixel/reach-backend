@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { isJourney } from '../../lib/travel-slot.ts';
 import { typeForKind, itemNote, rowFromItem, itemFromRow } from '../../lib/contracts/itinerary-item.ts';
+import { lineWhen, labelWithClock } from '../../lib/line-when.ts';
 
 // f979c880, "A weekend in Washington", Day 1, as the generator now answers
 // it: each slot with its own tip and the kind of the row it cited. The day
@@ -20,13 +21,13 @@ const DAY = {
 
 // The row builders as the screen runs them, read out of the component so
 // this tests the code that ships rather than a copy of it.
-function builders(): { itineraryRows: (days: unknown[], nightOut?: boolean) => Record<string, unknown>[] } {
+function builders(): { itineraryRows: (days: unknown[], nightOut?: boolean, dates?: { startDate?: string | null; endDate?: string | null }) => Record<string, unknown>[] } {
   const app = readFileSync('components/reach-app.jsx', 'utf8');
   const from = app.indexOf('const asSlot=');
   const to = app.indexOf('// Returning null from a screen');
   assert.ok(from > 0 && to > from, 'slotRow and itineraryRows moved; point this test at them');
   const src = app.slice(from, to);
-  return new Function('isJourney', 'typeForKind', `${src}; return { itineraryRows };`)(isJourney, typeForKind);
+  return new Function('isJourney', 'typeForKind', 'lineWhen', 'labelWithClock', `${src}; return { itineraryRows };`)(isJourney, typeForKind, lineWhen, labelWithClock);
 }
 
 test('a day\'s title and tip are never printed under its morning or evening row', () => {

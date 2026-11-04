@@ -42,7 +42,7 @@ import { isNear, awayPromptBlock, awayGaps, awayCorrection, awayEstimate, awayLi
 import { arrivalFor } from '@/lib/booking/arrival';
 import { awayMissing, afterAwayRebuild } from '@/lib/itinerary-rebuild';
 import { readTimedSkips, memberJoins, whoIsOff } from '@/lib/participation';
-import { readBackDays, clearPhotos, attachTicket, vouchedGeography, asGenSlot, oneSlotReadBack, type ReadBackEnv, type GenDay, type GenSlot } from '@/lib/itinerary-readback';
+import { readBackDays, clearPhotos, attachTicket, stampStatedTime, vouchedGeography, asGenSlot, oneSlotReadBack, type ReadBackEnv, type GenDay, type GenSlot } from '@/lib/itinerary-readback';
 
 /** Logged when a stop is dropped for being nowhere near the rest of its day. */
 const DROPPED_LOCATION: string = 'itinerary_item_dropped_location';
@@ -1353,6 +1353,15 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // readBackDays — the same read-back "Something else…" puts a single
       // slot through.
       days.splice(0, days.length, ...readBackDays(days, readBackEnv(vouchers)));
+      // The time they set, on the slot it is about: the dinner on a dinner
+      // out, the ticket on a concert, the start of any other evening. A trip
+      // of days was given no times, and gets none.
+      const statedTime = isNightPlan ? nightPrefs.time : null;
+      if (!stampStatedTime(days, { time: statedTime, planType: groupPlan?.type }) && statedTime) {
+        console.log('[trips itinerary] a time was set and no slot is plainly what it is for, so no line carries it', {
+          plan: groupPlan?.id ?? null, type: groupPlan?.type ?? null,
+        });
+      }
       if (!days.length) {
         console.error('[trips itinerary] no itinerary in response', {
           destination, nights, stop_reason: res.stop_reason,

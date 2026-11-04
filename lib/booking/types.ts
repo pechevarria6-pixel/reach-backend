@@ -98,8 +98,13 @@ export interface BookingItemRequest {
   restaurant?: {
     name: string;
     city: string;
+    /** YYYY-MM-DD, the night the itinerary line is on; '' when it cannot be known. */
     date: string;
-    time: string;
+    /**
+     * 24-hour HH:MM, only when somebody gave one. Null for an evening with no
+     * stated time — never "19:00" standing in for "Evening".
+     */
+    time: string | null;
     partySize: number;
     notes?: string;
     externalUrl?: string;  // OpenTable/Resy page if known

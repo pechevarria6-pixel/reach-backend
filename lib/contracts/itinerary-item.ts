@@ -22,6 +22,7 @@
 // carries it everywhere, which is the entire point: it should not be
 // possible to add a fact and forget to deliver it.
 import { z } from 'zod';
+import { lineWhen, type PlanDates } from '../line-when.ts';
 
 /**
  * What a row is, as the database holds it.
@@ -31,6 +32,13 @@ import { z } from 'zod';
  */
 export const ItineraryItemRow = z.object({
   id: z.string().nullish(),
+  /**
+   * The line's day and, when somebody gave one, its clock — in words that
+   * every reader parses the same way: "Day 3 · Evening", "Day 3 · Evening ·
+   * 7:30 PM", "The main event · 8:00 PM". The date is not stored: it is the
+   * plan's dates and this day, worked out on read (`date` below), so moving
+   * the trip moves every line with it. See lib/line-when.ts.
+   */
   scheduled_time: z.string().nullish(),
   title: z.string(),
   /**
@@ -80,6 +88,14 @@ export type ItineraryItemRow = z.infer<typeof ItineraryItemRow>;
 export interface ItineraryItem {
   id: string | null;
   time: string;
+  /**
+   * The local date this line is on, YYYY-MM-DD: the plan's start plus the
+   * line's day. Null when the plan has no dates, or the line names no day on
+   * a trip of more than one. A booking is made for this, never the start.
+   */
+  date: string | null;
+  /** 24-hour "HH:MM", only when somebody gave one. "Evening" is null, not 19:00. */
+  clock: string | null;
   title: string;
   sub: string;
   type: string | null;
@@ -138,12 +154,21 @@ export const ABOUT_THE_PLACE = [
   'subtitle_unverified', 'subtitle_claims', 'title_claims', 'payment_note_unverified',
 ] as const;
 
-/** A database row, as the screen wants it. The only place this is done. */
-export function itemFromRow(row: Record<string, unknown>): ItineraryItem {
+/**
+ * A database row, as the screen wants it. The only place this is done.
+ *
+ * `plan` is the plan's dates, which is what turns "Day 3" into a date. Every
+ * caller that holds the plan passes them; without them `date` is null rather
+ * than the first day, which is the bug this field exists to end.
+ */
+export function itemFromRow(row: Record<string, unknown>, plan: PlanDates = {}): ItineraryItem {
   const r = ItineraryItemRow.parse(row);
+  const when = lineWhen(r.scheduled_time, plan);
   return {
     id: r.id ?? null,
     time: r.scheduled_time ?? '',
+    date: when.date,
+    clock: when.clock,
     title: r.title,
     sub: r.subtitle ?? '',
     type: r.type ?? null,
@@ -247,6 +272,10 @@ export function rowFromItem(item: Record<string, unknown>, sortOrder: number): R
     return null;
   };
   const conf = pick('conf', 'confirmation_number');
+  // `date` and `clock` are not written: both are read back out of
+  // scheduled_time and the plan's dates. The clock is in the words already —
+  // a generated line carries it there (lib/line-when.ts labelWithClock) — so
+  // somebody who edits the time on a line edits the one place it lives.
   return {
     type: item.type ?? null,
     title: item.title,
@@ -305,11 +334,11 @@ export const FACTS_THAT_MUST_SURVIVE: { row: keyof ItineraryItemRow; item: keyof
  * So a screen uses this: the bad row is dropped and said out loud in the
  * console, and the other nineteen days still render.
  */
-export function itemsFromRows(rows: unknown[] | null | undefined): ItineraryItem[] {
+export function itemsFromRows(rows: unknown[] | null | undefined, plan: PlanDates = {}): ItineraryItem[] {
   const out: ItineraryItem[] = [];
   for (const row of rows ?? []) {
     try {
-      out.push(itemFromRow(row as Record<string, unknown>));
+      out.push(itemFromRow(row as Record<string, unknown>, plan));
     } catch (err) {
       console.error('[itinerary] a row did not match the contract and was left out', {
         row, error: err instanceof Error ? err.message : 'invalid',

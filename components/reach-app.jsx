@@ -5,6 +5,7 @@ import { namesList } from "@/lib/group-answers";
 import { shownTitle, isOrganiser, waitingTripIn } from "@/lib/trip-vote";
 import { lockedIn, bookedBy } from "@/lib/itinerary-change";
 import { itemsFromRows, typeForKind, itemNote } from "@/lib/contracts/itinerary-item";
+import { lineWhen, labelWithClock, whenSaid } from "@/lib/line-when";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive, dayWhere } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
@@ -686,8 +687,13 @@ function isSoloGroup(g){return (g?.memberIds||[]).length<=1;}
 // A slot is an object: what it is, how you get in, what they take. Older
 // generations sent a bare string, so both are read.
 const asSlot=(v)=>typeof v==="string"?{plan:v,booking:null,payment:null,cost:null}:(v||{});
-function slotRow(raw,{time,fallback,cost}){
+function slotRow(raw,{time:label,fallback,cost}){
   const sl=asSlot(raw);
+  // The time somebody gave, on the slot it is about, kept in the words with
+  // the part of the day: "The main event · 7:30 PM". Attached by the server
+  // (stampStatedTime) from the time they set — never a guess from the slot.
+  // Without one the line is "Evening" and nothing else.
+  const time=labelWithClock(label,sl.time);
   // A slot carrying a ticket link IS the event, whichever part of the
   // evening it landed in, and carries the page that sells the ticket. A slot
   // that is the journey home is transport, and leaving is not reserved.
@@ -725,13 +731,21 @@ function slotRow(raw,{time,fallback,cost}){
   };
 }
 
-function daytimeRows(days){
-  return (days||[]).flatMap(day=>(day.daytime||[]).map((raw,i)=>
-    slotRow(raw,{time:i===0?"Earlier that day":"Then",fallback:"activity"})
-  )).filter(r=>r.title);
+// Each line's own date and clock, from its words and the plan's dates — the
+// same reading the server does on load (lib/contracts/itinerary-item.ts), so a
+// line built here and the same line read back are on the same night. Without
+// it a line built on this device had no date until the next reload.
+function withWhen(rows,dates){
+  return rows.map(r=>{const w=lineWhen(r.time,dates||{});return {...r,date:w.date,clock:w.clock};});
 }
 
-function itineraryRows(days,nightOut=false){
+function daytimeRows(days,dates){
+  return withWhen((days||[]).flatMap(day=>(day.daytime||[]).map((raw,i)=>
+    slotRow(raw,{time:i===0?"Earlier that day":"Then",fallback:"activity"})
+  )).filter(r=>r.title),dates);
+}
+
+function itineraryRows(days,nightOut=false,dates){
   // A night out is one evening, not a day with an evening in it.
   //
   // The three slots are the shape the model answers in, and for a night out
@@ -745,7 +759,7 @@ function itineraryRows(days,nightOut=false){
     :["Morning","Afternoon","Evening"];
   const label=(day,i)=>nightOut?SLOTS[i]:`Day ${day.day} · ${SLOTS[i]}`;
 
-  return (days||[]).flatMap(day=>{
+  return withWhen((days||[]).flatMap(day=>{
     const cost=Math.round((day.cost_today||0)*100);
     // Each event carries its own cost so the budget screen can itemise;
     // anything generated before per-event costs spreads the day's figure.
@@ -761,7 +775,7 @@ function itineraryRows(days,nightOut=false){
       slotRow(day.afternoon,{time:label(day,1),fallback:"activity",cost:each}),
       slotRow(day.evening,{time:label(day,2),fallback:"restaurant",cost:each}),
     ].filter(r=>r.title);
-  });
+  }),dates);
 }
 
 // Returning null from a screen paints nothing — no header, no way back, just
@@ -6556,9 +6570,9 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
     let rows=[];
     if(hasDays){
       rows=nightOut
-        ?itineraryRows(trip.itinerary,true)
-        :[...await awayRows(trip,{startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1,from:departure?.city}),...itineraryRows(trip.itinerary)];
-      const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
+        ?itineraryRows(trip.itinerary,true,{startDate,endDate})
+        :[...await awayRows(trip,{startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1,from:departure?.city}),...itineraryRows(trip.itinerary,false,{startDate,endDate})];
+      const offeredDay=nightOut?daytimeRows(trip.itinerary,{startDate,endDate}):[];
       updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
     }else{
       const r=await fetch("/api/trips/generate",{
@@ -6577,8 +6591,8 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
       const d=await r.json().catch(()=>({}));
       if(r.ok&&(d.itinerary||[]).length){
         rows=nightOut
-          ?itineraryRows(d.itinerary,true)
-          :[...await awayRows(trip,{fixed:d.fixed,startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1,from:departure?.city}),...itineraryRows(d.itinerary)];
+          ?itineraryRows(d.itinerary,true,{startDate,endDate})
+          :[...await awayRows(trip,{fixed:d.fixed,startDate,endDate,party:groupSizeOf(plan),solo:groupSizeOf(plan)<=1,from:departure?.city}),...itineraryRows(d.itinerary,false,{startDate,endDate})];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows}:p)}));
       }else{
         console.error("[pick] itinerary for the pick failed",r.status,d);
@@ -7299,9 +7313,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // it" — because a night out answered with a whole day is the app
         // deciding how long somebody's evening is.
         const rows=nightOut
-          ?itineraryRows(trip.itinerary,true)
-          :[...await awayRows(trip,{startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1,from:departure?.city}),...itineraryRows(trip.itinerary)];
-        const offeredDay=nightOut?daytimeRows(trip.itinerary):[];
+          ?itineraryRows(trip.itinerary,true,{startDate,endDate})
+          :[...await awayRows(trip,{startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1,from:departure?.city}),...itineraryRows(trip.itinerary,false,{startDate,endDate})];
+        const offeredDay=nightOut?daytimeRows(trip.itinerary,{startDate,endDate}):[];
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary:rows,dayOffer:offeredDay}:p)}));
         if(saveItineraryToServer)await saveItineraryToServer(realId,rows);
         setBuildingItinerary(null);
@@ -7332,8 +7346,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       if(res.ok){
         const data=await res.json();
         const itinerary=nightOut
-          ?itineraryRows(data.itinerary,true)
-          :[...await awayRows(trip,{fixed:data.fixed,startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1,from:departure?.city}),...itineraryRows(data.itinerary)];
+          ?itineraryRows(data.itinerary,true,{startDate,endDate})
+          :[...await awayRows(trip,{fixed:data.fixed,startDate,endDate,party:(group.memberIds||[]).length,solo:(group.memberIds||[]).length<=1,from:departure?.city}),...itineraryRows(data.itinerary,false,{startDate,endDate})];
         if(itinerary.length){
           updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>(p.id===realId||p.id===np.id)?{...p,itinerary}:p)}));
           if(saveItineraryToServer)await saveItineraryToServer(realId,itinerary);
@@ -9408,7 +9422,11 @@ const PRICED_TYPES=new Set(["hotel","flight"]);
 function slotOfLine(item,lines,nightOut){
   const t=String(item?.time||"");
   const NIGHT={"To start":"morning","The main event":"afternoon","After":"evening"};
-  if(nightOut&&NIGHT[t])return {day:1,part:NIGHT[t]};
+  // "The main event · 7:30 PM" is still the main event: a time somebody set
+  // rides after the part of the evening (lib/line-when.ts), so the part is
+  // read without it.
+  const said=lineWhen(t,{}).part||t;
+  if(nightOut&&NIGHT[said])return {day:1,part:NIGHT[said]};
   if(t==="Earlier that day"||t==="Then"){
     const index=(lines||[]).filter(l=>l.time==="Earlier that day"||l.time==="Then").indexOf(item);
     return index>=0?{day:1,part:"daytime",index}:null;
@@ -9696,7 +9714,7 @@ function ItemActions({item,markGot,tight,city}){
   const phone=!ticketed&&item.venue_phone;
   // Book-ahead with nothing named: somewhere to look, said as a search
   // (lib/find-links.ts), so the line can still be done from here.
-  const looks=!ticketed&&!site&&!phone&&item.booking_mode==="ahead"?findLinks({title:item.title,type:item.type,city}):[];
+  const looks=!ticketed&&!site&&!phone&&item.booking_mode==="ahead"?findLinks({title:item.title,type:item.type,city,date:item.date,clock:item.clock}):[];
   if(!ticketed&&!site&&!phone&&!looks.length)return null;
   // Anything somebody has to arrange can be said to be arranged. Only a
   // ticket could be marked done, so a table you had just rung stayed on the
@@ -10746,7 +10764,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       //
       // An away plan is told which of getting there and its bed it has lost
       // (`restore`, Task 6a), and only those go back — never a second flight.
-      const fresh=itineraryRows(d.itinerary,oneEvening);
+      const fresh=itineraryRows(d.itinerary,oneEvening,{startDate:plan.startDate,endDate:plan.endDate});
       const rows=d.away&&!oneEvening
         ?afterAwayRebuild(plan.itinerary,fresh,d.restore||null,{
           nights:d.away.nights||0,
@@ -10760,7 +10778,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // night out quietly removed the offer. A night out answered with a
       // whole day is the app deciding how long somebody's evening is, and
       // losing the choice is the same decision made the other way.
-      const offered=oneEvening?daytimeRows(d.itinerary):[];
+      const offered=oneEvening?daytimeRows(d.itinerary,{startDate:plan.startDate,endDate:plan.endDate}):[];
       if(!rows.length)throw new Error("Nothing came back — try again");
       updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows,dayOffer:offered}:x)}));
       const saved=await saveItineraryToServer(planId,rows);
@@ -10896,7 +10914,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         if(data.votes)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:data.votes,myVote:data.myVote}:p)}));
         if(data.myVote)setMyVote(data.myVote);
         // Update itinerary
-        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:itemsFromRows(data.itinerary)}:p)}));
+        if(data.itinerary)updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:itemsFromRows(data.itinerary,data.plan?{startDate:data.plan.start_date,endDate:data.plan.end_date}:{startDate:p.startDate,endDate:p.endDate})}:p)}));
         setLoadFailed(false);
       }catch(e){
         // Swallowing this made the itinerary tab say "No itinerary yet" when
@@ -12910,7 +12928,20 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // named is still called what it is for. The hotel booking that failed on
   // Puerto Vallarta has no detail and does have a line: it is "7 nights in
   // Puerto Vallarta", whatever came back.
-  const lineTitle=(b)=>(plan?.itinerary||[]).find(i=>i.id===b?.itinerary_item_id)?.title||null;
+  //
+  // A row from the table names it itinerary_item_id; the same row through the
+  // booking contract names it itineraryItemId. The checkout list is built from
+  // the contract, so this matched nothing there and the line was never found.
+  const lineOf=(b)=>{const id=b?.itinerary_item_id??b?.itineraryItemId;return id?(plan?.itinerary||[]).find(i=>i.id===id)||null:null;};
+  const lineTitle=(b)=>lineOf(b)?.title||null;
+  // Which night a table is for, and at what time — the line's own, read from
+  // its words and the plan's dates (lib/line-when.ts). An evening nobody gave
+  // a time for says so rather than showing seven o'clock.
+  const tableWhen=(b)=>{
+    if(b?.vertical!=="restaurant")return null;
+    const ln=lineOf(b);
+    return ln?whenSaid(lineWhen(ln.time,{startDate:plan?.startDate,endDate:plan?.endDate})):null;
+  };
 
   // One list per question, not two lists of the same answer.
   //
@@ -12943,6 +12974,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     // do — a table the app said it wanted and gave you no way to get. The
     // phone is the answer for those, and it is the one we have most often.
     phone:b.phone,
+    when:tableWhen(b),
   })):[
     // Nothing is priced yet, so there is nothing to itemise. This used to list
     // flights, accommodation and activities at 34, 40 and 26 per cent of the
@@ -13359,6 +13391,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         {lines.filter(it=>!isYours(it)).map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderBottom:i<lines.length-1?`1px solid ${C.border}`:"none"}}>
           <span style={{fontSize:20}}>{it.icon}</span>
           <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
+            {it.when?<div style={{fontSize:12,color:C.t2}}>{it.when}</div>:null}
             {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}
             <HoldToggle bookingId={it.id} status={it.st} toast={toast} onChanged={load}/></div>
           {/* Same fall-through as the success screen had: anything that was
@@ -13398,7 +13431,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             </div>
           )}
           <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:10}}>
-            Did you get the table?
+            {it.when?`For ${it.when}. `:""}Did you get the table?
           </div>
           <input className="inp" aria-label={`Confirmation number for ${it.l}`} placeholder="Confirmation number (optional)"
             value={capturedRef[it.id]||""} onChange={e=>{const v=e.target.value;setCapturedRef(m=>({...m,[it.id]:v}));}}
@@ -13450,6 +13483,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
           {mine.map((it,i)=>(
             <div key={it.id||`b${i}`} style={{padding:"9px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
               <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{it.l}</div>
+              {it.when?<div style={{fontSize:11,color:C.t2,marginTop:1}}>{it.when}</div>:null}
               {it.d?<div style={{fontSize:11,color:C.t3,marginTop:1}}>{it.d}</div>:null}
               <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
                 {it.href?(
@@ -13478,6 +13512,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
           {yoursToBook.map((item,i)=>(
             <div key={item.id||i} style={{padding:"9px 0",borderTop:(i||mine.length)?`1px solid ${C.border}`:"none"}}>
               <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{item.title}</div>
+              {/* The night the table is for, from the line itself — and,
+                  when nobody gave a time, that no time is set. */}
+              {item.type==="restaurant"?(
+                <div style={{fontSize:11,color:C.t2,marginTop:2}}>
+                  {whenSaid(lineWhen(item.time,{startDate:plan?.startDate,endDate:plan?.endDate}))}
+                </div>
+              ):null}
               {/* What one person spends there, as the generator estimated it —
                   its costs are per person by instruction. Labelled, because
                   nobody has read this place's menu for us. */}
@@ -15150,7 +15191,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     // separate occasions when somebody added a column and forgot it here —
     // the practicals, then the trip reasons, then the ticket URL. Each
     // showed once after generating and vanished on the next load.
-    itinerary:itemsFromRows(p.itinerary),
+    itinerary:itemsFromRows(p.itinerary,{startDate:p.start_date,endDate:p.end_date}),
     votes:p.votes||{},
     options:p.vote_options||[],
     accommodation:p.accommodation,

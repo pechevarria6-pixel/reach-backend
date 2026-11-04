@@ -32,7 +32,7 @@ test('the days open with the server\'s away lines; the client no longer builds i
 });
 
 test('a rebuild puts back only the away lines the plan lost', () => {
-  const build = between('const fresh=itineraryRows(d.itinerary,oneEvening);', ':afterRebuild(plan.itinerary,fresh);');
+  const build = between('const fresh=itineraryRows(d.itinerary,oneEvening,{startDate:plan.startDate,endDate:plan.endDate});', ':afterRebuild(plan.itinerary,fresh);');
   assert.match(build, /afterAwayRebuild\(plan\.itinerary,fresh,d\.restore\|\|null,/);
 });
 
