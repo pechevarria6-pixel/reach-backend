@@ -19,6 +19,7 @@ import { isOrderId } from '@/lib/booking/duffel-map';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { cancelDuffelOrder } from '@/lib/booking/providers/flights.duffel';
+import { tableProviderNamed } from '@/lib/booking/registry';
 
 /** What each lane can undo, and what to say when it cannot. */
 const CANNOT: Record<string, string> = {
@@ -54,6 +55,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (booking.status === 'cancelled') {
     return NextResponse.json({ status: 'cancelled', alreadyCancelled: true });
+  }
+
+  // A table Reach booked on Yelp or OpenTable is cancelled on that platform,
+  // through the same two steps (lib/booking/tables/). Only a row with the
+  // platform's own reservation id — one Reach actually booked.
+  const table = tableProviderNamed(booking.provider);
+  if (table && booking.provider_ref && booking.vertical === 'restaurant') {
+    const r = await table.cancel(String(booking.provider_ref), { confirm });
+    if (r.status === 'failed') {
+      console.error('[cancel] the platform did not cancel the table', { id: params.id, provider: booking.provider, confirm, error: r.error });
+      return NextResponse.json({ error: r.error ?? 'That table could not be cancelled.' }, { status: 502 });
+    }
+    if (r.status === 'quoted') return NextResponse.json({ status: 'quoted', refundCents: 0, currency: 'USD', paidCents: null });
+    const { error: marked } = await db.from('bookings')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', params.id);
+    if (marked) {
+      console.error('[cancel] the table is cancelled and the row still says otherwise', { id: params.id, code: marked.code });
+      return NextResponse.json({ status: 'cancelled', refundCents: 0, currency: 'USD', warning: 'It is cancelled with the restaurant, but we could not update your plan — it may still show as booked.' });
+    }
+    return NextResponse.json({ status: 'cancelled', refundCents: 0, currency: 'USD' });
   }
 
   // Only Duffel can be undone from here today. Saying which lane cannot,

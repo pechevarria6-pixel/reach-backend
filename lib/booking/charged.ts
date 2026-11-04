@@ -31,6 +31,10 @@ export const NOT_CHARGED = '("failed","cancelled","quoted")';
 export function reachBuys(row: { mode?: unknown; provider?: unknown }): boolean {
   if (row.mode === 'redirect' || row.mode === 'concierge') return false;
   if (row.provider === 'concierge') return false;
+  // A table Reach books on Yelp or OpenTable is booked in-app ('native') and
+  // still costs nothing: Reach takes no deposit and pays the platform nothing
+  // per table, so nobody owes a share of it (lib/booking/tables/).
+  if (row.provider === 'yelp' || row.provider === 'opentable') return false;
   return true;
 }
 

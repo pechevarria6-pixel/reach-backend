@@ -1,0 +1,134 @@
+{
+  "//": "Recorded from the platforms' own documentation on 2026-11-04; no live call was made (no credentials exist). Field names, nesting and example values are the documented ones; dates are moved to 2026-11-06 so a test can ask for one night. Yelp: docs.developer.yelp.com/reference/v3_openings.md, v3_holds.md, v3_reservations.md, v3_reservation_status.md, v3_reservation_cancel.md. OpenTable: docs.opentable.com Postman collection 38767429/2sAXxTcWRy (Consumer API v2 availability, slot_locks, reservations, booking-policies, get reservation, error table; 'Service Fees for Booking APIs' deposit total example).",
+  "yelp": {
+    "openings": {
+      "reservation_times": [
+        { "date": "2026-11-05", "times": [ { "credit_card_required": false, "time": "19:00" } ] },
+        { "date": "2026-11-06", "times": [
+          { "credit_card_required": false, "time": "19:30" },
+          { "credit_card_required": false, "time": "18:45" },
+          { "credit_card_required": true, "time": "20:00" }
+        ] },
+        { "date": "2026-11-07", "times": [ { "credit_card_required": false, "time": "19:30" } ] }
+      ],
+      "covers_range": { "min_party_size": 1, "max_party_size": 8 }
+    },
+    "hold": {
+      "hold_id": "ab12CD34ef56GH78ij90KL",
+      "expires_at": 1793998200.0,
+      "credit_card_hold": false,
+      "reserve_url": "https://www.yelp.com/reservations/victors-french-bistro-test-listing-san-francisco?hold_id=ab12CD34ef56GH78ij90KL",
+      "is_editable": false,
+      "cancellation_policy": "Please call at least 24 hours ahead to cancel. Parties that do not show may not be able to book again.",
+      "last_cancellation_date": 1794000000.0,
+      "notes": "Patio seating is first come, first served."
+    },
+    "holdCard": {
+      "hold_id": "zz12CD34ef56GH78ij90KL",
+      "expires_at": 1793998200.0,
+      "credit_card_hold": true,
+      "reserve_url": "https://www.yelp.com/reservations/victors-french-bistro-test-listing-san-francisco?hold_id=zz12CD34ef56GH78ij90KL",
+      "is_editable": false,
+      "cancellation_policy": "A $25 per person fee applies to no-shows.",
+      "last_cancellation_date": 1794000000.0,
+      "notes": ""
+    },
+    "reservation": {
+      "confirmation_url": "https://www.yelp.com/reservations/victors-french-bistro-test-listing-san-francisco/confirmed/e33b40ef-f6b1-4f17-987c-d850892564b1",
+      "notes": "We look forward to seeing you.",
+      "reservation_id": "e33b40ef-f6b1-4f17-987c-d850892564b1"
+    },
+    "status": { "active": true, "date": "2026-11-06", "time": "19:30:00", "covers": 4 },
+    "errors": {
+      "holdSlotGone": { "error": { "code": "HOLD_SLOT_NOT_AVAILABLE", "description": "The requested time is not available." } },
+      "creditCardRequired": { "error": { "code": "CREDIT_CARD_REQUIRED", "description": "This business requires a credit card hold. Please use the reservation URL." } },
+      "slotGone": { "error": { "code": "RESERVATION_SLOT_NO_LONGER_AVAILABLE", "description": "The slot is no longer available." } },
+      "holdNotFound": { "error": { "code": "HOLD_NOT_FOUND", "description": "Hold does not exist or has expired." } },
+      "duplicate": { "error": { "code": "DUPLICATE_RESERVATION", "description": "The diner already has a reservation on this day." } },
+      "doesNotTake": { "error": { "code": "DOES_NOT_TAKE_RESERVATIONS", "description": "Business does not take reservations." } },
+      "canceled": { "error": { "code": "RESERVATION_CANCELED", "description": "This reservation has been canceled." } },
+      "alreadyCanceled": { "error": { "code": "RESERVATION_ALREADY_CANCELED", "description": "The reservation has already been canceled." } },
+      "cancelConflict": { "error": { "code": "RESERVATION_CANCEL_CONFLICT", "description": "The reservation could not be canceled due to a conflict." } },
+      "internal": { "error": { "code": "INTERNAL_ERROR", "description": "Something went wrong internally, please try again later." } }
+    }
+  },
+  "opentable": {
+    "token": { "access_token": "v2-10cec40e-7dce-4049-8a95-5cc90df6bd00", "scope": "DEFAULT", "token_type": "Bearer", "expires_in": 1989434 },
+    "availability": {
+      "rid": 1038007,
+      "party_size": 4,
+      "times": ["2026-11-06T19:00", "2026-11-06T19:30", "2026-11-06T20:00", "2026-11-07T19:30"],
+      "times_available": [
+        { "time": "2026-11-06T19:00", "availability_types": [ { "type": "Standard", "cancellationPolicy": {}, "diningArea": [ { "id": 1, "attributes": ["default"], "environment": "Indoor",
+          "booking_url": "https://www.opentable.com/book/validate?rid=1038007&d=2026-11-06T19%3A00&sd=2026-11-06T19%3A00&p=4&pt=100&hash=2147862740&ref=&tc=default&diningAreaId=1",
+          "booking_restref_url": "https://www.opentable.com/restref/client?rid=1038007&dateTime=2026-11-06T19%3A00&partySize=4&restref=1038007" } ] } ] },
+        { "time": "2026-11-06T19:30", "availability_types": [
+          { "type": "Standard", "cancellation_policy": { "type": "Deposit", "id": "67feff530b3b9d7dedb6a918", "amount": 500, "denominator": 100, "currency": "USD", "deposit_type": "PerGuest" },
+            "dining_area": [ { "id": 1, "booking_url": "https://www.opentable.com/book/validate?rid=1038007&d=2026-11-06T19%3A30&sd=2026-11-06T19%3A30&p=4&pt=100&hash=3845724566&ref=&tc=default&diningAreaId=1",
+              "booking_restref_url": "https://www.opentable.com/restref/client?rid=1038007&dateTime=2026-11-06T19%3A30&partySize=4&restref=1038007", "attributes": ["default"], "environment": "Indoor" } ] },
+          { "type": "Experience", "cancellation_policy": { "type": "Deposit", "id": "67feff530b3b9d7dedb6a918", "amount": 500, "denominator": 100, "currency": "USD", "deposit_type": "PerGuest" },
+            "dining_area": [ { "id": 1, "attributes": ["default"], "experience_ids": [515941], "environment": "Indoor" } ] }
+        ] },
+        { "time": "2026-11-06T20:00", "availability_types": [ { "type": "Experience", "cancellation_policy": { "type": "Prepayment", "id": "68c2a9021b126798dbbe6a62" }, "dining_area": [ { "id": 1, "attributes": ["default"], "experience_ids": [515916], "environment": "Indoor" } ] } ] },
+        { "time": "2026-11-07T19:30", "availability_types": [ { "type": "Standard", "cancellationPolicy": {}, "diningArea": [ { "id": 1, "attributes": ["default"], "environment": "Indoor" } ] } ] }
+      ],
+      "no_availability_reasons": [],
+      "href": "https://platform.otqa.com/sync/listings/1038007"
+    },
+    "slotLock": { "expires_at": "2026-11-06T18:58:07", "reservation_token": "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiI2MTc3MzgxNDJ8MnwyMDI1LTEwLTEzVDE2OjAwfDEwMzgwMDcifQ.6uVQiE9gzI8nRxIP0qUjP2o__5pwV7DwYeW_0-VPq8oJUvltg-HIj8iel3acYzWeKZuQqLHNiBQ3VlSVeONYGQ" },
+    "slotLockCard": {
+      "expires_at": "2026-11-06T18:58:07",
+      "payment_method": { "paymentProviderType": "SPREEDLY", "tokenizerAuthData": { "nonce": "aecff101-095d-4d23-962b-936bfebafd5f", "timestamp": 1788979987, "certificateToken": "41NRFK9S8B900VZW8KWFZPKFC5", "signature": "idbDeoXbi3Y7j1PTct0GQFNMJwIBO8Kl", "environmentKey": "8b01Y9b9sSRkMsbw14aOya8YmQj" } },
+      "reservation_token": "eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiIxNzcxMzc5ODM1fDZ8MjAyNi0wOS0xMFQxMzo0NXwxMDM4MDA3In0.l3TjGriT9SEe0sJUmSwd4qa09o7xXvus7NPG6tiKJWZqFDfoOw2gqF626l_vx9mS7boh5J0m5JPS12FPBy9Pvg"
+    },
+    "releasedLock": { "status": "Success" },
+    "bookingPolicies": { "Policies": [ { "Message": "We have a 15 minute grace period. Please call us if you are running later than 15 minutes after your reservation time.<br /><br />Your table will be reserved for 1 hour 30 minutes for parties of up to 2; 2 hours for parties of up to 4; 2 hours 30 minutes for parties of up to 6; and 3 hours for parties of 7+.", "Type": "General", "Language": { "Code": "en", "Region": "US", "IETF": "en-US" } } ] },
+    "reservation": {
+      "message": "We have a 5 minute grace period. Please call us if you are running later than 5 minutes after your reservation time.<br /><br />We may contact you about this reservation, so please ensure your email and phone number are up to date.",
+      "confirmation_number": 1751,
+      "offer_confirmation_number": 0,
+      "date_time": "2026-11-06T19:00",
+      "party_size": 4,
+      "notes": "Window table",
+      "manage_reservation_url": "https://www.opentable.com/book/view?rid=1038007&confnumber=1751&token=01EMM9tRYsZ5LWf59HhG_iCHIzHSs1Spu-9JvrwKx0nzI1"
+    },
+    "reservationOwesCard": {
+      "message": "We have a 5 minute grace period.",
+      "confirmation_number": 7646,
+      "offer_confirmation_number": 0,
+      "date_time": "2026-11-06T19:00",
+      "party_size": 4,
+      "notes": "",
+      "manage_reservation_url": "https://www.opentable.com/book/view?rid=1038007&confnumber=7646&token=013boUaUujs9z9R-a_RfNnE-tFIyrTrfQb5GAwpjJYORk1",
+      "post_booking_required_action": "AddCreditCard",
+      "payment": { "status": "Pending", "payment_type": "CardHold", "payment_page_url": "https://www.opentable.com/booking/inhouse/cc-details?rid=1038007&confirmationNumber=7646&securityToken=013boUaUujs9z9R-a_RfNnE-tFIyrTrfQb5GAwpjJYORk1", "auto_cancel_hours": 0.25 },
+      "cancel_cutoff_date_utc": "2026-11-05T20:45:00"
+    },
+    "modified": {
+      "message": "We have a 5 minute grace period.",
+      "confirmation_number": 1751,
+      "date_time": "2026-11-06T20:00",
+      "party_size": 4,
+      "notes": "Window table"
+    },
+    "getReservation": {
+      "confirmation_number": 1751, "restaurant_id": 1038007, "date_time": "2026-11-06T19:00", "party_size": 4,
+      "manage_reservation_url": "https://www.opentable.com/book/view?rid=1038007&confnumber=1751&token=01EMM9tRYsZ5LWf59HhG_iCHIzHSs1Spu-9JvrwKx0nzI1",
+      "reservation_attribute": "Default", "status": "CancelledRestaurant", "notes": "Window table", "dining_area_id": 1, "environment": "Indoor",
+      "cancel_cutoff_date_utc": "2026-11-06T17:00:00", "language": "en-US"
+    },
+    "depositTotal": {
+      "total_amount": 25260, "subtotal_amount": 25000, "currency": "USD", "currency_denominator": 100,
+      "ot_fees": [ { "fee_amount": 250, "tax_on_fee_amount": 10, "fee_percent": 1, "fee_type": "OTServiceFee", "is_refundable": true } ],
+      "ot_fees_amount": 250, "taxes_on_ot_fees_amount": 10
+    },
+    "errors": {
+      "creditCardRequired": { "errors": [ { "message": "SlotStatusError - CreditCardRequired" } ], "requestid": "beac4f6e-fa1b-4a29-af7c-bb6ba6a8e6ca" },
+      "overlapping": { "errors": [ { "message": "business rule: DinerHasOverlappingReservations" } ], "requestid": "beac4f6e-fa1b-4a29-af7c-bb6ba6a8e6cb" },
+      "badToken": { "errors": [ { "message": "reservation_token or restaurant id is invalid" } ], "requestid": "beac4f6e-fa1b-4a29-af7c-bb6ba6a8e6cc" },
+      "cancelCutoff": { "errors": [ { "message": "CreditCardCutoff - CreditCardCutoff" } ], "requestid": "beac4f6e-fa1b-4a29-af7c-bb6ba6a8e6cd" },
+      "permission": { "errors": [ { "message": "Permission denied" } ], "requestid": "ff3b1deb-944f-4c34-9634-12dc088fb97e" },
+      "gateway": { "errors": [ { "message": "Unexpected http status code received: GatewayTimeOut" } ] }
+    }
+  }
+}
