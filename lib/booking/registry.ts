@@ -8,7 +8,7 @@
 // One map, imported by both, so the provider that prices a thing is the one
 // that books it. tests/unit/provider-registry.test.ts fails if a route grows
 // its own again.
-import type { BookingProvider, Vertical } from './types';
+import { usableTableProvider, type BookingProvider, type Vertical } from './types';
 import { liteApiHotels } from './providers/hotels.liteapi';
 import { duffelFlights } from './providers/flights.duffel';
 import { viatorActivities, ticketmasterEvents, tableReservations } from './providers/rest';
@@ -57,4 +57,13 @@ export function tableProviderFor(
 /** The platform a table was booked on, from the row's provider. */
 export function tableProviderNamed(name: unknown): TableProvider | null {
   return name === 'yelp' || name === 'opentable' ? TABLE_PROVIDERS[name] : null;
+}
+
+/**
+ * Transitional (rebase of the orchestrator onto the table providers): the
+ * orchestrator's quote/book contract is not the providers' hold/reserve one,
+ * so nothing is offered instantly until the next commit wires the two.
+ */
+export function tableProvider(_platform: string | null | undefined, registry: Partial<Record<string, BookingProvider>> = {}): BookingProvider | null {
+  return usableTableProvider(_platform ? registry[_platform] : undefined);
 }

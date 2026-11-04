@@ -186,7 +186,8 @@ export const tableReservations: BookingProvider = {
       // Handed over, not confirmed. Only the person who booked it can say
       // whether there was a table, and there is a button for exactly that.
       status: quoted.redirectUrl ? 'redirected' : 'pending',
-      providerRef: `RES-${Date.now().toString(36).toUpperCase()}`,
+      // No reference: nobody issued one. `RES-<timestamp>` used to go here,
+      // a number no restaurant ever gave, shown as if it were a confirmation.
     };
   },
 };

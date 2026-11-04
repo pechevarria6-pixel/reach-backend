@@ -66,8 +66,10 @@ import {
   type BookedClaim, type CheckoutRow, type CheckoutStep, type FundingView,
 } from './checkout.ts';
 import { reachBuys } from './booking/charged.ts';
+import { midClaim } from './booking/claim.ts';
 import { bookingTracker, type TrackLine } from './plan-steps.ts';
 import { dateSaid, clockSaid } from './line-when.ts';
+import { reserveMarkOf, shortClock, type ReservePath } from './reservations/reserve-state.ts';
 
 export const NEXT_STATES = [
   'needs_trip_input',
@@ -102,6 +104,13 @@ export type Cta = { label: string } & (
    * line is marked filled, as the Book tab already does.
    */
   | { kind: 'confirm'; bookingId?: string; itemId?: string }
+  /**
+   * POST /api/bookings/[bookingId]/reserve with { path, time? }: Reach
+   * reserves the table (lib/reservations/reserve.ts). Only ever offered for
+   * a path the server said is open (GET /api/plans/[id]/reservations), or to
+   * take a time a platform offered.
+   */
+  | { kind: 'reserve'; bookingId: string; path: ReservePath; time?: string }
 );
 
 export interface NextAction {
@@ -140,6 +149,10 @@ export type NextBooking = Omit<CheckoutRow, 'vertical'> & {
   provider_ref?: string | null;
   /** Written by "I've got it" (sql booking-confirmation, 2026-09-25). Absent before that runs. */
   confirmation_number?: string | null;
+  /** The provider's answer; a table's reservation mark lives in it (lib/reservations/reserve-state.ts). */
+  response_payload?: unknown;
+  /** Why it failed, or "outcome unknown: …" on a row left mid-booking. */
+  error?: string | null;
 };
 
 /** An itinerary line as the screen holds it (ItineraryItem in lib/contracts/itinerary-item.ts). */
@@ -235,6 +248,12 @@ export interface NextActionInput {
    * asked it: a line with no row may then just not have been priced yet.
    */
   bookableSkipped?: string[] | null;
+  /**
+   * GET /api/plans/[id]/reservations → reservations, where the caller holds
+   * it: the way Reach will reserve each table. Without it a table is read as
+   * the hand-off it was before Reach could book any.
+   */
+  reservations?: { bookingId: string | null; path: ReservePath; what?: string | null }[] | null;
   /** What the last press answered, where it refused: 402 short of money, 409 a price rise. */
   outcome?: { status: number; priceChangeCents?: number | null } | null;
   now?: Date;
@@ -261,7 +280,8 @@ function list(names: string[]): string {
 
 /** Providers by the name they trade under; anything else by its site. */
 const PROVIDER_NAMES: Record<string, string> = {
-  resy: 'Resy', opentable: 'OpenTable', ticketmaster: 'Ticketmaster', stubhub: 'StubHub',
+  resy: 'Resy', opentable: 'OpenTable', tock: 'Tock', yelp: 'Yelp', sevenrooms: 'SevenRooms', thefork: 'TheFork',
+  ticketmaster: 'Ticketmaster', stubhub: 'StubHub',
   seatgeek: 'SeatGeek', duffel: 'the airline', liteapi: 'the hotel', viator: 'Viator',
   eventbrite: 'Eventbrite', dice: 'DICE',
 };
@@ -622,6 +642,104 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   const mySkips = new Set((input.skips ?? []).filter(s => s.userId === me).map(s => s.ref));
   const skipCount = new Map<string, number>();
   for (const s of input.skips ?? []) skipCount.set(s.ref, (skipCount.get(s.ref) ?? 0) + 1);
+
+  // ── Tables: where each reservation stands, from the row's own mark ──
+  // (lib/reservations/reserve-state.ts). Before the hand-offs below: a table
+  // Reach is on the phone about is 'pending' with mode 'redirect', and read
+  // as a hand-off it said "Finish on OpenTable" while Reach was calling.
+  const table = tableAnswer();
+  if (table) return table;
+
+  function tableAnswer(): NextAction | null {
+    const tables = live.filter(r => r.vertical === 'restaurant' && !(r.id && mySkips.has(r.id)));
+    if (!tables.length) return null;
+    const lineOf = (r: NextBooking) => lines.find(l => !!l.id && l.id === r.itinerary_item_id) ?? null;
+    const nameOf = (r: CheckoutRow & NextBooking) => lineOf(r)?.venue_name?.trim() || itemTitle(r);
+    const phoneOf = (r: NextBooking): string | null => {
+      const p = (r.response_payload as { phone?: unknown } | null | undefined)?.phone;
+      const n = typeof p === 'string' && p.trim() ? p : lineOf(r)?.venue_phone ?? null;
+      return n ? `tel:${n.replace(/[^\d+]/g, '')}` : null;
+    };
+    const handoffLink = (r: NextBooking): Cta | null => {
+      if (r.redirect_url) {
+        const where = providerName(r);
+        return { label: where ? `Book on ${where} →` : 'Book on their site →', kind: 'link', href: r.redirect_url };
+      }
+      const tel = phoneOf(r);
+      return tel ? { label: 'Call them', kind: 'link', href: tel } : null;
+    };
+    const gotIt = (r: NextBooking): Cta | null => (r.id ? { label: "I've got it ✓", kind: 'confirm', bookingId: r.id } : null);
+    const planned = (r: NextBooking) => (input.reservations ?? []).find(x => !!x.bookingId && x.bookingId === r.id) ?? null;
+    const errorOf = (r: NextBooking) => String((r as { error?: unknown }).error ?? '').trim();
+    const marked = tables.map(r => ({ r, m: reserveMarkOf(r) }));
+
+    // Sent, and no answer: it may be booked. Never offered again from here.
+    const doubt = marked.find(({ r, m }) => (r.status === 'booking' || midClaim(r)) && (m?.state === 'in_doubt' || /^outcome unknown/i.test(errorOf(r))));
+    if (doubt) {
+      return attention(`We can't tell yet whether ${nameOf(doubt.r)} is booked`,
+        "It was sent to be booked and no answer came back, so it isn't tried again from here. Don't book it anywhere else — write to us.",
+        write('A table that may have been booked'));
+    }
+    const booking = marked.find(({ r }) => r.status === 'booking' || midClaim(r));
+    if (booking) {
+      return say({ state: 'booking_in_progress', title: `Booking ${nameOf(booking.r)} now`,
+        body: `${providerName(booking.r) ?? 'The platform'} is answering. Open the trip again in a minute to see how it went.`, cta: null, chip: 'Booking' });
+    }
+    const calling = marked.find(({ r, m }) => r.status === 'pending' && m?.state === 'calling');
+    if (calling) {
+      const m = calling.m!;
+      const at = m.time ? `${shortClock(m.time)}${m.partySize ? ` for ${m.partySize}` : ''}` : 'a table';
+      return say({ state: 'booking_in_progress', title: `Reach is calling ${nameOf(calling.r)}`,
+        body: `Asking for ${at}. Nothing is booked until they say yes — ${solo ? "you'll" : "the group will"} see their answer here.`,
+        cta: null, chip: 'Calling' });
+    }
+    const requested = marked.find(({ r, m }) => r.status === 'pending' && m?.state === 'requested');
+    if (requested) {
+      return say({ state: 'booking_in_progress', title: `${providerName(requested.r) ?? 'The platform'} is checking with ${nameOf(requested.r)}`,
+        body: `It isn't confirmed yet. ${solo ? "You'll" : "The group will"} see the answer here.`, cta: null, chip: 'Booking' });
+    }
+    const offered = marked.find(({ r, m }) => r.status === 'awaiting_approval' && m?.state === 'offered' && (m.offeredTimes?.length ?? 0) > 0);
+    if (offered && offered.r.id) {
+      const m = offered.m!;
+      const o = m.offeredTimes![0];
+      const asked = m.time ? `No ${shortClock(m.time)}. ` : '';
+      const tel = phoneOf(offered.r);
+      const take: Cta = m.path === 'instant'
+        ? { label: `Take ${shortClock(o)}?`, kind: 'reserve', bookingId: offered.r.id, path: 'instant', time: o }
+        // A call never takes another time on its own; the person does.
+        : tel
+          ? { label: `Take ${shortClock(o)}?`, kind: 'link', href: tel }
+          : handoffLink(offered.r) ?? toCheckout('Open checkout →');
+      return say({ state: 'needs_attention', chip: 'Needs you', title: `${asked}${nameOf(offered.r)} offered ${shortClock(o)}`,
+        body: m.path === 'instant'
+          ? `Nothing is booked yet. Take ${shortClock(o)} and Reach books it.`
+          : `Reach only asked, so nothing is booked. To take ${shortClock(o)}, call them.`,
+        cta: take, secondary: m.path === 'instant' ? handoffLink(offered.r) ?? gotIt(offered.r) : gotIt(offered.r) });
+    }
+    const notBooked = marked.find(({ r, m }) => (r.status === 'failed' && m?.path !== 'handoff') || (r.status === 'awaiting_approval' && m?.state === 'not_booked'));
+    if (notBooked && notBooked.r.id) {
+      const r = notBooked.r;
+      const p = planned(r);
+      // The next option, already on screen: Reach calling where it can and
+      // has not yet, else the page or their number, else checkout.
+      const next: Cta = p?.path === 'call' && notBooked.m?.path !== 'call'
+        ? { label: 'Ask Reach to call →', kind: 'reserve', bookingId: r.id!, path: 'call' }
+        : handoffLink(r) ?? toCheckout('See what is next →');
+      return say({ state: 'needs_attention', chip: 'Needs you', title: `${nameOf(r)} isn't booked`,
+        body: notBooked.m?.reason || errorOf(r) || 'Nothing was booked.',
+        cta: next, secondary: gotIt(r) });
+    }
+    // Open, and the server says Reach can reserve it: that, not a hand-off.
+    const ready = tables.find(r => r.status === 'awaiting_approval' && !reserveMarkOf(r) && !!r.id && !!planned(r) && planned(r)!.path !== 'handoff');
+    if (ready) {
+      const p = planned(ready)!;
+      return say({ state: 'ready_to_book', chip: 'Ready to book', title: p.path === 'call' ? `Ask Reach to call ${nameOf(ready)}` : `Book ${nameOf(ready)}`,
+        body: p.what?.trim() || null,
+        cta: { label: p.path === 'call' ? 'Ask Reach to call →' : 'Book it →', kind: 'reserve', bookingId: ready.id!, path: p.path },
+        secondary: handoffLink(ready) });
+    }
+    return null;
+  }
 
   const unfinished = live.filter(r => handedOff(r) && !gotElsewhere(r) && !(r.id && mySkips.has(r.id)));
   if (unfinished.length) {

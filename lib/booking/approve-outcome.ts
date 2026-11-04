@@ -14,6 +14,8 @@ export type ApproveKind =
   | 'reprice'       // 409 party_changed: price it again for who is going
   | 'busy'          // 409 already_in_progress: another press has it
   | 'unknown'       // 502 outcome_unknown, or no answer: it may be bought
+  | 'terms'         // 409 terms_required: a table — show the platform's terms, approve with acceptTerms
+  | 'otherTime'     // 409 other_time: a table — not at that time; approve with one of offeredTimes
   | 'refused';      // anything else: not booked, and here is why
 
 export interface ApproveOutcome {
@@ -26,6 +28,10 @@ export interface ApproveOutcome {
   /** price_changed: the price agreed, and the one the provider gives now. */
   oldCents: number | null;
   newCents: number | null;
+  /** terms_required: the platform's terms to show, and the key that accepts them. */
+  terms?: { key: string; platformName?: string; cancellationPolicy?: string | null; statement?: string } | null;
+  /** other_time: the times the table is offered at instead, HH:MM. */
+  offeredTimes?: string[];
 }
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null);
@@ -33,6 +39,7 @@ const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v > 
 export function approveOutcome(status: number, body: unknown): ApproveOutcome {
   const b = (body && typeof body === 'object' ? body : {}) as {
     code?: unknown; error?: unknown; who?: unknown; oldCents?: unknown; newCents?: unknown;
+    terms?: unknown; offeredTimes?: unknown;
   };
   const said = typeof b.error === 'string' && b.error.trim() ? b.error.trim() : null;
   const out = (kind: ApproveKind, message: string | null): ApproveOutcome => ({
@@ -47,6 +54,13 @@ export function approveOutcome(status: number, body: unknown): ApproveOutcome {
   if (b.code === 'price_changed') return out('priceUp', said);
   if (b.code === 'party_changed') return out('reprice', said);
   if (b.code === 'already_in_progress') return out('busy', said);
+  if (b.code === 'terms_required' && b.terms && typeof b.terms === 'object' && typeof (b.terms as { key?: unknown }).key === 'string') {
+    return { ...out('terms', said), terms: b.terms as ApproveOutcome['terms'] };
+  }
+  if (b.code === 'other_time' && Array.isArray(b.offeredTimes)) {
+    const times = b.offeredTimes.filter((t): t is string => typeof t === 'string' && /^\d{2}:\d{2}$/.test(t));
+    if (times.length) return { ...out('otherTime', said), offeredTimes: times };
+  }
   if (b.code === 'outcome_unknown') {
     return out('unknown', said ?? "We couldn't tell whether this went through. Don't book it again.");
   }
@@ -78,10 +92,16 @@ export type NextStep =
    * failed. Approval only runs rows still waiting, so "Try again" skipped it
    * and landed on the done screen; pricing the line again is the way on.
    */
-  | 'price_again';
+  | 'price_again'
+  /**
+   * A table waiting on the person: the platform's terms to accept, or an
+   * offered time to take. Approve it again with acceptTerms or time.
+   */
+  | 'answer';
 
 export function nextStepFor(o: ApproveOutcome, vertical: string | null | undefined): NextStep {
   if (o.kind === 'busy' || o.kind === 'unknown' || o.code === 'changed') return 'recheck';
+  if (o.kind === 'terms' || o.kind === 'otherTime') return 'answer';
   if (o.code === 'travellers_missing') return 'details';
   if (o.code === 'unavailable' || o.kind === 'reprice') {
     return vertical === 'hotel' || vertical === 'flight' ? 'other_options' : 'plan';

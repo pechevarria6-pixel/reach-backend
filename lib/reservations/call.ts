@@ -36,6 +36,7 @@ import { callWording, type WordingContext, type Wording } from './wording.ts';
 import { toE164, dialable, openForCalls, localMinute, HOURS_MARGIN, type LineLookup, type LineType } from './policy.ts';
 import type { Provider, CallEnded } from './providers.ts';
 import { dayWhere } from '../calendar.ts';
+import type { ReserveMark } from './reserve-state.ts';
 
 export { gate, settle, callWording };
 export type { Outcome, Settled, Wording, CallFacts };
@@ -137,7 +138,12 @@ export interface Store {
   settleOnce(id: string, fields: Partial<CallRow> & { transcript: unknown }): Promise<Read<CallRow | null>>;
   addDoNotCall(phone: string, reason: 'asked' | 'refused', callId: string): Promise<boolean>;
   /** Move a booking from one of `from` to `to`; false when it was not in `from` any more. */
-  moveBooking(bookingId: string, from: string[], to: { status: string; detail?: string | null; provider_ref?: string | null }): Promise<boolean>;
+  /**
+   * `mark` is where the reservation stands (lib/reservations/reserve-state.ts),
+   * put on the row's response_payload so every screen reads "on the phone",
+   * "offered 9:00" or "not booked" from the row itself.
+   */
+  moveBooking(bookingId: string, from: string[], to: { status: string; detail?: string | null; provider_ref?: string | null; mark?: ReserveMark }): Promise<boolean>;
   planMembers(planId: string, groupId: string | null): Promise<string[]>;
   notify(userIds: string[], note: { kind: string; title: string; body: string; url: string | null; planId: string }): Promise<void>;
 }
@@ -304,7 +310,12 @@ export async function placeCall(input: PlaceInput, deps: PlaceDeps): Promise<Pla
   const wording = callWording({ state: 'calling' }, wordingFor(request, handoff.phone, mode === 'test'));
   if (mode === 'live') {
     // Calling is not booked; the row says "pending" and the words say "calling".
-    const moved = await deps.store.moveBooking(b.id, [b.status], { status: 'pending', detail: wording.title });
+    const moved = await deps.store.moveBooking(b.id, [b.status], {
+      // detail stays the restaurant's name: it is what every list shows as
+      // the booking's title. Where it stands is the mark's to say.
+      status: 'pending', detail: facts.restaurant,
+      mark: { state: 'calling', path: 'call', date: facts.date, time: facts.time, partySize: facts.partySize, callId: row.id, at: now.toISOString() },
+    });
     if (!moved) console.error('[reservation call] booking changed while the call was placed', { booking: b.id });
   }
   await tell(deps.store, row.plan_id, request, row.requested_by, mode, wording);
@@ -366,9 +377,15 @@ export async function settleCall(event: CallEnded, providerName: string, store: 
   if (!test) {
     // Only a call that moved the booking to pending moves it back, and only
     // while it is still pending: somebody who marked it themselves meanwhile wins.
+    const base = { path: 'call' as const, date: req.date, time: req.time, partySize: req.partySize, callId: row.id, at: now.toISOString() };
+    const mark: ReserveMark = settled.outcome === 'confirmed'
+      ? { ...base, state: 'confirmed', ref: `reach-call:${row.id}` }
+      : settled.outcome === 'alternative_offered' && settled.offeredTime
+        ? { ...base, state: 'offered', offeredTimes: [settled.offeredTime] }
+        : { ...base, state: 'not_booked', reason: wording.title.replace(/^Not booked\.\s*/, '') };
     const to = settled.outcome === 'confirmed'
-      ? { status: 'confirmed', detail: wording.title, provider_ref: `reach-call:${row.id}` }
-      : { status: req.previousStatus, detail: wording.title };
+      ? { status: 'confirmed', detail: req.restaurant, provider_ref: `reach-call:${row.id}`, mark }
+      : { status: req.previousStatus, detail: req.restaurant, mark };
     const moved = await store.moveBooking(row.booking_id, ['pending'], to);
     if (!moved) console.error('[reservation call] booking was not pending when the call settled; left as it is', { booking: row.booking_id, outcome: settled.outcome });
   }

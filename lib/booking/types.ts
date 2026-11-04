@@ -111,9 +111,16 @@ export interface BookingItemRequest {
     // Where this restaurant actually takes bookings, learned at harvest time
     // rather than looked up while somebody waits. Absent means we do not
     // know, which sends them to the phone rather than to a guess.
-    platform?: 'resy' | 'opentable' | 'tock' | 'none';
+    platform?: 'resy' | 'opentable' | 'tock' | 'sevenrooms' | 'yelp' | 'thefork' | 'none';
     // For the places with no platform at all: the number you ring.
     phone?: string | null;
+    /**
+     * The slot a table platform held for this table at quote time (Yelp's
+     * hold id, OpenTable's slot lock), the quote's own `providerRef`, handed
+     * back to book() so the table booked is the one whose terms were shown.
+     * Set only by lib/reservations/reserve.ts.
+     */
+    holdRef?: string;
   };
 }
 
@@ -144,6 +151,13 @@ export interface BookingItemResult {
 export interface BookingProvider {
   vertical: Vertical;
   name: string;
+  /**
+   * Whether every key this provider needs is present. Optional for the
+   * providers that answer "X not set" from quote() instead; a table platform
+   * (lib/booking/registry.ts TABLE_PROVIDERS) is only ever offered when this
+   * says yes, so absent keys mean "not offered", never "try anyway".
+   */
+  enabled?(): boolean;
   /** Price/availability check. Should never charge. */
   quote(req: BookingItemRequest): Promise<BookingItemResult>;
   /** Commit the booking (or produce redirect/concierge ticket). */
@@ -164,6 +178,40 @@ export interface BookingProvider {
   cancel?(ref: string, opts?: { confirm?: boolean }): Promise<CancelResult>;
 }
 
+/**
+ * What a table platform's quote() leaves in `raw`, read by
+ * lib/reservations/reserve.ts (tableQuoteOf). Every field is optional: a
+ * platform that says nothing about deposits has said nothing, and the screen
+ * says so rather than reading silence as "free".
+ *
+ *   Yelp:      openings → hold (cancellation_policy, reserve_url, 5 minutes)
+ *   OpenTable: availability → slot_lock (booking + cancellation policies,
+ *              deposits and card holds through OpenTable's own processor)
+ *
+ * The quote is `status: 'quoted'` only when the exact date, time and party
+ * asked for is held; `providerRef` is then the hold, and book() takes it
+ * back as `restaurant.holdRef`. A quote with no table at that time is
+ * `status: 'failed'` and lists what the platform did offer in `offeredTimes`.
+ */
+export interface TableQuoteRaw {
+  /** HH:MM, 24-hour: other times the platform offers that night, nearest first. */
+  offeredTimes?: string[];
+  /** The platform's own cancellation / no-show policy, in its words. */
+  cancellationPolicy?: string | null;
+  /** A deposit, card hold or prepayment the restaurant asks for, in cents. */
+  depositCents?: number | null;
+  /** The restaurant wants a card on file — Reach never holds one, so this is handed off. */
+  cardRequired?: boolean;
+  /** A fee the platform says it adds (OpenTable's 2% service fee), in its words. */
+  feeNote?: string | null;
+  /** The platform's terms the diner accepts by booking (OpenTable requires them on screen). */
+  termsUrl?: string | null;
+  /** The platform's own page for this table — where a deposit or card hold is finished. */
+  reserveUrl?: string | null;
+  /** The confirmation page the platform gives back once it is booked. */
+  confirmationUrl?: string | null;
+}
+
 export interface CancelResult {
   /** 'quoted' — here is what you would get back. 'cancelled' — it is done. */
   status: 'quoted' | 'cancelled' | 'failed';
@@ -173,6 +221,16 @@ export interface CancelResult {
   cancellationRef?: string;
   error?: string;
   raw?: unknown;
+}
+
+/**
+ * A table platform's provider, only if it can book now: listed for tables,
+ * and saying its keys are set. A provider with no enabled() is not offered —
+ * absent keys mean "not offered", never "try anyway".
+ */
+export function usableTableProvider(p: BookingProvider | null | undefined): BookingProvider | null {
+  if (!p || p.vertical !== 'restaurant') return null;
+  try { return typeof p.enabled === 'function' && p.enabled() === true ? p : null; } catch { return null; }
 }
 
 export const isConfigured = (envKey: string) =>

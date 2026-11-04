@@ -10,6 +10,10 @@
 //   409 { code: 'unavailable', error }                      cannot be booked as it stands
 //   502 { code: 'provider_failed', error }                  the provider refused; nothing was bought
 //   502 { code: 'outcome_unknown', error }                  sent, and no answer: it MAY be bought
+//   A table (vertical 'restaurant') goes through lib/reservations/reserve.ts
+//   instead, and adds two answers — nothing booked by either:
+//   409 { code: 'terms_required', terms }   show terms; approve again with { acceptTerms: terms.key }
+//   409 { code: 'other_time', offeredTimes } not at that time; approve again with { time }
 // and 401/403/404 from sign-in and lookup, 500 when our own database fails.
 // Every response except 200 and outcome_unknown means nothing was bought.
 //
@@ -58,6 +62,8 @@ import { reportPaidFailure } from '@/lib/paid-failure';
 import { pinQuoted, termsChanged } from '@/lib/booking/pin';
 import { withClaims, isMissingTable, type ContributionRow, type RefundClaim } from '@/lib/refunds';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { reserveTable, type TableRow } from '@/lib/reservations/reserve';
+import { chosenFrom, lineOf, placeOf, planOf, requesterOf, reserveDeps, tableFacts } from '@/lib/reservations/reserve-server';
 
 const supabase = createServerClient;
 
@@ -114,6 +120,45 @@ async function recordRise(db: SupabaseClient, booking: Row, newCents: number): P
   if (error) console.error('[approve] could not record a price rise', { bookingId: booking.id, code: error.code });
 }
 
+const TABLE_CODES: Record<string, string> = {
+  in_progress: 'already_in_progress', calling: 'already_in_progress',
+  terms_required: 'terms_required', other_time: 'other_time', changed: 'changed',
+  provider_failed: 'provider_failed', outcome_unknown: 'outcome_unknown',
+};
+
+/**
+ * "Book it" for a table. The answer is approval's contract (codes as at the
+ * top of this file, plus terms_required and other_time, which
+ * lib/booking/approve-outcome.ts reads), so checkout handles a dinner the
+ * way it handles a hotel.
+ */
+async function approveTable(booking: Row, ctx: { db: SupabaseClient; user: { id: string }; plan: Record<string, unknown> }, body: Record<string, unknown>) {
+  const plan = ctx.plan as Record<string, any>;
+  const row = booking as unknown as TableRow & { itinerary_item_id?: string | null };
+  const [line, where, requester] = await Promise.all([
+    lineOf(ctx.db, row.itinerary_item_id), placeOf(plan), requesterOf(ctx.db, ctx.user.id),
+  ]);
+  const { facts, venue } = await tableFacts(ctx.db, plan, row, line, where);
+  const result = await reserveTable(
+    { booking: row, facts, plan: planOf(plan), requester, chosen: chosenFrom(body), venue },
+    reserveDeps(ctx.db),
+  );
+  if (result.ok === false) {
+    const { ok: _ok, status, code, ...rest } = result;
+    return refuse(status, { ...rest, code: TABLE_CODES[code] ?? (status >= 500 ? 'provider_failed' : 'unavailable'), reserveCode: code });
+  }
+  let updated = result.row;
+  if (!updated) {
+    const { data } = await ctx.db.from('bookings').select('*').eq('id', booking.id).maybeSingle();
+    updated = (data as Record<string, unknown> | null) ?? null;
+  }
+  return NextResponse.json({
+    status: String(updated?.status ?? (result.outcome === 'calling' ? 'pending' : booking.status)),
+    booking: updated, outcome: result.outcome, title: result.title, body: result.body, href: result.href ?? null,
+    alternatives: result.alternatives,
+  });
+}
+
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   // Looked up first so we know which plan to authorize against. Approval
   // executes a real purchase, so this endpoint once let any signed-in user
@@ -146,6 +191,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   let version: string | null = booking.updated_at ?? null;
 
   const vertical = booking.vertical as Vertical;
+
+  // ── A table: reserved the way lib/reservations/reserve.ts decides ─────
+  // On a platform Reach books, at the line's own night and time, once the
+  // platform's terms are accepted; by a call when the gate is open; handed
+  // over otherwise. A table takes no money — no funding check, no share, no
+  // Stripe — so none of the steps below apply to it.
+  if (vertical === 'restaurant') return approveTable(booking, ctx, body);
+
   const provider = PROVIDERS[vertical];
   if (!provider) return unavailable("Reach can't book this kind of thing.");
 

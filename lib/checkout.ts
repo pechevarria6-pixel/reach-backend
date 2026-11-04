@@ -295,6 +295,14 @@ export interface CheckoutState {
   canBook: boolean;
   /** Rows approval would be asked to book: only what Reach buys, and nothing mid-booking. */
   waiting: CheckoutRow[];
+  /**
+   * Tables "Book it" also sends to approval, after `waiting`: a restaurant
+   * row still open and not mid-booking. Approval reserves each through
+   * lib/reservations/reserve.ts — on a platform, by a call or handed over —
+   * and never charges for one, so they are kept out of `waiting` and out of
+   * every sum of money.
+   */
+  tables: CheckoutRow[];
   /** Rows that may already be bought and cannot be told apart from bought yet. */
   inDoubt: CheckoutRow[];
   /** Rows the provider refused. The pay button stays shut while any exist. */
@@ -420,6 +428,7 @@ export function checkoutState(
     step,
     canBook: step === 'book',
     waiting,
+    tables: deduped.filter(r => r.vertical === 'restaurant' && r.status === 'awaiting_approval' && !midClaim(r)),
     inDoubt,
     broken,
     clashes: doubleBooked(deduped),

@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { notifyUsers, type Sender } from '../notify-user.ts';
 import type { CallRow, Claim, Store } from './call.ts';
 import { DAILY_CAP } from './call.ts';
+import { withMark } from './reserve-state.ts';
 
 export const MIGRATION = 'sql/reservation-calls-2026-11-04.sql';
 
@@ -124,8 +125,18 @@ export function supabaseStore(db: SupabaseClient, send: Sender | null): Store {
     },
 
     async moveBooking(bookingId, from, to) {
+      const { mark, ...cols } = to;
+      const patch: Record<string, unknown> = { ...cols, updated_at: new Date().toISOString() };
+      if (mark) {
+        // The rest of the payload is kept: only the reservation's mark changes.
+        // The write below is still conditional on the status, so a row somebody
+        // moved meanwhile is left as they left it.
+        const { data: now, error: readErr } = await db.from('bookings').select('response_payload').eq('id', bookingId).maybeSingle();
+        if (readErr) console.error('[reservation calls] could not read a booking to mark it', { bookingId, code: readErr.code });
+        patch.response_payload = withMark((now as { response_payload?: unknown } | null)?.response_payload, mark);
+      }
       const { data, error } = await db.from('bookings')
-        .update({ ...to, updated_at: new Date().toISOString() })
+        .update(patch)
         .eq('id', bookingId).in('status', from).select('id');
       if (error) { console.error('[reservation calls] could not move a booking', { bookingId, code: error.code }); return false; }
       return (data ?? []).length > 0;

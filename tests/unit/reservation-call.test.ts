@@ -462,6 +462,30 @@ test('a call that books nothing puts the booking back where the hand-off is stil
   assert.equal(m.notes[0].body, "Next: reserve online or call them on (919) 555-0100 — it's on the group's plan.");
 });
 
+test('the booking carries where the call stands, so every screen reads it from the row', async () => {
+  const markOf = (m: { bookings: Map<string, unknown> }) => (m.bookings.get(booking().id) as { mark?: Record<string, unknown>; detail?: string }).mark;
+  const calling = await placedLive();
+  assert.equal(markOf(calling)?.state, 'calling');
+  assert.equal(markOf(calling)?.time, '19:30');
+  assert.equal((calling.bookings.get(booking().id) as { detail?: string }).detail, "Luigi's", 'the name stays the title; the mark says "calling"');
+
+  const offered = await placedLive();
+  await settleCall(ended([OPEN, S("We don't have 7:30, but we could do 9:00.")], { outcome: 'alternative_offered', offered_time: '9:00' }), 'retell', offered.store);
+  assert.equal(offered.bookings.get(booking().id)!.status, 'awaiting_approval');
+  assert.equal(markOf(offered)?.state, 'offered');
+  assert.deepEqual(markOf(offered)?.offeredTimes, ['21:00']);
+
+  const yes = await placedLive();
+  await settleCall(ended([OPEN, S('Yes, 7:30 for four is fine.')], { outcome: 'confirmed', staff_quote: 'Yes, 7:30 for four is fine.', held_time: '19:30', held_party: 4 }), 'retell', yes.store);
+  assert.equal(markOf(yes)?.state, 'confirmed');
+  assert.equal(markOf(yes)?.ref, 'reach-call:c1');
+
+  const nobody = await placedLive();
+  await settleCall(ended([OPEN], null, { voicemail: true }), 'retell', nobody.store);
+  assert.equal(markOf(nobody)?.state, 'not_booked');
+  assert.equal(markOf(nobody)?.reason, "We couldn't reach Luigi's.");
+});
+
 test('somebody who marked it themselves while the call was out wins', async () => {
   const m = await placedLive();
   m.bookings.set(booking().id, { status: 'confirmed' });
