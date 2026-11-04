@@ -47,8 +47,16 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           APP_URL: ${{ secrets.APP_URL }}
           DRY: ${{ github.event.inputs.dry }}
+          EVENT: ${{ github.event_name }}
         run: |
+          # Not switched on yet is not a failure every hour: the owner adds the
+          # two secrets when pings should start. A run started by hand still
+          # fails, so a missing secret is never silent when somebody asks.
           if [ -z "$CRON_SECRET" ] || [ -z "$APP_URL" ]; then
+            if [ "$EVENT" = "schedule" ]; then
+              echo "::notice::Pings are off: add CRON_SECRET and APP_URL as repository secrets to switch them on"
+              exit 0
+            fi
             echo "::error::CRON_SECRET and APP_URL must both be set as repository secrets"
             exit 1
           fi
