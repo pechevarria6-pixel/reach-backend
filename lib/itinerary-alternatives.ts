@@ -243,6 +243,8 @@ export interface AlternativesInput {
    * list is the places closest to the town's middle rather than A to Z.
    */
   center?: { lat: number; lng: number } | null;
+  /** The town the plan's point is the middle of, for saying so. */
+  townName?: string | null;
 }
 
 const PRICE_NOTE = "We hold no price for this place, so this line's estimate stays as it is.";
@@ -262,14 +264,16 @@ function kindLabel(kind: string): string {
  * The map's hours are never restated as ours (they are a volunteer's note),
  * so "open then" is what decided it was offered, not something it says.
  */
-export function whyLine(p: RealPlace, km: number | null, dayLabel: string): string {
+export function whyLine(p: RealPlace, km: number | null, dayLabel: string, from?: string): string {
   const parts: string[] = [];
   const label = kindLabel(p.kind);
   if (label) parts.push(label);
   if (p.street) parts.push(String(p.street).trim());
   if (km !== null) {
     const mi = km / KM_PER_MILE;
-    parts.push(`${mi < 0.1 ? 'under 0.1' : mi.toFixed(1)} mi from the rest of ${dayLabel}`);
+    // What it was measured from, as it was: the day's other stops, or — when
+    // nothing on the day is on the map — the middle of the town.
+    parts.push(`${mi < 0.1 ? 'under 0.1' : mi.toFixed(1)} mi from ${from ?? `the rest of ${dayLabel}`}`);
   }
   const on = (p.whatsOn ?? []).find(s => String(s || '').trim());
   if (on) parts.push(`${String(on).trim()} — from their own page`);
@@ -356,6 +360,10 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
       || a.p.name.localeCompare(b.p.name));
 
   const words = dayWords(line.scheduled_time, nightOut);
+  const fromTown = anchors.length === 1 && anchors[0] === input.center;
+  const town = String(input.townName ?? '').split(',')[0].trim();
+  const from = fromTown ? `the middle of ${town || 'town'}` : undefined;
+  const nearWhat = from ?? `the rest of ${words}`;
   const alternatives: Alternative[] = ranked.slice(0, count).map(({ p, km, same }) => ({
     ref: placeRef(p),
     name: p.name,
@@ -365,7 +373,7 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
     phone: p.phone ?? null,
     sameKind: same,
     km: km === null ? null : Math.round(km * 10) / 10,
-    why: whyLine(p, km, words),
+    why: whyLine(p, km, words, from),
     booking_mode: honestMode(lineType, bookingFor(String(line.booking_mode || 'walk_in'), p)),
     price: { deltaPerPersonCents: null, estimate: true, note: PRICE_NOTE },
   }));
@@ -375,8 +383,8 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
       status: 'none', current: cur,
       reason: places.length
         ? input.preferIndoor
-          ? `Nothing indoors we've verified is near the rest of ${words} and open then.`
-          : `Nothing else of this kind we've verified is near the rest of ${words} and open then.`
+          ? `Nothing indoors we've verified is near ${nearWhat} and open then.`
+          : `Nothing else of this kind we've verified is near ${nearWhat} and open then.`
         : "We haven't verified any places in this town yet, so there is nothing to offer in its place.",
     };
   }

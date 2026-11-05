@@ -12,7 +12,8 @@
 import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
-import { evenSplit } from '@/lib/money';
+import { planShares } from '@/lib/money';
+import { planSkips } from '@/lib/participation';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const DAY = 86400000;
@@ -23,20 +24,19 @@ const periodsBetween = (start: string, end: string, cadence: string) => {
 };
 
 async function planShareCents(
-  db: SupabaseClient, planId: string, groupId: string, budgetCents: number
+  db: SupabaseClient, planId: string, groupId: string, budgetCents: number, userId: string,
 ): Promise<number> {
-  const { data: bookings } = await db
-    .from('bookings').select('price_cents,status,mode,provider').eq('plan_id', planId)
-    .not('status', 'in', NOT_CHARGED);
-  const total = chargedRows(bookings).reduce((s, b) => s + (b.price_cents || 0), 0);
-
-  // Split across the whole group. Dividing by the number of savings_goals rows
-  // meant the first member to set a goal was told to save for the entire trip,
-  // and every later goal silently changed what a share was worth.
-  const heads = Math.max(1, (await groupMemberIds(db, groupId)).length);
-  const basis = total > 0 ? total : (budgetCents || 0);
-  // Largest share, so nobody is told to save less than they may owe.
-  return evenSplit(basis, heads)[0];
+  // The same share funding charges (lib/money.ts planShares), so the savings
+  // goal and checkout can never disagree. This used to split the plan's
+  // budget across the group as if it were the trip's total; it is per
+  // person, so an $800-a-head trip for two told each person to save $400.
+  const [{ data: bookings }, memberIds, skips] = await Promise.all([
+    db.from('bookings').select('id,price_cents,status,mode,provider,vertical').eq('plan_id', planId)
+      .not('status', 'in', NOT_CHARGED),
+    groupMemberIds(db, groupId),
+    planSkips(db, planId),
+  ]);
+  return planShares(chargedRows(bookings), budgetCents || 0, memberIds, skips)[userId] ?? 0;
 }
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   const cadence = ['weekly', 'biweekly', 'monthly'].includes(body.cadence) ? body.cadence : 'weekly';
   const targetCents = Number(body.targetCents) || await planShareCents(
-    ctx.db, params.planId, ctx.plan.group_id as string, Number(ctx.plan.budget_cents) || 0
+    ctx.db, params.planId, ctx.plan.group_id as string, Number(ctx.plan.budget_cents) || 0, ctx.user.id,
   );
   if (!targetCents) return NextResponse.json({ error: 'No target — price the plan or pass targetCents' }, { status: 400 });
 

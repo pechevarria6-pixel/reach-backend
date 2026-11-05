@@ -74,6 +74,7 @@ export async function tableFacts(
       bookingId: row?.id ?? null, itemId: line?.id ?? (row as { itinerary_item_id?: string | null } | null)?.itinerary_item_id ?? null,
       restaurant: name, city: r.city ?? null, platform, date, time, partySize,
       phone: v.phone,
+      website: v.website,
       reserveUrl, solo: plan.solo_mode === true,
       // Only the cited row's link: the one place a platform id may come from.
       urls: v.urls,

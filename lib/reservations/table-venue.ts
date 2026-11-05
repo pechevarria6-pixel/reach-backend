@@ -21,6 +21,7 @@ export interface CitedVenue {
   reservation_platform: string | null;
   reservation_url: string | null;
   phone: string | null;
+  website?: string | null;
 }
 
 export interface VenueFacts {
@@ -29,6 +30,19 @@ export interface VenueFacts {
   urls: (string | null)[];
   reserveUrl: string | null;
   phone: string | null;
+  /**
+   * Their own homepage, held apart from reserveUrl: a homepage says nothing
+   * about whether they take tables online, so it is offered as "their
+   * website", never "Book on their site".
+   */
+  website: string | null;
+}
+
+/** An http(s) address we can link to, or null. A homepage: nothing more is claimed of it. */
+function homepage(u: unknown): string | null {
+  const raw = String(u ?? '').trim();
+  if (!/^https?:\/\//i.test(raw)) return null;
+  try { new URL(raw); return raw; } catch { return null; }
 }
 
 export function tableVenueFacts(input: {
@@ -47,13 +61,16 @@ export function tableVenueFacts(input: {
     name: input.restaurant, city: input.city, date: input.date, time: input.time, partySize: input.partySize, knownUrl: known,
   })
     ?? usableStoredUrl('none', known)
-    // The line's own site, as the menu row it was written from gave it.
+    // The line's own site, only where it is itself a booking page.
     ?? usableStoredUrl('none', line?.venue_website ?? null)
     ?? null;
+  // The cited row's homepage, or the line's own, as the menu row gave it.
+  const website = homepage(venue?.website) ?? homepage(line?.venue_website);
   return {
     platform,
     urls: venue ? [venue.reservation_url ?? null] : [],
     reserveUrl,
+    website: website && website !== reserveUrl ? website : null,
     phone: venue?.phone ?? line?.venue_phone ?? (line ? null : input.stored?.phone ?? null),
   };
 }

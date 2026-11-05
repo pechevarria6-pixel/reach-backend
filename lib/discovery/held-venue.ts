@@ -21,6 +21,8 @@ export interface HeldVenue {
   reservation_platform: string | null;
   reservation_url: string | null;
   phone: string | null;
+  /** The venue's own homepage, as the map gives it. Not a booking page. */
+  website?: string | null;
   /**
    * The venue's mapped hours and where it is, for the reservation assistant,
    * which may ring only while a place is plainly open
@@ -146,7 +148,7 @@ export async function heldVenueByRef(
   if (!id) return { venue: null, error: null };
   const read = (migrated: boolean) => {
     let q = db.from('discovery_venues')
-      .select('id, name, lng, reservation_platform, reservation_url, phone, opening_hours')
+      .select('id, name, lng, reservation_platform, reservation_url, phone, opening_hours, website')
       .eq('id', id);
     if (migrated) q = q.is('gone_at', null);
     return q.maybeSingle() as unknown as Promise<{ data: (Row & { id: string }) | null; error: ReadError }>;

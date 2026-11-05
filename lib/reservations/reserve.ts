@@ -82,6 +82,8 @@ export interface TableFacts {
   phone: string | null;
   /** The hand-off link with the line's night in it (reservationUrl), or their own booking page. */
   reserveUrl: string | null;
+  /** Their own homepage, which says nothing of how they take tables. */
+  website?: string | null;
   /**
    * Every booking link we hold for it — the line's, the row's hand-off, the
    * venue's — from which a platform id may be read (tableProviderFor). Never
@@ -213,6 +215,13 @@ function handoffOptions(f: TableFacts, skipLink = false): ReserveOption[] {
       what: name ? `Book it yourself on ${name}, with your own account.` : 'Book it yourself on their own site.',
     });
   }
+  if (f.website && !f.reserveUrl) {
+    out.push({
+      kind: 'link', href: f.website,
+      label: 'Their website',
+      what: 'Their own site — see whether it takes tables online.',
+    });
+  }
   if (f.phone) {
     out.push({
       kind: 'phone', href: `tel:${f.phone.replace(/[^\d+]/g, '')}`,
@@ -302,7 +311,10 @@ export function decide(f: TableFacts, a: Availability, row?: DecideRow | null, n
   } else {
     path = 'handoff';
     const first = handoffOptions(f)[0];
-    what = first.kind === 'link'
+    what = first.kind === 'link' && first.href === f.website && !f.reserveUrl
+      // A homepage, not a booking page: the same words as the next-step card.
+      ? `Reach can't book ${f.restaurant} itself yet. Try their own site${f.phone ? `, or ring them on ${prettyPhone(toE164(f.phone) ?? f.phone)}` : ''}.`
+      : first.kind === 'link'
       ? `${name ? `Book it on ${name}` : 'Book it on their site'} with your own account — Reach can't book ${f.restaurant} itself yet.`
       : first.kind === 'phone'
         // We hold their number, not how they take tables: "books by phone"

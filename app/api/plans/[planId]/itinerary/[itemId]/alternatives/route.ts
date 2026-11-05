@@ -65,6 +65,7 @@ export async function GET(_req: Request, { params }: { params: { planId: string;
     startDate: lc.plan.start_date ?? null, countryCode: lc.plan.destination_country ?? null,
     preferIndoor: !!weather,
     center: planCenter(lc.plan),
+    townName: typeof (lc.plan as { destination_city?: unknown })?.destination_city === 'string' ? String((lc.plan as { destination_city?: unknown }).destination_city) : null,
   });
 
   if (result.status === 'booking_line') {

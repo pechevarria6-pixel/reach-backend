@@ -795,7 +795,8 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     const line = yours[0].line;
     const name = line.venue_name?.trim() || line.title?.trim() || 'This one';
     const cta: Cta = line.venue_website
-      ? { label: 'Book on their site →', kind: 'link', href: line.venue_website }
+      // Their homepage, not a booking page: it says nothing of how they take tables.
+      ? { label: 'Their website →', kind: 'link', href: line.venue_website }
       : line.venue_phone
         ? { label: `Call ${name}`, kind: 'link', href: `tel:${line.venue_phone.replace(/[^\d+]/g, '')}` }
         : { label: 'Open the list →', ...nav('planDetail', 'bookings') };

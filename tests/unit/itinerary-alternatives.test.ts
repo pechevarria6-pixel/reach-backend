@@ -246,6 +246,11 @@ test('with nothing on the day located, the town\'s own point says what is near',
   // SPIN (60 m from the point), Renwick (750 m), The Pour House (3 km) — not A to Z.
   assert.deepEqual(got.alternatives.map(a => a.name), ['SPIN', 'Renwick Gallery', 'The Pour House']);
   assert.ok(got.alternatives.every(a => a.km !== null), 'each says how far it is');
+  // Measured from the town's middle, and said so — never "from the rest of Day 1",
+  // a day with nothing else on the map.
+  assert.ok(got.alternatives.every(a => /from the middle of town/.test(a.why) && !/rest of/.test(a.why)), got.alternatives.map(a => a.why).join(' | '));
+  const named = alternativesFor({ line: walk, lines: [walk, supper], places: menu, nightOut: false, startDate: '2026-10-23', count: 1, center, townName: 'Washington, DC' });
+  assert.ok(named.status === 'ok' && /from the middle of Washington\b/.test(named.alternatives[0].why));
   // Without the point it is still the old order: nothing to measure from.
   const blind = alternativesFor({ line: walk, lines: [walk, supper], places: menu, nightOut: false, startDate: '2026-10-23', count: 3 });
   assert.equal(blind.status, 'ok');

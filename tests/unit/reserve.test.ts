@@ -1310,3 +1310,13 @@ test('a place we hold only a number for is rung, not said to book by phone', () 
   assert.doesNotMatch(v.what, /books by phone/);
   assert.match(v.what, /^Reach can't book Luigi's itself yet\. Ring them on .+ to ask for a table\.$/);
 });
+
+test('a homepage is offered as their website, never as "Book on their site"', async () => {
+  const { tableVenueFacts } = await import('../../lib/reservations/table-venue.ts');
+  const v = tableVenueFacts({
+    venue: { reservation_platform: null, reservation_url: null, phone: '+18432251817', website: 'https://bohemianbull.com' },
+    line: null, stored: null, restaurant: 'Bohemian Bull', city: 'Charleston', date: '2026-12-05', time: '19:30', partySize: 2,
+  });
+  assert.equal(v.reserveUrl, null, 'a homepage is not a booking page');
+  assert.equal(v.website, 'https://bohemianbull.com', 'the website the map holds is passed on');
+});
