@@ -11367,7 +11367,7 @@ function CloseCard({planId,groupId,push,toast}){
 // this plan reaches the bell or the phone — the countdown pings, the
 // settle-up reminder and a friend's nudge alike. Hidden until the table is
 // there, rather than a switch that does nothing.
-function MuteReminders({planId,toast,solo=false}){
+function MuteReminders({planId,toast,solo=false,night=false}){
   const [m,setM]=useState(null);
   const [busy,setBusy]=useState(false);
   useEffect(()=>{
@@ -11394,14 +11394,14 @@ function MuteReminders({planId,toast,solo=false}){
     <label style={{display:"flex",alignItems:"center",gap:12,marginTop:14,padding:"12px 14px",background:C.s2,
       border:`1px solid ${C.border}`,borderRadius:14,cursor:busy?"progress":"pointer"}}>
       <span style={{flex:1}}>
-        <span style={{display:"block",fontSize:13.5,color:C.t1,fontWeight:600}}>Mute reminders for this trip</span>
+        <span style={{display:"block",fontSize:13.5,color:C.t1,fontWeight:600}}>{night?"Mute reminders for this night out":"Mute reminders for this trip"}</span>
         <span style={{display:"block",fontSize:12,color:C.t2,lineHeight:1.5,marginTop:2}}>
           {solo
             ?(m.muted?"Nothing about this trip reaches your bell or your phone.":"Reminders about this trip come to your bell and your phone.")
             :(m.muted?"Nothing about this trip reaches your bell or your phone — not reminders, not nudges from the group.":"Reminders and nudges about this trip come to your bell and your phone.")}
         </span>
       </span>
-      <input type="checkbox" checked={!!m.muted} disabled={busy} onChange={flip} aria-label="Mute reminders for this trip"
+      <input type="checkbox" checked={!!m.muted} disabled={busy} onChange={flip} aria-label={night?"Mute reminders for this night out":"Mute reminders for this trip"}
         style={{width:20,height:20,accentColor:C.accent}}/>
     </label>
   );
@@ -12729,7 +12729,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               onCta={act} onDot={openDot}
               unknown={planStandsLine({fundingFailed:fundingFailed||(bookingsFailed&&!bookingsLoaded),funding:bookingsFailed&&!bookingsLoaded?null:funding,bookingsLoaded})}/>}
             <div style={{display:"flex",gap:10,padding:"0 20px 14px"}}>
-              {[{l:soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},(plan.startDate&&plan.startDate===plan.endDate)?{l:"When",v:dayLabel(plan.startDate)||"—",e:"🌃"}:{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
+              {[{l:plan.type==="restaurant"?"Going":soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},(plan.startDate&&plan.startDate===plan.endDate)?{l:"When",v:dayLabel(plan.startDate)||"—",e:"🌃"}:{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
                 <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
                   <div style={{fontSize:20}}>{s.e}</div>
                   <div style={{fontFamily:"var(--font-display)",fontSize:18,color:C.t1,marginTop:4}}>{s.v}</div>
@@ -12844,7 +12844,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               <div style={{padding:"0 20px 14px"}}>
                 {/* About dates only. Under "Everyone has answered" a bare
                     "0 of 2 have answered" read as contradicting it. */}
-                <div className="sl" style={{marginBottom:10}}>Which dates work for you?</div>
+                <div className="sl" style={{marginBottom:10}}>{plan.type==="restaurant"?"Which evening works for you?":"Which dates work for you?"}</div>
                 <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
                   {dates.bestWindows?.[0]&&(
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
@@ -12978,7 +12978,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&plan.options?.length>0&&<button className="bs" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast(votingOpen?"Sent round for a vote":"The vote's open. Whoever's still to answer has been asked to, and everyone hears once they're in");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
               {/* Settle-up reminders come after the trip, so this stays then too. */}
-              <MuteReminders planId={planId} toast={toast} solo={soloTrip}/>
+              <MuteReminders planId={planId} toast={toast} solo={soloTrip} night={plan.type==="restaurant"}/>
               {/* Only where a plan can be stuck — still deciding where it goes.
                   A decided plan may have money in it, and calling it off
                   from here says nothing about that. */}

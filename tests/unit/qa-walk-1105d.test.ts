@@ -33,3 +33,9 @@ test('a cached gig says its venue once', () => {
   const cache = readFileSync('lib/discovery/cache.ts', 'utf8');
   assert.match(cache, /!String\(e\.when_text \?\? ''\)\.toLowerCase\(\)\.includes\(String\(venue\.name\)\.toLowerCase\(\)\)/);
 });
+
+test('a night out is an evening on its own screen: who is going, which evening, this night out', () => {
+  assert.match(app, /plan\.type==="restaurant"\?"Which evening works for you\?":"Which dates work for you\?"/);
+  assert.match(app, /l:plan\.type==="restaurant"\?"Going":soloTrip\?"Traveller":"Travellers"/);
+  assert.match(app, /night\?"Mute reminders for this night out":"Mute reminders for this trip"/);
+});
