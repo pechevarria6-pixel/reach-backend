@@ -64,6 +64,31 @@ export function offerTotal(roomType: LiteRoomType | null | undefined, rooms: num
   return total > 0 ? { cents: total, currency: picked[0].retailRate?.total?.[0]?.currency || 'USD' } : null;
 }
 
+/**
+ * What the hotel charges on top of our price, paid at the property: the
+ * taxes and fees LiteAPI marks included:false. The Vendue in Charleston
+ * quoted $914.38 and $176.17 more was owed at the desk (tax, a destination
+ * charge, a service charge) — and the person was never told.
+ */
+export function paidAtHotel(roomType: LiteRoomType | null | undefined, rooms: number): { cents: number; items: { what: string; cents: number }[] } {
+  const rates = (roomType?.rates ?? []) as Array<{ occupancyNumber?: unknown; retailRate?: { taxesAndFees?: { amount?: unknown; included?: unknown; description?: unknown }[] | null } }>;
+  const perRoom = new Map<number, typeof rates[number]>();
+  for (const r of rates) {
+    const n = Number(r.occupancyNumber);
+    if (Number.isFinite(n) && n >= 1 && !perRoom.has(n)) perRoom.set(n, r);
+  }
+  const want = Math.max(1, Math.floor(rooms || 1));
+  const picked = perRoom.size ? [...perRoom.values()].slice(0, want) : rates.slice(0, 1);
+  const items: { what: string; cents: number }[] = [];
+  for (const r of picked) {
+    for (const f of r.retailRate?.taxesAndFees ?? []) {
+      const c = Math.round(Number(f?.amount) * 100);
+      if (f?.included === false && Number.isFinite(c) && c > 0) items.push({ what: String(f.description || 'Fee').trim(), cents: c });
+    }
+  }
+  return { cents: items.reduce((s, i) => s + i.cents, 0), items };
+}
+
 const BASE = process.env.LITEAPI_BASE || 'https://api.liteapi.travel/v3.0';
 const KEY = () => process.env.LITEAPI_KEY || '';
 
@@ -229,6 +254,8 @@ export const liteApiHotels: BookingProvider = {
     const hotelId: string | undefined = match?.hotelId;
     const hotel = hotelId ? await hotelDetails(hotelId) : null;
     const room = titleCase(first?.name);
+    const atHotel = paidAtHotel(roomType, (body.occupancies as unknown[]).length);
+    const atHotelWords = atHotel.cents > 0 ? `plus $${(atHotel.cents / 100).toFixed(2)} in taxes and fees paid at the hotel` : null;
     return {
       vertical: 'hotel',
       mode: 'native',
@@ -240,11 +267,11 @@ export const liteApiHotels: BookingProvider = {
       priceCents: total.cents,
       currency: total.currency,
       detail: hotel
-        ? [hotel.name, hotel.stars ? `${hotel.stars}★` : null, room, `${h.checkin} → ${h.checkout}`].filter(Boolean).join(' · ')
-        : `A hotel in ${h.city} · ${h.checkin} → ${h.checkout}`,
+        ? [hotel.name, hotel.stars ? `${hotel.stars}★` : null, room, `${h.checkin} → ${h.checkout}`, atHotelWords].filter(Boolean).join(' · ')
+        : [`A hotel in ${h.city}`, `${h.checkin} → ${h.checkout}`, atHotelWords].filter(Boolean).join(' · '),
       // hotelId travels with the quote so approval books this hotel, not
       // whichever one a fresh city-wide search happens to return first.
-      raw: { ...first, ...(hotelId ? { hotelId } : {}), ...(hotel ? { hotel } : {}) },
+      raw: { ...first, ...(hotelId ? { hotelId } : {}), ...(hotel ? { hotel } : {}), payAtHotelCents: atHotel.cents, payAtHotel: atHotel.items },
     };
   },
 

@@ -14472,6 +14472,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     // person it concerns is reading this screen.
     d:b.note||BOOKING_MODE[b.mode]||BOOKING_MODE[b.provider]||"",
     a:b.priceCents, st:b.status,
+    info:typeof b.detail==="string"?b.detail:null,
     // A redirected booking finishes somewhere else, and until now the screen
     // said so with nothing to tap: "Finish on their site" and no site. The
     // provider hands the address back on the booking; this is it.
@@ -14909,6 +14910,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
           <span style={{fontSize:20}}>{it.icon}</span>
           <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
             {it.when?<div style={{fontSize:12,color:C.t2}}>{it.when}</div>:null}
+            {/* What it is — the flights, the room and the nights, and anything
+                the hotel charges at the desk — and what it costs. Every row
+                read only "We book this for you" over one total. */}
+            {it.info&&it.info!==it.l?<div style={{fontSize:12,color:C.t2,lineHeight:1.4}}>{it.info}</div>:null}
+            {it.a>0?<div style={{fontSize:12,color:C.t1,fontWeight:600}}>{`$${(it.a/100).toFixed(2)}`}</div>:null}
             {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}
             <HoldToggle bookingId={it.id} status={it.st} toast={toast} onChanged={load}/></div>
           {/* Same fall-through as the success screen had: anything that was

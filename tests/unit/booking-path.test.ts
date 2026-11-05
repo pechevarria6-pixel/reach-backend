@@ -531,3 +531,18 @@ test('when our Viator access cannot check a tour, the person is handed its own V
     assert.doesNotMatch(String(r.detail), /Not available/);
   } finally { s.restore(); }
 });
+
+test('what the hotel charges at the desk is said beside our price, never left out', async () => {
+  const { paidAtHotel } = await import('../../lib/booking/providers/hotels.liteapi.ts');
+  const rt = { rates: [{ occupancyNumber: 1, retailRate: { total: [{ amount: 914.38 }], taxesAndFees: [
+    { amount: 128.01, included: false, description: 'TAX' },
+    { amount: 4.56, included: false, description: 'Destination charge' },
+    { amount: 43.6, included: false, description: 'Property service charge' },
+    { amount: 10, included: true, description: 'Already in the price' },
+  ] } }] };
+  const got = paidAtHotel(rt as never, 1);
+  assert.equal(got.cents, 17617);
+  assert.equal(got.items.length, 3);
+  const src = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(src, /info:typeof b\.detail==="string"\?b\.detail:null/);
+});
