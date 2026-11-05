@@ -240,6 +240,18 @@ type Locate = (city: string, country?: string | null) => Promise<{ lat: number; 
 type Deps = { read?: Read; locate?: Locate; now?: Date; deadlineMs?: number };
 
 /**
+ * Whether any of these dates is inside a forecast's range for somebody,
+ * somewhere on earth: from the earliest today anywhere to the furthest day
+ * any source covers. False means nothing should be looked up at all — not
+ * the place, not the forecast. Pure.
+ */
+export function inForecastRange(dates: string[], now: Date = new Date()): boolean {
+  const soonest = placeToday({ lat: 0, lng: -180 }, now);
+  const furthest = addDays(placeToday({ lat: 0, lng: 180 }, now), SOURCES.met_norway.horizonDays);
+  return dates.some(d => d >= soonest && d <= furthest);
+}
+
+/**
  * The forecast days held for a place and these dates, or null. Through the
  * cache and the per-instance memo, never past the deadline, never throws.
  * Asks nothing when none of the dates is inside a forecast's range.
@@ -277,10 +289,7 @@ export async function ideaForecasts(
   const ms = deps.deadlineMs ?? DEADLINE_MS;
   const dates = optionDates(when.start, when.end, !!when.night);
   if (!dates.length) return options.map(() => null);
-  // Nobody's dates are within nine days of today anywhere on earth: no lookups.
-  const soonest = placeToday({ lat: 0, lng: -180 }, now);
-  const furthest = addDays(placeToday({ lat: 0, lng: 180 }, now), SOURCES.met_norway.horizonDays);
-  if (!dates.some(d => d >= soonest && d <= furthest)) return options.map(() => null);
+  if (!inForecastRange(dates, now)) return options.map(() => null);
   try {
     return await Promise.all(options.map(async t => {
       if (!outdoorsLed(t)) return null;

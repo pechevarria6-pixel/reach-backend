@@ -17,7 +17,7 @@ import { howIsIt, climatePromptBlock, climateVetoes, COLD_HIGH_C, HOT_HIGH_C } f
 import { readClimate, climateFor, ideasWithClimateNow } from '@/lib/climate-store';
 import { forecastPromptBlock, addDays } from '@/lib/forecast';
 import { generationForecast, indoorMenu, weatherClashes, scrubWeatherTips, forecastSummary } from '@/lib/forecast-plan';
-import { ideaForecasts, ideasWithForecast, dropSpoiled, scrubIdeaWeather, optionsForecastBlock, optionDates, heldFor } from '@/lib/forecast-ideas';
+import { ideaForecasts, ideasWithForecast, dropSpoiled, scrubIdeaWeather, optionsForecastBlock, optionDates, heldFor, inForecastRange } from '@/lib/forecast-ideas';
 import { forecastPoint } from '@/lib/forecast';
 import { generationHints } from '@/lib/traveler-profile';
 import { readProfiles } from '@/lib/quiz-store';
@@ -1501,7 +1501,9 @@ you have made up; a day that is simply a good day is allowed to be one.`;
   // against the forecast once they are back (lib/forecast-ideas.ts).
   const knownPlace = isNightPlan ? nightCity : fixedPlace;
   const optionsDates = optionDates(startDate, endDate, isNightPlan);
-  const ideasForecastBlock = knownPlace && optionsDates.length
+  // Dates past every forecast's range ask nothing — not even where the place
+  // is: a geocode for a forecast that cannot exist is only a wait.
+  const ideasForecastBlock = knownPlace && inForecastRange(optionsDates)
     ? await within((async () => {
       const spot = await locate(String(knownPlace));
       const at = spot ? forecastPoint(spot.lat, spot.lng) : null;

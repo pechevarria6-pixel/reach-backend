@@ -52,13 +52,19 @@ export interface FindingWeather {
  * its kind, then its own seating tags. Null when nothing on the map says.
  */
 export function findingSetting(f: Pick<Finding, 'kind' | 'osm'>): 'open' | 'roof' | null {
+  // The place's own seating tags come first: a bar or a kiosk mapped as
+  // seating people outside and nobody inside is out in the open, whatever
+  // its kind usually means. Its kind never overrules what its row says.
+  const t = f.osm?.tags ?? {};
+  const outsideOnly = t.outdoor_seating === 'yes' && t.indoor_seating === 'no';
+  if (outsideOnly) return 'open';
   const k = setting(f.kind ?? null, null);
   // setting() with no kind falls back to words, and words are not asked for:
   // with no kind there is nothing on the map to read.
   if (f.kind && k === 'outdoor') return 'open';
-  if (f.kind && k === 'indoor') return 'roof';
-  const t = f.osm?.tags ?? {};
-  if (t.outdoor_seating === 'yes' && t.indoor_seating === 'no') return 'open';
+  // Under a roof only when nothing on the row says otherwise: a place mapped
+  // as having no indoor seating is not called dry on its kind alone.
+  if (f.kind && k === 'indoor' && t.indoor_seating !== 'no') return 'roof';
   return null;
 }
 

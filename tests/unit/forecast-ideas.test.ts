@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   outdoorsLed, ideaForecastFrom, washedOut, dropSpoiled, scrubIdeaWeather, optionsForecastBlock,
-  optionDates, ideaForecasts, spoilers,
+  optionDates, ideaForecasts, spoilers, inForecastRange,
 } from '../../lib/forecast-ideas.ts';
 import { forgetPickForecasts } from '../../lib/recommendations/pick-weather.ts';
 import { TripsSchema, TRIPS_JSON_SCHEMA } from '../../lib/trip-schema.ts';
@@ -147,4 +147,20 @@ test('the model is asked what each option is built around, and an answer without
   const shape = (TripsSchema.shape.trips.element as any).shape;
   assert.ok(shape.setting.safeParse(null).success);
   assert.ok(!shape.setting.safeParse('beach').success);
+});
+
+test('dates past every forecast range ask for nothing before the options are written', async () => {
+  const now = new Date('2026-11-05T15:00:00Z');
+  assert.equal(inForecastRange(['2026-11-07'], now), true);
+  assert.equal(inForecastRange(['2027-02-05', '2027-02-08'], now), false, 'three months out');
+  assert.equal(inForecastRange(['2026-11-30'], now), false, 'a few weeks out');
+  assert.equal(inForecastRange([], now), false);
+  // The generate route gates its pre-generation lookup (a live geocode) on
+  // the same range, not merely on there being a date.
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../../app/api/trips/generate/route.ts', import.meta.url), 'utf8');
+  const at = src.indexOf('const ideasForecastBlock');
+  assert.ok(at > 0);
+  const head = src.slice(at, src.indexOf('await locate(String(knownPlace))', at));
+  assert.match(head, /inForecastRange\(optionsDates\)/, 'the geocode waits behind the forecast range');
 });

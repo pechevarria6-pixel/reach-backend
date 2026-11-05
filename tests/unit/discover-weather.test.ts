@@ -93,3 +93,14 @@ test('a slow forecast is no forecast: Discover is never held up for it', async (
   assert.equal(ok.today, THU);
   assert.deepEqual((await discoverForecast({} as never, 0, 0, { now })).days, [], 'Null Island is nowhere');
 });
+
+test('a row saying it seats nobody inside is never called under a roof on its kind', () => {
+  const outsideOnly = { osm: { tags: { outdoor_seating: 'yes', indoor_seating: 'no' } } };
+  assert.equal(findingSetting(f('Beach bar', 'bar', outsideOnly)), 'open');
+  assert.equal(findingSetting(f('Kiosk', 'restaurant', outsideOnly)), 'open');
+  assert.equal(findingSetting(f('Rooftop', 'bar', { osm: { tags: { indoor_seating: 'no' } } })), null, 'no seats inside: not dry');
+  assert.equal(findingSetting(f('Pub', 'pub', { osm: { tags: { outdoor_seating: 'yes' } } })), 'roof', 'seats inside as well');
+  const out = weatherRanked([f('museum', 'museum'), f('beach bar', 'bar', outsideOnly)], [day(THU, [], ['rain'])], THU, HERE);
+  assert.deepEqual(out.map(x => x.id), ['museum', 'beach bar']);
+  assert.equal(out.find(x => x.id === 'beach bar')!.weather?.line, 'Rain likely this evening (70%) — this one is out in the open.');
+});
