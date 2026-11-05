@@ -104,9 +104,35 @@ export async function announceIfEveryoneIn(
     title: "Everyone's in",
     body: night
       ? 'All of you have answered — find your ideas for the night.'
-      : 'All of you have answered — your trip ideas are built from every one of your answers.',
+      // Nothing is built until somebody presses Find; "are built" said it was.
+      : 'All of you have answered — find your trip ideas, made from every one of your answers.',
     url: `/home?waiting=${encodeURIComponent(plan.id)}&group=${encodeURIComponent(plan.group_id)}`,
     planId: plan.id,
   }, send);
   return true;
+}
+
+/**
+ * After somebody leaves a group: every trip still waiting on answers that
+ * their going has completed. Leaving never told anybody, so if the last
+ * person who had not answered left or was removed, "Everyone's in" was never
+ * sent and only somebody watching the wait screen noticed. A failed read
+ * tells nobody; this is a courtesy, never a gate.
+ */
+export async function announceWhereLeavingCompletesAnswers(
+  db: SupabaseClient, groupId: string, actorId: string, send: Sender | null,
+): Promise<void> {
+  const { data, error } = await db.from('plans')
+    .select('id, group_id, title, type, destination_style, status')
+    .eq('group_id', groupId).eq('destination_style', 'undecided').in('status', ['planning', 'voting']);
+  if (error) {
+    console.error('[everyone-in] could not read the waiting trips after somebody left', { groupId, code: error.code });
+    return;
+  }
+  for (const plan of (data ?? []) as Array<Parameters<typeof announceIfEveryoneIn>[1]>) {
+    await announceIfEveryoneIn(db, plan, actorId, send).catch(e => {
+      console.error('[everyone-in] could not announce after a leave', { planId: plan.id, error: e instanceof Error ? e.message : String(e) });
+      return false;
+    });
+  }
 }

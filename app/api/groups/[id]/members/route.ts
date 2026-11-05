@@ -9,6 +9,7 @@ import { normalizeEmail, newInviteToken, INVITE_TTL_DAYS } from '@/lib/invites';
 import { sendGroupInvite } from '@/lib/email';
 import { beforeJoining, afterJoining } from '@/lib/joining';
 import { tellWhereLeavingCompletesTheVote } from '@/lib/vote-complete';
+import { announceWhereLeavingCompletesAnswers } from '@/lib/everyone-in';
 import { pushSender } from '@/lib/push';
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
@@ -168,6 +169,12 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   // last one still to vote, the vote is complete now, and the organiser is
   // told as they would have been by a vote (lib/vote-complete.ts). Named as
   // the one who left, so an organiser removing them hears it too.
-  await tellWhereLeavingCompletesTheVote(ctx.db, params.id, String(targetUserId), pushSender());
+  // And a trip that was waiting only on them now has everybody's answers.
+  // Both at once: each is a courtesy, and the person leaving waits on them.
+  const send = pushSender();
+  await Promise.all([
+    tellWhereLeavingCompletesTheVote(ctx.db, params.id, String(targetUserId), send),
+    announceWhereLeavingCompletesAnswers(ctx.db, params.id, String(targetUserId), send),
+  ]);
   return NextResponse.json({ success: true });
 }
