@@ -604,3 +604,22 @@ test("changing the plan's kind lets go of the idea's length", () => {
   const j = app.indexOf('["This weekend","Next weekend","In 2 weeks","In a month"]');
   assert.match(app.slice(j, j + 1500), /setEndDate\(today\(sun\)\);[\s\S]{0,200}setSuggestedNights\(0\);/);
 });
+
+test('a town read from two states\' map files is not given whichever state came first', () => {
+  const c = candidatesFrom({
+    world: [],
+    seeds: [
+      { name: 'Alexandria', lat: 38.8, lng: -77.1, region: 'north-america/us/maryland' },
+      { name: 'Alexandria', lat: 38.8, lng: -77.1, region: 'north-america/us/virginia' },
+      { name: 'Charlotte', lat: 35.227, lng: -80.843, region: 'north-america/us/south-carolina' },
+      { name: 'Charlotte', lat: 35.227, lng: -80.843, region: 'north-america/us/north-carolina' },
+      { name: 'Aberdeen', lat: 35.1315, lng: -79.4295, region: 'north-america/us/north-carolina' },
+    ],
+    areas: [{ city: 'Charlotte, NC', lat: 35.23, lng: -80.84 }],
+  });
+  const label = (n: string) => c.find(x => x.name === n)?.label;
+  assert.equal(label('Alexandria'), 'Alexandria', 'no state rather than the wrong one');
+  assert.equal(label('Charlotte'), 'Charlotte, NC', 'a saved area says which');
+  assert.equal(label('Aberdeen'), 'Aberdeen, North Carolina', 'one file, one state');
+  assert.equal(c.filter(x => x.name === 'Alexandria').length, 1);
+});

@@ -8,7 +8,7 @@
 #
 # Needs two repository secrets (Settings → Secrets and variables → Actions):
 #   CRON_SECRET   the same value as the deployment's CRON_SECRET
-#   APP_URL       the deployment's address, e.g. https://alcanzar.io
+#   APP_URL       the deployment's address, https://www.alcanzar.io — the www address: the bare domain answers 308 and curl here does not follow it
 #
 # The repository is public, so: the secrets reach the step only through
 # `env:`, nothing prints them, the endpoint answers with counts only, and the

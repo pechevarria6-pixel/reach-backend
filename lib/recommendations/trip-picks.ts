@@ -846,12 +846,18 @@ export function candidatesFrom(input: {
     return d <= 5 || (d <= 15 && nameKey(c.name) === nameKey(name));
   });
   const keys = new Set<string>();
+  const unplaced = new Set<Candidate>();
   const push = (c: Omit<Candidate, 'key'>, state: string | null = null) => {
     if (!Number.isFinite(c.lat) || !Number.isFinite(c.lng) || (Math.abs(c.lat) < 0.01 && Math.abs(c.lng) < 0.01)) return;
     if (notATown(c.name)) return;
     const dup = near(c, c.name);
     if (dup) {
       const into = dup.into;
+      // An area that names its state settles a town the map files could not.
+      if (into && unplaced.has(into) && state && nameKey(c.name) === nameKey(into.name)) {
+        into.label = c.label;
+        unplaced.delete(into);
+      }
       seen.push({ name: c.name, lat: c.lat, lng: c.lng, country: c.country, into });
       const known = into && [into.name, ...(into.aliases ?? []).map(a => a.name)].some(n => nameKey(n) === nameKey(c.name));
       if (into && !known) (into.aliases ??= []).push({ name: c.name, label: c.label, lat: c.lat, lng: c.lng });
@@ -872,14 +878,32 @@ export function candidatesFrom(input: {
   for (const w of input.world ?? []) {
     push({ name: w.name, country: w.country, label: `${w.name}, ${countryName(w.country)}`, lat: w.lat, lng: w.lng, site: w.site ?? null, rank: w.rank ?? null });
   }
+  // A town near a border is read from every map file it reaches, so one
+  // seed point is filed under several states: Alexandria under Maryland and
+  // Virginia, Charlotte under both Carolinas. Which file came first says
+  // nothing about where the town is, and "Alexandria, Maryland" on a card is
+  // a fact we made up. Such a town is named without a state, unless an area
+  // somebody saved says which.
+  const seedKey = (s: { name: string | null; lat: number | null; lng: number | null }) =>
+    `${nameKey(String(s.name ?? '').split(',')[0].trim())}@${Number(s.lat).toFixed(1)},${Number(s.lng).toFixed(1)}`;
+  const areasOf = new Map<string, Set<string>>();
+  for (const s of input.seeds ?? []) {
+    const k = seedKey(s);
+    if (!areasOf.has(k)) areasOf.set(k, new Set());
+    areasOf.get(k)!.add(placeOfRegion(s.region).area ?? '');
+  }
   for (const s of input.seeds ?? []) {
     const name = String(s.name ?? '').split(',')[0].trim();
     const where = placeOfRegion(s.region);
+    const unsure = (areasOf.get(seedKey(s))?.size ?? 1) > 1;
+    const area = unsure ? null : where.area;
+    const before = out.length;
     push({
       name, country: where.country,
-      label: where.area && where.area !== name ? `${name}, ${where.area}` : name,
+      label: area && area !== name ? `${name}, ${area}` : name,
       lat: Number(s.lat), lng: Number(s.lng),
-    }, where.country === 'US' ? where.area : null);
+    }, where.country === 'US' ? area : null);
+    if (unsure && out.length > before) unplaced.add(out[out.length - 1]);
   }
   for (const a of input.areas ?? []) {
     const [name, ...rest] = String(a.city ?? '').split(',').map(x => x.trim());

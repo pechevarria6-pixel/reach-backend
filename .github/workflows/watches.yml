@@ -9,7 +9,7 @@
 #
 # Needs the same two repository secrets as pings.yml:
 #   CRON_SECRET   the same value as the deployment's CRON_SECRET
-#   APP_URL       the deployment's address, e.g. https://alcanzar.io
+#   APP_URL       the deployment's address, https://www.alcanzar.io — the www address: the bare domain answers 308 and curl here does not follow it
 #
 # Nothing is watched until a table platform's keys are set on the deployment
 # too (OPENTABLE_CLIENT_ID and _SECRET, or YELP_RESERVATIONS_API_KEY — lib/booking/registry.ts): without them a run
