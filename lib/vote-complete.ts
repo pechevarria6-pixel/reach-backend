@@ -12,6 +12,8 @@ import { readIdeas, tallyVotes, voteTitles, shownTitle, everyoneVotedCopy } from
 import { membersOf, organisersOf, readVetoes, type Member } from './trip-ideas-store.ts';
 import { claimOnce } from './everyone-in.ts';
 import { notifyUsers, type Note, type Sender } from './notify-user.ts';
+import { planReadiness } from './plan-readiness.ts';
+import { isUndecided } from './group-answers.ts';
 
 export interface VotePlan {
   id: string;
@@ -147,6 +149,66 @@ export function voteOpenedNotes(p: {
       planId: p.planId,
     },
   }];
+}
+
+/**
+ * The vote was opened before everyone had answered, and the last answer has
+ * just come in. At the opening, whoever had already answered was told
+ * nothing (voteOpenedNotes: there was nothing they could do yet), and on a
+ * plan whose place is set nothing else ever told them — "Everyone's in" is
+ * only for a trip still finding its place — so "wants your vote" was lost
+ * for good and the vote waited on people who did not know it was open.
+ *
+ * Who hears it: the whole group but whoever just answered (they are looking
+ * at it). Keyed on the options, so the same vote is announced once however
+ * many answers land together, and a new set of options is its own vote.
+ * Null when there is nothing to say: no vote open, somebody still to
+ * answer, or a readiness read that failed.
+ */
+export function voteOpenNowAnsweredNotice(p: {
+  plan: VotePlan & { title?: string | null; type?: string | null };
+  readiness: { allReady: boolean } | null;
+  memberIds: string[];
+  actorId: string;
+}): { key: string; to: string[]; note: Note } | null {
+  if (p.plan.status !== 'voting' || !p.readiness?.allReady || !p.plan.group_id) return null;
+  const options = voteTitles(p.plan);
+  if (!options.length) return null;
+  const to = p.memberIds.filter(id => id !== p.actorId);
+  if (!to.length) return null;
+  return {
+    key: `${p.plan.id}:vote-open:${options.join('|')}`,
+    to,
+    note: voteOpenedNote({
+      planId: p.plan.id, groupId: String(p.plan.group_id), title: p.plan.title ?? null,
+      // Nobody in particular opened it just now: the last answer did.
+      by: null, night: p.plan.type === 'restaurant', options,
+    }),
+  };
+}
+
+export const VOTE_OPEN_TOLD_ACTION = 'vote_open_told';
+
+/**
+ * After an answer is saved: if it was the last one a vote was waiting on,
+ * tell the group the vote is open, once. A failed read tells nobody — this
+ * is a courtesy, never a gate. True when this call told them.
+ */
+export async function tellVoteOpenIfAnswersComplete(
+  db: SupabaseClient, planId: string, actorId: string, send: Sender | null,
+): Promise<boolean> {
+  const { data: plan, error } = await db.from('plans').select('*').eq('id', planId).maybeSingle();
+  if (error || !plan || plan.status !== 'voting') return false;
+  const groupId = String(plan.group_id);
+  const readiness = await planReadiness(db, planId, groupId, plan.solo_mode === true, { undecided: isUndecided(plan) })
+    .catch(() => null);
+  const members = await membersOf(db, groupId);
+  if (!members) return false;
+  const notice = voteOpenNowAnsweredNotice({ plan, readiness, memberIds: members.map(m => m.userId), actorId });
+  if (!notice) return false;
+  if (!(await claimOnce(db, planId, actorId, VOTE_OPEN_TOLD_ACTION, notice.key))) return false;
+  await notifyUsers(db, notice.to, notice.note, send);
+  return true;
 }
 
 /**

@@ -2680,9 +2680,16 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
   // Only what the listing holds. Chips promising a full experience, a group
   // booking or a group reservation were said on every detail page and
   // nothing vouched for any of them — Reach cannot book a group into most.
-  // Where it is, from the listing's own line, is the one fact this had.
+  // Where it is, only from a field that says where. The last "·" of the sub
+  // was read as the place, and it is not always one: a map venue with no
+  // street or town is just its kind ("📍 Park"), and a page's event with no
+  // venue is just its when ("📍 Thursdays 7pm"). An event says where by its
+  // venue; a place by its street or town, the part after its kind.
   const getIncludes=()=>{
-    const where=String(exp.sub||"").split("·").pop()?.trim();
+    const parts=String(exp.sub||"").split("·").map(x=>x.trim()).filter(Boolean);
+    const venue=String(exp.venue||"").trim();
+    const where=venue&&venue!==exp.title?venue
+      :!exp.date&&!exp.whenText&&parts.length>1?parts[parts.length-1]:null;
     return where?["📍 "+where]:[];
   };
 
@@ -2825,7 +2832,10 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             <div style={{flex:1,background:C.s2,borderRadius:14,padding:14,border:"1px solid "+C.border}}>
               <div style={{fontSize:11,color:C.t3,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em"}}>Price</div>
               <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{exp.price}</div>
-              <div style={{fontSize:11,color:C.t2}}>per person</div>
+              {/* Their price as they wrote it (lib/discovery/price-label.ts).
+                  "per person" was ours: Yelp's price is a level ("$$") and a
+                  Ticketmaster price is per ticket, and neither says per head. */}
+              <div style={{fontSize:11,color:C.t2}}>as listed</div>
             </div>
           )}
           <div style={{flex:1,background:C.s2,borderRadius:14,padding:14,border:"1px solid "+C.border}}>
@@ -2990,7 +3000,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     <div>
                       <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{exp.title}</div>
                       <div style={{fontSize:12,color:C.t2}}>{exp.sub}</div>
-                      {exp.price&&<div style={{fontSize:13,color:C.accentText,fontWeight:600,marginTop:2}}>{exp.price} per person</div>}
+                      {exp.price&&<div style={{fontSize:13,color:C.accentText,fontWeight:600,marginTop:2}}>{exp.price} · as listed</div>}
                     </div>
                   </div>
 
@@ -3546,8 +3556,11 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <div style={{padding:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                   <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{plan.title}</div>
+                  {/* Under its own "Called off" heading a called-off plan says
+                      nothing more: the pill was the heading twice. Anywhere
+                      else it would still need saying. */}
                   {plan.status==="cancelled"
-                    ?<span className="pill pill-m">Called off</span>
+                    ?section.key==="off"?null:<span className="pill pill-m">Called off</span>
                     :nexts[plan.id]?<span className={`pill ${nextTone(nexts[plan.id])}`}>{nexts[plan.id].chip}</span>:null}
                 </div>
                 <div style={{fontSize:13,color:C.t2,marginBottom:10,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -12125,10 +12138,19 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     // came back the card said "… is being voted on" where Home, on the
     // same vote, said "It's a tie · Settle it →". Same read, same answer
     // (tied, myVote and the rest), so the two screens cannot disagree.
+    // Only a read as fresh as readNextInputs would reuse (30 s): Home's can
+    // be minutes old, and an old myVote or tie is a false statement about
+    // the vote. And only until ours answers: if ours fails, Home's is
+    // dropped rather than left standing with nothing to correct it.
     const held=NEXT_READS.get(planId);
-    if(held)held.p.then(d=>{if(d?.vote)setVoteView(v=>v||d.vote);}).catch(()=>{});
-    try{const r=await fetch(`/api/plans/${planId}/vote`);if(r.ok)setVoteView(await r.json());}
+    let heldVote=null,settled=false;
+    if(held&&Date.now()-held.at<30000)held.p.then(d=>{if(!settled&&d?.vote){heldVote=d.vote;setVoteView(v=>v||d.vote);}}).catch(()=>{});
+    let fresh=null;
+    try{const r=await fetch(`/api/plans/${planId}/vote`);if(r.ok)fresh=await r.json();}
     catch(e){console.error("[planDetail] could not read the vote",e);}
+    settled=true;
+    if(fresh)setVoteView(fresh);
+    else setVoteView(v=>heldVote&&v===heldVote?null:v);
   };
   const votesCast=Object.values(plan?.votes||{}).reduce((a,b)=>a+b,0);
   useEffect(()=>{loadVote();},[planId,plan?.status,votesCast]);
@@ -12944,8 +12966,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               {/* Agreeing, locking in and approving were three buttons here,
                   each a status change, beside a progress card that said the
                   same thing. Locking in is the rail's button now. Putting
-                  the options to the group is a different thing, and stays. */}
-              {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&plan.options?.length>0&&<button className="bs" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast("Sent round for a vote");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
+                  the options to the group is a different thing, and stays.
+                  Before everyone's in nobody can vote yet (POST /vote
+                  refuses), and the server asks who is still to answer
+                  rather than telling anybody to vote — so the toast says
+                  that, not "Sent round for a vote". */}
+              {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&plan.options?.length>0&&<button className="bs" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast(votingOpen?"Sent round for a vote":"The vote's open. Whoever's still to answer has been asked to, and everyone hears once they're in");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
               {/* Settle-up reminders come after the trip, so this stays then too. */}
               <MuteReminders planId={planId} toast={toast} solo={soloTrip}/>
@@ -13087,17 +13113,39 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       // worst version of this screen. The plan is not
                       // written until everyone has said what they want, so
                       // say that here rather than after the tap.
-                      ?`${daysWait.sentence||"We're waiting on the rest of the group."} We write the days once everyone's in, so nobody's trip is planned around half the answers.`
+                      // What waits on the answers, said for this plan: the
+                      // ideas on a plan still finding its place, the evening
+                      // on a night out, the days on a trip.
+                      ?`${daysWait.sentence||"We're waiting on the rest of the group."} ${plan.destStyle==="undecided"
+                        ?plan.hasIdeas?"The vote on the ideas opens once everyone's in."
+                        :`The ${nightPlan?"ideas for the night":"trip ideas"} are found once everyone's in, so they're built from every answer.`
+                        :nightPlan
+                          ?"We plan the evening once everyone's in, so nobody's night is planned around half the answers."
+                          :"We write the days once everyone's in, so nobody's trip is planned around half the answers."}`
                       // No place yet, no days: the days are planned around
                       // a place, so the next step is finding where. This
                       // offered "Plan my days for me" on "Where next?",
                       // and named the placeholder as if it were the trip.
+                      // Where the ideas are already found, the step is
+                      // picking one — as the Overview's card says — and
+                      // "find them first" would be untrue.
                       :plan.destStyle==="undecided"
-                        ?`Where ${planCalled(plan)} goes isn't picked yet, so there are no days to plan. Find the ${plan.type==="restaurant"?"ideas for the night":"trip ideas"} first, then the days are written around the one ${soloTrip?"you pick":"you all pick"}.`
+                        ?plan.hasIdeas
+                          ?`The ${nightPlan?"ideas for the night":"trip ideas"} for ${planCalled(plan)} are ready. ${soloTrip?"Pick the one you want":"Vote on the one you want"}, then the ${nightPlan?"evening is":"days are"} planned around ${soloTrip?"it":"the one that's picked"}.`
+                          :`Where ${planCalled(plan)} goes isn't picked yet, so there's ${nightPlan?"no evening":"no days"} to plan. Find the ${nightPlan?"ideas for the night":"trip ideas"} first, then the ${nightPlan?"evening is":"days are"} planned around the one ${soloTrip?"you pick":"you all pick"}.`
                         :`Give us twenty seconds and we'll write the plan for ${planCalled(plan)} — where to eat, what it costs, which places only take cash. Or do it yourself, if that's the fun bit for you.`}
                 </div>
-                {!loadFailed&&plan.destStyle==="undecided"&&(
+                {!loadFailed&&plan.destStyle==="undecided"&&plan.hasIdeas&&(
+                  // The same step as the next-step card's "See them →": the
+                  // ideas, to vote on or pick from — never found again.
+                  <button className="bp" onClick={()=>push("groupTrip",{planId,groupId})} style={{marginBottom:10}}>
+                    See them →
+                  </button>
+                )}
+                {!loadFailed&&plan.destStyle==="undecided"&&!plan.hasIdeas&&!(!votingOpen&&prefs)&&(
                   // The same step as the next-step card's "Find them →".
+                  // Not while the answers are still coming: the copy above
+                  // says the ideas wait on them.
                   <button className="bp" onClick={()=>push("groupTrip",{planId,groupId,find:"1"})} style={{marginBottom:10}}>
                     Find them →
                   </button>

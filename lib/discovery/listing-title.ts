@@ -6,7 +6,8 @@
 // So the title becomes what the listing itself says the event is — its own
 // classification ("Comedy", "Arts & Theatre") — and where the listing says
 // nothing more than the venue, the card is left out: there is no event on it
-// we can name. Nothing is made up: both words are the source's.
+// we can name. Nothing is made up: both words are the source's, and only a
+// lane that classifies its own listings (OWN_WORDS) can rename one.
 //
 // Pure, relative imports only.
 
@@ -36,13 +37,27 @@ export interface TitledListing {
 }
 
 /**
+ * The lanes whose `category` is the listing's own classification:
+ * Ticketmaster's segment and Yelp's event category, as they answered. A
+ * cached or harvested row's category is our label for an interest — for a
+ * harvested event, the venue's map kind copied onto it
+ * (app/api/discovery/harvest) — so "Theatre" over an event titled with a
+ * theatre's name would say what the event is from where it is held.
+ */
+const OWN_WORDS = new Set(['ticketmaster', 'yelp-events']);
+
+/**
  * The listing with a title that says what it is, or null when its own words
- * say nothing beyond the venue. Places (no date, not a ticketed source) are
+ * say nothing beyond the venue. `lane` is the source that answered (the
+ * SourceResult's own name, not the finding's: a cached Ticketmaster gig is
+ * a finding of the cache lane). Places (no date, not a ticketed source) are
  * left as they are: a place's title is its name.
  */
-export function titledByListing<T extends TitledListing>(f: T): T | null {
+export function titledByListing<T extends TitledListing>(f: T, lane: string | null | undefined): T | null {
   const isEvent = !!f.date || f.source === 'ticketmaster';
   if (!isEvent || !titleIsVenue(f.title, f.venue)) return f;
+  // Not the listing's own words: nothing we can honestly call it.
+  if (!lane || !OWN_WORDS.has(lane)) return null;
   const what = String(f.category ?? '').trim();
   if (SAYS_NOTHING.has(what.toLowerCase())) return null;
   return { ...f, title: what };

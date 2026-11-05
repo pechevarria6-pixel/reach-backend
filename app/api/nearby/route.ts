@@ -133,8 +133,8 @@ export async function GET(req: NextRequest) {
   // An event titled only with its venue's name says where, not what: it
   // takes the listing's own word for what it is, or is left out
   // (lib/discovery/listing-title.ts).
-  const merged = results.flatMap(r => r.findings)
-    .map(f => titledByListing(f)).filter((f): f is NonNullable<typeof f> => !!f)
+  const merged = results.flatMap(r => r.findings.map(f => titledByListing(f, r.source)))
+    .filter((f): f is NonNullable<typeof f> => !!f)
     .filter(f => {
     const key = `${f.title}|${f.venue ?? ''}|${f.date ?? ''}`.toLowerCase();
     if (seen.has(key)) return false;

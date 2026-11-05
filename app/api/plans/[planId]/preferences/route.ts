@@ -13,6 +13,7 @@
 // POST → record what I said, and mark me as having had my say
 import { announceIfEveryoneIn, everyoneHasAnswered } from '@/lib/everyone-in';
 import { pushSender } from '@/lib/push';
+import { tellVoteOpenIfAnswersComplete } from '@/lib/vote-complete';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { z } from 'zod';
@@ -101,6 +102,15 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     announced = await announceIfEveryoneIn(ctx.db, { ...plan, id: params.planId }, ctx.user.id, pushSender());
   } catch (e) {
     console.error('[plan preferences POST] could not announce everyone in', { planId: params.planId, error: e instanceof Error ? e.message : String(e) });
+  }
+  // A vote opened before everyone had answered: whoever had answered by
+  // then was told nothing, so the last answer is what tells the group the
+  // vote is open (tellVoteOpenIfAnswersComplete). Never fails the save.
+  if (!announced) {
+    await tellVoteOpenIfAnswersComplete(ctx.db, params.planId, ctx.user.id, pushSender()).catch(e => {
+      console.error('[plan preferences POST] could not tell the group the vote is open', { planId: params.planId, error: e instanceof Error ? e.message : String(e) });
+      return false;
+    });
   }
   // Whether everybody has answered is its own read: the announcement is
   // made once, only on a trip still finding its place, so "not announced

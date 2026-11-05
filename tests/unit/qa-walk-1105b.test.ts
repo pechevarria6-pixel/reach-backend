@@ -30,7 +30,7 @@ test('1: the empty Book tab names the plan with planCalled, never the "Where nex
 test('1: with no place yet it offers finding the ideas, not "Plan my days for me"', () => {
   const plan = fn('PlanDetailScreen');
   // The same route as next-action's "Find them →" (findNow).
-  assert.match(plan, /plan\.destStyle==="undecided"&&\(\s*\/\/[^\n]*\n\s*<button className="bp" onClick=\{\(\)=>push\("groupTrip",\{planId,groupId,find:"1"\}\)\}/);
+  assert.match(plan, /plan\.destStyle==="undecided"&&!plan\.hasIdeas&&[^\n]*\(\s*(\/\/[^\n]*\n\s*)+<button className="bp" onClick=\{\(\)=>push\("groupTrip",\{planId,groupId,find:"1"\}\)\}/);
   assert.match(plan, /\{!loadFailed&&plan\.destStyle!=="undecided"&&\(\s*<>/, 'the days button is not offered without a place');
 });
 
@@ -70,14 +70,14 @@ test('6c: a title that is just the venue takes the listing\'s own word for what 
   assert.ok(titleIsVenue('The Lounge at Martin Marietta', venue), 'cut short');
   assert.ok(!titleIsVenue('Liza Treyger', 'Raleigh Improv'));
   assert.ok(!titleIsVenue('The Lounge', 'The Lounge Bar'), 'too short to say');
-  const comedy = titledByListing({ title: venue, venue, category: 'Comedy', date: '2026-11-05', source: 'ticketmaster' });
+  const comedy = titledByListing({ title: venue, venue, category: 'Comedy', date: '2026-11-05', source: 'ticketmaster' }, 'ticketmaster');
   assert.equal(comedy?.title, 'Comedy');
-  assert.equal(titledByListing({ title: venue, venue, category: 'Event', date: '2026-11-05', source: 'ticketmaster' }), null,
+  assert.equal(titledByListing({ title: venue, venue, category: 'Event', date: '2026-11-05', source: 'ticketmaster' }, 'ticketmaster'), null,
     'the listing says nothing more: left out');
   const place = { title: 'Raleigh Improv', venue: 'Raleigh Improv', category: 'Comedy club', date: null, source: 'osm' };
-  assert.equal(titledByListing(place), place, 'a place is called by its name');
+  assert.equal(titledByListing(place, 'osm'), place, 'a place is called by its name');
   const route = read('app/api/nearby/route.ts');
-  assert.match(route, /\.map\(f => titledByListing\(f\)\)/);
+  assert.match(route, /r\.findings\.map\(f => titledByListing\(f, r\.source\)\)/);
 });
 
 // ── 6d. Yelp's expired trial is not "a source not answering" ───────────
