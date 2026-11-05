@@ -13,10 +13,10 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 
 | row | state | evidence |
 |---|---|---|
-| suite green (all e2e + unit) | ✅ | 2026-10-23: unit **1606 pass / 0 fail**. 2026-09-22: **unit 531 pass / 0 fail** under `npm run verify`, and **e2e 81 pass / 0 fail** in 4.1 min — `npx playwright test`, run against production today across chromium and iPhone 14. The e2e specs still sit outside the build gate on purpose: they need a live deployment and a session, so a build cannot be the thing that runs them |
+| suite green (all e2e + unit) | 🟡 | 2026-11-05: unit **2436 pass / 0 fail** under `npm run verify`; e2e **89 pass, 1 fail, 2 flaky** against production as the two QA accounts — the fail and both flakes were Discover's filter pills waited for 12 s after the redesign made them arrive with the finds; the wait now matches the card test and the Discover block passes **10 / 10**. The full suite has not been re-run since. 2026-10-23: unit **1606 pass / 0 fail**. 2026-09-22: **unit 531 pass / 0 fail** under `npm run verify`, and **e2e 81 pass / 0 fail** in 4.1 min — `npx playwright test`, run against production today across chromium and iPhone 14. The e2e specs still sit outside the build gate on purpose: they need a live deployment and a session, so a build cannot be the thing that runs them |
 | build gate proven | ✅ | `build: npm run verify && next build`. Proven once by planting a failing test: `exit=1` and `next build` never ran. 🔒 depends on the owner confirming Vercel's Build Command is `npm run build` |
 | contract tests ≥ 4 surfaces | ✅ | `lib/contracts/itinerary-item.ts` (API · mapper · client · PUT) and `lib/contracts/booking.ts` (route · duplicate path · checkout screen), each with a round-trip test proven by reverting a field |
-| money path e2e in test mode | 🟡 | Stripe confirmed **test mode** — `/api/config/stripe` serves `pk_test_51U4lDQ…`, checked immediately before touching anything. Walked as far as it goes today: a QA plan was created against production and `POST /api/plans/<id>/funding` **correctly refused** it — `{"error":"We're still pricing this — check back soon.","funding":{"targetCents":0,…}}`. That is the w5 **$0-checkout guard**, live and right: nothing priced means nothing to charge. Going further needs priced bookings, which means quoting against Duffel and the other live providers on the owner's real account, so it stops here. No contribution row was created; the table is unchanged at 6 |
+| money path e2e in test mode | 🟡 | 2026-11-05: `GET /api/health/modes` reports Stripe, Duffel and LiteAPI keys all **test**. The QA demo plan (b21bae42, Charleston, Dec 4–6) is generated, locked in and priced at checkout — Duffel Airways ZZ5009 $54.86, The Vendue (Charleston, SC) $914.38 plus $176.17 paid at the hotel, total $969.24 — and stops at Pay for the owner to enter the Stripe test card; nothing has been paid or booked. Viator answers 403 "Endpoint access denied" (the account's tier cannot check or book) and hands off to the tour's own page. Earlier: Stripe confirmed **test mode** — `/api/config/stripe` serves `pk_test_51U4lDQ…`, checked immediately before touching anything. Walked as far as it goes today: a QA plan was created against production and `POST /api/plans/<id>/funding` **correctly refused** it — `{"error":"We're still pricing this — check back soon.","funding":{"targetCents":0,…}}`. That is the w5 **$0-checkout guard**, live and right: nothing priced means nothing to charge. Going further needs priced bookings, which means quoting against Duffel and the other live providers on the owner's real account, so it stops here. No contribution row was created; the table is unchanged at 6 |
 | grounding tests green | ✅ | `tests/unit/grounding.test.ts` — an empty town names nothing, an invented venue is removed, a verified one is left alone, and the instruction is checked for not being softened into a suggestion |
 | zero console errors on all screens | ✅ | all six addressable screens swept and clean — `/home`, `/onboarding`, `/sign-in`, `/sign-up`, `/terms`, `/privacy` — for console errors, uncaught exceptions and 404s. The rest of the app is `push()` inside `/home`, so those six are every URL there is. The old single test was named "home page load" and loaded `/sign-in`, so home had never once been checked |
 | copy sweep clean | ✅ | `check:vocabulary`, `check:promises`, `check:spelling` all green; `BROKEN_PROMISES` bans the five false-promise strings that shipped on 09-21 |
@@ -38,7 +38,7 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 | SENTRY_DSN set | 🔒 |
 | BNPL methods enabled | 🔒 |
 | Duffel orders confirmed test | ✅ MHW2Y3 cancelled and refunded (owner, 2026-09-24); SFYVFK was Duffel's test carrier; both indexes run |
-| second test account created | 🔒 `TEST_EMAIL` points at the owner's real account, so e2e acts on real groups and plans |
+| second test account created | ✅ 2026-11-05 — `TEST_EMAIL=pechevarria6+qa@gmail.com` and `TEST_EMAIL_2=pechevarria6+qa2@gmail.com`; e2e and the two-person walks act only on QA groups |
 | flying details filled | 🔒 left empty on purpose; never stubbed |
 | backups / PITR confirmed | 🔒 |
 
@@ -56,14 +56,22 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 
 ## What is not proven, stated plainly
 
-The finish-line directive asks for a Phase 5 mini-marathon: Flow A twice on a
-fresh account, B–E once, resilience. The automated half of that ran today and
-passed 81/81. The hand-walked half did not, for one reason, and it is 🔒:
+The hand-walked half now exists. On 2026-11-05 two QA accounts walked ten
+two-person scenarios on production (group trip, go-ahead, votes, a set place
+sent to a vote, the one-active rule, the itinerary, money up to paying,
+nudges, leaving and rejoining, solo), then re-walked every fix: 14 of 15
+passed the first re-walk, and the fifteenth and eight smaller defects were
+fixed in 07dc497 and 1658bea. Still not proven:
 
-- `TEST_EMAIL` is the owner's real account, so a walked run acts on real groups
-  and real plans rather than a fixture. Every QA artefact made today carried a
-  `QA-` prefix and was deleted through the API afterwards, and the four event
-  rows they produced were swept.
+- **Paying and booking.** Nobody has yet paid a share and pressed book on
+  production. The QA demo plan is priced and stops at Pay for the owner.
+- **A restaurant call.** Built, gated off (`RESERVATION_CALLS_MODE` unset);
+  the test-number call needs Retell and Twilio accounts.
+- **Tours.** Viator's tier refuses availability and booking (403), so a tour
+  is a hand-off to its Viator page until the account has booking access.
+- **Scheduled jobs.** GitHub runs the hourly pings 3–6 times a day and never
+  ran the 15-minute watches schedule; the watches now ride on the pings job.
+  Vercel Pro would make both reliable.
 
 One standing caveat, which is not a gap but is easy to misread:
 
