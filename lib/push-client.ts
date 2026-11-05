@@ -61,6 +61,56 @@ export async function clearOfflineWallet(): Promise<void> {
   reg?.active?.postMessage({ type: 'clear-wallet' });
 }
 
+/** What forgetThisDevice reaches for; the browser's own, unless a test hands its own. */
+export interface DeviceHooks {
+  getSubscription: () => Promise<{ endpoint: string; unsubscribe: () => Promise<boolean> } | null>;
+  fetch: (url: string, init: RequestInit) => Promise<{ ok: boolean; status: number }>;
+  clearWallet: () => Promise<void>;
+}
+
+const browserHooks = (): DeviceHooks => ({
+  getSubscription: async () => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
+    const reg = await navigator.serviceWorker.getRegistration('/sw.js').catch(() => undefined);
+    return reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
+  },
+  fetch: (url, init) => fetch(url, init),
+  clearWallet: clearOfflineWallet,
+});
+
+/**
+ * Sign-out, for this device: the next person to pick up the phone must not
+ * get the last account's pings, nor find its confirmation numbers in the
+ * offline wallet. Sign-out ended the Clerk session and did neither — the
+ * subscription stayed on the server under the old account, and sw.js says
+ * sign-out clears the wallet when nothing called it.
+ *
+ * The server is told first, while the session that owns the row is still
+ * signed in (DELETE /api/push is the owner's alone); then the browser drops
+ * the subscription; then the wallet goes. Each step runs whatever the one
+ * before it answered: a server that could not be told must not leave the
+ * phone subscribed or the wallet full. Never throws — signing out goes on.
+ */
+export async function forgetThisDevice(hooks: DeviceHooks = browserHooks()): Promise<{ told: boolean; unsubscribed: boolean }> {
+  let told = false;
+  let unsubscribed = false;
+  try {
+    const sub = await hooks.getSubscription();
+    if (sub) {
+      try {
+        const r = await hooks.fetch('/api/push', {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: sub.endpoint }),
+        });
+        told = r.ok;
+      } catch { /* the server forgets it when the push service says it is gone */ }
+      try { unsubscribed = await sub.unsubscribe(); } catch { /* nothing more to drop */ }
+    }
+  } catch { /* no push here: nothing to forget */ }
+  try { await hooks.clearWallet(); } catch { /* no Cache API: nothing was kept */ }
+  return { told, unsubscribed };
+}
+
 export async function turnOnPush(): Promise<PushState> {
   const now = await pushState();
   if (now !== 'off') return now;

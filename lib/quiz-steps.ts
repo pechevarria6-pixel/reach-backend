@@ -43,3 +43,24 @@ export function stepsFor<T extends { id: string }>(asked: T[]): ({ kind: 'dates'
 export function dateStepIndex<T extends { id: string }>(asked: T[]): number {
   return stepsFor(asked).findIndex(s => s.kind === 'dates');
 }
+
+/**
+ * "Step 2 of 6": where the person is, out of one total for the flow on
+ * screen. The steps shown shrink as the opening answer settles questions (a
+ * goal that names the pace skips the pace), and counting only those gave
+ * "Step 1 of 6" and then "Step 2 of 5" on the next screen. The total is the
+ * whole flow — `full`, before anything was settled — and a step skipped on
+ * the way counts as passed, so the number only ever goes up.
+ */
+export function stepCounter(
+  full: { kind: string; question?: { id: string } }[],
+  current: { kind: string; question?: { id: string } } | undefined,
+  shownIndex: number,
+): { at: number; total: number } {
+  const total = Math.max(1, full.length);
+  const i = current
+    ? full.findIndex(s => s.kind === current.kind && (s.kind !== 'question' || s.question?.id === current.question?.id))
+    : -1;
+  const at = i >= 0 ? i + 1 : Math.min(total, shownIndex + 1);
+  return { at, total };
+}

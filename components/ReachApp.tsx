@@ -2,6 +2,7 @@
 // @ts-nocheck
 import { useUser, useClerk } from '@clerk/nextjs';
 import { BRAND, SURFACE } from '@/lib/brand';
+import { forgetThisDevice } from '@/lib/push-client';
 import ReachAppCoreUntyped from './reach-app.jsx';
 
 // reach-app.jsx is untyped JS, so TS infers no props for it. Declare the one
@@ -69,5 +70,14 @@ export default function ReachAppWrapper() {
     clerkId: user.id,
   } : null;
 
-  return <ReachAppCore realUser={realUser} onSignOut={() => signOut({ redirectUrl: '/sign-in' })} />;
+  // This device is forgotten before the session ends — the push
+  // subscription (on the server, while the session that owns it can still
+  // delete it, and in the browser) and the offline wallet — so the next
+  // person on the phone gets neither the last account's pings nor its
+  // confirmation numbers. Capped: a slow network never holds a sign-out.
+  const signOutHere = async () => {
+    await Promise.race([forgetThisDevice(), new Promise(r => setTimeout(r, 4000))]);
+    await signOut({ redirectUrl: '/sign-in' });
+  };
+  return <ReachAppCore realUser={realUser} onSignOut={signOutHere} />;
 }

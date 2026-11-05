@@ -70,6 +70,7 @@ import { midClaim } from './booking/claim.ts';
 import { bookingTracker, type TrackLine } from './plan-steps.ts';
 import { dateSaid, clockSaid } from './line-when.ts';
 import { reserveMarkOf, shortClock, type ReservePath } from './reservations/reserve-state.ts';
+import { planStageLabel, planCalled } from './plan-words.ts';
 
 export const NEXT_STATES = [
   'needs_trip_input',
@@ -297,7 +298,9 @@ export function providerName(row: { provider?: string | null; redirect_url?: str
 }
 
 const trips = (plan: NextPlan) => (plan.type === 'restaurant' ? 'nights out' : 'trips');
-const called = (plan: NextPlan) => (plan.title?.trim() || (plan.type === 'restaurant' ? 'this night out' : 'this trip'));
+// "Where next?" is the placeholder an undecided trip is saved under, not a
+// name: "Nothing is picked for Where next? yet" was the sentence it made.
+const called = (plan: NextPlan) => planCalled(plan);
 
 // ─── The answer ─────────────────────────────────────────────────────────
 
@@ -327,6 +330,14 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       },
     },
   });
+
+  // "Find them →" starts finding. It used to open the wait screen, where a
+  // second "Find our trips" button had to be pressed: two taps for one act.
+  // `find` tells that screen to begin as it opens (GroupTripScreen).
+  const findNow = (): Cta => {
+    const to = nav('groupTrip');
+    return { label: 'Find them →', ...to, route: { ...to.route, params: { ...to.route.params, find: '1' } } };
+  };
 
   /** A hand-off to the seller's own site, still open (see the top of this file). */
   const handedOff = (r: NextBooking) => (r.mode === 'redirect' || r.status === 'redirected')
@@ -360,8 +371,20 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       : Math.max(0, keys.indexOf(stage === 'pay' && !buys ? 'booked' : stage === 'vote' && !hasVote ? 'plan' : stage));
     return keys.map((key, i) => ({ key, label: LABEL[key], state: i < at ? 'done' : i === at ? 'current' : 'todo' }));
   };
-  const say = (a: Omit<NextAction, 'checkoutStep' | 'claim' | 'allBooked' | 'rail'> & Partial<NextAction>): NextAction =>
-    ({ ...base, rail: railAt(a.state), ...a });
+  // The chip while the plan is still being decided is the plan's, not the
+  // reader's: one word from its status and who has answered, the same for
+  // the organiser and for everyone else (lib/plan-words.ts planStageLabel).
+  // Set below, once whether anything is moving is known.
+  let stageChip: string | null = null;
+  const STAGE_CHIPS = new Set(['Planning', 'Voting', 'Waiting']);
+  const say = (a: Omit<NextAction, 'checkoutStep' | 'claim' | 'allBooked' | 'rail'> & Partial<NextAction>): NextAction => {
+    const out = { ...base, rail: railAt(a.state), ...a };
+    if (stageChip && STAGE_CHIPS.has(out.chip)) out.chip = stageChip;
+    // Nobody to remind on a plan for one, whatever the rows say.
+    if (solo && out.cta?.kind === 'nudge') out.cta = null;
+    if (solo && out.secondary?.kind === 'nudge') out.secondary = null;
+    return out;
+  };
 
   const waitOn = (names: string[], title: string, body: string | null, cta: Cta): NextAction | null => {
     // Never on a plan for one, whatever the rows or the reads say.
@@ -382,6 +405,12 @@ export function getNextAction(input: NextActionInput): NextAction | null {
   // Agreed: past planning and voting. 'booked' is the old word for the same
   // thing further on, and a plan already moving is past it whatever it says.
   const lockedIn = moving || ['approved', 'booked', 'completed'].includes(String(plan.status ?? ''));
+  if (!lockedIn) {
+    stageChip = planStageLabel({
+      status: plan.status, hasOptions: plan.hasOptions === true,
+      readiness: input.readiness ?? null, solo,
+    });
+  }
 
   if (!moving) {
     const answers = input.readiness && !input.readiness.solo && !solo ? input.readiness : null;
@@ -466,10 +495,10 @@ export function getNextAction(input: NextActionInput): NextAction | null {
         : !solo && answers && answers.members.length > 0 && answers.members.every(m => m.answered)
           ? say({ state: 'needs_trip_input', title: 'Everyone has answered',
             body: `Find the ${trips(plan)} — built from what each of you said.`,
-            cta: { label: 'Find them →', ...nav('groupTrip') }, chip: 'Planning' })
+            cta: findNow(), chip: 'Planning' })
           : say({ state: 'needs_trip_input', title: `Find the ${trips(plan)}`,
-            body: `Nothing is picked for ${called(plan)} yet.`,
-            cta: { label: 'Find them →', ...nav('groupTrip') }, chip: 'Planning' });
+            body: `Where ${called(plan)} goes isn't picked yet.`,
+            cta: findNow(), chip: 'Planning' });
     }
 
     if (!lines.length) {

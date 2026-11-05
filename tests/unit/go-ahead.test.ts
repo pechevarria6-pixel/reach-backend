@@ -172,7 +172,8 @@ test('the wait screen offers the go-ahead to the organiser only, with the count'
   assert.match(app, /Plan with who's answered/);
   assert.match(app, /withAnswered:opts\.withAnswered===true/);
   // The count is the organiser's heading, said once.
-  assert.match(app, /allAnswered\?"Everyone has answered":orgWait\?orgWait\.title:"Waiting on everyone's answers"/);
+  // (And the member being waited on reads it about herself, in the second person.)
+  assert.match(app, /allAnswered\?"Everyone has answered":orgWait\?orgWait\.title:wait\.mine\?"Waiting on your answers":"Waiting on everyone's answers"/);
   assert.doesNotMatch(app, /\{haveAnswered\.length\} of \{members\.length\}/);
 });
 

@@ -42,7 +42,7 @@
 //     page for the night and party — and said plainly that Reach is not the
 //     one watching. No platform documents a link that opens its form filled
 //     in, so none is promised.
-//   · a restaurant that books by phone: nothing for Reach to check, so no
+//   · a restaurant we hold only a number for: nothing to check, so no
 //     watch is offered or saved — their number, and the suggestion to ask
 //     whether they keep a cancellation list. A watch that nothing checks is
 //     a promise nobody keeps.
@@ -282,7 +282,7 @@ export interface OfferState {
 /**
  * What Reach offers for this restaurant: to watch it on a platform it has a
  * deal with, or not — and then the platform's own alert or their number,
- * said as theirs. A restaurant that books by phone has nothing Reach can
+ * said as theirs. A restaurant we hold only a number for has nothing Reach can
  * check, so it is never offered as a watch.
  * "Reach watches" appears only where every switch it needs is on.
  */

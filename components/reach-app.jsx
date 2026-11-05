@@ -28,9 +28,10 @@ import { createPlanSteps } from "@/lib/create-plan-steps";
 import { picksFrom, seedFromPick } from "@/lib/contracts/trip-pick";
 import { howIsIt, climateLine, bestMonthsLine, climateCredit, fahrenheitFirst, climateIsFor, CLIMATE_CREDIT, CLIMATE_SOURCE_URL } from "@/lib/climate";
 import { ideaClimateFrom } from "@/lib/contracts/idea-climate";
-import { pushState, turnOnPush } from "@/lib/push-client";
+import { pushState, turnOnPush, forgetThisDevice } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
-import { stepsFor } from "@/lib/quiz-steps";
+import { stepsFor, stepCounter } from "@/lib/quiz-steps";
+import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords } from "@/lib/plan-words";
 import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
 import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
@@ -1079,8 +1080,17 @@ function TripPicks({push,userLocation,toast,groups}){
   // Refs hidden on this screen, so a card can say "Hidden" and offer undo.
   const [hidden,setHidden]=useState(()=>new Set());
   const [busy,setBusy]=useState(null);
+  // What went wrong, in the server's words. "Couldn't put ideas together
+  // just now. Try again shortly." was said over every refusal — including a
+  // 503 that said exactly what it was doing ("Still checking the towns near
+  // you") and when to ask again — with nothing to press.
+  const [failure,setFailure]=useState(null);
+  // Bumped by "Try again", and once on its own when the server said when.
+  const [attempt,setAttempt]=useState(0);
+  const autoRetried=useRef(false);
   useEffect(()=>{
     let live=true;
+    let timer=null;
     const lat=userLocation?.lat, lng=userLocation?.lng;
     const city=userLocation?.city||userLocation?.formatted||"";
     // The airport of this same place, so a flight card never measures from
@@ -1093,13 +1103,29 @@ function TripPicks({push,userLocation,toast,groups}){
       try{
         const r=await fetch("/api/recommendations/trips"+q);
         if(!live)return;
-        if(!r.ok){console.error("[home] trip ideas returned",r.status);setState("error");return;}
+        if(!r.ok){
+          console.error("[home] trip ideas returned",r.status);
+          const body=await r.json().catch(()=>null);
+          if(!live)return;
+          const f=failureFrom(r.status,body,r.headers.get("Retry-After"),"Couldn't put ideas together just now.");
+          setFailure(f);setState("error");
+          // Once, on its own, when the server said when to come back.
+          if(f.retryIn!=null&&!autoRetried.current){
+            autoRetried.current=true;
+            timer=setTimeout(()=>{if(live)setAttempt(a=>a+1);},f.retryIn*1000);
+          }
+          return;
+        }
         setData(picksFrom(await r.json()));
+        setFailure(null);
         setState("ready");
-      }catch(e){console.error("[home] trip ideas failed",e);if(live)setState("error");}
+      }catch(e){
+        console.error("[home] trip ideas failed",e);
+        if(live){setFailure({message:"Couldn't reach Reach — check your connection.",retryIn:null});setState("error");}
+      }
     })();
-    return()=>{live=false;};
-  },[userLocation?.lat,userLocation?.lng,userLocation?.airport]);
+    return()=>{live=false;if(timer)clearTimeout(timer);};
+  },[userLocation?.lat,userLocation?.lng,userLocation?.airport,attempt]);
 
   const dismiss=async(p)=>{
     if(busy)return;
@@ -1150,7 +1176,15 @@ function TripPicks({push,userLocation,toast,groups}){
       {state!=="ready"||!data.picks.length?(
         <div style={{margin:"0 20px 18px",padding:"14px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
           {state==="loading"?"Looking at the towns we've checked…"
-            :state==="error"?"Couldn't put ideas together just now. Try again shortly."
+            :state==="error"?(
+              <>
+                {failure?.message||"Couldn't put ideas together just now."}
+                {failure?.retryIn!=null&&autoRetried.current&&attempt===0?" Asking again in a moment.":""}
+                <div style={{marginTop:10}}>
+                  <button className="bsm" onClick={()=>setAttempt(a=>a+1)}>Try again</button>
+                </div>
+              </>
+            )
             :data.reason==="all_dismissed"?"You've passed on every town we'd suggest for now. New ones appear as Reach checks more places."
             :"Nothing we've checked closely enough to suggest yet. Reach checks more towns every week."}
         </div>
@@ -1386,7 +1420,9 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
           const dr=JSON.parse(d);
           if(!dr?.planType&&!dr?.gid)return null;
           const typeLabel=dr.planType==="restaurant"?"dinner out":dr.planType==="concert"?"concert night":dr.planType==="weekend"?"weekend away":"trip";
-          const totalSteps=dr.planType==="restaurant"||dr.planType==="concert"?4:dr.planType==="weekend"?5:6;
+          // The flow's own list of screens, so this says the same "of N" the
+          // flow does — it was 4, 5 or 6 written here while the flow had 5, 6 or 7.
+          const totalSteps=createPlanSteps(dr.planType).length;
           return(
             <div style={{margin:"0 20px 14px",background:`linear-gradient(135deg,${C.accentDim},rgba(108,99,255,.05))`,border:`1px solid ${C.accentBorder}`,borderRadius:16,padding:"12px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>push("createPlan",{})}>
               <div style={{fontSize:26,flexShrink:0}}>{dr.planType==="restaurant"?"🍽️":dr.planType==="concert"?"🎵":dr.planType==="weekend"?"🏡":"✈️"}</div>
@@ -6049,6 +6085,11 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
   const quizQ=steps[qStep]?.question;
   const totalSteps=steps.length;
   const isLast=qStep===totalSteps-1;
+  // What the counter says: one total for this flow, counted before the
+  // opening answer settled anything, so it never drops between screens.
+  const fullSteps=stepsFor((isNight?nightQuestions:questions).filter(q=>!isCarried(q)))
+    .filter(s=>!(fixed&&s.kind==="dates"));
+  const counter=stepCounter(fullSteps,steps[qStep],qStep);
   // A group plans one of each kind at a time. The kind already being
   // decided is said here, where the kind is chosen, with the way to it —
   // not after every question has been answered for a plan that cannot start.
@@ -6120,12 +6161,12 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
       {/* Progress */}
       <div style={{padding:"16px 20px 12px"}}>
         <div style={{display:"flex",gap:3,marginBottom:8}}>
-          {Array.from({length:totalSteps}).map((_,i)=>(
+          {Array.from({length:counter.total}).map((_,i)=>(
             <div key={i} style={{flex:1,height:3,borderRadius:2,
-              background:i<=qStep?C.accent:C.s3,transition:"background .3s"}}/>
+              background:i<counter.at?C.accent:C.s3,transition:"background .3s"}}/>
           ))}
         </div>
-        <div style={{fontSize:11,color:C.t3}}>Step {qStep+1} of {totalSteps}</div>
+        <div style={{fontSize:11,color:C.t3}}>Step {counter.at} of {counter.total}</div>
       </div>
 
       {/* Date step */}
@@ -7085,6 +7126,9 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
     :`${v.voted} of ${v.members} have voted.`;
   const next=v.mayPick
     ?(v.tied.length?"It's your call — pick the one the group goes with.":v.leader?`Pick ${show(v.leader)} to go with the vote, or any of them — it's your call.`:"Pick one when you're ready — the votes are here to help.")
+    // A tie is the organiser's to settle; everybody else is told who.
+    :v.everyoneVoted&&v.tied.length
+      ?tieWords({tied:v.tied.map(show),organiserIsMe:false,organiserName:organiser?.name})
     :v.myVote
       ?`Waiting for ${orgName} to pick — the votes so far: ${standings}. You can change your vote until then.`
       :`Vote for the one you want. ${organiser?.name||"The organiser"} makes the pick.`;
@@ -7093,7 +7137,7 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
     <div>
       <div style={{padding:"0 20px 14px"}}>
         <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1,marginBottom:6}}>
-          {night?"Which plan for the night?":"Where should we go?"}
+          {voteHeading({night,undecided:plan?.destStyle==="undecided",city:plan?.destinationCity})}
         </div>
         <div style={{fontSize:13.5,color:C.t1,lineHeight:1.6,marginBottom:4}}>{standing}</div>
         <div style={{fontSize:13,color:C.t2,lineHeight:1.6}}>{next}</div>
@@ -7252,7 +7296,7 @@ function CallOffPlan({plan,group,me,um,updatePlanOnServer,updateGroup,toast,onDo
 // same questions, and "Find our trips" opens once they all have. `planId`
 // is that trip, when this screen is opened to wait on it or to find its
 // options. A solo trip has nobody to wait for and works as it always has.
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,um,updatePlanOnServer,refreshGroup,regenerate=false}){
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,um,updatePlanOnServer,refreshGroup,regenerate=false,find=false}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
   // it is what the person filled in a moment ago on the way here.
@@ -7285,6 +7329,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     const t=setTimeout(()=>setNudgeWait(w=>Math.max(0,w-1)),1000);
     return()=>clearTimeout(t);
   },[nudgeWait]);
+  // The status the last refusal came with. A 409 is the trip waiting on
+  // somebody — not a failure, and nothing to try again; anything else is,
+  // and gets a button to try again under the server's own words.
+  const [errorStatus,setErrorStatus]=useState(null);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
   const [budget,setBudget]=useState("");
@@ -7370,6 +7418,20 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     regenAsked.current=true;
     findOurTrips(wp,{regenerate:true});
   },[regenerate,group,waitPlanId]);
+  // Opened from "Find them →": that tap was the ask, so finding starts here
+  // rather than behind a second "Find our trips" on the wait. Only once
+  // everybody's answers are read in and all there — the same gate as the
+  // button, so it never starts what the button would refuse.
+  const findAsked=useRef(false);
+  useEffect(()=>{
+    if(!find||findAsked.current||step!=="wait"||generating||isSolo)return;
+    const wp=(group?.plans||[]).find(p=>p.id===waitPlanId);
+    if(!wp||wp.destStyle!=="undecided"||wp.status==="voting")return;
+    const ms=answered?.members||[];
+    if(!(ms.length>0&&ms.every(m=>m.answered)))return;
+    findAsked.current=true;
+    findOurTrips(wp);
+  },[find,step,answered,group,waitPlanId,generating,isSolo]);
 
   // One trip and one night out wait on everyone at a time, and the server
   // refuses a second of either — while the one waiting is still on by its
@@ -7427,7 +7489,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     setNightOut(extra.mode==="night");
     setNightAnswers(extra.nightPrefs||{});
     setEnrichFailed(false);
-    setStep(1);setGenerating(true);setError(null);
+    setStep(1);setGenerating(true);setError(null);setErrorStatus(null);
     // Where a failure lands: back on the wait for a group trip, back on the
     // quiz otherwise. Either way with the reason on the screen.
     const back=extra.planId?"wait":0;
@@ -7495,7 +7557,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           setTimeout(()=>generate(sd,ed,bud,prefs,extra,true),1000);
           return;
         }
-        setError(msg);
+        // The server's words as they are: it already says when the problem
+        // is on our side, and "try again" on top of a 503 that said so is
+        // two answers. The status decides whether a Try again is offered.
+        setError(msg);setErrorStatus(res.status);
         setStep(back);
         // Somebody's answers were taken back, or the list moved: show the
         // server's own view of who it is waiting on.
@@ -7504,7 +7569,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         if(extra.planId&&err.alreadyDecided&&refreshGroup)refreshGroup(groupId);
       }
     }catch(e){
-      setError("Network error — check your connection and try again");
+      setError("Couldn't reach Reach — check your connection.");setErrorStatus(0);
       setStep(extra.planId?"wait":0);
     }finally{setGenerating(false);}
   };
@@ -8042,6 +8107,17 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         const orgWait=iOrganise&&!allAnswered&&members.length>0
           ?organiserWaitCopy({members,mayGoAhead,createdBy:wp.createdBy||null,createdAt:wp.createdAt||null,me,night:nightWait})
           :null;
+        // Who it is waiting on, said to whoever is reading: "you" when it is
+        // them, and only the others by name. The server's sentence names
+        // everybody, so the member being waited on was told "NEW hasn't said
+        // what they want from this trip yet" about herself.
+        const wait=waitingFor(answered,me,{strict:true,night:nightWait});
+        // A refusal that says who it waits on (409), when the reader is one
+        // of them, is said in the second person from the same read.
+        // Nothing to try again with here beyond the button under it: "Find
+        // our trips" is the retry, and a second one beside it is the same
+        // action twice.
+        const shownError=errorStatus===409&&wait.mine?wait.sentence:error;
         return(
           <div style={{flex:1,overflowY:"auto",padding:"0 20px 30px"}}>
             <div style={{fontSize:12.5,color:C.t3,marginBottom:4}}>
@@ -8053,13 +8129,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {!isSolo&&(
               <>
                 <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,lineHeight:1.2,marginBottom:8}}>
-                  {allAnswered?"Everyone has answered":orgWait?orgWait.title:"Waiting on everyone's answers"}
+                  {allAnswered?"Everyone has answered":orgWait?orgWait.title:wait.mine?"Waiting on your answers":"Waiting on everyone's answers"}
                 </div>
                 <div style={{fontSize:14,color:C.t2,lineHeight:1.6,marginBottom:14}}>
                   {allAnswered
                     ?`Everyone's in — your ${nightWait?"nights out":"trips"} will be built from all of your answers.`
                     :orgWait?orgWait.body
-                    :`Your three ${nightWait?"ideas for the night":"trip ideas"} are built from what every one of you wants, so we wait until everyone has answered. Nothing gets picked on one person's say-so.`}
+                    :`${wait.sentence?wait.sentence+" ":""}Your three ${nightWait?"ideas for the night":"trip ideas"} are built from what every one of you wants, so we wait until everyone has answered. Nothing gets picked on one person's say-so.`}
                 </div>
                 {/* One face each: ✓ answered, grey still to. A grey face is
                     the nudge for that one person, and the organiser has
@@ -8114,10 +8190,10 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
               </div>
             )}
 
-            {error&&(
+            {shownError&&(
               <div style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
                 borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:12}}>
-                {error}
+                {shownError}
               </div>
             )}
 
@@ -8673,7 +8749,10 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           <div style={{flex:1}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
               <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em"}}>{STEPS[step]}</div>
-              <div style={{fontSize:11,color:C.t3}}>{step+1} / {STEPS.length}</div>
+              {/* Out of how many is the kind's to say: a dinner has five
+                  screens and a trip seven, so before the kind is picked
+                  any total would be one that changes on the next screen. */}
+              <div style={{fontSize:11,color:C.t3}}>{planType?`${step+1} / ${STEPS.length}`:`${step+1}`}</div>
             </div>
             <div style={{display:"flex",gap:3,marginBottom:2}}>
               {STEPS.map((_,i)=><div key={i} style={{flex:1,height:3,borderRadius:2,background:i<=step?C.accent:C.s3,transition:"background .3s"}}/>)}
@@ -9387,6 +9466,27 @@ const SR_ONLY={position:"absolute",width:1,height:1,padding:0,margin:-1,overflow
  * press is working. The confirmation number is asked for here, beside the
  * button that records it, rather than on another screen.
  */
+/**
+ * Why "Plan my days for me" did not write the days, kept under the button
+ * that was pressed. The retry is that button, relabelled "Try again" — a
+ * second button beside it doing the same thing is the redundancy rule. When
+ * it waits on the reader's own answers, the questions are the next thing.
+ */
+function BuildNote({e,onAnswer,night,style}){
+  if(!e)return null;
+  return(
+    <div role="status" style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
+      borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5,textAlign:"left",...style}}>
+      {e.msg}
+      {e.answer&&(
+        <div style={{marginTop:8}}>
+          <button className="bsm bsm-p" onClick={onAnswer}>Say what you want from this {night?"night out":"trip"}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NextStepCard({na,onCta,onDot,busy,unknown}){
   const [asking,setAsking]=useState(false);
   const [number,setNumber]=useState("");
@@ -11545,7 +11645,7 @@ function PlacePrompt({onPick,onCancel,toast}){
 // "hotel already booked", "flight on hold": one thing somebody who joined
 // later is not on (lib/joining.ts). Booked, held and paid-towards said apart.
 const notOnWords=({vertical:kind,booked,held})=>kind+" "+(booked?"already booked":held?"on hold":"already paid towards");
-function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab,departure,goToProfileSection,tableId=null,tablePath=null,tableTime=null}){
+function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toast,updatePlanOnServer,castVoteOnServer,refreshGroup,saveItineraryToServer,me,initialTab,departure,goToProfileSection,tableId=null,tablePath=null,tableTime=null,changeLineId=null}){
   const group=groups.find(g=>g.id===groupId);
   const plan=group?.plans.find(p=>p.id===planId);
   // Opens where the caller asked. "See my itinerary" after a payment means
@@ -11567,6 +11667,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     if(atab==="vote"&&(ideasDecided||(plan.options||[]).length===0))setAtab("overview");
   },[atab,ideasDecided,!!plan,plan?.options?.length]);
   const [myVote,setMyVote]=useState(null);
+  // Which option a vote, veto or tie-break press is working on.
+  const [voteBusy,setVoteBusy]=useState(null);
   const [loading,setLoading]=useState(false);
 
   const [loadFailed,setLoadFailed]=useState(false);
@@ -11778,6 +11880,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // trip the model already chose can have its day-by-day plan generated on
   // demand, which is also the repair path for those older plans.
   const [needsPlace,setNeedsPlace]=useState(false);
+  // Why the last "Plan my days for me" did not write the days, while it is
+  // still true: {msg, retry, answer}. Cleared when it is pressed again.
+  const [buildError,setBuildError]=useState(null);
   // Build once the place has landed on the plan — the build reads the plan,
   // and calling it in the same tick would still see no place.
   const [buildWhenPlaced,setBuildWhenPlaced]=useState(false);
@@ -11797,7 +11902,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const buildItinerary=async()=>{
     if(building)return;
     if(isTempId(planId)){toast("This trip is still saving — try again in a moment");return;}
-    setBuilding(true);
+    setBuilding(true);setBuildError(null);
     try{
       // The group's dates beat the plan's once people have said which work:
       // build the days for the stretch most of them can make, and put those
@@ -11862,8 +11967,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // server says who — "Marco hasn't said what they want from this trip
       // yet". Treating it as an error would put "couldn't build the plan" on
       // screen when nothing is broken and there is something to do about it.
-      if(res.status===409){toast(d.error||((group?.memberIds||[]).length>1?"Waiting on the rest of the group":"Not ready to plan the days yet"));setBuilding(false);return;}
-      if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan");
+      // Said in the second person when the reader is who it waits on: the
+      // server names everybody, the reader included.
+      if(res.status===409){
+        const w=waitingFor(readiness?.preferences,me,{night:oneEvening});
+        setBuildError({msg:(w.mine&&w.sentence)||d.error||((group?.memberIds||[]).length>1?"Waiting on the rest of the group":"Not ready to plan the days yet"),retry:false,answer:w.mine});
+        setBuilding(false);return;
+      }
+      // The server's own words, as they are: it says when the problem is on
+      // our side, and "try again" is the button under it, not more words.
+      if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan.");
       // A restaurant-type plan is the night out. Labelled as an evening
       // rather than a day, same as the generate path.
       // The flights, the stay and the transfers survive a rebuild.
@@ -11900,13 +12013,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // whole day is the app deciding how long somebody's evening is, and
       // losing the choice is the same decision made the other way.
       const offered=oneEvening?daytimeRows(d.itinerary,{startDate:plan.startDate,endDate:plan.endDate}):[];
-      if(!rows.length)throw new Error("Nothing came back — try again");
+      if(!rows.length)throw new Error("Nothing came back for these days.");
       updateGroup(groupId,g=>({...g,plans:g.plans.map(x=>x.id===planId?{...x,itinerary:rows,dayOffer:offered}:x)}));
       const saved=await saveItineraryToServer(planId,rows);
       toast(saved===false?"Built, but couldn't save — try again":`${plural(d.itinerary.length,"day","days")} planned 🗺️`);
     }catch(e){
       console.error("[planDetail] build itinerary failed",e);
-      toast(e.message);
+      // Kept on screen under the button, with the way to try again — a toast
+      // went in four seconds and left a button that looked as if nothing
+      // had happened.
+      setBuildError({msg:e?.message||"Couldn't build the day-by-day plan.",retry:true});
     }
     setBuilding(false);
   };
@@ -11921,6 +12037,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // off the booking rows, so the same trip read $1,474 on one screen and $404
   // on the next. There is one answer to "how much", and the server owns it.
   const [funding,setFunding]=useState(null);
+  // Whether the money read has actually failed, as against not being back
+  // yet. "Couldn't check where this plan stands" was shown the moment the
+  // bookings arrived ahead of the money — on a read still on its way.
+  const [fundingFailed,setFundingFailed]=useState(false);
   useEffect(()=>{
     if(!planId||isTempId(planId))return;
     let live=true;
@@ -11929,12 +12049,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       .then(d=>{if(live&&d)setReadiness(d);})
       // A readiness check that fails shows no chips rather than a wrong "Ready".
       .catch(()=>{});
+    setFundingFailed(false);
     fetch(`/api/plans/${planId}/funding`)
       .then(r=>r.ok?r.json():null)
-      .then(d=>{if(live&&d)setFunding(d);})
+      .then(d=>{if(!live)return;if(d)setFunding(d);else setFundingFailed(true);})
       // No answer means the button falls back to the itinerary estimate and
       // says "estimated", rather than showing a confident wrong number.
-      .catch(()=>{});
+      .catch(()=>{if(live)setFundingFailed(true);});
     return()=>{live=false;};
   },[planId]);
 
@@ -11962,8 +12083,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     try{
       const [b,f]=await Promise.all([fetch(`/api/bookings?planId=${planId}`),fetch(`/api/plans/${planId}/funding`)]);
       if(b.ok){const d=await b.json();setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));setBookingsLoaded(true);}
-      if(f.ok)setFunding(await f.json());
-    }catch(e){console.error("[planDetail] could not refresh bookings",e);}
+      if(f.ok){setFunding(await f.json());setFundingFailed(false);}
+      else setFundingFailed(true);
+    }catch(e){console.error("[planDetail] could not refresh bookings",e);setFundingFailed(true);}
     await loadVote();
   };
   useEffect(()=>{
@@ -11971,10 +12093,25 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     let live=true;
     fetch(`/api/bookings?planId=${planId}`)
       .then(r=>r.ok?r.json():null)
-      .then(d=>{if(live&&d){setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));setBookingsLoaded(true);}})
-      .catch(()=>{});
+      .then(d=>{if(!live)return;if(d){setPlanBookings(Array.isArray(d)?d:(d.bookings||[]));setBookingsLoaded(true);}else setBookingsFailed(true);})
+      .catch(()=>{if(live)setBookingsFailed(true);});
     return()=>{live=false;};
   },[planId]);
+  // The same for the bookings: without it a failed read said "Checking…" for ever.
+  const [bookingsFailed,setBookingsFailed]=useState(false);
+  // Opened from the weather ping's link (`&change=<line>`): the Change sheet
+  // on that line, once — the ping says "this line has weather against it",
+  // and the sheet is where something can be done about it. Only a line still
+  // on the plan, of a kind that can be changed; anything else just opens the
+  // plan, which is where the ping's words are true too.
+  const changeOpened=useRef(false);
+  useEffect(()=>{
+    if(!changeLineId||changeOpened.current||!plan||!bookingsLoaded)return;
+    changeOpened.current=true;
+    const line=(plan.itinerary||[]).find(i=>i?.id!=null&&String(i.id)===String(changeLineId));
+    if(line&&CHANGEABLE_TYPES.has(line.type))setChanging(line);
+    else toast("That line isn't on the plan any more — here's the plan as it stands.");
+  },[changeLineId,!!plan,bookingsLoaded]);
 
   // Suggestions are a group's, before Lock it in; the server answers empty
   // on a trip for one and once it is locked, and before its SQL is run.
@@ -12239,27 +12376,91 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // who the trip is waiting on so there is something to do about it.
   const prefs=readiness?.preferences;
   const votingOpen=!prefs||prefs.solo||prefs.allReady;
+  // Who it waits on, said to the reader — "you" when it is them. The
+  // server's `waiting` names everybody, so a member read "Waiting on NEW…"
+  // about herself.
+  const nightPlan=plan?.type==="restaurant";
+  const voteWait=waitingFor(prefs,me,{votes:true,night:nightPlan});
+  const daysWait=waitingFor(prefs,me,{night:nightPlan});
+  // The vote's own state, where it was read (GET /vote): the vetoes on each
+  // option and mine, the organiser, a tie.
+  const vetoCounts=voteView?.vetoes||{};
+  const myVetoes=voteView?.myVetoes||[];
 
+  // Changeable until the vote closes — the server takes a second vote as a
+  // change (POST /vote updates the row). This returned early once a vote was
+  // cast, so the first tap was final on this screen and on no other.
   const castVote=async opt=>{
-    if(myVote)return;
-    if(!votingOpen){toast(prefs?.waiting||"Votes open when everyone's in");return;}
+    if(myVote===opt||voteBusy)return;
+    if(plan.status!=="voting"){toast("The vote on this has closed.");return;}
+    if(!votingOpen){toast(voteWait.sentence||"Votes open when everyone's in");return;}
     // Showing the vote immediately is right — waiting on a round trip to tick
     // a box feels broken. Leaving it there when the server refused is not:
     // the screen went on saying "✓ Your vote" and "your vote has been
     // recorded" under a toast explaining it had not been, and the count stayed
     // up by one for as long as the screen was open.
     haptic();
+    const before=myVote;
+    // Moving a vote takes one off the old option as it adds one to the new.
+    const moved=(votes,from,to)=>{
+      const v={...votes};
+      if(from&&v[from]>0)v[from]-=1;
+      if(to)v[to]=(v[to]||0)+1;
+      return v;
+    };
+    setVoteBusy(opt);
     setMyVote(opt);
-    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:{...p.votes,[opt]:(p.votes[opt]||0)+1}}:p)}));
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:moved(p.votes||{},before,opt)}:p)}));
     const ok=castVoteOnServer?await castVoteOnServer(planId,opt):true;
+    setVoteBusy(null);
     if(ok){
-      toast(`Voted for ${opt}!`);
+      toast(before?`Changed your vote to ${opt}`:`Voted for ${opt}!`);
+      loadVote();
       return;
     }
     // castVoteOnServer has already said what went wrong. Put the screen back
     // the way it was so it agrees with what it just told them.
-    setMyVote(null);
-    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:{...p.votes,[opt]:Math.max(0,(p.votes[opt]||1)-1)}}:p)}));
+    setMyVote(before);
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,votes:moved(p.votes||{},opt,before)}:p)}));
+  };
+
+  // "I won't do this one", on an option put to the group — POST /vote takes
+  // a veto on any of the plan's options, not only saved ideas, and counts
+  // them; nobody is told whose. Not on the one you voted for: the server
+  // refuses that (move your vote first), so the button is not offered.
+  const vetoOption=async(opt,on)=>{
+    if(voteBusy||isTempId(planId))return;
+    if(!votingOpen){toast(voteWait.sentence||"Votes open when everyone's in");return;}
+    setVoteBusy(opt);
+    try{
+      const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({veto:opt,on})});
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)throw new Error(d.error||"That veto didn't save — try again");
+      forgetNext(planId);
+      toast(on?`Vetoed ${opt}`:`Took back your veto of ${opt}`);
+    }catch(e){console.error("[vote] veto failed",{planId},e);toast(e.message);}
+    await loadVote();
+    setVoteBusy(null);
+  };
+
+  // A tie on options put to the group is the organiser's to settle. The
+  // plan's own PATCH takes it from them (patchDecides: rewriting the options
+  // or moving the status off "voting" while the vote is open is the
+  // organiser's): the option they pick becomes the one the plan goes with,
+  // and that closes the vote — on a set place, locking in is what closes it.
+  const settleTie=async(opt)=>{
+    if(voteBusy||loading)return;
+    setVoteBusy(opt);
+    setLoading(true);
+    const ok=updatePlanOnServer?await updatePlanOnServer(planId,{vote_options:[opt],status:"approved"}):false;
+    setLoading(false);
+    setVoteBusy(null);
+    // updatePlanOnServer has said what went wrong when it is not true.
+    if(ok!==true)return;
+    updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,options:[opt],status:"approved"}:p)}));
+    forgetNext(planId);
+    toast(`${opt} it is — locked in for everyone`);
+    if(refreshGroup)refreshGroup(groupId);
   };
 
   // Two of the three status buttons bypassed this and changed local state
@@ -12346,9 +12547,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           onList={setLineSuggestions} onBookingsChanged={refreshBookings}/>
       )}
       <div style={{background:`linear-gradient(145deg,#1a1060,${C.accent})`,padding:"18px 20px 22px",flexShrink:0}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+        {/* The back button floats (position:absolute), so it is not in this
+            row: with space-between the pill was the row's only item and sat
+            at the left, under the back button. The row keeps the button's
+            44px, and the pill goes right. */}
+        <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",minHeight:44,marginBottom:14}}>
           <ScreenHeader onBack={onBack} overlay/>
-          <button className="bsm" style={{background:"rgba(255,255,255,.15)",color:"white",border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
+          <button className="bsm" style={{marginLeft:"auto",background:"rgba(255,255,255,.15)",color:"white",border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
         </div>
         <div style={{fontFamily:"var(--font-display)",fontSize:26,color:"white",marginBottom:4}}>{plan.title}</div>
         <div style={{fontSize:13,color:"rgba(255,255,255,.65)",marginBottom:12}}>{plan.dates} · {group.name}</div>
@@ -12380,7 +12585,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             )}
             {/* Built before we held places for this town, and we hold them
                 now: the rebuild is worth doing, and says by how much. */}
-            {fresh?.stale&&!building&&(
+            {/* The organiser's to act on: rebuilding replaces everybody's
+                days, and a member shown "rebuild the days" was offered a
+                button about a plan that is not theirs to rewrite. */}
+            {fresh?.stale&&!building&&(soloTrip||organiserHere)&&(
               <div style={{margin:"0 20px 14px",padding:"14px",background:C.accentDim,
                 border:`1px solid ${C.accentText}`,borderRadius:14}}>
                 <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>
@@ -12389,7 +12597,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
                   {`These days name ${fresh.named} real ${fresh.named===1?"place":"places"} in ${fresh.lines} ${fresh.lines===1?"line":"lines"}. We've since checked ${fresh.held} places there — rebuild the days to use them.`}
                 </div>
-                <button className="bsm bsm-p" onClick={buildItinerary}>Rebuild the days</button>
+                <button className="bsm bsm-p" onClick={buildItinerary}>{buildError?.retry?"↻ Try again":"Rebuild the days"}</button>
+                <BuildNote e={buildError} night={plan.type==="restaurant"}
+                  onAnswer={()=>push("planPrefs",{planId,groupId})} style={{marginTop:10}}/>
               </div>
             )}
             {/* Not while the trip has no destination: its first step is "plan
@@ -12412,7 +12622,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 button, and they were this same answer said a second way. */}
             {!isTempId(planId)&&<NextStepCard na={na} busy={acting||building||loading}
               onCta={act} onDot={openDot}
-              unknown={bookingsLoaded&&!funding?"Couldn't check where this plan stands just now — reopen it in a moment.":null}/>}
+              unknown={planStandsLine({fundingFailed:fundingFailed||(bookingsFailed&&!bookingsLoaded),funding:bookingsFailed&&!bookingsLoaded?null:funding,bookingsLoaded})}/>}
             <div style={{display:"flex",gap:10,padding:"0 20px 14px"}}>
               {[{l:soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},(plan.startDate&&plan.startDate===plan.endDate)?{l:"When",v:dayLabel(plan.startDate)||"—",e:"🌃"}:{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
                 <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
@@ -12527,7 +12737,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 the plan. */}
             {!soloTrip&&dates?.ready&&plan.status!=="booked"&&(
               <div style={{padding:"0 20px 14px"}}>
-                <div className="sl" style={{marginBottom:10}}>When works for you?</div>
+                {/* About dates only. Under "Everyone has answered" a bare
+                    "0 of 2 have answered" read as contradicting it. */}
+                <div className="sl" style={{marginBottom:10}}>Which dates work for you?</div>
                 <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
                   {dates.bestWindows?.[0]&&(
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
@@ -12560,7 +12772,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   </div>
                   <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
                     {dates.mine?.length?`You said ${dates.mine.map(x=>formatDates(x.start,x.end)).join(", ")}. `:""}
-                    {`${dates.respondents} of ${dates.members} have answered.`}
+                    {datesTally(dates.respondents,dates.members)}
                     {dates.mine?.length?(
                       <span {...pressable} onClick={clearMyDates}
                         style={{color:C.accentText,cursor:"pointer",marginLeft:6,fontWeight:600}}>
@@ -12796,14 +13008,16 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       // worst version of this screen. The plan is not
                       // written until everyone has said what they want, so
                       // say that here rather than after the tap.
-                      ?`${prefs.waiting||"We're waiting on the rest of the group"} We write the days once everyone's in, so nobody's trip is planned around half the answers.`
+                      ?`${daysWait.sentence||"We're waiting on the rest of the group."} We write the days once everyone's in, so nobody's trip is planned around half the answers.`
                       :`Give us twenty seconds and we'll write the whole ${plan.title} plan — where to eat, what it costs, which places only take cash. Or do it yourself, if that's the fun bit for you.`}
                 </div>
                 {!loadFailed&&(
                   <>
                     <button className="bp" disabled={building||(!votingOpen&&!!prefs)} onClick={buildItinerary} style={{marginBottom:10}}>
-                      {building?"Building your days…":(!votingOpen&&prefs)?"Waiting on the group":"✨ Plan my days for me"}
+                      {building?"Building your days…":(!votingOpen&&prefs)?"Waiting on the group":buildError?.retry?"↻ Try again":"✨ Plan my days for me"}
                     </button>
+                    {!building&&<BuildNote e={buildError} night={plan.type==="restaurant"}
+                      onAnswer={()=>push("planPrefs",{planId,groupId})} style={{marginBottom:10}}/>}
                     <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>I'll do it myself</button>
                   </>
                 )}
@@ -13062,33 +13276,89 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         )}
         {atab==="vote"&&!plan.hasIdeas&&plan.options.length>0&&(
           <div style={{padding:"16px 20px"}}>
-            <div className="pt" style={{fontSize:22,marginBottom:6}}>Where should we go?</div>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,marginBottom:18,flexWrap:"wrap"}}>
-              <div style={{fontSize:13,color:C.t2}}>
-                {totalV>=plan.participants.length
-                  ?(()=>{
-                    // Said as the group's decision, not the organiser's, so
-                    // nobody has to carry the choice on their own.
-                    const ranked=Object.entries(plan.votes||{}).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
-                    if(!ranked.length)return "Everyone's voted. Approve it and let's book.";
-                    if(ranked[1]&&ranked[1][1]===ranked[0][1]){
-                      return `Everyone's voted, and it's a tie between ${ranked.filter(x=>x[1]===ranked[0][1]).map(x=>x[0]).join(" and ")}.`;
-                    }
-                    return `The group picked ${ranked[0][0]} — ${ranked[0][1]} of ${plan.participants.length}.`;
-                  })()
-                  :plan.participants.length-totalV===1
-                    ?"One vote away."
-                    :`${totalV} of ${plan.participants.length} voted.`}
-              </div>
+            {/* What is being voted on. On a plan whose place is set, it is
+                which plan for that place — not "Where should we go?". */}
+            <div className="pt" style={{fontSize:22,marginBottom:6}}>
+              {voteHeading({night:nightPlan,undecided:plan.destStyle==="undecided",city:plan.destinationCity})}
             </div>
-            {/* A plan could sit needing one vote for a week with no way to
-                tell anyone. One face each, ✓ voted or grey: a grey face
-                nudges that person, and the organiser can remind everyone. */}
-            {totalV<plan.participants.length&&!soloTrip&&(
-              <div style={{marginBottom:18}}>
-                <WaitFaces planId={planId} kind="vote" um={um} toast={toast} organiser={organiserHere} rev={totalV}/>
+            {/* Closed until everyone has answered: that is said first, with
+                who it waits on — "you" when it is the reader, with the way
+                to answer — and the options below are greyed. The tally and
+                the vote faces were shown over a vote nobody could cast. */}
+            {!votingOpen&&prefs&&(
+              <div style={{margin:"6px 0 14px",padding:"12px 14px",background:voteWait.mine?C.accentDim:C.amberDim,
+                border:`1px solid ${voteWait.mine?C.accentText:C.amber}`,borderRadius:14}}>
+                <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:8,lineHeight:1.5}}>
+                  {voteWait.sentence||"Votes open when everyone's in"}
+                </div>
+                {voteWait.mine&&(
+                  <>
+                    <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
+                      The same questions everyone going answers, about this {nightPlan?"night out":"trip"} only. Your profile stays as it is.
+                    </div>
+                    <button className="bp" style={{marginBottom:10}} onClick={()=>push("planPrefs",{planId,groupId})}>
+                      Say what you want from this {nightPlan?"night out":"trip"}
+                    </button>
+                  </>
+                )}
+                {/* Who has had their say. A yes or a no and a name — never
+                    what anybody answered, which is theirs. */}
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {prefs.members.map(m=>(
+                    <span key={m.userId} style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,
+                      background:m.ready?"rgba(16,185,129,.15)":"rgba(255,255,255,.08)",
+                      color:m.ready?C.green:C.t2}}>
+                      {m.ready?"✓ ":""}{m.userId===me?"You":(m.name.trim().split(/\s+/)[0]||"Someone")}{m.ready?"":" · waiting…"}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
+            {votingOpen&&(()=>{
+              // Said as the group's decision, not the organiser's, so nobody
+              // has to carry the choice on their own.
+              const ranked=Object.entries(plan.votes||{}).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+              const tied=ranked.length>1&&ranked[1][1]===ranked[0][1]?ranked.filter(x=>x[1]===ranked[0][1]).map(x=>x[0]):[];
+              const everyone=totalV>=plan.participants.length;
+              const open=plan.status==="voting";
+              const orgName=voteView?.organiser?.name||String(um?.[plan.createdBy]?.name||"").trim().split(/\s+/)[0]||null;
+              const tie=everyone&&open?tieWords({tied,organiserIsMe:organiserHere,organiserName:orgName}):null;
+              return(
+                <>
+                  <div style={{fontSize:13,color:C.t2,marginBottom:18,lineHeight:1.55}}>
+                    {!open&&plan.options.length===1
+                      ?`The group is going with ${plan.options[0]}.`
+                      :tie
+                      ?tie
+                      :everyone
+                      ?(!ranked.length?"Everyone's voted.":`The group picked ${ranked[0][0]} — ${ranked[0][1]} of ${plan.participants.length}.`)
+                      :plan.participants.length-totalV===1
+                        ?"One vote away."
+                        :`${totalV} of ${plan.participants.length} voted.`}
+                  </div>
+                  {/* The tie is the organiser's to settle, between the tied
+                      options only. Picking one locks the plan in with it. */}
+                  {tie&&organiserHere&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
+                      {tied.map(opt=>(
+                        <button key={opt} className="bp" disabled={!!voteBusy||loading} onClick={()=>settleTie(opt)}>
+                          {voteBusy===opt?"Settling…":`Go with ${opt}`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* A plan could sit needing one vote for a week with no way
+                      to tell anyone. One face each, ✓ voted or grey: a grey
+                      face nudges that person, and the organiser can remind
+                      everyone. */}
+                  {!everyone&&open&&!soloTrip&&(
+                    <div style={{marginBottom:18}}>
+                      <WaitFaces planId={planId} kind="vote" um={um} toast={toast} organiser={organiserHere} rev={totalV}/>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
             {/* What moving the dates would disturb, read before it happens
                 rather than discovered afterwards. Each line names who has to
                 act: a table booked on somebody's own account can only be
@@ -13122,56 +13392,47 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
               </div>
             )}
-            {/* The person the group is waiting on sees the way to stop being
-                waited on, not just the fact of it. Shown to anybody who has
-                not answered for this trip, whether or not voting is open. */}
-            {prefs&&!prefs.solo&&prefs.members.some(m=>m.userId===me&&!m.ready)&&(
-              <div style={{margin:"0 0 12px",padding:"14px",background:C.accentDim,
-                border:`1px solid ${C.accentText}`,borderRadius:14}}>
-                <div style={{fontSize:13.5,color:C.t1,fontWeight:600,marginBottom:4}}>
-                  The group is waiting on you
-                </div>
-                <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55,marginBottom:10}}>
-                  The same questions everyone going answers, about this {plan.type==="restaurant"?"night out":"trip"} only. Your profile stays as it is.
-                </div>
-                <button className="bp" onClick={()=>push("planPrefs",{planId})}>
-                  Say what you want from this {plan.type==="restaurant"?"night out":"trip"}
-                </button>
-              </div>
-            )}
-            {/* Who has had their say. A yes or a no and a name — never what
-                anybody answered, which is theirs. */}
-            {!votingOpen&&prefs&&(
-              <div style={{margin:"0 0 12px",padding:"12px 14px",background:C.amberDim,border:`1px solid ${C.amber}`,borderRadius:14}}>
-                <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:8,lineHeight:1.5}}>
-                  {prefs.waiting||"Votes open when everyone's in"}
-                </div>
-                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {prefs.members.map(m=>(
-                    <span key={m.userId} style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,
-                      background:m.ready?"rgba(16,185,129,.15)":"rgba(255,255,255,.08)",
-                      color:m.ready?C.green:C.t2}}>
-                      {m.ready?"✓ ":""}{m.name.trim().split(/\s+/)[0]||"Someone"}{m.ready?"":" · waiting…"}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
             {plan.options.map(opt=>{
               const v=plan.votes[opt]||0; const pct=totalV>0?(v/totalV)*100:0; const mine=myVote===opt;
+              // Counted as trip ideas count them: how many, never whose.
+              const x=vetoCounts[opt]||0;
+              const vetoed=myVetoes.includes(opt);
+              const canVote=votingOpen&&plan.status==="voting";
               return(
-                <div key={opt} {...pressable} onClick={()=>castVote(opt)} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accentText:C.border}`,borderRadius:16,padding:16,marginBottom:10,cursor:(myVote||!votingOpen)?"default":"pointer",opacity:votingOpen?1:.55,transition:"all .15s"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                    <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{opt}</div>
-                    <div style={{fontSize:13,fontWeight:600,color:mine?C.accentText:C.t2}}>{v} vote{v!==1?"s":""}</div>
+                <div key={opt} style={{background:mine?C.accentDim:C.s2,border:`2px solid ${mine?C.accentText:C.border}`,borderRadius:16,padding:16,marginBottom:10,opacity:votingOpen?1:.55,transition:"all .15s"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:8,gap:10}}>
+                    <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1,minWidth:0}}>{opt}</div>
+                    <div style={{fontSize:13,fontWeight:600,color:mine?C.accentText:C.t2,flexShrink:0}}>
+                      {v} vote{v!==1?"s":""}{x>0?` · ${plural(x,"veto","vetoes")}`:""}
+                    </div>
                   </div>
-                  <div className="pb-t" style={{marginBottom:8}}><div className="pb-f" style={{width:`${pct}%`}}/></div>
-                  {!myVote&&<div style={{fontSize:12,color:C.accentText,fontWeight:500}}>Tap to vote →</div>}
-                  {mine&&<div style={{fontSize:12,color:C.accentText,fontWeight:500}}>✓ Your vote</div>}
+                  <div className="pb-t" style={{marginBottom:10}}><div className="pb-f" style={{width:`${pct}%`}}/></div>
+                  {!votingOpen?(
+                    <div style={{fontSize:12,color:C.t3}}>Voting opens once everyone has answered.</div>
+                  ):canVote?(
+                    <div style={{display:"flex",gap:8}}>
+                      {voteView?.vetoesAvailable&&!mine&&(
+                        <button disabled={!!voteBusy} onClick={()=>vetoOption(opt,!vetoed)}
+                          style={{flex:1,padding:"10px 8px",borderRadius:12,border:"1px solid rgba(239,68,68,.4)",
+                            background:vetoed?"rgba(239,68,68,.18)":"rgba(239,68,68,.08)",color:C.red,fontSize:13,fontWeight:600,
+                            cursor:voteBusy?"default":"pointer"}}>
+                          {voteBusy===opt?"…":vetoed?"Vetoed · undo":"Veto"}
+                        </button>
+                      )}
+                      <button disabled={!!voteBusy||mine} onClick={()=>castVote(opt)}
+                        style={{flex:1,padding:"10px 8px",borderRadius:12,border:"1px solid "+(mine?C.accentText:C.border),
+                          background:mine?C.accentDim:"none",color:mine?C.accentText:C.t2,fontSize:13,fontWeight:600,
+                          cursor:voteBusy||mine?"default":"pointer"}}>
+                        {mine?"✓ Your vote":myVote?"Change vote to this":"Vote for this"}
+                      </button>
+                    </div>
+                  ):mine?(
+                    <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>✓ Your vote</div>
+                  ):null}
                 </div>
               );
             })}
-            {myVote&&<div style={{background:C.greenDim,border:`1px solid ${C.green}`,borderRadius:14,padding:14,textAlign:"center",marginTop:8}}><div style={{fontSize:13,color:C.green,fontWeight:500}}>Your vote has been recorded. Results update in real time.</div></div>}
+            {myVote&&votingOpen&&plan.status==="voting"&&<div style={{fontSize:12,color:C.t3,textAlign:"center",marginTop:4,lineHeight:1.5}}>Your vote is in. You can change it until the vote closes.</div>}
           </div>
         )}
         {atab==="budget"&&(
@@ -14528,8 +14789,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
               {plural(stillOpen.length,"thing","things")} left for you
             </div>
             <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:10}}>
-              Reach booked what it could. These are the ones somebody else sells or
-              takes by phone — here is where to do each of them.
+              Reach booked what it could. These are the ones it can't book —
+              here is the way in to each of them.
             </div>
             <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:"4px 14px"}}>
               {stillOpen.map((item,i)=>(
@@ -16095,11 +16356,17 @@ export default function ReachApp({realUser,onSignOut}={}){
         const groupId=params.get("group"), planId=params.get("plan");
         // From the invite page, the moment somebody joins (app/invite).
         const justJoined=params.get("joined")==="1";
-        params.delete("group");params.delete("plan");params.delete("joined");
+        // From the weather ping (lib/pings.ts): the line the forecast is
+        // about, whose Change sheet the ping is asking somebody to open. It
+        // was carried in the link and never read, so the ping just opened
+        // the plan.
+        const changeLineId=params.get("change");
+        params.delete("group");params.delete("plan");params.delete("joined");params.delete("change");
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         if(/^[0-9a-f-]{36}$/i.test(groupId)){
-          if(/^[0-9a-f-]{36}$/i.test(planId||""))push("planDetail",{planId,groupId});
+          if(/^[0-9a-f-]{36}$/i.test(planId||""))push("planDetail",{planId,groupId,
+            ...(changeLineId&&/^[\w-]{1,80}$/.test(changeLineId)?{changeLineId,initialTab:"bookings"}:{})});
           else push("groupDetail",{groupId,justJoined});
         }
       }
@@ -16831,11 +17098,18 @@ export default function ReachApp({realUser,onSignOut}={}){
   // state alone left the session cookie in place, so this only looked like a
   // sign-out — and it dropped you into the in-app auth screens, which the
   // route guard means nobody can ever legitimately reach.
-  const handleSignOut=()=>{
+  // The wrapper (components/ReachApp.tsx) forgets this device — its push
+  // subscription and the offline wallet — before ending the session; with no
+  // wrapper it is done here, so no way out leaves either behind.
+  const signingOut=useRef(false);
+  const handleSignOut=async()=>{
+    if(signingOut.current)return;
+    signingOut.current=true;
     setStack([]);setTab("home");
     if(onSignOut){showToast("Signing you out…");onSignOut();return;}
     // No Clerk in the tree (tests, storybook): fall back to a hard reload so
     // the guard re-evaluates rather than pretending.
+    await Promise.race([forgetThisDevice(),new Promise(r=>setTimeout(r,4000))]);
     if(typeof window!=="undefined")window.location.href="/sign-in";
   };
 
