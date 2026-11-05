@@ -32,7 +32,7 @@ Probed today (PostgREST GETs, `vercel env ls`, the GitHub Actions API).
   record at a bare `\r`. Fixed in `8eb4f7a` (lib/discovery/feature-lines.ts);
   confirmed — both load every run since 2026-10-24 (≈10.8k and 11.4k kept),
   all 105 regions ok.
-- **Email is still dead:** `RESEND_API_KEY` in Vercel last changed 89 days ago.
+- **Email works again (2026-11-05):** Resend's DKIM + send/rsend records added in Squarespace DNS for alcanzar.io, EMAIL_FROM changed from a reach.app address (unverified) to `Reach <hello@alcanzar.io>`, and a test itinerary email was accepted (`sent: 1`).
 - **Checkout spec (REACH-CHECKOUT-NEXT-STEP-2026-09-25): Stages 1–6 merged and
   live by 2026-10-28** (main `552beae`, 1920 unit tests) — the 5-dot rail and
   getNextAction everywhere, one active trip, the booked "Your trip" view, the

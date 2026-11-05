@@ -31,7 +31,7 @@ Legend: ✅ done, with evidence · 🟡 partial, scope stated · ❌ not done ·
 | row | state |
 |---|---|
 | migrations run | ✅ every file in `sql/` through 2026-09-25, except the two held on purpose (STATUS.md, Now) |
-| RESEND key live (send a test email) | 🔒 still dead on 2026-10-23 — the Vercel value was last changed 89 days ago |
+| RESEND key live (send a test email) | ✅ 2026-11-05 — alcanzar.io verified in Resend (DNS in Squarespace), sender `hello@alcanzar.io`, test email sent |
 | APP_URL fixed | 🟡 `NEXT_PUBLIC_APP_URL` is set in Vercel; its value is not readable from here |
 | Supabase service key + Clerk secret rotated | 🔒 |
 | STRIPE_WEBHOOK_SECRET set | 🟡 set in Vercel (89 days old); whether it matches the live endpoint's secret is not provable from here |
