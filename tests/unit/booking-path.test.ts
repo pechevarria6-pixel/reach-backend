@@ -461,3 +461,11 @@ test('a refused model key is said to be on our side, never "please try again"', 
   assert.equal((src.match(/ourSide\(e\) \? 503/g) ?? []).length, 2, 'both the ideas and the days');
   assert.match(src, /e\?\.status === 401 \|\| e\?\.status === 403/);
 });
+
+test('the trip screen reads the group only once it has loaded — "Everyone\'s in" opened it cold and crashed the app', () => {
+  const src = read('components/reach-app.jsx');
+  const start = src.indexOf('function GroupTripScreen(');
+  const guard = src.indexOf('if(!group)return <NotLoaded what="This group"', start);
+  assert.ok(start > 0 && guard > start);
+  assert.match(src.slice(start, guard), /membersList\.length\|\|group\?\.memberIds\?\.length/);
+});

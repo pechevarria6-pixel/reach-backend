@@ -7342,7 +7342,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
   const membersList=Object.values(memberStatus);
   const completedCount=membersList.filter(m=>m.quizDone).length;
-  const rawTotal=membersList.length||group.memberIds?.length||1;
+  const rawTotal=membersList.length||group?.memberIds?.length||1;
   const isSolo=rawTotal<=1;
   const totalCount=isSolo?1:rawTotal;
   const allComplete=isSolo||(completedCount>=totalCount&&totalCount>0);
@@ -7391,7 +7391,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // member who is never going to answer.
   // `here`: said on the plan itself, where "call it off" is a button below.
   const wayOut=(w,here=false)=>{
-    if(isOrganiser({role:group.role,createdBy:w?.createdBy,userId:me}))
+    if(isOrganiser({role:group?.role,createdBy:w?.createdBy,userId:me}))
       return here
         ?"You make the pick once the ideas are in — or call it off below and start another."
         :"You can open it and pick once the ideas are in — or call it off there and start another.";
