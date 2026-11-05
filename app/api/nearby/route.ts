@@ -25,6 +25,7 @@ import { barLed, NOT_DRINKING } from '@/lib/traveler-profile';
 import type { Seeker, SourceResult } from '@/lib/discovery/types';
 import { whatsOn } from '@/lib/discovery/whats-on';
 import { parseWhen } from '@/lib/discovery/when';
+import { discoverForecast, weatherRanked } from '@/lib/discovery/weather';
 
 export const maxDuration = 30;
 
@@ -68,6 +69,11 @@ export async function GET(req: NextRequest) {
     avoid: (me?.no_way_jose ?? []).filter(Boolean),
   };
   const personal = seeker.interests.length > 0;
+
+  // The forecast for tonight and the coming weekend, asked for alongside the
+  // sources and through the cache — never on its own clock: it has a short
+  // deadline, and a forecast that misses it changes nothing on the screen.
+  const forecasting = discoverForecast(ctx.db, lat, lng);
 
   // All three at once. Sequentially this would be three round trips deep
   // inside a request somebody is waiting on with an empty screen.
@@ -145,7 +151,13 @@ export async function GET(req: NextRequest) {
   // near you, and it was not ordered by near. Within a ring the two steps
   // above survive, so a pottery class four miles away still beats a stadium
   // show three miles away that nobody asked for.
-  const events = byDistance(varied, { lat, lng });
+  const near = byDistance(varied, { lat, lng });
+  // Last, on a spoiled evening or weekend: a place the map says is out in
+  // the open goes to the bottom, one under a roof to the top of its ring,
+  // each saying why with the forecast's source. A fine or unknown forecast
+  // leaves the list exactly as it was (lib/discovery/weather.ts).
+  const fc = await forecasting;
+  const events = weatherRanked(near, fc.days, fc.today, { lat, lng });
   const sources = results.map(r => ({ source: r.source, status: r.status, found: r.findings.length }));
 
   // Every source refusing is a different problem from a quiet week, and the

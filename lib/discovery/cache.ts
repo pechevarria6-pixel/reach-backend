@@ -13,6 +13,7 @@ import { kindFor } from './taste.ts';
 import { dayWhere } from '../calendar.ts';
 import { rowPhoto } from './place-photo.ts';
 import { placeName } from './where.ts';
+import { visitTagsOf } from './osm.ts';
 
 /**
  * The area a point belongs to, rounded to about seven miles. Everybody in a
@@ -86,13 +87,15 @@ const DISCOVER_RINGS = [3, 15];
 /** Rows asked for per interest per box. */
 const PER_INTEREST = 60;
 
-const VENUE_COLUMNS = 'id, osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url, image_source';
+const VENUE_COLUMNS = 'id, osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url, image_source, osm_tags';
 /** The credit and page of a Wikimedia photo: sql/place-photos-2026-09-24.sql. */
 const PHOTO_COLUMNS = ', image_credit, image_link';
 type CachedVenue = {
   id?: string | null; osm_type: string; osm_id: number; name: string; lat: number; lng: number; city: string | null;
   website: string | null; interest: string; kind: string | null; street: string | null;
   image_url?: string | null; image_source?: string | null; image_credit?: string | null; image_link?: string | null;
+  /** The map entry's kept tags (lib/discovery/osm.ts keptTagsOf). */
+  osm_tags?: Record<string, string> | null;
 };
 
 /** gone_at arrives in sql/world-data-phase1-2026-09-24.sql. */
@@ -199,6 +202,10 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
         source: 'osm',
         // The row itself, so a card can cite it (a table watch, lib/watch/tables.ts) — never its name.
         venueRef: typeof v.id === 'string' ? v.id : null,
+        // What the map calls it, and how it seats people: what says whether
+        // it is out in the open on a wet evening (lib/discovery/weather.ts).
+        kind: v.kind || null,
+        osm: { tags: visitTagsOf(v.osm_tags && typeof v.osm_tags === 'object' ? v.osm_tags : {}) },
         because: becauseOf(seeker, v.interest),
         miles,
       };

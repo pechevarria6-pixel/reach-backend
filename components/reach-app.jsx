@@ -1017,6 +1017,28 @@ const fetchedAtWords=(iso)=>{
   if(!Number.isFinite(t))return "fetched recently";
   return "fetched "+new Date(t).toLocaleString("en-US",{weekday:"short",hour:"numeric",minute:"2-digit"});
 };
+/**
+ * One forecast line on a card — a trip option's, or a Discover place's on a
+ * spoiled evening or weekend — labelled "Forecast", with every source's
+ * credit and when it was fetched, which the sources' terms ask for. Nothing
+ * when there is no line: a fine or unknown forecast says nothing.
+ */
+function ForecastNote({f,style}){
+  if(!f?.line)return null;
+  const sources=Array.isArray(f.sources)?f.sources:f.source?[f.source]:[];
+  return(
+    <div style={{fontSize:11.5,color:C.t1,lineHeight:1.45,background:C.s2,borderRadius:10,padding:"6px 8px",...style}}>
+      <span style={{fontSize:9.5,fontWeight:700,color:C.t3,textTransform:"uppercase",letterSpacing:.4,marginRight:4}}>{f.label||"Forecast"}</span>
+      {f.line}
+      <div style={{fontSize:9.5,color:C.t3,marginTop:2}}>
+        {sources.map((s,i)=>(
+          <span key={s.name||i}>{i?" · ":""}<a href={s.link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{color:C.t3}}>{s.credit}</a></span>
+        ))}
+        {" · "}{fetchedAtWords(f.fetchedAt)}
+      </div>
+    </div>
+  );
+}
 function TripPicks({push,userLocation,toast,groups}){
   const [state,setState]=useState("loading"); // loading|ready|error
   const [data,setData]=useState({picks:[],reason:null,from:null});
@@ -1131,18 +1153,7 @@ function TripPicks({push,userLocation,toast,groups}){
               {/* The forecast, for tonight or this weekend, when the pick is
                   out of doors and the forecast spoils it — with each source's
                   credit and when it was fetched, which the terms ask for. */}
-              {p.forecast?.line&&(
-                <div style={{fontSize:11.5,color:C.t1,lineHeight:1.45,background:C.s2,borderRadius:10,padding:"6px 8px"}}>
-                  <span style={{fontSize:9.5,fontWeight:700,color:C.t3,textTransform:"uppercase",letterSpacing:.4,marginRight:4}}>{p.forecast.label}</span>
-                  {p.forecast.line}
-                  <div style={{fontSize:9.5,color:C.t3,marginTop:2}}>
-                    {p.forecast.sources.map((s,i)=>(
-                      <span key={s.name}>{i?" · ":""}<a href={s.link} target="_blank" rel="noopener noreferrer" style={{color:C.t3}}>{s.credit}</a></span>
-                    ))}
-                    {" · "}{fetchedAtWords(p.forecast.fetchedAt)}
-                  </div>
-                </div>
-              )}
+              <ForecastNote f={p.forecast}/>
               {/* When the weather is usually best — averages, said as averages. */}
               {p.weather?.line&&(
                 <div style={{fontSize:11.5,color:C.t2,lineHeight:1.45}} title={p.weather.credit}>
@@ -1534,6 +1545,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
           <div style={{flex:1}}>
             <div style={{fontSize:14,fontWeight:500,color:C.t1}}>{n.title}</div>
             <div style={{fontSize:11,color:C.t2,marginTop:2}}>{n.meta}</div>
+            <ForecastNote f={n.weather} style={{marginTop:6}}/>
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
             {n.price&&<div style={{fontSize:12,color:C.accentText,fontWeight:600}}>{n.price}</div>}
@@ -2298,6 +2310,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
               </div>
               {/* Whose picture it is, wherever there is one. */}
               {hasPhoto&&<PhotoCredit credit={exp.imageCredit} link={exp.imageLink} style={{marginTop:3}}/>}
+              {/* Why it moved up or down tonight, from the forecast. */}
+              <ForecastNote f={exp.weather} style={{marginTop:6}}/>
             </div>
             {/* This used to be a "Share with group" button whose entire
                 handler was a toast saying it had been shared. The screen
@@ -4344,6 +4358,9 @@ function expFromFinding(e){
     venueRef:e.venueRef||null,
     tags:[e.category||"Event"],
     because:e.because||null,
+    // The forecast's word on it, on a spoiled evening or weekend — with its
+    // source. Dropped here, it would be ranked for the weather and never say why.
+    weather:e.weather||null,
     provider:e.source||null,
     bg:`linear-gradient(135deg,${C.accentDeep},${C.accent})`,
     isLocal:true,
@@ -6385,6 +6402,11 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
             {trip.vibe}
           </div>
           <IdeaClimateNote raw={trip.climate} startDate={startDate} endDate={endDate}/>
+          {/* The forecast for this option's own dates, when they are close
+              enough to have one and the plan is out of doors on a spoiled
+              day. Past the forecast's range the line above says what is
+              usual, and nothing here pretends to know more. */}
+          <ForecastNote f={trip.forecast} style={{marginTop:8}}/>
           {/* What this option does about what somebody actually
               asked for, by name. The model has been writing these
               all along and no screen showed them, so the answer to

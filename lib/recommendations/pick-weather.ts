@@ -62,8 +62,8 @@ export function windowFor(band: Band, today: string): string[] {
 
 const deg = (p: ForecastPart, fFirst: boolean) => (fFirst ? `${p.highF}°F / ${p.highC}°C` : `${p.highC}°C / ${p.highF}°F`);
 
-/** The worst thing forecast, said with when: "Rain likely Saturday (70%)". */
-function phrase(w: Worry, when: string, p: ForecastPart, fFirst: boolean): string {
+/** The worst thing forecast, said with when: "Rain likely Saturday (70%)". Also the trip options' and Discover's. */
+export function worryPhrase(w: Worry, when: string, p: ForecastPart, fFirst: boolean): string {
   switch (w) {
     case 'storms': return `Thunderstorms possible ${when}`;
     case 'snow': return `Snow likely ${when}${rainFigure(p)}`;
@@ -73,7 +73,9 @@ function phrase(w: Worry, when: string, p: ForecastPart, fFirst: boolean): strin
   }
 }
 const ORDER: Worry[] = ['storms', 'snow', 'rain', 'heat', 'wind'];
-const worst = (p: ForecastPart): Worry | null => ORDER.find(w => p.worries.includes(w)) ?? null;
+/** The worry said first, of those a part carries (or of `only`). */
+export const worst = (p: ForecastPart, only?: Worry[]): Worry | null =>
+  ORDER.find(w => p.worries.includes(w) && (!only || only.includes(w))) ?? null;
 
 const listOf = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 
@@ -100,7 +102,7 @@ export function pickForecastLine(
     const w = p ? worst(p) : null;
     if (!p || !w) continue;
     const when = band === 'night' ? 'this evening' : date === today ? 'today' : WEEKDAY[weekday(date)];
-    spoiled.push({ day, text: phrase(w, when, p, fFirst) });
+    spoiled.push({ day, text: worryPhrase(w, when, p, fFirst) });
   }
   if (!spoiled.length) return null;
   const said = spoiled.map((s, i) => (i ? s.text.charAt(0).toLowerCase() + s.text.slice(1) : s.text)).join(', ');
@@ -121,10 +123,14 @@ const DEADLINE_MS = 3500;
 const MEMO_MS = 10 * 60_000;
 const memo = new Map<string, { at: number; value: Promise<PlaceForecast> }>();
 
-type Read = (db: SupabaseClient, at: Point, want: { dates: string[]; country?: string | null }) => Promise<PlaceForecast>;
+export type Read = (db: SupabaseClient, at: Point, want: { dates: string[]; country?: string | null }) => Promise<PlaceForecast>;
 
-/** forecastFor, kept per instance for a few minutes. A failed read is not kept. */
-function remembered(read: Read, db: SupabaseClient, at: Point, want: { dates: string[]; country?: string | null }, now: number): Promise<PlaceForecast> {
+/**
+ * forecastFor, kept per instance for a few minutes. A failed read is not
+ * kept. Shared by every recommendation that reads the forecast (Home's
+ * picks, the trip options, Discover), so one screen's read serves the next.
+ */
+export function remembered(read: Read, db: SupabaseClient, at: Point, want: { dates: string[]; country?: string | null }, now: number): Promise<PlaceForecast> {
   const key = `${at.lat},${at.lng}|${want.dates.join(',')}`;
   const hit = memo.get(key);
   if (hit && now - hit.at < MEMO_MS) return hit.value;
@@ -140,8 +146,13 @@ export function forgetPickForecasts(): void { memo.clear(); }
 
 type Deps = { read?: Read; now?: Date; deadlineMs?: number };
 
-function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
-  return Promise.race([p.catch(() => null), new Promise<null>(r => setTimeout(() => r(null), ms))]);
+/** The answer, or null once `ms` has passed or it failed: a slow forecast costs its line, never the screen. */
+export function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  // The clock is stopped once the answer is in: a timer left running keeps
+  // a test process (and an idle instance) alive for the whole deadline.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clock = new Promise<null>(r => { timer = setTimeout(() => r(null), ms); });
+  return Promise.race([p.catch(() => null), clock]).finally(() => clearTimeout(timer));
 }
 
 /**

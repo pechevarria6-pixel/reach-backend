@@ -122,7 +122,7 @@ export const LODGING = new Set(['hotel', 'guest_house', 'hostel', 'motel', 'apar
  */
 export function visitTagsOf(tags: Record<string, string> = {}): Record<string, string> {
   return Object.fromEntries(Object.entries(tags).filter(([k]) =>
-    /^(cuisine|diet:|payment:|reservation|takeaway|outdoor_seating|wheelchair|drink:|smoking)/.test(k)));
+    /^(cuisine|diet:|payment:|reservation|takeaway|outdoor_seating|indoor_seating|wheelchair|drink:|smoking)/.test(k)));
 }
 
 /**
@@ -301,6 +301,7 @@ export async function openStreetMap(seeker: Seeker, budgetMs = 8000): Promise<So
       date: null,
       venue: streetOf(tags),
       source: 'osm',
+      kind: what || null,
       because: interest,
       // `out center` gives a way or relation a point of its own, so a studio
       // mapped as a building outline still knows where it is.

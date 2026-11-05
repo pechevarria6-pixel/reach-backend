@@ -8,6 +8,7 @@ import { claimOnce } from '@/lib/everyone-in';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
 import { ideasWithClimateNow } from '@/lib/climate-store';
+import { ideasWithForecast } from '@/lib/forecast-ideas';
 
 // ─── /api/plans/[id]/vote — the group's vote on where to go ──────────────
 // A group trip's three ideas are saved on the plan (plans.trip_options) and
@@ -225,7 +226,12 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
   // made for: the dates can move while the vote is open, and the card and
   // the weather no-go both have to follow them (lib/climate-store.ts).
   const dates = { start: plan.start_date ?? null, end: plan.end_date ?? null };
-  const options = ideas ? await ideasWithClimateNow(supabase, ideas.options, dates) : null;
+  // …and the forecast for those dates, where they are close enough to have
+  // one: read on every look, never saved, capped so a slow source costs a
+  // card its line and never the vote (lib/forecast-ideas.ts).
+  const options = ideas
+    ? await ideasWithForecast(supabase, await ideasWithClimateNow(supabase, ideas.options, dates), { ...dates, night: ideas.mode === 'night' })
+    : null;
 
   return NextResponse.json({
     // Kept for older screens: counts by option and how many votes in all.

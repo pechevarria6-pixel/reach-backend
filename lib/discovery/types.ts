@@ -31,6 +31,17 @@ export interface Finding {
   /** Where it actually is, when the source knows. Null when it does not. */
   lat?: number | null;
   lng?: number | null;
+  /**
+   * What the map calls it ("biergarten", "museum", "park"), when the finding
+   * is a mapped place. Whether it is out in the open on a wet evening is read
+   * from this (lib/discovery/weather.ts), never from the name.
+   */
+  kind?: string | null;
+  /**
+   * The forecast's word on it, when tonight or the coming weekend is spoiled
+   * and the map says it is out in the open or under a roof.
+   */
+  weather?: import('./weather.ts').FindingWeather;
   /** What the map says about a venue beyond its name: kept by the sweep. */
   osm?: { phone?: string | null; hours?: string | null; tags?: Record<string, string> | null };
   /**

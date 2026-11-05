@@ -46,6 +46,12 @@ export const TripSchema = z.object({
   // so a model that has nothing to say sends null instead of omitting the
   // key — losing a whole trip over an empty list would be a poor trade.
   used_suggestions: z.array(z.string()).nullish(),
+  // What the plan is built around: being out of doors (a beach, hikes, a
+  // rooftop crawl), under a roof, or both. A fact about the plan the model
+  // just wrote, not about the world — what decides whether a forecast of
+  // rain spoils it (lib/forecast-ideas.ts outdoorsLed). nullish: an answer
+  // without it is read from the plan's own words instead.
+  setting: z.enum(['outdoors', 'indoors', 'mixed']).nullish(),
   costs: z.object({
     flights: CostLine,
     // The card shows the example hotel or area here, not the details line.
@@ -68,6 +74,10 @@ export const TripsSchema = z.object({ trips: z.array(TripSchema) });
  *   climate  NASA POWER averages for the idea's dates (lib/climate.ts
  *            ideaClimate), and whether a weather no-go was checked.
  */
+//   forecast The forecast for the option's own dates, when they are close
+//            enough to have one and its plan is out of doors on a spoiled
+//            day (lib/forecast-ideas.ts IdeaForecast). Worked out on every
+//            read and never saved: a forecast is only true for a few hours.
 //   away     Getting there and somewhere to sleep, for an away trip
 //            (lib/away-lines.ts awayEstimate): the transport and lodging
 //            lines the card shows, each an estimate, the tier's class of
@@ -250,6 +260,7 @@ export const TRIPS_JSON_SCHEMA = {
           // wrote varied run to run: one answered a fortieth birthday in
           // every option, the next never mentioned it.
           used_suggestions: { type: 'array', items: str },
+          setting: { type: 'string', enum: ['outdoors', 'indoors', 'mixed'] },
           costs: {
             type: 'object',
             properties: {
@@ -269,7 +280,7 @@ export const TRIPS_JSON_SCHEMA = {
         },
         required: ['id', 'destination', 'city', 'country_code', 'emoji', 'tagline', 'vibe',
                    'why_this_group', 'food_scene', 'music_scene', 'total_per_person', 'tier', 'costs',
-                   'used_suggestions'],
+                   'used_suggestions', 'setting'],
         additionalProperties: false,
       },
     },

@@ -17,6 +17,8 @@ import { howIsIt, climatePromptBlock, climateVetoes, COLD_HIGH_C, HOT_HIGH_C } f
 import { readClimate, climateFor, ideasWithClimateNow } from '@/lib/climate-store';
 import { forecastPromptBlock, addDays } from '@/lib/forecast';
 import { generationForecast, indoorMenu, weatherClashes, scrubWeatherTips, forecastSummary } from '@/lib/forecast-plan';
+import { ideaForecasts, ideasWithForecast, dropSpoiled, scrubIdeaWeather, optionsForecastBlock, optionDates, heldFor } from '@/lib/forecast-ideas';
+import { forecastPoint } from '@/lib/forecast';
 import { generationHints } from '@/lib/traveler-profile';
 import { readProfiles } from '@/lib/quiz-store';
 import {
@@ -359,7 +361,11 @@ export async function POST(req: NextRequest) {
       if (decision.action === 'show' && read.ideas) {
         // The saved ideas' weather for the dates asked about now, which may
         // not be the dates they were made for (lib/climate-store.ts).
-        const shownTrips = await ideasWithClimateNow(supabase, read.ideas.options, { start: startDate, end: endDate });
+        // …and the forecast for them, where those dates are close enough to
+        // have one — read now, never saved (lib/forecast-ideas.ts).
+        const shownTrips = await ideasWithForecast(supabase,
+          await ideasWithClimateNow(supabase, read.ideas.options, { start: startDate, end: endDate }),
+          { start: startDate, end: endDate, night: read.ideas.mode === 'night' });
         return NextResponse.json({ success: true, trips: shownTrips, ideas: publicIdeas(read.ideas), saved: true, shared: true });
       }
       if (decision.action === 'generate') replacing = decision.replacing;
@@ -1487,13 +1493,30 @@ you have made up; a day that is simply a good day is allowed to be one.`;
     : (noGoRule && startDate
       ? `\nWEATHER NO-GO: choose places that are not ${noGoRule} on these dates. Every idea is checked against NASA POWER 1981–2020 averages for its dates, and one that breaks this is dropped.\n`
       : '');
+  // The forecast, where the place is known before the options are: a fixed
+  // place, or the town of a night out, on dates close enough to have one.
+  // Given as data, through the cache, on a short leash — options that wait
+  // on a slow forecast are options that never arrive. A destination the
+  // model is still choosing has no forecast to give: its options are read
+  // against the forecast once they are back (lib/forecast-ideas.ts).
+  const knownPlace = isNightPlan ? nightCity : fixedPlace;
+  const optionsDates = optionDates(startDate, endDate, isNightPlan);
+  const ideasForecastBlock = knownPlace && optionsDates.length
+    ? await within((async () => {
+      const spot = await locate(String(knownPlace));
+      const at = spot ? forecastPoint(spot.lat, spot.lng) : null;
+      const held = at ? await heldFor(supabase, at, optionsDates, spot?.countryCode ? String(spot.countryCode).toUpperCase() : null) : null;
+      const block = held ? optionsForecastBlock(String(knownPlace), held.filter(d => optionsDates.includes(d.date)), { night: isNightPlan }) : '';
+      return block ? `\n${block}\n` : '';
+    })(), 4000, 'the forecast for the options').catch(() => '')
+    : '';
   const nightWhere = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
   const prompt = isNightPlan ? `You are Reach. Generate exactly 3 options for ONE NIGHT OUT in ${nightCity || 'the user\'s city'}. BE FAST — overviews and honest costs, no itinerary yet.
 ${nightCity ? `ALL THREE MUST BE IN ${nightCity.toUpperCase()}. Every "destination" and "city" is there — not anywhere they live or anywhere nearby.` : ''}
 ${goal ? `WHAT THE NIGHT IS FOR, IN THEIR WORDS: ${goal}` : ''}
 
 ${solo ? 'ONE PERSON, on their own.' : partyLine ? `GROUP: ${partyLine}` : `GROUP: ${groupSize} people.`}
-WHEN: ${startDate || 'soon'}${nightPrefs.time ? ` around ${nightPrefs.time}` : ''}
+WHEN: ${startDate || 'soon'}${nightPrefs.time ? ` around ${nightPrefs.time}` : ''}${ideasForecastBlock}
 WHERE IT SHOULD FEEL LIKE: ${nightPrefs.where || 'anywhere good'}
 ${(nightPrefs.kind || []).length ? 'WHAT THEY WANT OUT OF IT: ' + (nightPrefs.kind || []).join(', ') : ''}
 ${nightPrefs.energy ? 'ENERGY: ' + nightPrefs.energy : ''}
@@ -1529,13 +1552,15 @@ answers. food_scene and music_scene are one short line each and are REPLACED
 by counts from our verified venue table before anybody sees them, so do not
 spend words or claims on them. tagline is at most
 ten words. emoji is one emoji. accommodation.example is the neighbourhood the
-night happens in.` : `You are Reach's AI travel planner. Generate exactly 3 destination options. BE FAST — no itinerary needed yet, just destination overviews and cost estimates.
+night happens in. setting is what the evening is built around: "outdoors"
+(a rooftop, a beer garden, a patio crawl, a park or the waterfront),
+"indoors", or "mixed". Never say anything about the weather.` : `You are Reach's AI travel planner. Generate exactly 3 destination options. BE FAST — no itinerary needed yet, just destination overviews and cost estimates.
 
 ${solo
   ? `TRAVELLING: alone, ${nights} nights, $${effectiveBudget} budget`
   : `GROUP: ${groupSize} people, ${nights} nights, $${effectiveBudget}/person budget`}
 DEPARTING: ${departure} (${departureCode})
-DATES: ${startDate || 'flexible'} to ${endDate || 'flexible'}${ideasClimateBlock}
+DATES: ${startDate || 'flexible'} to ${endDate || 'flexible'}${ideasClimateBlock}${ideasForecastBlock}
 ${goal ? `WHAT THEY SAID THIS TRIP IS, IN THEIR OWN WORDS — this leads over
 everything below it:
 "${goal}"
@@ -1623,6 +1648,9 @@ Keep it tight — this has to fit in one response:
   a restaurant, bar or venue in them.
 - why_this_group is one sentence
 - tagline is at most ten words
+- setting is what the plan is built around: "outdoors" (a beach, hikes,
+  trails, a lake, being out in the open), "indoors" (museums, food, shows,
+  spas), or "mixed". Never say anything about what the weather will do.
 - destination is for people to read; city and country_code are for looking the
   place up. city is the city alone, no state and no country. country_code is
   the two-letter ISO code — US, MX, PT, JP.
@@ -1632,7 +1660,7 @@ Return JSON only, shaped exactly like this:
 "tagline":"Ten words on why this group","vibe":"Vibe label",
 "why_this_group":"One sentence tied to their preferences",
 "food_scene":"One line, replaced","music_scene":"One line, replaced",
-"total_per_person":1850,"tier":"saver","used_suggestions":[${isGroup
+"total_per_person":1850,"tier":"saver","setting":"mixed","used_suggestions":[${isGroup
   ? '"Somewhere with snow for a birthday — this is a ski town"'
   : '"Somewhere your sister can see snow — this is a ski town"'}],
 "costs":{"flights":{"per_person":400,"details":"..."},
@@ -1797,6 +1825,21 @@ Return JSON only, shaped exactly like this:
       }
       trips = kept.map(j => j.t);
     }
+    // ── The forecast, for options close enough to have one ────────────
+    // The model's words are never a forecast: a tagline or reason saying
+    // what the weather will do goes (for a town the model picked, nobody had
+    // read its forecast at all). Then each option's town is read against the
+    // forecast for its dates, alongside the scene counts below, so the wait
+    // is shared — and capped, so a slow forecast costs a card its line,
+    // never the options (lib/forecast-ideas.ts).
+    if (trips?.length) {
+      let scrubbed = 0;
+      for (const t of trips) scrubbed += scrubIdeaWeather(t as unknown as Record<string, unknown>);
+      if (scrubbed) console.log('[trips generate] lines that stated the weather — taken out', { groupId, scrubbed });
+    }
+    const forecasting = trips?.length
+      ? ideaForecasts(supabase, trips, { start: startDate, end: endDate, night: isNightPlan, nightCity })
+      : Promise.resolve([]);
     // The schema cannot pin the array length, so the count is checked here.
     // Fewer than three is still worth showing — an empty list is not.
     if (!trips?.length) {
@@ -1915,6 +1958,22 @@ Return JSON only, shaped exactly like this:
       trip.music_scene = trip.food_scene;
     }));
 
+    // An option out of doors on every day it covers, each one forecast to
+    // rain, storm or bake, is not one of their choices — unless they all
+    // are, when each stays up and says so. The rest carry their forecast on
+    // the card, never saved with the ideas: a forecast is true for hours.
+    const forecasts = await forecasting;
+    const spoiled = dropSpoiled(trips, forecasts);
+    if (spoiled.dropped.length) {
+      console.error('[trips generate] dropped an outdoor option the forecast washes out', {
+        groupId, dropped: spoiled.dropped.map(t => t.destination),
+        forecast: spoiled.dropped.map(t => forecasts[trips!.indexOf(t)]?.spoiled),
+      });
+    }
+    const keptForecasts = spoiled.kept.map(t => forecasts[trips!.indexOf(t)] ?? null);
+    trips = spoiled.kept;
+    const withForecast = <T extends object>(list: T[]) => list.map((t, i) => ({ ...t, forecast: keptForecasts[i] ?? null }));
+
     const meta = { groupSize, nights, budget: effectiveBudget, departure, departureAirport: departureCode };
 
     // ── Saved on the trip, for the whole group ───────────────────────
@@ -1952,7 +2011,7 @@ Return JSON only, shaped exactly like this:
       if (saved.outcome === 'saved') {
         if (replacing) await clearVotes(supabase, groupPlan.id);
         await tellTheGroup(supabase, groupPlan.id, String(groupId), groupPlan.created_by, ctx.user.id, isNightPlan, !!replacing, ideas.options.length);
-        return NextResponse.json({ success: true, trips: await ideasWithClimateNow(supabase, ideas.options, { start: startDate, end: endDate }), ideas: publicIdeas(ideas), saved: false, shared: true, meta });
+        return NextResponse.json({ success: true, trips: withForecast(await ideasWithClimateNow(supabase, ideas.options, { start: startDate, end: endDate })), ideas: publicIdeas(ideas), saved: false, shared: true, meta });
       }
       if (saved.outcome === 'taken') {
         // Somebody else's Find landed first. Theirs are the group's ideas;
@@ -1968,14 +2027,18 @@ Return JSON only, shaped exactly like this:
             { status: 409 },
           );
         }
-        return NextResponse.json({ success: true, trips: await ideasWithClimateNow(supabase, saved.ideas.options, { start: startDate, end: endDate }), ideas: publicIdeas(saved.ideas), saved: true, shared: true, meta });
+        return NextResponse.json({
+          success: true,
+          trips: await ideasWithForecast(supabase, await ideasWithClimateNow(supabase, saved.ideas.options, { start: startDate, end: endDate }), { start: startDate, end: endDate, night: saved.ideas.mode === 'night' }),
+          ideas: publicIdeas(saved.ideas), saved: true, shared: true, meta,
+        });
       }
       // 'unavailable' or 'error': fall through, unshared.
     }
 
     return NextResponse.json({
       success: true,
-      trips,
+      trips: withForecast(trips),
       // A group's ideas that could not be saved are on this phone only.
       shared: !(groupPlan && isGroup) ? null : false,
       meta,
