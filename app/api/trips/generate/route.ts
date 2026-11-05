@@ -15,6 +15,8 @@ import { splitVetoes, weatherLine } from '@/lib/weather-no-go';
 import { planReadiness, wentAheadWith, type ReadinessReport } from '@/lib/plan-readiness';
 import { howIsIt, climatePromptBlock, climateVetoes, COLD_HIGH_C, HOT_HIGH_C } from '@/lib/climate';
 import { readClimate, climateFor, ideasWithClimateNow } from '@/lib/climate-store';
+import { forecastPromptBlock, addDays } from '@/lib/forecast';
+import { generationForecast, indoorMenu, weatherClashes, scrubWeatherTips, forecastSummary } from '@/lib/forecast-plan';
 import { generationHints } from '@/lib/traveler-profile';
 import { readProfiles } from '@/lib/quiz-store';
 import {
@@ -975,6 +977,19 @@ export async function POST(req: NextRequest) {
     const climateBlock = daysClimate ? `\n${climatePromptBlock(daysClimate)}\n` : '';
     if (startDate && !daysClimate) console.log('[generate] no climate held for this place', { place: climateCity });
 
+    // ── What the forecast says, for the days close enough to have one ──
+    // A saved plan's point on the map, asked of MET Norway (and the NWS in
+    // the US) through the cache in lib/forecast-store.ts — only when one of
+    // its days is inside a forecast's range. Given as data, with the indoor
+    // places on the menu, so a hike is not put in a forecast downpour; read
+    // back below (weatherClashes, scrubWeatherTips). None held, and the
+    // prompt says nothing about a forecast at all.
+    const dayForecast = await generationForecast(
+      supabase, detailIsPlan ? String(detailTripId) : null, startDate ? String(startDate) : null,
+      isNightPlan ? 1 : Math.max(1, nights), { night: isNightPlan },
+    );
+    const forecastBlock = dayForecast ? `\n${forecastPromptBlock(dayForecast.prompt, indoorMenu(realPlaces))}\n` : '';
+
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = wantFood.join(', ');
     // Said plainly either way. A menu with no Thai place next to "Food
@@ -1084,9 +1099,15 @@ export async function POST(req: NextRequest) {
       ].filter(([, s]) => !!s?.plan);
       const ask = typeof slotAsk.ask === 'string' && slotAsk.ask.trim() ? slotAsk.ask.trim().replace(/\s+/g, ' ').slice(0, 200) : null;
       const dayDate = calendarDays[slotAsk.day - 1]?.replace(/^Day \d+ — /, '') ?? null;
+      // The forecast for this one day only, when we hold one.
+      const slotDate = startDate ? addDays(String(startDate), isNightPlan ? 0 : slotAsk.day - 1) : null;
+      const slotForecast = dayForecast && slotDate
+        ? forecastPromptBlock(dayForecast.prompt.filter(p => p.day.date === slotDate), indoorMenu(realPlaces))
+        : '';
+      const slotForecastBlock = slotForecast ? `\n${slotForecast}\n` : '';
 
       const slotPrompt = `Change ONE stop of ${isNightPlan ? 'an evening out' : 'a trip'} in ${tripCity || (isNightPlan ? nightCity : destination) || destination}.
-${dayDate ? `${isNightPlan ? 'The evening' : `Day ${slotAsk.day}`}: ${dayDate}.` : 'The dates are not fixed yet. Do not tie anything to a weekday or a season.'}${climateBlock}
+${dayDate ? `${isNightPlan ? 'The evening' : `Day ${slotAsk.day}`}: ${dayDate}.` : 'The dates are not fixed yet. Do not tie anything to a weekday or a season.'}${climateBlock}${slotForecastBlock}
 ${solo ? 'One person, on their own.' : partyLine ?? `${groupSize} people together.`}
 
 THE STOP TO CHANGE: ${LABEL[part]}${isNightPlan ? '' : ` of day ${slotAsk.day}`}. It is now: "${current?.plan || 'nothing yet'}".
@@ -1154,6 +1175,10 @@ Return one slot.`;
         // per-item PATCH and a suggestion take (lib/itinerary-alternatives
         // placeRef) — so it lands on that one line, not by rewriting the plan.
         const named = placeOf(out.slot, realPlaces);
+        // A tip that states a forecast we do not hold loses the tip.
+        if (part !== 'daytime' && scrubWeatherTips([{ day: slotAsk.day, [part]: out.slot }], startDate ? String(startDate) : null, dayForecast, isNightPlan)) {
+          console.log('[trips slot] a tip stated weather we do not hold — taken out', { plan: detailTripId, day: slotAsk.day, part });
+        }
         return NextResponse.json({
           slot: out.slot, day: slotAsk.day, part, ...(index !== null ? { index } : {}), label: LABEL[part],
           to: named ? placeRef(named) : null,
@@ -1170,7 +1195,7 @@ Return one slot.`;
     }
 
     const prompt = isNightPlan ? `Plan one evening out in ${tripCity || nightCity || destination}.
-${whenLine}${climateBlock}${shapeBlock} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
+${whenLine}${climateBlock}${forecastBlock}${shapeBlock} Its working title was "${destination}" — a name from an earlier step, not a fact: do not treat any venue, performer or dish it mentions as real unless it is on the menu below.
 
 ${solo ? 'One person, on their own.' : partyLine ?? `${groupSize} people going out together.`}
 ${realEvent ? eventFacts(realEvent) : ''}${act.length >= 2 && !realEvent ? `
@@ -1236,7 +1261,7 @@ ${TABLES_ARE_THEIRS}
 Never write "placeholder", "TBD" or any other filler.
 
 ${NO_VENUE_FACTS}` : `Generate a detailed ${nights}-day itinerary for a group trip to ${destination}.
-${whenLine}${climateBlock}${shapeBlock}
+${whenLine}${climateBlock}${forecastBlock}${shapeBlock}
 
 ${solo ? `Travelling: alone, ${tripPace} pace` : `Group: ${groupSize} people, ${tripPace} pace`}
 Food loves: ${cuisines.slice(0, 4).join(', ') || 'varied'}
@@ -1366,6 +1391,17 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // readBackDays — the same read-back "Something else…" puts a single
       // slot through.
       days.splice(0, days.length, ...readBackDays(days, readBackEnv(vouchers)));
+      // ── The weather it was given, read back ─────────────────────────
+      // A tip claiming a forecast we do not hold goes; an outdoor stop in a
+      // spoiled part of a day is said, not hidden (lib/forecast-plan.ts).
+      const scrubbed = scrubWeatherTips(days, startDate ? String(startDate) : null, dayForecast, isNightPlan);
+      if (scrubbed) console.log('[trips itinerary] tips stated weather we do not hold — taken out', { plan: detailTripId ?? null, tips: scrubbed });
+      const clashes = startDate ? weatherClashes(days, String(startDate), dayForecast, isNightPlan) : [];
+      if (clashes.length) {
+        console.error('[trips itinerary] an outdoor stop is in forecast bad weather', {
+          plan: detailTripId ?? null, clashes: clashes.map(c => `${c.date} ${c.part} ${c.worries.join('+')}`),
+        });
+      }
       // The time they set, on the slot it is about: the dinner on a dinner
       // out, the ticket on a concert, the start of any other evening. A trip
       // of days was given no times, and gets none.
@@ -1409,6 +1445,10 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       return NextResponse.json({
         itinerary: days, savedToIdeas, ...(title ? { title } : {}), ...(isNightPlan && foodGap.length ? { foodGap } : {}),
         ...awayPart,
+        // Which days were written with a forecast, from where and when, and
+        // any outdoor stop still in forecast bad weather. Absent when no
+        // forecast was used.
+        ...(dayForecast ? { forecast: forecastSummary(dayForecast, clashes) } : {}),
       });
     } catch (e: any) {
       report(e, { where: 'trips/generate', extra: { destination, nights, status: e?.status } });

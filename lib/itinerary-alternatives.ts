@@ -34,6 +34,7 @@ import { closedThroughout, type Window } from './discovery/hours.ts';
 import { haversineMiles } from './discovery/distance.ts';
 import { dayOf } from './budget.ts';
 import { typeForKind, honestMode, ABOUT_THE_PLACE } from './contracts/itinerary-item.ts';
+import { setting } from './forecast.ts';
 
 const KM_PER_MILE = 1.609344;
 
@@ -217,6 +218,12 @@ export interface AlternativesInput {
    * the plan.
    */
   anyType?: boolean;
+  /**
+   * The forecast spoils this line's part of the day and the line is out of
+   * doors (app/api/plans/[planId]/itinerary/[itemId]/alternatives): nothing
+   * out of doors is offered, and somewhere with a roof comes first.
+   */
+  preferIndoor?: boolean;
 }
 
 const PRICE_NOTE = "We hold no price for this place, so this line's estimate stays as it is.";
@@ -302,6 +309,7 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
     if (onPlan.has(placeRef(p))) return false;
     const kindType = typeForKind(p.kind);
     if (input.anyType ? !MENU_TYPES.has(String(kindType)) : kindType !== lineType) return false;
+    if (input.preferIndoor && setting(p.kind) === 'outdoor') return false;
     const km = kmToNearest(p, anchors);
     if (km !== null && km > limitKm) return false;
     // Shut on that day, in that part of it, by the map's hours. No date (an
@@ -312,10 +320,12 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
   });
 
   const sameKind = (p: RealPlace) => !!current && p.kind === current.kind;
+  const roofed = (p: RealPlace) => (input.preferIndoor && setting(p.kind) === 'indoor' ? 1 : 0);
   const ranked = pool
     .map(p => ({ p, km: kmToNearest(p, anchors), same: sameKind(p) }))
     .sort((a, b) =>
-      Number(b.same) - Number(a.same)
+      roofed(b.p) - roofed(a.p)
+      || Number(b.same) - Number(a.same)
       || (a.km === null ? 1 : 0) - (b.km === null ? 1 : 0)
       || (a.km ?? 0) - (b.km ?? 0)
       || a.p.name.localeCompare(b.p.name));
@@ -339,7 +349,9 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
     return {
       status: 'none', current: cur,
       reason: places.length
-        ? `Nothing else of this kind we've verified is near the rest of ${words} and open then.`
+        ? input.preferIndoor
+          ? `Nothing indoors we've verified is near the rest of ${words} and open then.`
+          : `Nothing else of this kind we've verified is near the rest of ${words} and open then.`
         : "We haven't verified any places in this town yet, so there is nothing to offer in its place.",
     };
   }

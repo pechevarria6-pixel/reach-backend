@@ -20,6 +20,11 @@
 //                   the person who owes it and nobody else, and then at most
 //                   once every three days. Never on a trip of one. See
 //                   dueSettleUps below.
+//   weather         the day before an outdoor line, when the cached forecast
+//                   (MET Norway, or the NWS in the US) spoils its part of the
+//                   day: "Rain likely tomorrow afternoon (70%)", linking to
+//                   Change on that line, with the source's credit. Once per
+//                   line per person per day. See dueWeatherPings below.
 //
 // ── Once ──
 //
@@ -71,9 +76,12 @@ import { packingList, packingLine, type PackLine } from './packing.ts';
 import { isSoloPlan } from './booking/approval.ts';
 import { isOrderId } from './booking/duffel-map.ts';
 import { loadLedger, settleNote, type Ledger } from './ledger.ts';
+import { SOURCES, forecastPoint, worryHeadline, rainFigure, type ForecastSource } from './forecast.ts';
+import { forecastFor, type HeldDay, type PlaceForecast } from './forecast-store.ts';
+import { lineWeatherFrom, partOfLine, partFor } from './forecast-plan.ts';
 import type { SettleLine } from './money.ts';
 
-export const PING_KINDS = ['packing', 'flight_checkin', 'flight_day', 'tonight', 'settle_up'] as const;
+export const PING_KINDS = ['packing', 'flight_checkin', 'flight_day', 'tonight', 'settle_up', 'weather'] as const;
 export type PingKind = typeof PING_KINDS[number];
 
 // ── The trip's clock ─────────────────────────────────────────────────────
@@ -163,6 +171,10 @@ export const WINDOWS: Record<PingKind, { from: number; to: number }> = {
   flight_day: { from: 5, to: 12 },
   tonight: { from: 15, to: 22 },
   settle_up: { from: 10, to: 21 },
+  // The day before: after the morning's model runs, before people stop
+  // reading their phones. The claim is per line, so a forecast that turns
+  // bad at six still reaches somebody who had a dry one at noon.
+  weather: { from: 12, to: 21 },
 };
 const inWindow = (kind: PingKind, hour: number) => hour >= WINDOWS[kind].from && hour < WINDOWS[kind].to;
 
@@ -179,6 +191,8 @@ export interface PingPlan {
   solo_mode?: boolean | null;
   created_by?: string | null;
   destination_lng?: number | string | null;
+  destination_lat?: number | string | null;
+  destination_country?: string | null;
 }
 export interface PingLine {
   id: string;
@@ -220,6 +234,12 @@ export interface PlannedPing {
   note: Note;
   /** flight_day only: the flight to ask AeroAPI about, and its date. */
   flight?: { ident: string; departDate: string };
+  /**
+   * What ping_log is claimed under, when it is not `kind`. A weather ping is
+   * once per LINE per day, so it claims `weather_<line id>` — the unique
+   * index on (plan, user, kind, local_day) then holds it to that.
+   */
+  claimKind?: string;
 }
 
 const LOCKED = new Set(['approved', 'booked']);
@@ -435,6 +455,93 @@ export function duePings(input: PingInput, now: Date = new Date()): PlannedPing[
           body: rest.length ? `Then ${rest.map(r => `${clean(r.l.title)}, ${r.text}`).join('; ')}.` : title,
           url, planId: plan.id,
         },
+      });
+    }
+  }
+  return out;
+}
+
+// ── The weather, the day before ──────────────────────────────────────────
+// "Rain likely tomorrow afternoon (70%)", to the people on an outdoor line of
+// tomorrow's plan, linking to Change on that line (which then offers indoor
+// places first — lib/itinerary-alternatives.ts preferIndoor). Only:
+//
+//   - for a line we hold, on tomorrow by the trip's clock, that is out of
+//     doors by its venue's map kind (or, with no venue, its own words);
+//   - when tomorrow's forecast for that part of the day — from a source we
+//     cache, with its credit — spoils it (lib/forecast.ts worries). No
+//     forecast, no ping, never one guessed from the averages;
+//   - once per line per person per day, claimed as weather_<line id>;
+//   - never to somebody who muted the plan, or sat the line out.
+//
+// A line somebody already holds a booking for is not offered a swap — it
+// cannot be swapped — and is told to check with them instead.
+
+export const WEATHER_TYPES = new Set(['activity', 'restaurant']);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Short enough to sit after a sentence in a notification. */
+const SHORT_CREDIT: Record<ForecastSource, string> = {
+  met_norway: SOURCES.met_norway.credit,
+  nws: 'Forecast data from weather.gov (US National Weather Service)',
+};
+
+export interface WeatherPingInput extends PingInput {
+  /** Tomorrow's forecast, on the trip's clock, as held. Null: none, and no ping. */
+  tomorrow: HeldDay | null;
+  /** line id → the map kind of the venue it cites. */
+  kinds: Map<string, string>;
+}
+
+/** The lines of tomorrow worth asking the forecast about: ours, typed for it, and on tomorrow. */
+export function linesForTomorrow(plan: PingPlan, lines: PingLine[], now: Date): { day: string; lines: PingLine[] } | null {
+  const clock = localClock(plan.destination_lng, now);
+  if (!clock || !inWindow('weather', clock.hour) || OVER.has(String(plan.status ?? ''))) return null;
+  const tomorrow = shiftDay(clock.day, 1);
+  if (!tomorrow) return null;
+  const ours = (lines ?? []).filter(l => l?.id && UUID_RE.test(l.id) && WEATHER_TYPES.has(String(l.type ?? ''))
+    && rowWhen(l.scheduled_time, plan.start_date)?.date === tomorrow && !!clean(l.title));
+  return ours.length ? { day: tomorrow, lines: ours } : null;
+}
+
+/** "afternoon" → "tomorrow afternoon"; a line that only says its day → "tomorrow". */
+const whenWords = (part: string) => (part === 'day' ? 'tomorrow' : `tomorrow ${part}`);
+
+/** Every weather ping due for this plan at `now`. Pure. */
+export function dueWeatherPings(input: WeatherPingInput, now: Date = new Date()): PlannedPing[] {
+  const { plan, tomorrow } = input;
+  if (!plan?.id || !tomorrow) return [];
+  const clock = localClock(plan.destination_lng, now);
+  const due = linesForTomorrow(plan, input.lines, now);
+  if (!clock || !due || tomorrow.date !== due.day) return [];
+  const { people, solo } = audience(plan, input.memberIds);
+  if (!people.length) return [];
+  const bookings = (input.bookings ?? []).filter(b => b?.id);
+  const live = (line: PingLine) => bookings.filter(b => b.itinerary_item_id === line.id && b.status !== 'cancelled' && b.status !== 'failed');
+  const nightOut = plan.type === 'restaurant';
+  const out: PlannedPing[] = [];
+  for (const line of due.lines) {
+    const verdict = lineWeatherFrom({ time: line.scheduled_time, title: line.title, kind: input.kinds.get(line.id) ?? null }, tomorrow, nightOut);
+    if (!verdict) continue;
+    const part = partFor(tomorrow, partOfLine(line.scheduled_time, nightOut));
+    const said = part ? worryHeadline(part) : null;
+    if (!part || !said) continue;
+    const wet = part.worries[0] === 'rain' || part.worries[0] === 'storms' || part.worries[0] === 'snow';
+    const name = clean(line.title).length > 70 ? `${clean(line.title).slice(0, 67).replace(/\s+\S*$/, '')}…` : clean(line.title);
+    const held = reserved(line, bookings);
+    const ask = held
+      ? 'It is booked, so check with them before you go.'
+      : solo ? 'Want an indoor swap?' : 'Want to look at an indoor swap for the group?';
+    const title = `${said} ${whenWords(verdict.part)}${wet ? rainFigure(part) : ''}`;
+    const body = `“${name}” is outdoors. ${ask} ${SHORT_CREDIT[tomorrow.source]}.`;
+    for (const userId of people) {
+      // Somebody sitting out every booking on the line is not told about it.
+      const bs = live(line);
+      if (bs.length && bs.every(b => input.optOuts.get(b.id)?.has(userId))) continue;
+      out.push({
+        kind: 'weather', userId, localDay: clock.day,
+        claimKind: `weather_${line.id.replace(/-/g, '').toLowerCase()}`,
+        note: { kind: 'weather', title, body, url: `${planUrl(plan)}&change=${encodeURIComponent(line.id)}`, planId: plan.id },
       });
     }
   }
@@ -676,12 +783,14 @@ export interface PingReport {
 const missingTable = (e: { code?: string; message?: string } | null | undefined) =>
   !!e && (e.code === '42P01' || e.code === 'PGRST205' || /does not exist|could not find the table/i.test(e.message || ''));
 
-const PLAN_COLUMNS = 'id, group_id, title, type, status, start_date, end_date, solo_mode, created_by, destination_lng';
+const PLAN_COLUMNS = 'id, group_id, title, type, status, start_date, end_date, solo_mode, created_by, destination_lng, destination_lat, destination_country';
 
 export type PingOpts = {
   now?: Date; send: Sender | null; aero: AeroLookup | null; dry?: boolean;
   /** The ledger reader; lib/ledger.ts loadLedger unless a test passes its own. */
   ledger?: (db: SupabaseClient, plan: { id: string; group_id: string }) => Promise<Pick<Ledger, 'solo' | 'settlementsAvailable' | 'lines'>>;
+  /** The forecast reader; lib/forecast-store.ts forecastFor unless a test passes its own. */
+  forecast?: (db: SupabaseClient, at: { lat: number; lng: number }, want: { dates: string[]; country?: string | null }) => Promise<PlaceForecast>;
 };
 
 /**
@@ -694,7 +803,7 @@ async function claimAndSend(
   db: SupabaseClient, planId: string, ping: PlannedPing, note: Note, send: Sender | null, report: PingReport,
 ): Promise<'ok' | 'missing'> {
   const { data: claimed, error: claimErr } = await db.from('ping_log')
-    .insert({ plan_id: planId, user_id: ping.userId, kind: ping.kind, local_day: ping.localDay })
+    .insert({ plan_id: planId, user_id: ping.userId, kind: ping.claimKind ?? ping.kind, local_day: ping.localDay })
     .select('id').single();
   if (claimErr) {
     if (claimErr.code === '23505') { report.already++; return 'ok'; }
@@ -886,6 +995,34 @@ export async function runSettleUps(db: SupabaseClient, opts: PingOpts, report: P
   return report;
 }
 
+/**
+ * line id → the map kind of the venue the line cites (itinerary_items.venue_ref
+ * → discovery_venues.kind). A line citing nothing, or a read that fails, has
+ * no kind, and is judged on its own words alone.
+ */
+export async function venueKinds(db: SupabaseClient, lineIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!lineIds.length) return out;
+  const { data: refs, error } = await db.from('itinerary_items').select('id, venue_ref').in('id', lineIds);
+  if (error) {
+    console.error('[pings] could not read which venues tomorrow\'s lines cite', { code: error.code });
+    return out;
+  }
+  const venueIds = [...new Set(((refs ?? []) as Array<{ venue_ref?: string | null }>).map(r => r.venue_ref).filter((v): v is string => !!v))];
+  if (!venueIds.length) return out;
+  const { data: venues, error: vErr } = await db.from('discovery_venues').select('id, kind').in('id', venueIds);
+  if (vErr) {
+    console.error('[pings] could not read the venues tomorrow\'s lines cite', { code: vErr.code });
+    return out;
+  }
+  const kindOf = new Map(((venues ?? []) as Array<{ id: string; kind?: string | null }>).filter(v => v.kind).map(v => [String(v.id), String(v.kind)]));
+  for (const r of (refs ?? []) as Array<{ id: string; venue_ref?: string | null }>) {
+    const k = r.venue_ref ? kindOf.get(String(r.venue_ref)) : undefined;
+    if (k) out.set(String(r.id), k);
+  }
+  return out;
+}
+
 async function runCountdown(db: SupabaseClient, opts: PingOpts): Promise<PingReport> {
   const now = opts.now ?? new Date();
   const report: PingReport = { plans: 0, sent: {}, already: 0, muted: 0, skipped: {}, failed: 0 };
@@ -948,6 +1085,17 @@ async function runCountdown(db: SupabaseClient, opts: PingOpts): Promise<PingRep
 
   const lookups = new Map<string, Promise<AeroFlight[] | null>>();
 
+  // The weather pings: which plans have a line tomorrow worth asking the
+  // forecast about, and the map kind of the venue each line cites. Only
+  // those plans' forecasts are read, through the cache.
+  const tomorrowLines = new Map<string, { day: string; lines: PingLine[] }>();
+  for (const plan of rows) {
+    const t = linesForTomorrow(plan, (linesBy.get(plan.id) ?? []) as unknown as PingLine[], now);
+    if (t) tomorrowLines.set(plan.id, t);
+  }
+  const kinds = await venueKinds(db, [...tomorrowLines.values()].flatMap(t => t.lines.map(l => l.id)));
+  const readForecast = opts.forecast ?? ((d: SupabaseClient, at: { lat: number; lng: number }, want: { dates: string[]; country?: string | null }) => forecastFor(d, at, want, { now }));
+
   for (const plan of rows) {
     if (localClock(plan.destination_lng, now) === null) { skip('no_place'); continue; }
     const optOuts = new Map<string, Set<string>>();
@@ -955,14 +1103,28 @@ async function runCountdown(db: SupabaseClient, opts: PingOpts): Promise<PingRep
       const ref = String(o.item_ref);
       optOuts.set(ref, (optOuts.get(ref) ?? new Set()).add(String(o.user_id)));
     }
-    const due = duePings({
+    const input: PingInput = {
       plan,
       memberIds: (membersBy.get(plan.group_id) ?? []).map(m => String(m.user_id)),
       lines: (linesBy.get(plan.id) ?? []) as unknown as PingLine[],
       bookings: (bookingsBy.get(plan.id) ?? []) as unknown as PingBooking[],
       optOuts,
       onSkip: skip,
-    }, now);
+    };
+    const due = duePings(input, now);
+    const t = tomorrowLines.get(plan.id);
+    if (t) {
+      const at = forecastPoint(plan.destination_lat, plan.destination_lng);
+      if (!at) skip('weather_no_point');
+      else {
+        const fc = await readForecast(db, at, { dates: [t.day], country: plan.destination_country ?? null })
+          .catch((e: unknown) => { console.error('[pings] forecast read failed', { error: (e as Error)?.message }); return null; });
+        const tomorrow = fc?.days.find(d => d.date === t.day) ?? null;
+        if (fc && !fc.available) skip('weather_no_forecast_table');
+        else if (!tomorrow) skip('weather_no_forecast');
+        due.push(...dueWeatherPings({ ...input, tomorrow, kinds }, now));
+      }
+    }
     if (!due.length) continue;
 
     const mutes = await mutedFor(db, plan.id, due.map(d => d.userId));

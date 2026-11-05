@@ -12,11 +12,17 @@
 // (PATCH the line), 'suggest' (POST .../suggestions), or 'locked_out';
 // `held` is non-null when somebody already holds a booking for this line,
 // with what to do before it can be changed.
+//
+// `weather` is non-null when the line is out of doors and the forecast
+// spoils its part of the day (lib/forecast-plan.ts lineWeather): the
+// headline ("Rain likely (70%)"), the date and part, the source and its
+// credit, and when it was fetched. The alternatives are then indoor ones.
 import { NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { readLine, menuFor } from '@/lib/itinerary-change-server';
 import { refusal, suggestionsClosed } from '@/lib/itinerary-change';
-import { alternativesFor } from '@/lib/itinerary-alternatives';
+import { alternativesFor, placeOfLine, MENU_TYPES } from '@/lib/itinerary-alternatives';
+import { lineWeather } from '@/lib/forecast-plan';
 import { bookingOnSwap } from '@/lib/itinerary-bookings';
 
 export const dynamic = 'force-dynamic';
@@ -45,11 +51,19 @@ export async function GET(_req: Request, { params }: { params: { planId: string;
   };
 
   const places = await menuFor(ctx.db, lc.plan);
+  const line = { id: String(lc.item.id), type: lc.item.type, title: lc.item.title, scheduled_time: lc.item.time,
+    venue_name: lc.item.venue_name, booking_mode: lc.item.booking_mode };
+  // The forecast for this line's part of its day, when it is out of doors
+  // and the forecast spoils it (the weather ping links here). Then nothing
+  // out of doors is offered, and somewhere with a roof comes first.
+  const weather = MENU_TYPES.has(String(lc.item.type ?? '').toLowerCase())
+    ? await lineWeather(ctx.db, ctx.plan as Record<string, unknown> & { start_date?: string | null; destination_country?: string | null },
+      { time: lc.item.time, title: lc.item.title, kind: placeOfLine(line, places)?.kind ?? null }, lc.nightOut)
+    : null;
   const result = alternativesFor({
-    line: { id: String(lc.item.id), type: lc.item.type, title: lc.item.title, scheduled_time: lc.item.time,
-      venue_name: lc.item.venue_name, booking_mode: lc.item.booking_mode },
-    lines: lc.lines, places, nightOut: lc.nightOut,
+    line, lines: lc.lines, places, nightOut: lc.nightOut,
     startDate: lc.plan.start_date ?? null, countryCode: lc.plan.destination_country ?? null,
+    preferIndoor: !!weather,
   });
 
   if (result.status === 'booking_line') {
@@ -63,5 +77,5 @@ export async function GET(_req: Request, { params }: { params: { planId: string;
       ...(lc.booking ? {} : { reason: `There's no ${result.type} priced for this trip yet, so there is nothing to compare it with.` }),
     });
   }
-  return NextResponse.json({ ...result, ...who });
+  return NextResponse.json({ ...result, ...who, weather });
 }
