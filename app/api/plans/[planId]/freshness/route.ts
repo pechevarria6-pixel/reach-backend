@@ -23,7 +23,7 @@ export async function GET(_req: Request, { params }: { params: { planId: string 
     return NextResponse.json({ error: "Couldn't check this plan just now." }, { status: 503 });
   }
   // The same menu the generator reads, so the number is the one a rebuild gets.
-  const menu = await placesFor(ctx.db, { city, country: plan.destination_country ?? null, interests: [] }, {})
+  const menu = await placesFor(ctx.db, { city, country: plan.destination_country ?? null, interests: [], point: { lat: (plan as { destination_lat?: unknown }).destination_lat, lng: (plan as { destination_lng?: unknown }).destination_lng } }, {})
     .catch(e => { console.error('[freshness] menu read failed', { planId: params.planId, e: String(e) }); return []; });
   return NextResponse.json({ ...freshness(items ?? [], menu.length, plan.status), city });
 }

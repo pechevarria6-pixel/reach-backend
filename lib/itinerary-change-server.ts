@@ -131,7 +131,7 @@ export async function menuFor(db: SupabaseClient, plan: PlanRow): Promise<RealPl
   const city = String(plan.destination_city || '').trim();
   if (!city) return [];
   const days = plan.start_date ? { from: String(plan.start_date), to: String(plan.end_date || plan.start_date) } : null;
-  return placesFor(db, { city, country: plan.destination_country ?? null, interests: [] },
+  return placesFor(db, { city, country: plan.destination_country ?? null, interests: [], point: { lat: (plan as { destination_lat?: unknown }).destination_lat, lng: (plan as { destination_lng?: unknown }).destination_lng } },
     { perKind: 15, max: 150, days, eveningOut: plan.type === 'restaurant' })
     .catch(e => {
       console.error('[itinerary item] could not read the menu', { plan: plan.id, error: e instanceof Error ? e.message : String(e) });

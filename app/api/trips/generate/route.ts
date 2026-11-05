@@ -287,6 +287,8 @@ export async function POST(req: NextRequest) {
   }
 
   let groupPlan: { id: string; created_by: string | null; created_at: string | null; type: string | null; solo_mode: boolean | null; title: string | null } | null = null;
+  // Where the plan itself says it is, for reading its town's venues there.
+  let planPoint: { city: string; lat: unknown; lng: unknown } | null = null;
   // Set when the organiser went ahead with who had answered: whose wishes
   // the prompt may carry. Null means everybody's, as it always was.
   let answeredOnly: Set<string> | null = null;
@@ -299,8 +301,9 @@ export async function POST(req: NextRequest) {
   let groupAnswers: GroupAnswers | null = null;
   if (groupPlanId) {
     const { data: row } = await supabase
-      .from('plans').select('id, group_id, created_by, created_at, type, solo_mode, destination_style, title, status')
+      .from('plans').select('id, group_id, created_by, created_at, type, solo_mode, destination_style, title, status, destination_city, destination_lat, destination_lng')
       .eq('id', String(groupPlanId)).maybeSingle();
+    if (row?.destination_city) planPoint = { city: String(row.destination_city), lat: row.destination_lat, lng: row.destination_lng };
     // Membership was checked against groupId; the plan has to be in that same
     // group, or a member of one group could read another group's answers
     // into a prompt by naming its plan.
@@ -958,7 +961,9 @@ export async function POST(req: NextRequest) {
     const realPlaces: RealPlace[] = await placesFor(
       supabase,
       // For an evening, never the option's title: it is a name, not a place.
-      { city: tripCity || fixedPlace || (isNightPlan ? nightCity : destination), country: tripCountry ?? null, interests: [...cuisines, ...activityVibes, ...musicGenres] },
+      { city: tripCity || fixedPlace || (isNightPlan ? nightCity : destination), country: tripCountry ?? null, interests: [...cuisines, ...activityVibes, ...musicGenres],
+        // The plan's own point, but only for the plan's own town.
+        point: samePlace(planPoint?.city, tripCity || fixedPlace || (isNightPlan ? nightCity : destination)) ? planPoint : null },
       // A night out is judged on the evening; a day trip on one date is not
       // a night out, and needs somewhere open for lunch.
       { days: startDate ? { from: String(startDate), to: String(endDate || startDate) } : null, wantFood, eveningOut: isNightPlan },
@@ -2069,6 +2074,12 @@ function ourSide(e: any): boolean {
     || /credit balance|authentication_error|invalid x-api-key/i.test(String(e?.message ?? ''));
 }
 const OUR_SIDE = "Reach can't write ideas just now. The problem is on our side, not yours, so trying again won't help yet.";
+
+/** Whether two place names are the same town, by its first part ("Charleston, South Carolina" = "Charleston"). */
+function samePlace(a: unknown, b: unknown): boolean {
+  const k = (v: unknown) => String(v ?? '').split(',')[0].trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return !!k(a) && k(a) === k(b);
+}
 
 /** The saved set as a screen sees it. */
 function publicIdeas(ideas: SavedIdeas) {

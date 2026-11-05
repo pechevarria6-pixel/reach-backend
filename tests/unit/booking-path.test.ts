@@ -555,3 +555,14 @@ test('checkout says when a share runs past the per-person budget, and the Book t
   const server = readFileSync('lib/reservations/reserve-server.ts', 'utf8');
   assert.match(server, /await countParty\(db, plan/, 'a table with no quote is sized to the trip, not two');
 });
+
+test('the venue menu reads around the plan\'s own point when it holds one, never a namesake town', async () => {
+  const { heldPoint } = await import('../../lib/discovery/real-places.ts');
+  assert.deepEqual(heldPoint({ lat: 32.788, lng: -79.94 }), { lat: 32.788, lng: -79.94 });
+  assert.equal(heldPoint({ lat: 0, lng: 0 }), null, 'Null Island is no place');
+  assert.equal(heldPoint({ lat: null, lng: -79.94 }), null);
+  const src = readFileSync('lib/discovery/real-places.ts', 'utf8');
+  assert.match(src, /: planAt\s*\n\s*\? \{ lat: planAt\.lat, lng: planAt\.lng/);
+  const gen = readFileSync('app/api/trips/generate/route.ts', 'utf8');
+  assert.match(gen, /point: samePlace\(planPoint\?\.city/);
+});

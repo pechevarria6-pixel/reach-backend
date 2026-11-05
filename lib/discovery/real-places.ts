@@ -344,9 +344,26 @@ async function venuesInBox(
  * empty anyway — plenty of real towns have nothing mapped — and an empty
  * list has a correct behaviour, which is to name no venues at all.
  */
+/** A real point (never Null Island), or null. */
+export function heldPoint(p: { lat?: unknown; lng?: unknown } | null | undefined): { lat: number; lng: number } | null {
+  if (!p || p.lat == null || p.lng == null) return null;
+  const lat = Number(p.lat), lng = Number(p.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  if (Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01) return null;
+  return { lat, lng };
+}
+
 export async function placesFor(
   db: SupabaseClient,
-  where: { city: string | null; country?: string | null; interests?: string[] },
+  where: {
+    city: string | null; country?: string | null; interests?: string[];
+    /**
+     * The plan's own point, when it holds one. Read around that instead of
+     * whatever a geocoder returns for the name: "Charleston", "US" is two
+     * towns, and only the plan knows which one it means.
+     */
+    point?: { lat?: unknown; lng?: unknown } | null;
+  },
   // A menu is capped so it can be read; a count must not be, or the number
   // is an artifact of the cap rather than a fact about the town. "10 places
   // to eat verified here" was true of the list and false of the place.
@@ -372,9 +389,12 @@ export async function placesFor(
   // village in Mallorca) — the load would hold the venues and the menu
   // would look for them somewhere else.
   const site = siteTown(city, where.country ?? null);
+  const planAt = heldPoint(where.point);
   const at: Awaited<ReturnType<typeof locate>> = site
     ? { lat: site.lat, lng: site.lng, name: site.name, from: city, countryCode: site.country.toLowerCase(), subdivision: null }
-    : await locate(city, where.country ?? null, fetchImpl).catch(() => null);
+    : planAt
+      ? { lat: planAt.lat, lng: planAt.lng, name: city.split(',')[0].trim(), from: city, countryCode: String(where.country ?? '').toLowerCase() || null, subdivision: null } as Awaited<ReturnType<typeof locate>>
+      : await locate(city, where.country ?? null, fetchImpl).catch(() => null);
   if (!at) {
     console.error('[real-places] could not place', { city });
     return [];
