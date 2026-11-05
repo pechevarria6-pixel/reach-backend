@@ -107,6 +107,49 @@ export function voteOpenedNote(p: {
 }
 
 /**
+ * Who hears what when a vote is opened, from the plan's readiness read.
+ *
+ * Votes open when everyone's in (POST /vote answers 403 until then). The
+ * QA walk of 5 November opened a vote while B had not answered, and B was
+ * told "Test wants your vote" — then refused on pressing Vote. So:
+ *
+ *   · everybody in: the rest of the group hears "wants your vote";
+ *   · somebody still to answer: they are asked to say what they want, with
+ *     the vote named as what waits on them, and those who have answered
+ *     hear nothing yet — there is nothing they can do until then.
+ *
+ * `readiness` null is a read that failed: nobody is told anything, because
+ * telling the wrong people the wrong thing is worse than the faces on the
+ * vote, which can still nudge.
+ */
+export function voteOpenedNotes(p: {
+  planId: string; groupId: string; title: string | null; by: string | null; night: boolean; options: string[];
+  actorId: string;
+  readiness: { allReady: boolean; members: Array<{ userId: string; ready: boolean }> } | null;
+  /** Everybody in the group, for when readiness has no rows (a plan for one). */
+  memberIds: string[];
+}): Array<{ to: string[]; note: Note }> {
+  if (!p.readiness) return [];
+  if (p.readiness.allReady) {
+    const to = p.memberIds.filter(id => id !== p.actorId);
+    return to.length ? [{ to, note: voteOpenedNote(p) }] : [];
+  }
+  const waiting = p.readiness.members.filter(m => !m.ready && m.userId !== p.actorId).map(m => m.userId);
+  if (!waiting.length) return [];
+  const what = !p.title || p.title === 'Where next?' ? (p.night ? 'your next night out' : 'your next trip') : p.title;
+  return [{
+    to: waiting,
+    note: {
+      kind: 'prefs',
+      title: p.by && p.by !== 'Someone' ? `${p.by} is waiting on you` : 'Your answers are still to come',
+      body: `Say what you want from ${what} — the vote opens once everyone has answered.`,
+      url: `/home?answer=${encodeURIComponent(p.planId)}`,
+      planId: p.planId,
+    },
+  }];
+}
+
+/**
  * After somebody leaves a group: every vote open in it that their going
  * has completed. A failed read tells nobody — this is a courtesy, never a
  * gate, and the count itself is right whatever happens here.

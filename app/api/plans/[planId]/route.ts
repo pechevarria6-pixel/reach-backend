@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { track } from '@/lib/track';
 import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
-import { UNDECIDED } from '@/lib/group-answers';
+import { UNDECIDED, isUndecided } from '@/lib/group-answers';
 import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle, planTally, voteTitles } from '@/lib/trip-vote';
 import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
@@ -19,7 +19,8 @@ import { pushSender } from '@/lib/push';
 import { pinPlan, pinMoves } from '@/lib/trip-map';
 import { readActive, closeStale, refusalBody, refusalFor, ACTIVE_STATUSES } from '@/lib/one-active';
 import { stopPaymentsInFlight } from '@/lib/call-off-money';
-import { voteOpenedNote } from '@/lib/vote-complete';
+import { voteOpenedNotes } from '@/lib/vote-complete';
+import { planReadiness } from '@/lib/plan-readiness';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -482,17 +483,25 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     // Everybody but whoever opened it: they are looking at it. A failed
     // read of the group tells nobody — the vote is open either way, and the
     // faces on it can still nudge.
+    // Votes open when everyone's in: who is still to answer is asked for
+    // their answers, not told to vote on a vote that would refuse them
+    // (voteOpenedNotes).
     const members = await membersOf(supabase, String(plan.group_id));
-    const rest = (members ?? []).map(m => m.userId).filter(id => id !== user.id);
-    if (rest.length) {
-      await notifyUsers(supabase, rest, voteOpenedNote({
-        planId: params.planId, groupId: String(plan.group_id),
-        title: updated.title ?? plan.title ?? null,
-        by: firstName(members?.find(m => m.userId === user.id)?.name ?? ''),
-        night: (updated.type ?? plan.type) === 'restaurant',
-        options: voteTitles(updated),
-      }), pushSender());
-    }
+    const readiness = await planReadiness(supabase, params.planId, String(plan.group_id),
+      (updated as { solo_mode?: boolean }).solo_mode === true, { undecided: isUndecided(updated) })
+      .catch(e => {
+        console.error('[plans PATCH] could not read who has answered — telling nobody the vote is open', { planId: params.planId, error: e instanceof Error ? e.message : String(e) });
+        return null;
+      });
+    const sends = members ? voteOpenedNotes({
+      planId: params.planId, groupId: String(plan.group_id),
+      title: updated.title ?? plan.title ?? null,
+      by: firstName(members.find(m => m.userId === user.id)?.name ?? ''),
+      night: (updated.type ?? plan.type) === 'restaurant',
+      options: voteTitles(updated),
+      actorId: user.id, readiness, memberIds: members.map(m => m.userId),
+    }) : [];
+    for (const s of sends) await notifyUsers(supabase, s.to, s.note, pushSender());
   }
   if (openingVote && !writeError && !updated) {
     // The other tap opened it first. Already open is open.

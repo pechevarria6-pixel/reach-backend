@@ -26,6 +26,7 @@ import type { Seeker, SourceResult } from '@/lib/discovery/types';
 import { whatsOn } from '@/lib/discovery/whats-on';
 import { parseWhen } from '@/lib/discovery/when';
 import { discoverForecast, weatherRanked } from '@/lib/discovery/weather';
+import { titledByListing } from '@/lib/discovery/listing-title';
 
 export const maxDuration = 30;
 
@@ -129,7 +130,12 @@ export async function GET(req: NextRequest) {
   // copy we kept of it — and they are different rows with different ids.
   // Matched on what it actually is: the thing, where, and when.
   const seen = new Set<string>();
-  const merged = results.flatMap(r => r.findings).filter(f => {
+  // An event titled only with its venue's name says where, not what: it
+  // takes the listing's own word for what it is, or is left out
+  // (lib/discovery/listing-title.ts).
+  const merged = results.flatMap(r => r.findings)
+    .map(f => titledByListing(f)).filter((f): f is NonNullable<typeof f> => !!f)
+    .filter(f => {
     const key = `${f.title}|${f.venue ?? ''}|${f.date ?? ''}`.toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);

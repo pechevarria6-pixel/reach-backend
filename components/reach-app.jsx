@@ -31,7 +31,7 @@ import { ideaClimateFrom } from "@/lib/contracts/idea-climate";
 import { pushState, turnOnPush, forgetThisDevice } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor, stepCounter } from "@/lib/quiz-steps";
-import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, waitRefusal, changeRefusal } from "@/lib/plan-words";
+import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, waitRefusal, changeRefusal, planCalled } from "@/lib/plan-words";
 import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
 import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
@@ -1091,9 +1091,11 @@ function TripPicks({push,userLocation,toast,groups}){
   // Bumped by "Try again", and once on its own when the server said when.
   const [attempt,setAttempt]=useState(0);
   const autoRetried=useRef(false);
+  const [retrySet,setRetrySet]=useState(false); // a retry is waiting to go
   useEffect(()=>{
     let live=true;
     let timer=null;
+    setRetrySet(false);
     const lat=userLocation?.lat, lng=userLocation?.lng;
     const city=userLocation?.city||userLocation?.formatted||"";
     // The airport of this same place, so a flight card never measures from
@@ -1118,9 +1120,12 @@ function TripPicks({push,userLocation,toast,groups}){
           const f=failureFrom(r.status,body,r.headers.get("Retry-After"),"Couldn't put ideas together just now.");
           setFailure(f);setState("error");
           // Once, on its own, when the server said when to come back.
+          // Spent only when it fires. The effect re-runs as the location
+          // settles and its cleanup cancels this timer; spent on scheduling,
+          // the screen kept saying "Asking again" and never asked.
           if(f.retryIn!=null&&!autoRetried.current){
-            autoRetried.current=true;
-            timer=setTimeout(()=>{if(live)setAttempt(a=>a+1);},f.retryIn*1000);
+            setRetrySet(true);
+            timer=setTimeout(()=>{if(!live)return;autoRetried.current=true;setRetrySet(false);setAttempt(a=>a+1);},f.retryIn*1000);
           }
           return;
         }
@@ -1187,7 +1192,7 @@ function TripPicks({push,userLocation,toast,groups}){
             :state==="error"?(
               <>
                 {failure?.message||"Couldn't put ideas together just now."}
-                {failure?.retryIn!=null&&autoRetried.current&&attempt===0?" Asking again in a moment.":""}
+                {retrySet?" Asking again in a moment.":""}
                 <div style={{marginTop:10}}>
                   <button className="bsm" onClick={()=>setAttempt(a=>a+1)}>Try again</button>
                 </div>
@@ -2672,11 +2677,13 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
     return"restaurant"; // default for local experiences
   };
 
+  // Only what the listing holds. Chips promising a full experience, a group
+  // booking or a group reservation were said on every detail page and
+  // nothing vouched for any of them — Reach cannot book a group into most.
+  // Where it is, from the listing's own line, is the one fact this had.
   const getIncludes=()=>{
-    if(isRestaurant)return["🍽️ Dinner & drinks","👥 Group reservation","📍 "+exp.sub?.split("·").pop()?.trim()];
-    if(isConcert)return["🎵 Live music","🎫 Tickets","📍 "+exp.sub?.split("·").pop()?.trim()];
-    if(isBar)return["🍹 Drinks & vibes","📍 "+exp.sub?.split("·").pop()?.trim(),"🌙 Evening out"];
-    return["🎯 Full experience","👥 Group booking","📍 "+exp.sub?.split("·").pop()?.trim()];
+    const where=String(exp.sub||"").split("·").pop()?.trim();
+    return where?["📍 "+where]:[];
   };
 
   // Add this experience directly to a group as a plan
@@ -2811,13 +2818,16 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
       </>)}</PhotoFrame>
 
       <div style={{padding:20,overflowY:"auto",flex:1}}>
-        {/* Price + type */}
+        {/* Price + type. The price only where the listing holds one: a
+            place with none read "PRICE — per person", a box with nothing in it. */}
         <div style={{display:"flex",gap:10,marginBottom:20}}>
-          <div style={{flex:1,background:C.s2,borderRadius:14,padding:14,border:"1px solid "+C.border}}>
-            <div style={{fontSize:11,color:C.t3,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em"}}>Price</div>
-            <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{exp.price||"—"}</div>
-            <div style={{fontSize:11,color:C.t2}}>per person</div>
-          </div>
+          {exp.price&&(
+            <div style={{flex:1,background:C.s2,borderRadius:14,padding:14,border:"1px solid "+C.border}}>
+              <div style={{fontSize:11,color:C.t3,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em"}}>Price</div>
+              <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{exp.price}</div>
+              <div style={{fontSize:11,color:C.t2}}>per person</div>
+            </div>
+          )}
           <div style={{flex:1,background:C.s2,borderRadius:14,padding:14,border:"1px solid "+C.border}}>
             <div style={{fontSize:11,color:C.t3,marginBottom:4,textTransform:"uppercase",letterSpacing:".06em"}}>Type</div>
             <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{exp.category||exp.tags?.[0]||"Experience"}</div>
@@ -2827,8 +2837,8 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
 
         {drip&&<div style={{margin:"0 -20px"}}><DripCard id={drip} userId={user?.id} toast={toast} onChange={onQuizChange}/></div>}
 
-        {/* What to expect */}
-        <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>What to expect</div>
+        {/* Where it is, when the listing says. */}
+        {getIncludes().length>0&&<div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Where</div>}
         {getIncludes().map((it,i)=>(
           <div key={i} style={{fontSize:13,color:C.t2,padding:"6px 0",borderBottom:i<getIncludes().length-1?"1px solid "+C.border:"none"}}>
             {it}
@@ -7201,12 +7211,15 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
                       {busy===o.title?"…":vetoed?"Vetoed · undo":"Veto"}
                     </button>
                   )}
-                  <button disabled={!!busy||mine} onClick={()=>cast(o)}
+                  {/* Not beside your own veto: voting for what you just ruled
+                      out is a contradiction to offer. "Vetoed · undo" is the
+                      way back. */}
+                  {!vetoed&&<button disabled={!!busy||mine} onClick={()=>cast(o)}
                     style={{flex:1,padding:"12px 8px",borderRadius:12,border:"1px solid "+(mine?C.accentText:C.border),
                       background:mine?C.accentDim:"none",color:mine?C.accentText:C.t2,fontSize:13,fontWeight:600,
                       cursor:busy||mine?"default":"pointer"}}>
                     {mine?"✓ Your vote":v.myVote?"Change vote to this":"Vote for this"}
-                  </button>
+                  </button>}
                 </div>
               )}
               {v.mayPick&&!closed&&(
@@ -9265,6 +9278,12 @@ function useNextActions(entries,me){
 /** The CTA's id for instrumentation: what it does, never what it says. */
 /** A chip's colour, from the answer: green when nothing is left, amber when it needs somebody. */
 const nextTone=na=>na.state==="booked"?"pill-g":na.state==="needs_attention"||na.state==="needs_travel_details"?"pill-a":"pill-p";
+/** The same tones over a dark photo or gradient, whatever the theme: light text on a tint. */
+const HEADER_CHIP={
+  "pill-g":{background:"rgba(16,185,129,.30)",color:"#ecfdf5"},
+  "pill-a":{background:"rgba(245,158,11,.32)",color:"#fffbeb"},
+  "pill-p":{background:"rgba(255,255,255,.18)",color:"white"},
+};
 
 const ctaId=c=>!c?"none":c.kind==="navigate"?`${c.route.screen}${c.route.params?.initialTab?`:${c.route.params.initialTab}`:""}`
   :c.kind==="nudge"?`nudge:${c.nudge}`:c.kind==="confirm"?(c.bookingId?"confirm:booking":"confirm:line"):c.kind==="reserve"?`reserve:${c.path}`:"link";
@@ -10870,7 +10889,9 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
             {right==="locked_out"&&d?.why&&<div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:10}}>{d.why}</div>}
             {d?.status==="ok"&&(
               <>
-                <div className="sl" style={{marginBottom:6}}>{mayApply?"Pick another":"Others like it"}</div>
+                <div className="sl" style={{marginBottom:6}}>{/* "Others like it" only where they are: a hand-written line
+                    whose words name no kind gets what is near, called that. */}
+                  {d.like===false?"Nearby":mayApply?"Pick another":"Others like it"}</div>
                 {d.alternatives.map(a=>(
                   <div key={a.ref} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:`1px solid ${C.border}`}}>
                     <div style={{flex:1,minWidth:0}}>
@@ -12099,6 +12120,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [voteView,setVoteView]=useState(null);
   const loadVote=async()=>{
     if(!planId||isTempId(planId)||plan?.status!=="voting")return;
+    // Home's read of this same vote, where it holds one, while ours is on
+    // its way: the vote read is slow (each idea's weather), and until it
+    // came back the card said "… is being voted on" where Home, on the
+    // same vote, said "It's a tie · Settle it →". Same read, same answer
+    // (tied, myVote and the rest), so the two screens cannot disagree.
+    const held=NEXT_READS.get(planId);
+    if(held)held.p.then(d=>{if(d?.vote)setVoteView(v=>v||d.vote);}).catch(()=>{});
     try{const r=await fetch(`/api/plans/${planId}/vote`);if(r.ok)setVoteView(await r.json());}
     catch(e){console.error("[planDetail] could not read the vote",e);}
   };
@@ -12605,7 +12633,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         <div style={{fontFamily:"var(--font-display)",fontSize:26,color:"white",marginBottom:4}}>{plan.title}</div>
         <div style={{fontSize:13,color:"rgba(255,255,255,.65)",marginBottom:12}}>{plan.dates} · {group.name}</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-          {na&&<span className={`pill ${nextTone(na)}`}>{na.chip}</span>}
+          {/* On the header's own dark gradient, in both themes: the theme's
+              pill colours are for the page, and in light mode the dark
+              green "Voting" sat unreadable on the dark hero. Fixed light on
+              dark, like the $/person chip beside it, the tone kept as a tint. */}
+          {na&&<span className="pill" style={HEADER_CHIP[nextTone(na)]||HEADER_CHIP["pill-p"]}>{na.chip}</span>}
           {/* The budget is what somebody hoped to spend. Once it is all
               booked, what it cost is on the trip itself, and a second money
               figure up here that is not that one would be a wrong number. */}
@@ -13056,9 +13088,21 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       // written until everyone has said what they want, so
                       // say that here rather than after the tap.
                       ?`${daysWait.sentence||"We're waiting on the rest of the group."} We write the days once everyone's in, so nobody's trip is planned around half the answers.`
-                      :`Give us twenty seconds and we'll write the whole ${plan.title} plan — where to eat, what it costs, which places only take cash. Or do it yourself, if that's the fun bit for you.`}
+                      // No place yet, no days: the days are planned around
+                      // a place, so the next step is finding where. This
+                      // offered "Plan my days for me" on "Where next?",
+                      // and named the placeholder as if it were the trip.
+                      :plan.destStyle==="undecided"
+                        ?`Where ${planCalled(plan)} goes isn't picked yet, so there are no days to plan. Find the ${plan.type==="restaurant"?"ideas for the night":"trip ideas"} first, then the days are written around the one ${soloTrip?"you pick":"you all pick"}.`
+                        :`Give us twenty seconds and we'll write the plan for ${planCalled(plan)} — where to eat, what it costs, which places only take cash. Or do it yourself, if that's the fun bit for you.`}
                 </div>
-                {!loadFailed&&(
+                {!loadFailed&&plan.destStyle==="undecided"&&(
+                  // The same step as the next-step card's "Find them →".
+                  <button className="bp" onClick={()=>push("groupTrip",{planId,groupId,find:"1"})} style={{marginBottom:10}}>
+                    Find them →
+                  </button>
+                )}
+                {!loadFailed&&plan.destStyle!=="undecided"&&(
                   <>
                     {plan.type!=="restaurant"&&plan.endDate&&plan.endDate!==plan.startDate&&(
                       <label style={{display:"flex",alignItems:"center",gap:10,minHeight:44,fontSize:13,color:C.t1,marginBottom:6,cursor:"pointer"}}>
@@ -13473,12 +13517,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           {voteBusy===opt?"…":vetoed?"Vetoed · undo":"Veto"}
                         </button>
                       )}
-                      <button disabled={!!voteBusy||mine} onClick={()=>castVote(opt)}
+                      {/* Not beside your own veto — "Vetoed · undo" is the way back. */}
+                      {!vetoed&&<button disabled={!!voteBusy||mine} onClick={()=>castVote(opt)}
                         style={{flex:1,padding:"10px 8px",borderRadius:12,border:"1px solid "+(mine?C.accentText:C.border),
                           background:mine?C.accentDim:"none",color:mine?C.accentText:C.t2,fontSize:13,fontWeight:600,
                           cursor:voteBusy||mine?"default":"pointer"}}>
                         {mine?"✓ Your vote":myVote?"Change vote to this":"Vote for this"}
-                      </button>
+                      </button>}
                     </div>
                   ):mine?(
                     <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>✓ Your vote</div>
@@ -13555,8 +13600,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
               if(!fixed.length&&!variable.length&&!unpriced.length&&!notYours.length)return(
                 <div style={{fontSize:13,color:C.t2,lineHeight:1.6,padding:"4px 0 8px"}}>
-                  Costs appear here once this trip has a day-by-day plan. Build it on the
-                  Itinerary tab and every event gets priced.
+                  {/* The days are on the Book tab — there has been no Itinerary
+                      tab since the rail — and a night out is one evening. */}
+                  {nightPlan
+                    ?"Costs appear here once the evening has a plan. Build it on the Book tab and each stop gets an estimate."
+                    :"Costs appear here once this trip has a day-by-day plan. Build it on the Book tab and each line gets an estimate."}
                 </div>
               );
 

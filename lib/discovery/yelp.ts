@@ -20,6 +20,21 @@ const MILES = 1609.34;
 // once asked for forty miles, and every search came back 400.
 const RADIUS = 40000;
 
+/**
+ * A refusal that says the key itself is switched off for good — Yelp's
+ * trial ran out (TRIAL_EXPIRED), or the key is not accepted. That is a lane
+ * not configured, the same as no key, not a source "not answering": it said
+ * "One of our sources isn't answering" under every Discover load for weeks
+ * after the trial ended (QA walk, 2026-11-05). A 5xx or a timeout is still
+ * an error — that one may answer next time.
+ */
+export function switchedOff(status: number, body: string): boolean {
+  if (status === 401) return true;
+  return (status === 403 || status === 400) && /TRIAL_EXPIRED|UNAUTHORIZED_API_KEY|TOKEN_INVALID|TOKEN_MISSING/i.test(body);
+}
+
+class SwitchedOff extends Error {}
+
 function auth() {
   const key = process.env.YELP_API_KEY;
   return key ? { Authorization: `Bearer ${key}` } : null;
@@ -61,6 +76,10 @@ export async function yelpEvents(seeker: Seeker, opts: { timeoutMs?: number } = 
       // the health table cry wolf on every single check.
       //
       // To turn it on: Yelp's "Manage App" page has a join-beta button.
+      if (switchedOff(res.status, detail)) {
+        console.log('[discover/yelp-events] key switched off — treated as not configured', res.status, detail.slice(0, 120));
+        return { source: 'yelp-events', status: 'no_key', findings: [], detail: 'Yelp refused the key (trial expired or not accepted).' };
+      }
       if (res.status === 403 && /DEVELOPER_BETA/i.test(detail)) {
         return {
           source: 'yelp-events', status: 'no_key', findings: [],
@@ -127,6 +146,7 @@ async function placesFor(interest: string, seeker: Seeker, headers: Record<strin
   const res = await fetch(url, { headers, next: { revalidate: 3600 }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
+    if (switchedOff(res.status, detail)) throw new SwitchedOff(String(res.status));
     console.error('[discover/yelp-places] returned', res.status, 'for', term, detail.slice(0, 160));
     throw new Error(String(res.status));
   }
@@ -178,6 +198,10 @@ export async function yelpPlaces(seeker: Seeker, opts: { timeoutMs?: number } = 
   const failed = settled.filter(r => r.status === 'rejected').length;
   // One interest failing while two answered is not a broken source.
   if (failed === wanted.length) {
+    if (settled.some(r => r.status === 'rejected' && r.reason instanceof SwitchedOff)) {
+      console.log('[discover/yelp-places] key switched off — treated as not configured');
+      return { source: 'yelp-places', status: 'no_key', findings: [], detail: 'Yelp refused the key (trial expired or not accepted).' };
+    }
     return { source: 'yelp-places', status: 'error', findings: [], detail: `all ${failed} searches failed` };
   }
   return { source: 'yelp-places', status: 'ok', findings };

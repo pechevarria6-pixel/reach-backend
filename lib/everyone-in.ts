@@ -77,6 +77,24 @@ export async function claimOnceOutcome(
   return after.data?.[0]?.id === mine.id ? 'first' : 'taken';
 }
 
+/**
+ * Whether every member of the group has answered for this plan — the fact,
+ * apart from whether anybody was told it. Null when the group could not be
+ * read. POST /preferences answered `everyoneIn: false` with both members of
+ * the QA group answered (2026-11-05): it was sending back whether this
+ * request made the announcement, which is false on any trip whose place is
+ * already set, once it has been made, or after a go-ahead.
+ */
+export async function everyoneHasAnswered(db: SupabaseClient, planId: string, groupId: string): Promise<boolean | null> {
+  const [{ data: members, error: mErr }, { data: said, error: sErr }] = await Promise.all([
+    db.from('group_members').select('user_id').eq('group_id', groupId),
+    db.from('plan_preferences').select('user_id, submitted_at').eq('plan_id', planId),
+  ]);
+  if (mErr || sErr) return null;
+  return everyoneIn((members ?? []).map(m => String(m.user_id)),
+    (said ?? []).filter(r => r.submitted_at).map(r => String(r.user_id)));
+}
+
 export async function announceIfEveryoneIn(
   db: SupabaseClient,
   plan: { id: string; group_id: string; title?: string | null; type?: string | null; destination_style?: string | null; status?: string | null },

@@ -422,7 +422,11 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     if (mine && !mine.ready) {
       return say({
         state: 'needs_trip_input', title: 'Add your two cents',
-        body: `Say what you want from ${called(plan)}. The ${trips(plan)} are built from what each of you says.`,
+        // A night out is one evening: "the nights out are built" read as a
+        // run of them (QA walk, 2026-11-05).
+        body: plan.type === 'restaurant'
+          ? `Say what you want from ${called(plan)}. The evening's plan is built from what each of you says.`
+          : `Say what you want from ${called(plan)}. The ${trips(plan)} are built from what each of you says.`,
         cta: { label: 'Answer →', ...nav('planPrefs') }, chip: 'Planning',
       });
     }
@@ -523,6 +527,12 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     }
 
     if (!lines.length) {
+      // One evening is planned as one: "Plan the days · … has no day-by-day
+      // plan yet" was said over a dinner and drinks.
+      if (plan.type === 'restaurant') {
+        return say({ state: 'needs_trip_input', title: 'Plan the evening', body: `${Called(plan)} has no plan for the evening yet.`,
+          cta: { label: 'Plan it →', ...nav('planDetail', 'itinerary') }, chip: 'Planning' });
+      }
       return say({ state: 'needs_trip_input', title: 'Plan the days', body: `${Called(plan)} has no day-by-day plan yet.`,
         cta: { label: 'Plan them →', ...nav('planDetail', 'itinerary') }, chip: 'Planning' });
     }

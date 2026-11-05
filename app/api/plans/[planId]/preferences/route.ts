@@ -11,7 +11,7 @@
 //
 // GET  → what I said about this trip (mine only)
 // POST → record what I said, and mark me as having had my say
-import { announceIfEveryoneIn } from '@/lib/everyone-in';
+import { announceIfEveryoneIn, everyoneHasAnswered } from '@/lib/everyone-in';
 import { pushSender } from '@/lib/push';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
@@ -95,13 +95,18 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   // The last answer in: tell the whole group, once. Never fails the save —
   // the answers are what matters and they are stored.
-  let everyone = false;
+  const plan = ctx.plan as { id?: string; group_id: string; title?: string; type?: string; destination_style?: string; status?: string };
+  let announced = false;
   try {
-    const plan = ctx.plan as { id?: string; group_id: string; title?: string; type?: string; destination_style?: string; status?: string };
-    everyone = await announceIfEveryoneIn(ctx.db, { ...plan, id: params.planId }, ctx.user.id, pushSender());
+    announced = await announceIfEveryoneIn(ctx.db, { ...plan, id: params.planId }, ctx.user.id, pushSender());
   } catch (e) {
     console.error('[plan preferences POST] could not announce everyone in', { planId: params.planId, error: e instanceof Error ? e.message : String(e) });
   }
+  // Whether everybody has answered is its own read: the announcement is
+  // made once, only on a trip still finding its place, so "not announced
+  // by this request" said nothing about who had answered. Null when the
+  // group could not be read.
+  const everyone = announced ? true : await everyoneHasAnswered(ctx.db, params.planId, String(plan.group_id)).catch(() => null);
 
-  return NextResponse.json({ saved: true, everyoneIn: everyone });
+  return NextResponse.json({ saved: true, everyoneIn: everyone, announced });
 }

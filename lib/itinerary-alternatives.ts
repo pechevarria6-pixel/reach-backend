@@ -204,7 +204,15 @@ export interface Alternative {
 }
 
 export type AlternativesResult =
-  | { status: 'ok'; current: { ref: string | null; name: string | null; kind: string | null }; alternatives: Alternative[] }
+  | {
+    status: 'ok'; current: { ref: string | null; name: string | null; kind: string | null }; alternatives: Alternative[];
+    /**
+     * Whether these are like the line: the same kind as its place, or the
+     * kind its own words name (wantedKinds). False is "Nearby" — a line
+     * with no place and words that name no kind has nothing to be like.
+     */
+    like: boolean;
+  }
   /** Hotels and flights: the booking's own options price them. */
   | { status: 'booking_line'; type: string }
   /** A ticket, a journey or a note — nothing on a menu replaces it. */
@@ -291,6 +299,37 @@ function dayWords(time: unknown, nightOut: boolean): string {
 }
 
 /**
+ * The kinds of place a hand-written line plainly asks for, by its own words.
+ *
+ * "Walk the Battery and Rainbow Row" names no venue and has no kind, and the
+ * Change sheet offered a bar, a daiquiri bar and an investment gallery under
+ * "Others like it" (QA walk, 2026-11-05). Only the words that say it outright
+ * count — a walk is somewhere outdoors to walk, a beach is a beach — and the
+ * kinds are the map's own (lib/discovery/osm.ts), so nothing is claimed about
+ * any place beyond what its row is filed as. Empty when the words say nothing.
+ */
+const WANTED: Array<[RegExp, string[]]> = [
+  [/\b(walk(s|ing)?|stroll(ing)?|wander(ing)?)\b/i, ['park', 'garden', 'viewpoint', 'nature reserve', 'beach', 'trail']],
+  [/\b(hik(e|es|ing)|trails?)\b/i, ['trail', 'nature reserve', 'national park', 'park']],
+  [/\bbeach(es)?\b/i, ['beach', 'beach resort']],
+  [/\bparks?\b/i, ['park', 'nature reserve', 'garden']],
+  [/\bgardens?\b/i, ['garden', 'park']],
+  [/\bmuseums?\b/i, ['museum']],
+  [/\bgaller(y|ies)\b/i, ['gallery', 'public art gallery', 'arts centre']],
+  [/\bmarkets?\b/i, ['marketplace']],
+  [/\bzoo\b/i, ['zoo']],
+  [/\baquarium\b/i, ['aquarium']],
+  [/\b(viewpoint|overlook|lookout)\b/i, ['viewpoint']],
+];
+export function wantedKinds(title: unknown): Set<string> {
+  const t = String(title ?? '');
+  const out = new Set<string>();
+  for (const [re, kinds] of WANTED) if (re.test(t)) for (const k of kinds) out.add(k);
+  return out;
+}
+const kindOf = (k: unknown) => String(k ?? '').replace(/_/g, ' ').trim().toLowerCase();
+
+/**
  * Up to `count` alternatives for one line, nearest first, the same kind of
  * place before the same type of line.
  */
@@ -348,9 +387,16 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
     return !(date && closedThroughout(p.hours ?? null, { from: date, to: date }, PART_WINDOW[window], where));
   });
 
-  const sameKind = (p: RealPlace) => !!current && p.kind === current.kind;
+  // A line with no place of its own is like what its words ask for, where
+  // they ask for anything; only those are offered as like it. Otherwise the
+  // list is what is near, and is called that.
+  const wanted = !current && !input.anyType ? wantedKinds(line.title) : new Set<string>();
+  const wants = (p: RealPlace) => wanted.has(kindOf(p.kind));
+  const sameKind = (p: RealPlace) => (current ? p.kind === current.kind : wants(p));
   const roofed = (p: RealPlace) => (input.preferIndoor && setting(p.kind) === 'indoor' ? 1 : 0);
-  const ranked = pool
+  const matching = wanted.size ? pool.filter(wants) : [];
+  const like = !!current || matching.length > 0;
+  const ranked = (matching.length ? matching : pool)
     .map(p => ({ p, km: kmToNearest(p, anchors), same: sameKind(p) }))
     .sort((a, b) =>
       roofed(b.p) - roofed(a.p)
@@ -388,7 +434,7 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
         : "We haven't verified any places in this town yet, so there is nothing to offer in its place.",
     };
   }
-  return { status: 'ok', current: cur, alternatives };
+  return { status: 'ok', current: cur, alternatives, like };
 }
 
 // ─── The line, once it names somewhere else ─────────────────────────────

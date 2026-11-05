@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  alternativesFor, placeRef, placeByRef, dateOfLine, swappedTitle, swappedLine, slotCostCents, titleNaming, whyLine, slotWindow, eveningSlot, type PlanLine,
+  alternativesFor, wantedKinds, placeRef, placeByRef, dateOfLine, swappedTitle, swappedLine, slotCostCents, titleNaming, whyLine, slotWindow, eveningSlot, type PlanLine,
 } from '../../lib/itinerary-alternatives.ts';
 import { ABOUT_THE_PLACE } from '../../lib/contracts/itinerary-item.ts';
 import type { RealPlace } from '../../lib/discovery/real-places.ts';
@@ -245,6 +245,7 @@ test('with nothing on the day located, the town\'s own point says what is near',
   if (got.status !== 'ok') return;
   // SPIN (60 m from the point), Renwick (750 m), The Pour House (3 km) — not A to Z.
   assert.deepEqual(got.alternatives.map(a => a.name), ['SPIN', 'Renwick Gallery', 'The Pour House']);
+  assert.equal(got.like, false, 'no park on the menu: these are "Nearby", not like a walk');
   assert.ok(got.alternatives.every(a => a.km !== null), 'each says how far it is');
   // Measured from the town's middle, and said so — never "from the rest of Day 1",
   // a day with nothing else on the map.
@@ -261,4 +262,39 @@ test('the Change sheet and the swap it leads to measure from the same point', ()
   const server = readFileSync('lib/itinerary-change-server.ts', 'utf8');
   assert.match(route, /center: planCenter\(lc\.plan\)/);
   assert.match(server, /center: planCenter\(lc\.plan\)/);
+});
+
+// ─── A hand-written line is like what its words say ─────────────────────
+// QA walk 2026-11-05: "Walk the Battery and Rainbow Row" and "Morning on
+// Folly Beach" were offered a bar, a daiquiri bar and an investment gallery
+// under "Others like it".
+test('a walk with no venue is offered somewhere to walk, called like it', () => {
+  const PARK = P({ name: 'Waterfront Park', kind: 'park', lat: 38.8990, lng: -77.0320 });
+  const GARDEN = P({ name: 'Enid A. Haupt Garden', kind: 'garden', lat: 38.8880, lng: -77.0270 });
+  const walk: PlanLine = { id: 'w', type: 'activity', title: 'Walk the Battery and Rainbow Row', scheduled_time: 'Day 1 · Afternoon', venue_name: null };
+  const center = { lat: 38.8977, lng: -77.0306 };
+  const got = alternativesFor({ line: walk, lines: [walk], places: [SPIN, ROOFTOP, MUSEUM, PARK, GARDEN], nightOut: false, startDate: '2026-10-23', center });
+  assert.equal(got.status, 'ok');
+  if (got.status !== 'ok') return;
+  assert.deepEqual(got.alternatives.map(a => a.name), ['Waterfront Park', 'Enid A. Haupt Garden'], 'no bar, no gallery');
+  assert.equal(got.like, true);
+  assert.ok(got.alternatives.every(a => a.sameKind));
+});
+
+test('a beach morning is offered beaches; words naming no kind leave the list "Nearby"', () => {
+  assert.ok(wantedKinds('Morning on Folly Beach').has('beach'));
+  assert.ok(wantedKinds('Walk the Battery and Rainbow Row').has('park'));
+  assert.ok(wantedKinds('Browse the City Market').has('marketplace'));
+  assert.equal(wantedKinds('Free afternoon').size, 0);
+  const free: PlanLine = { id: 'f', type: 'activity', title: 'Free afternoon', scheduled_time: 'Day 1 · Afternoon', venue_name: null };
+  const got = alternativesFor({ line: free, lines: [free], places: [SPIN, MUSEUM], nightOut: false, startDate: '2026-10-23' });
+  assert.ok(got.status === 'ok' && got.like === false);
+  // A line that names its place is like that place, as before.
+  const bar = alternativesFor({ line: evening, lines: LINES, places: MENU, nightOut: false, startDate: '2026-10-23' });
+  assert.ok(bar.status === 'ok' && bar.like === true);
+});
+
+test('the Change sheet calls an unlike list "Nearby"', () => {
+  const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
+  assert.match(app, /d\.like===false\?"Nearby":mayApply\?"Pick another":"Others like it"/);
 });

@@ -168,3 +168,20 @@ test('one fair sold as several products is one row on its day; different acts an
   assert.deepEqual(ids(THU), ['doe', 'elsewhere', 'eve', 'mat', 'smith', 'thu'].sort());
   assert.deepEqual(ids('2026-11-06'), ['fri']);
 });
+
+// QA walk 2026-11-05: Today and Tomorrow opened as "Further out · 19" and
+// "Further out · 9" with no card on the screen — a day that read as empty.
+test('a day with nothing near shows its nearest few, and keeps the rest behind "Further out"', () => {
+  const items = [
+    card('a40', { date: THU, dist: '40 mi' }),
+    card('a30', { date: THU, dist: '30 mi' }),
+    card('a90', { date: THU, dist: '90 mi' }),
+    card('a60', { date: THU, dist: '60 mi' }),
+    card('a26', { date: THU, dist: '26 mi' }),
+  ];
+  const { sections } = upcomingSections(items, [], THU, 9);
+  assert.deepEqual(sections[0].near.map(r => r.item.id).sort(), ['a26', 'a30', 'a40']);
+  assert.ok(sections[0].near.every(r => r.miles != null), 'each with its distance');
+  assert.deepEqual(sections[0].further.map(r => r.item.id).sort(), ['a60', 'a90']);
+  assert.equal(rowsIn(sections[0]), 5, 'nothing lost');
+});

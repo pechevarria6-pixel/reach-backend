@@ -44,7 +44,7 @@ test('1: Ideas for you shows the reason, retries once on Retry-After, and always
   const picks = fn('TripPicks');
   assert.doesNotMatch(picks, /Couldn't put ideas together just now\. Try again shortly\./);
   assert.match(picks, /failureFrom\(r\.status,body,r\.headers\.get\("Retry-After"\)/);
-  assert.match(picks, /autoRetried\.current=true;\s*timer=setTimeout/);
+  assert.match(picks, /timer=setTimeout\(\(\)=>\{if\(!live\)return;autoRetried\.current=true;/);
   assert.match(picks, /onClick=\{\(\)=>setAttempt\(a=>a\+1\)\}>Try again</);
 });
 

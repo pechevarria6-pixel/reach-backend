@@ -65,6 +65,13 @@ export interface UpcomingSection<T> {
 
 /** Past this, a row is behind "Further out". The day sheet listed towns 100 miles off as tonight's. */
 export const FURTHER_MILES = 25;
+/**
+ * A day with nothing inside FURTHER_MILES shows this many of its nearest
+ * rows anyway, each with its distance on the card. Today and Tomorrow opened
+ * as a bare "Further out · 19" with no card on the screen (QA walk,
+ * 2026-11-05): an empty day reads as nothing on, which was not true.
+ */
+export const NEAREST_WHEN_EMPTY = 3;
 /** The days the day-roll draws, today included. */
 export const WEEK_DAYS = 7;
 
@@ -279,13 +286,21 @@ export function upcomingSections<T extends UpcomingItem>(
   const sections = days.map((day): UpcomingSection<T> => {
     const all = once.filter(r => r.day === day).sort(byTimeThenDistance);
     const strip = ({ clock: _c, ...row }: UpcomingRow<T> & { clock: string | null }): UpcomingRow<T> => row;
+    let near = all.filter(r => r.miles == null || r.miles <= FURTHER_MILES);
+    let further = all.filter(r => r.miles != null && r.miles > FURTHER_MILES);
+    if (!near.length && further.length) {
+      const nearest = [...further].sort((a, b) => (a.miles ?? 0) - (b.miles ?? 0)).slice(0, NEAREST_WHEN_EMPTY);
+      const lifted = new Set(nearest);
+      near = all.filter(r => lifted.has(r));
+      further = further.filter(r => !lifted.has(r));
+    }
     return {
       day,
       label: dayHeading(day, today, hour),
       dateWords: dateWords(day),
       inWeek: daysBetween(today, day) < WEEK_DAYS,
-      near: all.filter(r => r.miles == null || r.miles <= FURTHER_MILES).map(strip),
-      further: all.filter(r => r.miles != null && r.miles > FURTHER_MILES).map(strip),
+      near: near.map(strip),
+      further: further.map(strip),
     };
   });
   return { sections, candidates };

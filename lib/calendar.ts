@@ -14,8 +14,8 @@
 //
 // Pure, so the rule can be tested without a browser.
 
-export type DatedPlan = { id?: string; startDate?: unknown; endDate?: unknown };
-export type PlanSection<T> = { key: 'upcoming' | 'undated' | 'past'; label: string; plans: T[] };
+export type DatedPlan = { id?: string; startDate?: unknown; endDate?: unknown; status?: unknown };
+export type PlanSection<T> = { key: 'upcoming' | 'undated' | 'past' | 'off'; label: string; plans: T[] };
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -122,20 +122,29 @@ export function planSections<T extends DatedPlan>(plans: T[], today: string): Pl
   const upcoming: T[] = [];
   const undated: T[] = [];
   const past: T[] = [];
+  const off: T[] = [];
   for (const plan of all) {
+    // Called off is not coming up, whatever its dates say: the group list
+    // counted called-off plans in "Coming up · N plans" (QA walk,
+    // 2026-11-05). They are kept, under their own heading, so the record of
+    // what was called off is still there to open. A plan marked done is
+    // behind them, wherever its dates fall.
+    if (plan.status === 'cancelled') { off.push(plan); continue; }
     const day = planDay(plan);
+    if (plan.status === 'completed') { past.push(plan); continue; }
     if (!day) { undated.push(plan); continue; }
     ((lastDay(plan) as string) >= today ? upcoming : past).push(plan);
   }
 
   // Soonest first for what is ahead; most recent first for what is behind.
   upcoming.sort((a, b) => (planDay(a) as string).localeCompare(planDay(b) as string));
-  past.sort((a, b) => (planDay(b) as string).localeCompare(planDay(a) as string));
+  past.sort((a, b) => String(planDay(b) ?? '').localeCompare(String(planDay(a) ?? '')));
 
   return [
     { key: 'upcoming', label: 'Coming up', plans: upcoming },
     { key: 'undated', label: 'No date yet', plans: undated },
     { key: 'past', label: 'Been and gone', plans: past },
+    { key: 'off', label: 'Called off', plans: off },
   ].filter(s => s.plans.length) as PlanSection<T>[];
 }
 
