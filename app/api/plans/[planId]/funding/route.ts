@@ -28,11 +28,27 @@ async function fundingStatus(
   // Target = every live booking on this plan that Reach itself buys. A
   // ticket or a table somebody buys on the seller's own site is not in it —
   // checkout does not show it in the total, so nobody is charged for it.
-  const { data: rows } = await db
-    .from('bookings')
-    .select('id,price_cents,status,mode,provider,vertical')
-    .eq('plan_id', planId)
-    .not('status', 'in', NOT_CHARGED);
+  // Every read below is independent, so they go at once: one after another
+  // they took 11 seconds on Home, where every plan asks for this together.
+  const [
+    { data: rows }, { data: contributions }, memberIds, skips,
+    { data: failedBookings }, { data: open }, { data: seatsAndRooms, error: seatsErr },
+    sideReads, refundsAreOpen,
+  ] = await Promise.all([
+    db.from('bookings').select('id,price_cents,status,mode,provider,vertical')
+      .eq('plan_id', planId).not('status', 'in', NOT_CHARGED),
+    // select('*'), never naming refunded_cents (see below).
+    db.from('contributions').select('*').eq('plan_id', planId),
+    groupMemberIds(db, groupId),
+    planSkips(db, planId),
+    db.from('bookings').select('id,vertical,price_cents,error').eq('plan_id', planId).in('status', ['failed']),
+    db.from('bookings').select('id,vertical,detail,status,approved_at,updated_at,error')
+      .eq('plan_id', planId).in('status', ['booking', 'awaiting_approval']).not('error', 'is', null),
+    db.from('bookings').select('id,vertical,status,mode,provider,request_payload,response_payload,approved_at,updated_at')
+      .eq('plan_id', planId).in('vertical', ['flight', 'hotel']).not('status', 'in', '("failed","cancelled")'),
+    Promise.all([readTimedSkips(db, planId), memberJoins(db, groupId)]).catch(() => null),
+    refundsOpen(db, planId),
+  ]);
   const bookings = chargedRows(rows);
   const targetCents = bookings.reduce((s, b) => s + (b.price_cents || 0), 0);
 
@@ -40,14 +56,10 @@ async function fundingStatus(
   // sql/wave1-refunds-2026-09-22.sql runs the column is not there, and naming
   // it would fail the whole read. collectedCents counts a missing one as
   // nothing refunded, and money handed back never counts towards the target.
-  const { data: contributions } = await db
-    .from('contributions').select('*').eq('plan_id', planId);
   // Net of anything Stripe has given back — the same figure approval checks
   // against, so this screen cannot say "funded" over a plan approval refuses.
   const collectedCents = netCollectedCents(contributions);
 
-  const memberIds = await groupMemberIds(db, groupId);
-  const skips = await planSkips(db, planId);
 
   // ── Nobody pays more because a booking of ours failed ─────────────────
   // Priced bookings, less anything this member is sitting out, split exactly;
@@ -71,42 +83,25 @@ async function fundingStatus(
 
   const myPaidCents = netCollectedCents(contributions, userId);
 
-  const { data: failedBookings } = await db
-    .from('bookings')
-    .select('id,vertical,price_cents,error')
-    .eq('plan_id', planId)
-    .in('status', ['failed']);
 
   // Sent to the provider and never answered (approval's outcome_unknown):
   // it may be bought, so it stays in the total and cannot be booked again.
   // Named here so it is not a row nobody can see that blocks for ever.
-  const { data: open } = await db
-    .from('bookings')
-    .select('id,vertical,detail,status,approved_at,updated_at,error')
-    .eq('plan_id', planId)
-    .in('status', ['booking', 'awaiting_approval'])
-    .not('error', 'is', null);
   const inDoubt = (open || []).filter(b => midClaim(b) && /^outcome unknown/.test(String(b.error)));
 
   // The flights and hotels, held ones too, with what a newcomer needs to get
   // their own: which flights, which hotel, and whether it is bought or only
   // paid towards. The charged rows above leave out held quotes and carry
   // neither, so somebody kept off a held room still read "✓ In".
-  const { data: seatsAndRooms, error: seatsErr } = await db
-    .from('bookings')
-    .select('id,vertical,status,mode,provider,request_payload,response_payload,approved_at,updated_at')
-    .eq('plan_id', planId)
-    .in('vertical', ['flight', 'hotel'])
-    .not('status', 'in', '("failed","cancelled")');
   if (seatsErr) console.error('[funding] could not read the flights and hotels', { planId, code: seatsErr.code });
   // Only who was kept off by joining late. A driver who came off the flight
   // (lib/participation.ts) is off it by choice, and telling them it "was
   // already booked before you joined" is a sentence about somebody else.
   // A hotel cannot be sat out by choice, so every row on one is a join's.
   let keptOff: { ref: string; userId: string }[] | null = null;
-  if (!seatsErr) {
+  if (!seatsErr && sideReads) {
     try {
-      const [timed, joins] = await Promise.all([readTimedSkips(db, planId), memberJoins(db, groupId)]);
+      const [timed, joins] = sideReads;
       const flights = new Set((seatsAndRooms ?? []).filter(b => b.vertical === 'flight').map(b => String(b.id)));
       keptOff = timed.filter(s => !flights.has(s.ref) || joinedLate(s, joins.get(s.userId)));
     } catch {
@@ -136,7 +131,7 @@ async function fundingStatus(
     // Whether "Refund what wasn't spent" can work yet. Before
     // sql/wave1-refunds-2026-09-22.sql runs, every press answered 503 under a
     // screen saying the money could be taken back from it.
-    refundsOpen: await refundsOpen(db, planId),
+    refundsOpen: refundsAreOpen,
     contributions: contributions || [],
   };
 }

@@ -326,7 +326,7 @@ test('before the refunds migration, the alert and the screen offer no button tha
   const screen = readFileSync('components/reach-app.jsx', 'utf8');
   assert.match(screen, /funding\?\.refundsOpen===true/);
   const funding = readFileSync('app/api/plans/[planId]/funding/route.ts', 'utf8');
-  assert.match(funding, /refundsOpen: await refundsOpen\(db, planId\)/);
+  assert.match(funding, /refundsOpen\(db, planId\)[\s\S]*refundsOpen: refundsAreOpen/);
 });
 
 // ── Review fixes (2026-09-23) ───────────────────────────────────────────
