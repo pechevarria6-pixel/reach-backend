@@ -17,6 +17,27 @@ import { headcount } from '../party.ts';
 // "unknown: key present; no free check to call" was hiding.
 const VIATOR = process.env.VIATOR_BASE || 'https://api.sandbox.viator.com/partner';
 
+const viatorHeaders = () => ({ 'Content-Type': 'application/json', 'exp-api-key': process.env.VIATOR_API_KEY!, 'Accept': 'application/json;version=2.0' });
+
+/**
+ * The age band a product prices its people in. Most tours take ADULT; a
+ * private session prices per TRAVELER and refuses ADULT, which Viator
+ * answers as every option being unavailable. Read from the product's own
+ * pricing, ADULT when it cannot be read.
+ */
+export async function ageBandFor(productCode: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+  try {
+    const res = await fetchImpl(`${VIATOR}/products/${encodeURIComponent(productCode)}`, { headers: viatorHeaders(), signal: AbortSignal.timeout(6000) });
+    const json = res.ok ? await res.json().catch(() => null) : null;
+    const bands = ((json?.pricingInfo?.ageBands ?? []) as { ageBand?: string }[]).map(b => String(b?.ageBand ?? ''));
+    if (bands.includes('ADULT')) return 'ADULT';
+    if (bands.includes('TRAVELER')) return 'TRAVELER';
+    return bands[0] || 'ADULT';
+  } catch {
+    return 'ADULT';
+  }
+}
+
 export const viatorActivities: BookingProvider = {
   vertical: 'activity',
   name: 'viator',
@@ -26,9 +47,10 @@ export const viatorActivities: BookingProvider = {
       return { vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator', error: 'VIATOR_API_KEY not set' };
     }
     const a = req.activity!;
+    const band = await ageBandFor(a.productCode);
     const res = await fetch(`${VIATOR}/availability/check`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'exp-api-key': process.env.VIATOR_API_KEY!, 'Accept': 'application/json;version=2.0' },
+      headers: viatorHeaders(),
       body: JSON.stringify({
         productCode: a.productCode, travelDate: a.date,
         // Viator requires the currency on an availability check; without it
@@ -37,7 +59,7 @@ export const viatorActivities: BookingProvider = {
         currency: 'USD',
         // The party, not whoever is named: nobody is at quote time, and an
         // activity priced for one person is not the price for four.
-        paxMix: [{ ageBand: 'ADULT', numberOfTravelers: headcount(req) }],
+        paxMix: [{ ageBand: band, numberOfTravelers: headcount(req) }],
       }),
     });
     const json = await res.json().catch(() => null);
@@ -48,13 +70,17 @@ export const viatorActivities: BookingProvider = {
       return { vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator', error: "Viator didn't answer for this tour just now, so we couldn't check that date." };
     }
     const opt = (json.bookableItems as { available?: boolean }[]).find(b => b?.available) as any;
-    if (!opt) return { vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator', error: 'Not available on that date' };
+    if (!opt) {
+      console.error('[viator] nothing open', { product: a.productCode, date: a.date, band,
+        reasons: (json.bookableItems as { unavailableReason?: string }[]).map(b => b?.unavailableReason ?? null).slice(0, 5) });
+      return { vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator', error: 'Not available on that date' };
+    }
     const total = opt?.totalPrice?.price?.recommendedRetailPrice;
     return {
       vertical: 'activity', mode: 'native', status: 'quoted', provider: 'viator',
       providerRef: opt.optionCode || a.productCode,
       priceCents: total ? Math.round(total * 100) : undefined, currency: 'USD',
-      detail: `${a.productCode} on ${a.date} · ${headcount(req)} ${headcount(req) === 1 ? 'traveller' : 'travellers'}`, raw: opt,
+      detail: `${a.productCode} on ${a.date} · ${headcount(req)} ${headcount(req) === 1 ? 'traveller' : 'travellers'}`, raw: { ...opt, ageBand: band },
     };
   },
 
@@ -76,7 +102,7 @@ export const viatorActivities: BookingProvider = {
       headers: { 'Content-Type': 'application/json', 'exp-api-key': process.env.VIATOR_API_KEY!, 'Accept': 'application/json;version=2.0' },
       body: JSON.stringify({
         productCode: a.productCode, optionCode: q.providerRef, travelDate: a.date,
-        paxMix: [{ ageBand: 'ADULT', numberOfTravelers: headcount(req) }],
+        paxMix: [{ ageBand: String((q.raw as { ageBand?: string } | undefined)?.ageBand || 'ADULT'), numberOfTravelers: headcount(req) }],
         communication: { email: lead.email, phone: lead.phone || '' },
         bookerInfo: { firstName: lead.firstName, lastName: lead.lastName },
         // Our booking's id where there is one, so Viator's record points back at

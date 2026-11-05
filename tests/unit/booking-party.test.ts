@@ -144,7 +144,7 @@ test('Viator prices an activity for everybody on it', async () => {
   try {
     const r = await viatorActivities.quote({ ...base, vertical: 'activity', party: 3, activity: { productCode: 'X1', date: '2099-11-03' } });
     assert.equal(r.status, 'quoted');
-    assert.deepEqual(seen[0].body.paxMix, [{ ageBand: 'ADULT', numberOfTravelers: 3 }]);
+    assert.deepEqual(seen.find(s => s.url.includes('/availability/check'))?.body.paxMix, [{ ageBand: 'ADULT', numberOfTravelers: 3 }]);
   } finally { restore(); }
 });
 

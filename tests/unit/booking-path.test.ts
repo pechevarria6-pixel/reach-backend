@@ -492,7 +492,7 @@ test('Viator is asked in dollars, and a refusal is never said to be the tour bei
     const r = await viatorActivities.quote(req as never);
     assert.equal(r.status, 'failed');
     assert.doesNotMatch(String(r.error), /Not available/);
-    assert.equal((s.seen[0].body as { currency?: string }).currency, 'USD');
+    assert.equal((s.seen.find(x => x.url.includes('/availability/check'))!.body as { currency?: string }).currency, 'USD');
   } finally { s.restore(); }
   s = stubFetch(() => ({ json: { bookableItems: [{ optionCode: 'A', available: false }, { optionCode: 'B', available: true, totalPrice: { price: { recommendedRetailPrice: 120 } } }] } }));
   try {
@@ -500,5 +500,20 @@ test('Viator is asked in dollars, and a refusal is never said to be the tour bei
     assert.equal(r.status, 'quoted', 'an open option is used even when the first is full');
     assert.equal(r.providerRef, 'B');
     assert.equal(r.priceCents, 12000);
+  } finally { s.restore(); }
+});
+
+test('a product priced per traveller is asked for travellers, not adults', async () => {
+  const { viatorActivities } = await import('../../lib/booking/providers/rest.ts');
+  process.env.VIATOR_API_KEY = 'viator_unit';
+  const s = stubFetch(u => u.includes('/products/')
+    ? { json: { pricingInfo: { type: 'UNIT', ageBands: [{ ageBand: 'TRAVELER' }] } } }
+    : { json: { bookableItems: [{ optionCode: 'A', available: true, totalPrice: { price: { recommendedRetailPrice: 300 } } }] } });
+  try {
+    const r = await viatorActivities.quote({ vertical: 'activity', planId: 'p', groupId: 'g', party: 2, travelers: [], activity: { productCode: '444621P1', date: '2099-12-05' } } as never);
+    assert.equal(r.status, 'quoted');
+    const ask = s.seen.find(x => x.url.includes('/availability/check'))!.body as { paxMix: { ageBand: string }[] };
+    assert.equal(ask.paxMix[0].ageBand, 'TRAVELER');
+    assert.equal((r.raw as { ageBand?: string }).ageBand, 'TRAVELER', 'and booked the same way');
   } finally { s.restore(); }
 });
