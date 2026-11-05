@@ -412,14 +412,14 @@ export function getNextAction(input: NextActionInput): NextAction | null {
 
     if (voting) {
       stage = 'vote';
-      // The vote route refuses every vote while anybody in the group has not
-      // answered for this trip (planReadiness — a late joiner, or an ordinary
-      // vote opened at creation). Offering "Vote →" there sent whoever had
-      // answered straight into that refusal. Said as what it is waiting on.
-      // Whoever has not answered was sent to answer above.
+      // Votes open when everyone's in (POST /vote answers 403 until then):
+      // somebody who joined after the ideas came out, or never answered, is
+      // still to say what they want. "Vote →" here sent everybody to a vote
+      // the server refused, and "Remind Jo" to vote pushed Jo straight into
+      // that refusal. What the group waits on is Jo's answers.
       if (answers && !answers.wentAhead && answers.waitingOn.length) {
         const w = waitOn(answers.waitingOn, `Waiting on ${list(answers.waitingOn)}`,
-          `Votes on ${called(plan)} open once everyone has said what they want from it.`,
+          `Votes on ${called(plan)} open once they've said what they want from it.`,
           remind(answers.waitingOn, 'prefs'));
         if (w) return w;
       }

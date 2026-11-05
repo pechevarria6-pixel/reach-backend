@@ -2,11 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { planReadiness, waitingSentence } from '@/lib/plan-readiness';
 import { track } from '@/lib/track';
-import { readIdeas, tallyVotes, mayPick, voteTitles, shownTitle, type SavedIdeas } from '@/lib/trip-vote';
-import { readVetoes, membersOf, organiserOf, organisersOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
-import { claimOnce } from '@/lib/everyone-in';
+import { readIdeas, tallyVotes, mayPick, voteTitles, type SavedIdeas } from '@/lib/trip-vote';
+import { readVetoes, membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { isUndecided } from '@/lib/group-answers';
-import { notifyUsers } from '@/lib/notify-user';
+import { tellOrganiserIfEveryoneVoted } from '@/lib/vote-complete';
 import { pushSender } from '@/lib/push';
 import { ideasWithClimateNow } from '@/lib/climate-store';
 import { ideasWithForecast } from '@/lib/forecast-ideas';
@@ -122,7 +121,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   void track(supabase, 'vote_cast', { userId: user.id, planId: params.planId });
 
   // The last vote in tells the organiser, once per set of ideas.
-  await tellOrganiserIfEveryoneVoted(supabase, plan, params.planId, user.id);
+  await tellOrganiserIfEveryoneVoted(supabase, { ...plan, id: params.planId }, user.id, pushSender());
 
   return NextResponse.json({ vote: { option } }, { status: 201 });
 }
@@ -154,38 +153,6 @@ async function veto(db: import('@supabase/supabase-js').SupabaseClient, planId: 
     return NextResponse.json({ error: "We couldn't take that veto back just now" }, { status: 500 });
   }
   return NextResponse.json({ veto: { option, on: false } });
-}
-
-async function tellOrganiserIfEveryoneVoted(
-  db: import('@supabase/supabase-js').SupabaseClient, plan: PlanRow, planId: string, voterId: string,
-) {
-  const ideas = readIdeas(plan.trip_options);
-  const [members, { data: votes, error }] = await Promise.all([
-    membersOf(db, String(plan.group_id)),
-    db.from('votes').select('user_id, option').eq('plan_id', planId),
-  ]);
-  if (!members || error) return;
-  const view = tallyVotes({
-    titles: voteTitles(plan), votes: (votes ?? []) as Array<{ user_id: string; option: string }>,
-    vetoes: [], memberIds: members.map(m => m.userId), me: voterId,
-  });
-  if (!view.everyoneVoted) return;
-  const key = `${planId}:${ideas?.set ?? 'votes'}`;
-  if (!(await claimOnce(db, planId, voterId, 'everyone_voted', key))) return;
-  // Whoever cast the last vote is looking at the count already.
-  const told = organisersOf(members, plan.created_by ?? null).filter(id => id !== voterId);
-  if (!told.length) return;
-  const shown = (t: string) => shownTitle(ideas?.options ?? [], t);
-  const lead = view.leader
-    ? `Most votes: ${shown(view.leader)}. The pick is yours.`
-    : view.tied.length ? `It's a tie between ${view.tied.map(shown).join(' and ')} — your call.` : 'The pick is yours.';
-  await notifyUsers(db, told, {
-    kind: 'everyone_voted',
-    title: 'Everyone has voted',
-    body: lead,
-    url: `/home?vote=${encodeURIComponent(planId)}&group=${encodeURIComponent(String(plan.group_id))}`,
-    planId,
-  }, pushSender());
 }
 
 // GET /api/plans/[id]/vote — where the vote stands, for the caller

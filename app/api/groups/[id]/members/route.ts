@@ -8,6 +8,8 @@ import { requireGroupMember, isFail } from '@/lib/auth';
 import { normalizeEmail, newInviteToken, INVITE_TTL_DAYS } from '@/lib/invites';
 import { sendGroupInvite } from '@/lib/email';
 import { beforeJoining, afterJoining } from '@/lib/joining';
+import { tellWhereLeavingCompletesTheVote } from '@/lib/vote-complete';
+import { pushSender } from '@/lib/push';
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const ctx = await requireGroupMember(params.id);
@@ -162,5 +164,10 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     console.error('[groups] could not remove the member', { group: params.id, code: removed.code });
     return NextResponse.json({ error: "We couldn't remove them just now" }, { status: 500 });
   }
+  // Their vote no longer counts and nobody waits on it: if they were the
+  // last one still to vote, the vote is complete now, and the organiser is
+  // told as they would have been by a vote (lib/vote-complete.ts). Named as
+  // the one who left, so an organiser removing them hears it too.
+  await tellWhereLeavingCompletesTheVote(ctx.db, params.id, String(targetUserId), pushSender());
   return NextResponse.json({ success: true });
 }

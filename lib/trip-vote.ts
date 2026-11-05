@@ -234,10 +234,23 @@ export function patchDecides(p: {
   undecided: boolean; fields: Record<string, unknown>; onlyIfUndecided: boolean; pickOption: unknown;
   /** Decided, and decided by picking one of the saved ideas. */
   picked?: boolean;
+  /**
+   * The plan's status is 'voting' now. On a set place that is options put to
+   * the group, and the vote has no pick of its own: moving the status off
+   * 'voting' (locking it in) is what closes it, and rewriting vote_options
+   * changes what everybody is voting on under their votes. Both were any
+   * member's — one tap from somebody who had not voted closed the vote for
+   * everybody still to.
+   */
+  voteOpen?: boolean;
 }): boolean {
   if (p.onlyIfUndecided || p.pickOption != null) return true;
   if (!p.undecided) {
     if (p.fields.destination_style === 'undecided') return true;
+    if (p.voteOpen === true) {
+      if ('vote_options' in p.fields) return true;
+      if (typeof p.fields.status === 'string' && p.fields.status !== 'voting') return true;
+    }
     return p.picked === true && p.fields.status === 'voting';
   }
   return ['destination_style', 'status', 'vote_options', 'trip_options'].some(k => k in p.fields);
@@ -366,26 +379,67 @@ export function tallyVotes(p: {
 }
 
 /**
- * The tally GET /api/plans/[id] hands the plan screen, by the same rule as
- * the vote route: a vote counts on an option the group can see, from
- * somebody still in the group, once.
- *
- * That route used to count every row in `votes`. Somebody who had left kept
- * their vote, so a group of two with one leaver read "Everyone's voted —
- * the group picked Lisbon, 2 of 2" while the one person left had not voted;
- * and a vote on an option no longer on the list counted towards "everyone".
+ * The count GET /api/plans/[id] answers with — the one a vote on a set
+ * place is shown from. It used to add up the raw rows: a vote from somebody
+ * who had since left was counted ("The group picked Porto — 3 of 3" with one
+ * of the three gone and one member never asked), a vote on an option no
+ * longer on the list was counted as a vote, and it became the caller's
+ * `myVote`, which locks every card on that screen. The same rule as
+ * tallyVotes, because it is tallyVotes.
  */
-export function detailTally(p: {
+export function planTally(p: {
   plan: { trip_options?: unknown; vote_options?: unknown };
-  votes: VoteRow[] | null | undefined;
+  votes: VoteRow[];
   memberIds: string[];
   me: string;
 }): { votes: Record<string, number>; myVote: string | null; totalVotes: number } {
-  const view = tallyVotes({
-    titles: voteTitles(p.plan), votes: p.votes ?? [], vetoes: [], memberIds: p.memberIds, me: p.me,
-  });
+  const view = tallyVotes({ titles: voteTitles(p.plan), votes: p.votes, vetoes: [], memberIds: p.memberIds, me: p.me });
   return { votes: view.counts, myVote: view.myVote, totalVotes: view.voted };
 }
+
+/**
+ * Who has a vote that counts — what the nudge faces and "Sam has already
+ * voted" go by. Any row used to be enough, so somebody whose vote was on an
+ * option no longer offered showed ✓ on the faces and could not be reminded,
+ * while the vote screen listed them as still to vote.
+ */
+export function votedMembers(p: {
+  plan: { trip_options?: unknown; vote_options?: unknown };
+  votes: Array<{ user_id: string; option: string }>;
+  memberIds: string[];
+}): Set<string> {
+  const view = tallyVotes({ titles: voteTitles(p.plan), votes: p.votes, vetoes: [], memberIds: p.memberIds, me: '' });
+  const notVoted = new Set(view.notVoted);
+  return new Set(p.memberIds.filter(id => !notVoted.has(id)));
+}
+
+/**
+ * What the organiser is told when the last vote is in. A vote on where ends
+ * in their pick; a vote on a set place has no pick — locking the plan in is
+ * what closes it — so it is not promised one. Vetoes on the leader are said
+ * beside it, as a count, the way its card says them: "Most votes: Porto" on
+ * a lock screen, with two of the group having said they won't go, was the
+ * one fact the organiser needed and the one it left out.
+ */
+export function everyoneVotedCopy(p: {
+  undecided: boolean; leader: string | null; tied: string[];
+  vetoes: Record<string, number>; shown: (title: string) => string;
+}): string {
+  const next = p.undecided ? ' The pick is yours.' : '';
+  if (p.leader) {
+    const x = p.vetoes[p.leader] ?? 0;
+    const against = x > 0 ? `, with ${x} ${x === 1 ? 'veto' : 'vetoes'} against it` : '';
+    return `Most votes: ${p.shown(p.leader)}${against}.${next}`;
+  }
+  if (p.tied.length) {
+    return `It's a tie between ${p.tied.map(p.shown).join(' and ')}${p.undecided ? ' — your call.' : '.'}`;
+  }
+  return p.undecided ? 'The pick is yours.' : 'Everyone has had their say.';
+}
+
+/** The group lane's name for planTally. */
+export const detailTally = (p: Parameters<typeof planTally>[0] & { votes: VoteRow[] | null | undefined }) =>
+  planTally({ ...p, votes: p.votes ?? [] });
 
 // ─── One undecided group trip at a time ─────────────────────────────────
 

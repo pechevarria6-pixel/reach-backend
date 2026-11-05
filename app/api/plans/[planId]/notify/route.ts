@@ -30,7 +30,7 @@ import { sendVoteNeeded, sendFundingNeeded, sendAnswersNeeded, type SendResult }
 import { planSkips } from '@/lib/participation';
 import { claimNudge, releaseNudge, limitsNudge, claimPeople, releasePeople, nudgedUntil, fundingStanding } from '@/lib/nudge';
 import { z } from 'zod';
-import { readIdeas, shownTitle } from '@/lib/trip-vote';
+import { readIdeas, shownTitle, votedMembers } from '@/lib/trip-vote';
 import { notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 
 const Kind = z.enum(['vote', 'funding', 'prefs']);
@@ -63,9 +63,26 @@ interface Standing {
 async function standing(db: SupabaseClient, planId: string, kind: Kind, plan: PlanRow, memberIds: string[]): Promise<Standing | null> {
   const out: Standing = { done: new Set(), notNeeded: new Set(), shares: {} };
   if (kind === 'vote') {
-    const { data, error } = await db.from('votes').select('user_id').eq('plan_id', planId);
+    // Voted means a vote the vote screen counts: on one of the options the
+    // group is shown, the saved ideas' titles where there are some
+    // (votedMembers). Any row used to do, so somebody whose vote was on an
+    // option no longer offered read as ✓ here and "still to vote" there,
+    // and could not be reminded.
+    const [{ data, error }, saved] = await Promise.all([
+      db.from('votes').select('user_id, option').eq('plan_id', planId),
+      db.from('plans').select('trip_options').eq('id', planId).maybeSingle(),
+    ]);
     if (error) { console.error('[notify] could not read who has voted', { planId, code: error.code }); return null; }
-    for (const v of data || []) out.done.add(String(v.user_id));
+    if (saved.error && !notMigrated(saved.error)) {
+      console.error('[notify] could not read the saved ideas to tell who has voted', { planId, code: saved.error.code });
+      return null;
+    }
+    const tripOptions = saved.error ? null : (saved.data as { trip_options?: unknown } | null)?.trip_options;
+    out.done = votedMembers({
+      plan: { trip_options: tripOptions, vote_options: plan.vote_options },
+      votes: (data || []).map(v => ({ user_id: String(v.user_id), option: String(v.option) })),
+      memberIds,
+    });
   } else if (kind === 'prefs') {
     // Having answered for this trip is the thing.
     const { data, error } = await db.from('plan_preferences').select('user_id, submitted_at').eq('plan_id', planId);

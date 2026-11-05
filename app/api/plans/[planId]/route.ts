@@ -12,7 +12,7 @@ import { track } from '@/lib/track';
 import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle, detailTally } from '@/lib/trip-vote';
+import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle, planTally } from '@/lib/trip-vote';
 import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
@@ -76,13 +76,15 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
 
   const participants = (membersRes.data || []).map(m => m.user_id);
 
-  // The tally, by the vote route's own rule (lib/trip-vote.ts detailTally):
-  // a vote on an option on the list, from somebody still in the group. This
-  // counted every row, so a leaver's vote made "Everyone's voted" true for
-  // a group whose remaining members had not.
-  const { votes: tally, myVote, totalVotes } = detailTally({
-    plan, votes: (votesRes.data ?? []) as Array<{ user_id: string; option: string }>,
-    memberIds: participants.map(String), me: user.id,
+  // The tally a vote on a set place is shown from: on the options the plan
+  // offers, from people still in the group, once each (planTally). The raw
+  // rows counted somebody who had left and a vote on an option since taken
+  // off the list.
+  const { votes: tally, myVote, totalVotes } = planTally({
+    plan,
+    votes: (votesRes.data ?? []).map(v => ({ user_id: String(v.user_id), option: String(v.option) })),
+    memberIds: participants.map(String),
+    me: user.id,
   });
 
   return NextResponse.json({
@@ -160,6 +162,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     onlyIfUndecided: onlyIfUndecided === true,
     pickOption,
     picked,
+    // Closing an open vote on a set place — or rewriting what it is on — is
+    // the organiser's too (patchDecides).
+    voteOpen: plan.status === 'voting',
   });
   // Calling a plan off is done for everybody, so it is the organiser's too.
   const callingOff = patchCallsOff(updates) && plan.status !== 'cancelled';
@@ -178,9 +183,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
       return NextResponse.json({
         // A plan still deciding where it goes counts moving its status as
         // deciding too, so calling it off is both; the answer names the act.
+        // A vote on a set place has no pick: closing it is locking it in.
         error: callingOff
           ? `Only ${who} can call this off.`
-          : `Only ${who} can make the pick — your vote is what counts toward it.`,
+          : plan.status === 'voting' && plan.destination_style !== UNDECIDED && updates.destination_style !== UNDECIDED
+            && pickOption == null && onlyIfUndecided !== true
+            ? `Only ${who} can close the vote — your vote is what counts toward it.`
+            : `Only ${who} can make the pick — your vote is what counts toward it.`,
         notOrganiser: true,
       }, { status: 403 });
     }
