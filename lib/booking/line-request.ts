@@ -48,7 +48,7 @@ export type BookableLine = {
  */
 export function asRequest(
   item: BookableLine,
-  plan: { start_date?: string | null; end_date?: string | null },
+  plan: { start_date?: string | null; end_date?: string | null; destination_lat?: unknown; destination_lng?: unknown },
   ctxIds: { planId: string; groupId: string },
   city: string,
   countryCode: string,
@@ -81,6 +81,7 @@ export function asRequest(
       hotel: {
         city,
         countryCode,
+        ...pointOf(plan),
         checkin: plan.start_date,
         checkout: plan.end_date,
         // One room per two people, rounded up: the group can change it, and
@@ -156,4 +157,13 @@ export function asRequest(
       phone: table?.phone ?? null,
     },
   } as BookingItemRequest & { itineraryItemId: string; title: string };
+}
+
+/** The plan's point, when it holds a real one (never Null Island). */
+function pointOf(plan: { destination_lat?: unknown; destination_lng?: unknown }): { lat?: number; lng?: number } {
+  const lat = Number(plan.destination_lat), lng = Number(plan.destination_lng);
+  if (plan.destination_lat == null || plan.destination_lng == null) return {};
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return {};
+  if (Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01) return {};
+  return { lat, lng };
 }

@@ -81,6 +81,12 @@ export interface BookingItemRequest {
     hotelId?: string;      // LiteAPI hotel id if already selected
     city?: string;
     countryCode?: string;  // ISO-2. LiteAPI refuses a city on its own.
+    /**
+     * The trip's own point. Searched by when held: a city name alone found
+     * Charleston, West Virginia for a Charleston, South Carolina trip.
+     */
+    lat?: number;
+    lng?: number;
     checkin: string;
     checkout: string;
     rooms: number;

@@ -469,3 +469,16 @@ test('the trip screen reads the group only once it has loaded — "Everyone\'s i
   assert.ok(start > 0 && guard > start);
   assert.match(src.slice(start, guard), /membersList\.length\|\|group\?\.memberIds\?\.length/);
 });
+
+test('a hotel is searched at the trip\'s own point, never by a city name another state shares', async () => {
+  const { whereToSearch, HOTEL_RADIUS_METERS } = await import('../../lib/booking/providers/hotels.liteapi.ts');
+  assert.deepEqual(whereToSearch({ city: 'Charleston', countryCode: 'US', lat: 32.788, lng: -79.94 }),
+    { latitude: 32.788, longitude: -79.94, radius: HOTEL_RADIUS_METERS });
+  assert.deepEqual(whereToSearch({ city: 'Charleston', countryCode: 'US' }), { cityName: 'Charleston', countryCode: 'US' });
+  const { asRequest } = await import('../../lib/booking/line-request.ts');
+  const r = asRequest({ id: 'h', type: 'hotel', title: 'Hotel' } as never,
+    { start_date: '2026-12-04', end_date: '2026-12-06', destination_lat: 32.788, destination_lng: -79.94 },
+    { planId: 'p', groupId: 'g' }, 'Charleston', 'US', 2, null as never, null as never, null as never) as { hotel?: { lat?: number; lng?: number } } | null;
+  assert.equal(r?.hotel?.lat, 32.788);
+  assert.equal(r?.hotel?.lng, -79.94);
+});

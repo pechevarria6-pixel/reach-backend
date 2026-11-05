@@ -122,6 +122,19 @@ const titleCase = (t: unknown) => typeof t === 'string'
  * Only hotels LiteAPI will actually sell a room in for these dates; a name
  * we cannot find is left out rather than shown as a code.
  */
+/**
+ * Where to look: the trip's own point when held, within a short drive of it,
+ * else the city by name. A name alone is ambiguous — "Charleston", "US" gave
+ * a hotel in Charleston, West Virginia for a South Carolina trip.
+ */
+export const HOTEL_RADIUS_METERS = 15000;
+export function whereToSearch(h: { city?: string; countryCode?: string; lat?: number; lng?: number }): Record<string, unknown> {
+  if (typeof h.lat === 'number' && typeof h.lng === 'number' && Number.isFinite(h.lat) && Number.isFinite(h.lng)) {
+    return { latitude: h.lat, longitude: h.lng, radius: HOTEL_RADIUS_METERS };
+  }
+  return h.city && h.countryCode ? { cityName: h.city, countryCode: h.countryCode } : {};
+}
+
 export async function hotelOptions(req: BookingItemRequest, limit = 6) {
   if (!isConfigured('LITEAPI_KEY')) return { error: 'Hotels are switched off.', options: [] };
   const h = req.hotel;
@@ -131,7 +144,7 @@ export async function hotelOptions(req: BookingItemRequest, limit = 6) {
     data = await liteFetch('/hotels/rates', { method: 'POST', body: JSON.stringify({
       checkin: h.checkin, checkout: h.checkout, currency: 'USD', guestNationality: 'US',
       occupancies: occupancyOf(req),
-      cityName: h.city, countryCode: h.countryCode,
+      ...whereToSearch(h),
     }) });
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Could not search hotels.', options: [] };
@@ -182,7 +195,7 @@ export const liteApiHotels: BookingProvider = {
     // longitude, placeId, lastUpdatedAt, IATA code, or hotelIds". A city name
     // on its own is refused, which is what the first end-to-end run hit.
     if (h.hotelId) body.hotelIds = [h.hotelId];
-    else if (h.city && h.countryCode) { body.cityName = h.city; body.countryCode = h.countryCode; }
+    else Object.assign(body, whereToSearch(h));
 
     const data = await liteFetch('/hotels/rates', { method: 'POST', body: JSON.stringify(body) });
     // The hotel that was priced, and no other. A pinned hotel with no rates is
