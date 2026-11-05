@@ -438,8 +438,9 @@ export function everyoneVotedCopy(p: {
 }
 
 /** The group lane's name for planTally. */
-export const detailTally = (p: Parameters<typeof planTally>[0] & { votes: VoteRow[] | null | undefined }) =>
-  planTally({ ...p, votes: p.votes ?? [] });
+export function detailTally(p: Omit<Parameters<typeof planTally>[0], 'votes'> & { votes: VoteRow[] | null | undefined }) {
+  return planTally({ ...p, votes: p.votes ?? [] });
+}
 
 // ─── One undecided group trip at a time ─────────────────────────────────
 

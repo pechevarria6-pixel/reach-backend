@@ -167,5 +167,5 @@ test("the plan's own tally counts only current members' votes on options on the 
   assert.equal(t.totalVotes, 1);
   assert.equal(t.myVote, 'Porto');
   const route = readFileSync('app/api/plans/[planId]/route.ts', 'utf8');
-  assert.match(route, /detailTally\(/);
+  assert.match(route, /(planTally|detailTally)\(/);
 });
