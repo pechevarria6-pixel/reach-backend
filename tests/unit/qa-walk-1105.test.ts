@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   waitingFor, planStageLabel, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, planCalled,
+  waitRefusal, changeRefusal, planCalledAtStart,
 } from '../../lib/plan-words.ts';
 import { getNextAction, type NextActionInput } from '../../lib/next-action.ts';
 import { stepsFor, stepCounter } from '../../lib/quiz-steps.ts';
@@ -58,7 +59,7 @@ test('2: a failed "Plan my days for me" stays on screen under the button, and th
 test('2: "Find our trips" shows the server\'s message as it is, with nothing added', () => {
   const trip = fn('GroupTripScreen');
   assert.match(trip, /const msg=err\.error\|\|"Generation failed";/);
-  assert.match(trip, /setError\(msg\);setErrorStatus\(res\.status\);/);
+  assert.match(trip, /setError\(msg\);setErrorWaits\(waitRefusal\(res\.status,err\)\);/);
   assert.match(trip, /\{shownError\}/);
   assert.doesNotMatch(trip, /setError\(`\$\{msg\}.*try again/i);
 });
@@ -168,7 +169,7 @@ test('9: the step total does not drop when an answer settles a later question', 
 test('9: the quiz and the draft card count with the flow\'s own list', () => {
   assert.match(fn('TripQuiz'), /Step \{counter\.at\} of \{counter\.total\}/);
   assert.doesNotMatch(fn('TripQuiz'), /Step \{qStep\+1\} of \{totalSteps\}/);
-  assert.match(APP, /const totalSteps=createPlanSteps\(dr\.planType\)\.length;/);
+  assert.match(APP, /const totalSteps=dr\.planType\?createPlanSteps\(dr\.planType\)\.length:null;/);
   assert.equal(createPlanSteps('restaurant').length, 5, 'the draft card said 4');
 });
 
@@ -202,7 +203,7 @@ test('12: while votes are closed the wait is said first, and the vote faces wait
   assert.ok(closed > 0 && closed < options, 'the closed state comes before the options');
   const openBlock = vote.indexOf('{votingOpen&&(()=>{');
   assert.ok(openBlock >= 0 && openBlock < faces && faces < vote.indexOf('})()}', openBlock), 'the vote faces only inside the votes-open block');
-  assert.match(vote, /Voting opens once everyone has answered\./);
+  assert.doesNotMatch(vote, /Voting opens once everyone has answered\./, 'said once, in the box above, not on every option');
 });
 
 // ── 13. The heading says what is being voted on ─────────────────────────
@@ -260,7 +261,7 @@ test('18: &change=<line> from the weather ping opens that line\'s Change sheet',
   assert.match(APP, /params\.delete\("change"\)/, 'cleared, so a refresh does not reopen it');
   const plan = fn('PlanDetailScreen');
   assert.match(plan, /changeLineId=null\}\)/);
-  assert.match(plan, /if\(line&&CHANGEABLE_TYPES\.has\(line\.type\)\)setChanging\(line\);/);
+  assert.match(plan, /const said=changeRefusal\(line,mayChangeRef\.current\);\s*if\(said\)toast\(said\);else setChanging\(line\);/);
 });
 
 // ── 19. Signing out forgets the device ──────────────────────────────────
@@ -296,4 +297,98 @@ test('19: both ways out call it before the session ends, and the wallet cache is
   assert.ok(cache);
   assert.match(read('lib/push-client.ts'), new RegExp(`caches\\.delete\\('${cache}'\\)`));
   assert.match(read('app/api/push/route.ts'), /export async function DELETE/, 'the route to forget it exists');
+});
+
+// ─── Review of the walk's fixes ─────────────────────────────────────────
+
+test('review 2: an event with only the venue\'s homepage is not said to sell tickets there', () => {
+  const gig = { id: 'l-g', title: 'Gig', venue_name: 'The Pour House', type: 'event', booking_mode: 'ahead', venue_website: 'https://pourhouse.example' };
+  const a = getNextAction({ ...input(A, { status: 'approved', destStyle: 'fixed', itinerary: [gig] },
+    { members: members(true), waitingOn: [], solo: false }), funding: { memberCount: 2, targetCents: 0, collectedCents: 0 } as never })!;
+  assert.equal(a.state, 'finish_elsewhere');
+  assert.doesNotMatch(a.cta?.label ?? '', /ticket/i);
+  assert.doesNotMatch(a.body ?? '', /ticket|seller/i);
+  assert.doesNotMatch(read('lib/watch/tables.ts'), /books by phone, so/);
+});
+
+const rules = (o: Partial<Parameters<typeof changeRefusal>[1]> = {}) => ({
+  may: () => false, changeable: () => true, locked: () => false, unpriced: () => false, ...o,
+});
+test('review 3: the weather link opens Change only where the screen\'s own Change button would be', () => {
+  const cafe = { type: 'restaurant', venue_name: 'Husk' };
+  assert.equal(changeRefusal(cafe, rules({ may: () => true })), null);
+  assert.equal(changeRefusal(cafe, rules({ locked: () => true })), "The plan is locked in, so changing Husk is the organiser's call.");
+  assert.equal(changeRefusal({ type: 'hotel', title: 'The stay' }, rules({ unpriced: () => true })), 'The stay has nothing priced yet to compare a change with.');
+  const plan = fn('PlanDetailScreen');
+  assert.doesNotMatch(plan, /if\(line&&CHANGEABLE_TYPES\.has\(line\.type\)\)setChanging/, 'the type alone let a member past Lock it in');
+  assert.match(plan, /mayChangeRef\.current=\{\s*may:mayChange,/);
+  assert.match(plan, /if\(!bookingsLoaded\|\|\(!funding&&!fundingFailed\)\|\|!mayChangeRef\.current\)return;/, 'waits on the funding lockedNow reads');
+});
+test('review 4: a failed bookings read says so, and "isn\'t on the plan" is said only of a line that is not', () => {
+  assert.match(changeRefusal(null, rules()) ?? '', /isn't on the plan any more/);
+  const there = changeRefusal({ type: 'transfer', title: 'Airport ride' }, rules({ changeable: () => false })) ?? '';
+  assert.doesNotMatch(there, /isn't on the plan/);
+  assert.match(there, /^Airport ride can't be swapped/);
+  assert.match(fn('PlanDetailScreen'), /if\(bookingsFailed&&!bookingsLoaded\)\{\s*changeOpened\.current=true;\s*toast\("Couldn't load this plan's bookings/);
+});
+test('review 5: the plan hero carries the safe-area inset the floating back button sits under', () => {
+  assert.match(APP, /\.hd-ov\{position:absolute;top:calc\(16px \+ env\(safe-area-inset-top\)\)/);
+  const plan = fn('PlanDetailScreen');
+  const at = plan.indexOf('<ScreenHeader onBack={onBack} overlay/>');
+  const hero = plan.slice(plan.lastIndexOf('linear-gradient(145deg', at), at);
+  assert.match(hero, /padding:"calc\(18px \+ env\(safe-area-inset-top\)\) 20px 22px"/);
+});
+test('review 7: a tie on a set place is settled, never locked in over', () => {
+  const tieInput = (me: string) => ({
+    ...input(me, { status: 'voting', destStyle: 'fixed', hasOptions: true, itinerary: [{ id: 'l1', title: 'Dinner', type: 'restaurant' }] },
+      { members: members(true), waitingOn: [], solo: false }),
+    funding: { memberCount: 2, targetCents: 0, collectedCents: 0 } as never,
+    vote: { decided: true, myVote: 'Beach', everyoneVoted: true, stillToVote: [], tied: ['Beach', 'Food'],
+      organiser: { name: 'Pat', isYou: me === A } },
+  });
+  const a = getNextAction(tieInput(A))!;
+  assert.notEqual(a.state, 'lock_in', 'Lock it in approved the plan with the tie standing');
+  assert.equal(a.title, "It's a tie");
+  assert.equal(a.cta?.label, 'Settle it →');
+  const b = getNextAction(tieInput(B))!;
+  assert.equal(b.title, 'Waiting on Pat to settle the tie');
+  // No tie: Lock it in as before.
+  const clear = getNextAction({ ...tieInput(A), vote: { ...tieInput(A).vote, tied: [] } })!;
+  assert.equal(clear.state, 'lock_in');
+});
+test('review 8: only a refusal that names who it waits on is re-said as "you"', () => {
+  assert.equal(waitRefusal(409, { error: "NEW hasn't said…", waitingOn: ['NEW'] }), true);
+  assert.equal(waitRefusal(409, { error: 'This trip was called off.' }), false);
+  assert.equal(waitRefusal(409, { error: 'Somebody has already picked where this trip goes.', alreadyDecided: true }), false);
+  assert.equal(waitRefusal(503, { waitingOn: ['NEW'] }), false);
+  assert.match(fn('GroupTripScreen'), /const shownError=errorWaits&&wait\.mine\?wait\.sentence:error;/);
+  assert.match(fn('PlanDetailScreen'), /const w=waitRefusal\(res\.status,d\)\?waitingFor\(/);
+});
+test('review 9: a plan with no name opens a sentence with a capital', () => {
+  assert.equal(planCalledAtStart({ title: 'Where next?', type: 'trip' }), 'This trip');
+  assert.equal(planCalledAtStart({ title: 'Charleston' }), 'Charleston');
+  const voting = getNextAction({ ...input(A, { title: 'Where next?', status: 'voting', hasOptions: true },
+    { members: members(true), waitingOn: [], solo: false }), vote: null })!;
+  assert.equal(voting.title, 'This trip is being voted on');
+});
+test('review 10: before a kind is picked neither the bar nor the draft card says a total', () => {
+  const flow = fn('CreatePlanFlow');
+  assert.match(flow, /\(planType\?STEPS:STEPS\.slice\(0,step\+1\)\)\.map/);
+  assert.match(APP, /Step \{\(dr\.step\|\|0\)\+1\}\{totalSteps\?` of \$\{totalSteps\}`:""\}/);
+});
+test('review 11: no comment promises a Try again the status never gives', () => {
+  assert.doesNotMatch(fn('GroupTripScreen'), /The status decides whether a Try again is offered/);
+  assert.doesNotMatch(fn('GroupTripScreen'), /errorStatus/);
+});
+test('review 12: a sign-out that fails can be tapped again, and says so', () => {
+  const at = APP.indexOf('const handleSignOut=async()=>{');
+  const body = APP.slice(at, APP.indexOf('\n  };', at));
+  assert.match(body, /try\{await onSignOut\(\);\}\s*catch\(e\)\{[^}]*signingOut\.current=false;/);
+  assert.match(body, /Couldn't sign you out/);
+});
+test('review 13: a throw after the server answered is not blamed on the connection', () => {
+  const picks = fn('TripPicks');
+  assert.match(picks, /const r=await fetch\("\/api\/recommendations\/trips"\+q\);\s*answered=true;/);
+  assert.match(picks, /message:answered\?OUR_SIDE:"Couldn't reach Reach/);
+  assert.match(fn('GroupTripScreen'), /setError\(answered\?OUR_SIDE:"Couldn't reach Reach/);
 });

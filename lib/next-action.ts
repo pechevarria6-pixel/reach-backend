@@ -70,7 +70,7 @@ import { midClaim } from './booking/claim.ts';
 import { bookingTracker, type TrackLine } from './plan-steps.ts';
 import { dateSaid, clockSaid } from './line-when.ts';
 import { reserveMarkOf, shortClock, type ReservePath } from './reservations/reserve-state.ts';
-import { planStageLabel, planCalled } from './plan-words.ts';
+import { planStageLabel, planCalled, planCalledAtStart } from './plan-words.ts';
 
 export const NEXT_STATES = [
   'needs_trip_input',
@@ -227,6 +227,8 @@ export interface VoteView {
   /** 'you' for the reader, first names for everyone else. */
   stillToVote?: string[] | null;
   organiser?: { name: string; isYou: boolean } | null;
+  /** The options level at the top when two or more are; empty otherwise. */
+  tied?: string[] | null;
 }
 
 export interface NextActionInput {
@@ -301,6 +303,8 @@ const trips = (plan: NextPlan) => (plan.type === 'restaurant' ? 'nights out' : '
 // "Where next?" is the placeholder an undecided trip is saved under, not a
 // name: "Nothing is picked for Where next? yet" was the sentence it made.
 const called = (plan: NextPlan) => planCalled(plan);
+/** The same, opening a sentence: "this trip is being voted on" began lowercase. */
+const Called = (plan: NextPlan) => planCalledAtStart(plan);
 
 // ─── The answer ─────────────────────────────────────────────────────────
 
@@ -456,7 +460,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       if (!v) {
         // The vote could not be read, so whether this person has voted is
         // not known. Said as the vote being open, which is true.
-        return say({ state: 'vote_open', title: `${called(plan)} is being voted on`, body: null,
+        return say({ state: 'vote_open', title: `${Called(plan)} is being voted on`, body: null,
           cta: { label: 'Open the vote →', ...nav('planDetail', 'vote') }, chip: 'Voting' });
       }
       if (!v.myVote) {
@@ -467,6 +471,23 @@ export function getNextAction(input: NextActionInput): NextAction | null {
         const still = (v.stillToVote ?? []).filter(n => n !== 'you');
         const w = waitOn(still, `Waiting on ${list(still)}`, `You've voted. The vote on ${called(plan)} is still open.`,
           remind(still, 'vote'));
+        if (w) return w;
+      }
+      // A tie on a set place is the organiser's to settle, on the vote tab
+      // ("Go with X" keeps X and locks the plan in with it). Offering "Lock
+      // it in" here as well was a second way to close the vote — and that
+      // one approved the plan with the tie standing and every option still
+      // on it.
+      const tied = (v.tied ?? []).filter(t => typeof t === 'string' && t.trim());
+      if (!undecided && v.everyoneVoted && tied.length > 1) {
+        if (organiser) {
+          return say({ state: 'vote_open', title: "It's a tie",
+            body: `${list(tied)} have the same votes. Picking one locks the plan in with it.`,
+            cta: { label: 'Settle it →', ...nav('planDetail', 'vote') }, chip: 'Voting' });
+        }
+        const who = organiserName ?? 'the organiser';
+        const w = waitOn([who], `Waiting on ${who} to settle the tie`,
+          `Everyone has voted, and ${list(tied)} are level.`, { label: 'See the votes →', ...nav('planDetail', 'vote') });
         if (w) return w;
       }
       // A vote on WHERE ends in a pick. A vote on a set place has no pick of
@@ -502,7 +523,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     }
 
     if (!lines.length) {
-      return say({ state: 'needs_trip_input', title: 'Plan the days', body: `${called(plan)} has no day-by-day plan yet.`,
+      return say({ state: 'needs_trip_input', title: 'Plan the days', body: `${Called(plan)} has no day-by-day plan yet.`,
         cta: { label: 'Plan them →', ...nav('planDetail', 'itinerary') }, chip: 'Planning' });
     }
 

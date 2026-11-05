@@ -153,3 +153,45 @@ export function planCalled(p: { title?: string | null; type?: string | null }): 
   if (!UNNAMED.has(t.toLowerCase())) return t;
   return p.type === 'restaurant' ? 'this night out' : 'this trip';
 }
+
+/**
+ * Whether a refusal is the plan waiting on somebody's answers: a 409 whose
+ * body names who (`waitingOn`). Only that one may be re-said in the reader's
+ * own words. The same routes answer 409 for a trip called off, a pick
+ * already made or no destination yet, and a client read of who has answered
+ * that is a moment stale must not replace those with "You haven't said…".
+ */
+export function waitRefusal(status: number, body: unknown): boolean {
+  return status === 409 && Array.isArray((body as { waitingOn?: unknown } | null)?.waitingOn);
+}
+
+/** `planCalled` at the start of a sentence: "This trip is being voted on". */
+export function planCalledAtStart(p: { title?: string | null; type?: string | null }): string {
+  const c = planCalled(p);
+  return c.charAt(0).toUpperCase() + c.slice(1);
+}
+
+type ChangeLine = { type?: string | null; venue_name?: string | null; title?: string | null };
+
+/**
+ * Why the weather ping's `&change=<line>` cannot open the Change sheet on
+ * this line, or null when it can. The ping goes to every member, so `may` is
+ * the screen's own rule for its Change button (lib's `mayChange` in the plan
+ * screen): the link opens nothing the screen would hide. Each sentence is
+ * true of the line it is said about — "isn't on the plan any more" only when
+ * it isn't (it used to be said of a café that was there, not changeable).
+ */
+export function changeRefusal(line: ChangeLine | null | undefined, rules: {
+  may: (l: ChangeLine) => boolean;
+  changeable: (l: ChangeLine) => boolean;
+  locked: (l: ChangeLine) => boolean;
+  unpriced: (l: ChangeLine) => boolean;
+}): string | null {
+  if (!line) return "That line isn't on the plan any more — here's the plan as it stands.";
+  if (rules.may(line)) return null;
+  const name = line.venue_name?.trim() || line.title?.trim() || 'That line';
+  if (!rules.changeable(line)) return `${name} can't be swapped from Reach — here's the plan as it stands.`;
+  if (rules.locked(line)) return `The plan is locked in, so changing ${name} is the organiser's call.`;
+  if (rules.unpriced(line)) return `${name} has nothing priced yet to compare a change with.`;
+  return `${name} can't be changed from here — here's the plan as it stands.`;
+}

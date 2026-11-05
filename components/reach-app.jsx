@@ -31,7 +31,7 @@ import { ideaClimateFrom } from "@/lib/contracts/idea-climate";
 import { pushState, turnOnPush, forgetThisDevice } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor, stepCounter } from "@/lib/quiz-steps";
-import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords } from "@/lib/plan-words";
+import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, waitRefusal, changeRefusal } from "@/lib/plan-words";
 import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
 import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
@@ -1074,6 +1074,9 @@ function ForecastNote({f,style}){
     </div>
   );
 }
+// A request that was answered but could not be used: the problem is on our
+// side, not the person's connection.
+const OUR_SIDE="Something went wrong on our side — try again in a moment.";
 function TripPicks({push,userLocation,toast,groups}){
   const [state,setState]=useState("loading"); // loading|ready|error
   const [data,setData]=useState({picks:[],reason:null,from:null});
@@ -1100,8 +1103,13 @@ function TripPicks({push,userLocation,toast,groups}){
     const q=lat!=null&&lng!=null?`?lat=${lat}&lng=${lng}&city=${encodeURIComponent(city)}${air?`&airport=${encodeURIComponent(air)}`:""}`:"";
     setState("loading");
     (async()=>{
+      // Whether the request got an answer: a throw before it is the
+      // connection, a throw after it (an unreadable body, a card that would
+      // not build) is ours, and blaming the person's signal for it was wrong.
+      let answered=false;
       try{
         const r=await fetch("/api/recommendations/trips"+q);
+        answered=true;
         if(!live)return;
         if(!r.ok){
           console.error("[home] trip ideas returned",r.status);
@@ -1121,7 +1129,7 @@ function TripPicks({push,userLocation,toast,groups}){
         setState("ready");
       }catch(e){
         console.error("[home] trip ideas failed",e);
-        if(live){setFailure({message:"Couldn't reach Reach — check your connection.",retryIn:null});setState("error");}
+        if(live){setFailure({message:answered?OUR_SIDE:"Couldn't reach Reach — check your connection.",retryIn:null});setState("error");}
       }
     })();
     return()=>{live=false;if(timer)clearTimeout(timer);};
@@ -1422,20 +1430,25 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
           const typeLabel=dr.planType==="restaurant"?"dinner out":dr.planType==="concert"?"concert night":dr.planType==="weekend"?"weekend away":"trip";
           // The flow's own list of screens, so this says the same "of N" the
           // flow does — it was 4, 5 or 6 written here while the flow had 5, 6 or 7.
-          const totalSteps=createPlanSteps(dr.planType).length;
+          // Before a kind is picked there is no total to say: the flow shows
+          // none either, and "of 7" was the trip's count for a draft that may
+          // turn out to be a five-screen dinner.
+          const totalSteps=dr.planType?createPlanSteps(dr.planType).length:null;
           return(
             <div style={{margin:"0 20px 14px",background:`linear-gradient(135deg,${C.accentDim},rgba(108,99,255,.05))`,border:`1px solid ${C.accentBorder}`,borderRadius:16,padding:"12px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>push("createPlan",{})}>
               <div style={{fontSize:26,flexShrink:0}}>{dr.planType==="restaurant"?"🍽️":dr.planType==="concert"?"🎵":dr.planType==="weekend"?"🏡":"✈️"}</div>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Resume your draft</div>
                 <div style={{fontSize:12,color:C.t2,marginTop:2}}>
-                  {dr.planName||`New ${typeLabel}`} · Step {(dr.step||0)+1} of {totalSteps}
+                  {dr.planName||`New ${typeLabel}`} · Step {(dr.step||0)+1}{totalSteps?` of ${totalSteps}`:""}
                 </div>
-                <div style={{marginTop:6,display:"flex",gap:3}}>
-                  {Array.from({length:totalSteps}).map((_,i)=>(
-                    <div key={i} style={{flex:1,height:2,borderRadius:1,background:i<=(dr.step||0)?C.accent:C.s3}}/>
-                  ))}
-                </div>
+                {totalSteps&&(
+                  <div style={{marginTop:6,display:"flex",gap:3}}>
+                    {Array.from({length:totalSteps}).map((_,i)=>(
+                      <div key={i} style={{flex:1,height:2,borderRadius:1,background:i<=(dr.step||0)?C.accent:C.s3}}/>
+                    ))}
+                  </div>
+                )}
               </div>
               <div style={{fontSize:18,color:C.accentText,fontWeight:600}}>→</div>
             </div>
@@ -7329,10 +7342,12 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     const t=setTimeout(()=>setNudgeWait(w=>Math.max(0,w-1)),1000);
     return()=>clearTimeout(t);
   },[nudgeWait]);
-  // The status the last refusal came with. A 409 is the trip waiting on
-  // somebody — not a failure, and nothing to try again; anything else is,
-  // and gets a button to try again under the server's own words.
-  const [errorStatus,setErrorStatus]=useState(null);
+  // Whether the last refusal was the trip waiting on somebody — a 409 whose
+  // body says who (`waitingOn`). Only that one is re-said in the reader's
+  // own words; every other refusal, 409s included ("This trip was called
+  // off.", "Somebody has already picked where this trip goes."), is shown as
+  // the server sent it, whatever the client's own read of who has answered.
+  const [errorWaits,setErrorWaits]=useState(false);
   const [startDate,setStartDate]=useState("");
   const [endDate,setEndDate]=useState("");
   const [budget,setBudget]=useState("");
@@ -7489,10 +7504,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     setNightOut(extra.mode==="night");
     setNightAnswers(extra.nightPrefs||{});
     setEnrichFailed(false);
-    setStep(1);setGenerating(true);setError(null);setErrorStatus(null);
+    setStep(1);setGenerating(true);setError(null);setErrorWaits(false);
     // Where a failure lands: back on the wait for a group trip, back on the
     // quiz otherwise. Either way with the reason on the screen.
     const back=extra.planId?"wait":0;
+    let answered=false; // as in TripPicks: after an answer, a throw is ours
     try{
       const res=await fetch("/api/trips/generate",{
         method:"POST",
@@ -7517,6 +7533,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           withAnswered:extra.withAnswered===true, // organiser going ahead with who has answered; the server checks
         }),
       });
+      answered=true;
       if(res.ok){
         const data=await res.json();
         if(extra.planId&&data.shared&&data.trips?.length){
@@ -7559,8 +7576,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         }
         // The server's words as they are: it already says when the problem
         // is on our side, and "try again" on top of a 503 that said so is
-        // two answers. The status decides whether a Try again is offered.
-        setError(msg);setErrorStatus(res.status);
+        // two answers. "Find our trips" under it is the way to try again.
+        setError(msg);setErrorWaits(waitRefusal(res.status,err));
         setStep(back);
         // Somebody's answers were taken back, or the list moved: show the
         // server's own view of who it is waiting on.
@@ -7569,7 +7586,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         if(extra.planId&&err.alreadyDecided&&refreshGroup)refreshGroup(groupId);
       }
     }catch(e){
-      setError("Couldn't reach Reach — check your connection.");setErrorStatus(0);
+      console.error("[trip] finding trips failed",e);
+      setError(answered?OUR_SIDE:"Couldn't reach Reach — check your connection.");setErrorWaits(false);
       setStep(extra.planId?"wait":0);
     }finally{setGenerating(false);}
   };
@@ -8112,12 +8130,13 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // everybody, so the member being waited on was told "NEW hasn't said
         // what they want from this trip yet" about herself.
         const wait=waitingFor(answered,me,{strict:true,night:nightWait});
-        // A refusal that says who it waits on (409), when the reader is one
-        // of them, is said in the second person from the same read.
+        // A refusal that says who it waits on (409 with `waitingOn`), when
+        // the reader is one of them, is said in the second person from the
+        // same read. Any other refusal keeps the server's words.
         // Nothing to try again with here beyond the button under it: "Find
         // our trips" is the retry, and a second one beside it is the same
         // action twice.
-        const shownError=errorStatus===409&&wait.mine?wait.sentence:error;
+        const shownError=errorWaits&&wait.mine?wait.sentence:error;
         return(
           <div style={{flex:1,overflowY:"auto",padding:"0 20px 30px"}}>
             <div style={{fontSize:12.5,color:C.t3,marginBottom:4}}>
@@ -8755,7 +8774,9 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               <div style={{fontSize:11,color:C.t3}}>{planType?`${step+1} / ${STEPS.length}`:`${step+1}`}</div>
             </div>
             <div style={{display:"flex",gap:3,marginBottom:2}}>
-              {STEPS.map((_,i)=><div key={i} style={{flex:1,height:3,borderRadius:2,background:i<=step?C.accent:C.s3,transition:"background .3s"}}/>)}
+              {/* The bar says the same total as the count: none before the
+                  kind is picked, so only the screens seen so far. */}
+              {(planType?STEPS:STEPS.slice(0,step+1)).map((_,i)=><div key={i} style={{flex:1,height:3,borderRadius:2,background:i<=step?C.accent:C.s3,transition:"background .3s"}}/>)}
             </div>
           </div>
         </div>
@@ -11969,8 +11990,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // screen when nothing is broken and there is something to do about it.
       // Said in the second person when the reader is who it waits on: the
       // server names everybody, the reader included.
+      // Only a 409 that names who it waits on is re-said: the same route
+      // answers 409 for a trip called off or one with no destination, and a
+      // stale read of who has answered must not paper over those.
       if(res.status===409){
-        const w=waitingFor(readiness?.preferences,me,{night:oneEvening});
+        const w=waitRefusal(res.status,d)?waitingFor(readiness?.preferences,me,{night:oneEvening}):{mine:false,sentence:null};
         setBuildError({msg:(w.mine&&w.sentence)||d.error||((group?.memberIds||[]).length>1?"Waiting on the rest of the group":"Not ready to plan the days yet"),retry:false,answer:w.mine});
         setBuilding(false);return;
       }
@@ -12101,17 +12125,27 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const [bookingsFailed,setBookingsFailed]=useState(false);
   // Opened from the weather ping's link (`&change=<line>`): the Change sheet
   // on that line, once — the ping says "this line has weather against it",
-  // and the sheet is where something can be done about it. Only a line still
-  // on the plan, of a kind that can be changed; anything else just opens the
-  // plan, which is where the ping's words are true too.
+  // and the sheet is where something can be done about it. The ping goes to
+  // every member, so the link opens the sheet only where the screen's own
+  // Change button would be there (`mayChange`, which reads the bookings and
+  // the funding — so it waits for both). Anything else says why, in words
+  // true of this line, and leaves the plan open; a failed read says so too,
+  // rather than opening nothing and saying nothing.
   const changeOpened=useRef(false);
+  const mayChangeRef=useRef(null);
   useEffect(()=>{
-    if(!changeLineId||changeOpened.current||!plan||!bookingsLoaded)return;
+    if(!changeLineId||changeOpened.current||!plan)return;
+    if(bookingsFailed&&!bookingsLoaded){
+      changeOpened.current=true;
+      toast("Couldn't load this plan's bookings, so Change can't open yet — try the link again in a moment.");
+      return;
+    }
+    if(!bookingsLoaded||(!funding&&!fundingFailed)||!mayChangeRef.current)return;
     changeOpened.current=true;
     const line=(plan.itinerary||[]).find(i=>i?.id!=null&&String(i.id)===String(changeLineId));
-    if(line&&CHANGEABLE_TYPES.has(line.type))setChanging(line);
-    else toast("That line isn't on the plan any more — here's the plan as it stands.");
-  },[changeLineId,!!plan,bookingsLoaded]);
+    const said=changeRefusal(line,mayChangeRef.current);
+    if(said)toast(said);else setChanging(line);
+  },[changeLineId,!!plan,bookingsLoaded,bookingsFailed,!!funding,fundingFailed]);
 
   // Suggestions are a group's, before Lock it in; the server answers empty
   // on a trip for one and once it is locked, and before its SQL is run.
@@ -12319,6 +12353,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   const mayChange=item=>!booked&&!!item?.id&&!isTempId(planId)&&CHANGEABLE_TYPES.has(item.type)
     &&(soloTrip||!lockedNow||organiserHere||bookedItMyself(item))
     &&(!PRICED_TYPES.has(item.type)||!!bookingFor(item,planBookings));
+  mayChangeRef.current={
+    may:mayChange,
+    changeable:item=>CHANGEABLE_TYPES.has(item.type),
+    locked:item=>!soloTrip&&lockedNow&&!organiserHere&&!bookedItMyself(item),
+    unpriced:item=>PRICED_TYPES.has(item.type)&&!bookingFor(item,planBookings),
+  };
   const ChangeLink=({item})=>mayChange(item)?(
     <button onClick={()=>setChanging(item)}
       style={{background:"none",border:"none",padding:"5px 0 0",color:C.accentText,fontSize:12,fontWeight:600,cursor:"pointer"}}>
@@ -12546,11 +12586,14 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           toast={toast} onClose={()=>setChanging(null)} onSwapped={lineSwapped}
           onList={setLineSuggestions} onBookingsChanged={refreshBookings}/>
       )}
-      <div style={{background:`linear-gradient(145deg,#1a1060,${C.accent})`,padding:"18px 20px 22px",flexShrink:0}}>
+      <div style={{background:`linear-gradient(145deg,#1a1060,${C.accent})`,padding:"calc(18px + env(safe-area-inset-top)) 20px 22px",flexShrink:0}}>
         {/* The back button floats (position:absolute), so it is not in this
             row: with space-between the pill was the row's only item and sat
             at the left, under the back button. The row keeps the button's
-            44px, and the pill goes right. */}
+            44px, and the pill goes right. The button sits at 16px plus the
+            safe-area inset (.hd-ov), so the hero's top padding carries the
+            same inset: without it, in the installed app (viewportFit cover)
+            the button dropped below this row onto the plan's title. */}
         <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",minHeight:44,marginBottom:14}}>
           <ScreenHeader onBack={onBack} overlay/>
           <button className="bsm" style={{marginLeft:"auto",background:"rgba(255,255,255,.15)",color:"white",border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
@@ -13407,9 +13450,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     </div>
                   </div>
                   <div className="pb-t" style={{marginBottom:10}}><div className="pb-f" style={{width:`${pct}%`}}/></div>
-                  {!votingOpen?(
-                    <div style={{fontSize:12,color:C.t3}}>Voting opens once everyone has answered.</div>
-                  ):canVote?(
+                  {/* Closed: the box above already says who it waits on, once —
+                      the greyed card says the rest. A line on every card
+                      repeated it (no redundancy). */}
+                  {!votingOpen?null:canVote?(
                     <div style={{display:"flex",gap:8}}>
                       {voteView?.vetoesAvailable&&!mine&&(
                         <button disabled={!!voteBusy} onClick={()=>vetoOption(opt,!vetoed)}
@@ -17106,7 +17150,19 @@ export default function ReachApp({realUser,onSignOut}={}){
     if(signingOut.current)return;
     signingOut.current=true;
     setStack([]);setTab("home");
-    if(onSignOut){showToast("Signing you out…");onSignOut();return;}
+    // A sign-out that fails says so and can be tapped again: the guard was
+    // set and never cleared, so one rejected signOut left the button dead
+    // until a reload.
+    if(onSignOut){
+      showToast("Signing you out…");
+      try{await onSignOut();}
+      catch(e){
+        console.error("[sign-out] the session did not end",e);
+        signingOut.current=false;
+        showToast("Couldn't sign you out — try again in a moment.");
+      }
+      return;
+    }
     // No Clerk in the tree (tests, storybook): fall back to a hard reload so
     // the guard re-evaluates rather than pretending.
     await Promise.race([forgetThisDevice(),new Promise(r=>setTimeout(r,4000))]);

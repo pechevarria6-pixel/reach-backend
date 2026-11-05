@@ -76,7 +76,9 @@ export default function ReachAppWrapper() {
   // person on the phone gets neither the last account's pings nor its
   // confirmation numbers. Capped: a slow network never holds a sign-out.
   const signOutHere = async () => {
-    await Promise.race([forgetThisDevice(), new Promise(r => setTimeout(r, 4000))]);
+    // forgetThisDevice failing never stops the sign-out; signOut failing is
+    // thrown to the caller, which says so and lets it be tapped again.
+    await Promise.race([forgetThisDevice().catch(() => undefined), new Promise(r => setTimeout(r, 4000))]);
     await signOut({ redirectUrl: '/sign-in' });
   };
   return <ReachAppCore realUser={realUser} onSignOut={signOutHere} />;
