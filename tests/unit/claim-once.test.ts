@@ -7,10 +7,21 @@ import { claimOnce, claimOnceOutcome } from '../../lib/everyone-in.ts';
 // the network does, so two requests started together interleave: both reads
 // land before either insert. That is a double tap, and the case a
 // read-then-write check gets wrong.
-function fakeAudit(opts: { failRead?: boolean; failInsert?: boolean } = {}) {
-  const rows: { id: string; action: string; resource_id: string; created_at: number }[] = [];
+// `uuidColumn`: audit_logs.resource_id typed uuid, as the live table may be
+// (sql/core-schema.sql was written down after the fact). Postgres then
+// refuses any other value there, on read and on write, with 22P02.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type AuditRow = { id: string; action: string; resource_id: string; metadata?: Record<string, unknown>; created_at: number };
+function fakeAudit(opts: { failRead?: boolean; failInsert?: boolean; uuidColumn?: boolean } = {}) {
+  const rows: AuditRow[] = [];
   let seq = 0;
   const later = <T>(v: T) => new Promise<T>(r => setTimeout(() => r(v), 0));
+  const bad = (v: unknown) => opts.uuidColumn && !UUID.test(String(v));
+  const refused = { data: null, error: { code: '22P02' } };
+  const field = (r: AuditRow, col: string) => {
+    const [c, k] = col.split('->>');
+    return k === undefined ? (r as Record<string, unknown>)[c] : r.metadata?.[k];
+  };
   const db = {
     from(table: string) {
       assert.equal(table, 'audit_logs');
@@ -21,20 +32,22 @@ function fakeAudit(opts: { failRead?: boolean; failInsert?: boolean } = {}) {
         order() { return q; },
         limit(n: number) {
           if (opts.failRead) return later({ data: null, error: { code: 'XX000' } });
+          if (bad(filters.resource_id)) return later(refused);
           const hit = rows
-            .filter(r => r.action === filters.action && r.resource_id === filters.resource_id)
+            .filter(r => Object.entries(filters).every(([c, v]) => field(r, c) === v))
             .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
             .slice(0, n).map(r => ({ id: r.id }));
           return later({ data: hit, error: null });
         },
-        insert(row: { action: string; resource_id: string }) {
+        insert(row: { action: string; resource_id: string; metadata?: Record<string, unknown> }) {
           return {
             select() {
               return {
                 single() {
                   if (opts.failInsert) return later({ data: null, error: { code: '23503' } });
+                  if (bad(row.resource_id)) return later(refused);
                   const id = `row-${String(++seq).padStart(3, '0')}`;
-                  rows.push({ id, action: row.action, resource_id: row.resource_id, created_at: seq });
+                  rows.push({ id, action: row.action, resource_id: row.resource_id, metadata: row.metadata, created_at: seq });
                   return later({ data: { id }, error: null });
                 },
               };
@@ -76,4 +89,27 @@ test('a table that cannot be read or written is an error, not "already done"', a
   assert.equal(await claimOnceOutcome(fakeAudit({ failRead: true }).db, 'p1', 'u1', 'x', 'k'), 'error');
   assert.equal(await claimOnceOutcome(fakeAudit({ failInsert: true }).db, 'p1', 'u1', 'x', 'k'), 'error');
   assert.equal(await claimOnce(fakeAudit({ failInsert: true }).db, 'p1', 'u1', 'x', 'k'), false);
+});
+
+// The live run on 2026-11-05: B cast the last vote on a Charleston trip and
+// the organiser was never told "Everyone has voted". The claim was keyed
+// '<plan>:votes' in a column that holds uuids, so it was refused, read as
+// 'error', and the announcement went to nobody. The celebration's
+// '<plan>:<person>' key had the same fault.
+test('a keyed claim holds where audit_logs.resource_id only takes a uuid', async () => {
+  const plan = '190b7d21-5acd-4234-8381-8e38fff8ad08';
+  const org = '0adf73af-e5ba-4135-88fd-8aa2a53f20fc';
+  const b = '74314b48-1f1c-47f7-80f6-b36297587472';
+  const { db } = fakeAudit({ uuidColumn: true });
+  assert.equal(await claimOnceOutcome(db, plan, b, 'everyone_voted', `${plan}:votes`), 'first');
+  assert.equal(await claimOnceOutcome(db, plan, org, 'everyone_voted', `${plan}:votes`), 'taken');
+  // A new set of ideas is a new announcement.
+  assert.equal(await claimOnceOutcome(db, plan, b, 'everyone_voted', `${plan}:set-2`), 'first');
+  // Per person, on the same plan.
+  assert.equal(await claimOnceOutcome(db, plan, org, 'celebrated_booked', `${plan}:${org}`), 'first');
+  assert.equal(await claimOnceOutcome(db, plan, b, 'celebrated_booked', `${plan}:${b}`), 'first');
+  assert.equal(await claimOnceOutcome(db, plan, b, 'celebrated_booked', `${plan}:${b}`), 'taken');
+  // The plain per-plan claim is unchanged.
+  assert.equal(await claimOnceOutcome(db, plan, b), 'first');
+  assert.equal(await claimOnceOutcome(db, plan, org), 'taken');
 });

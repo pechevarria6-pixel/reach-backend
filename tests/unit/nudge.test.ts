@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   claimNudge, releaseNudge, limitsNudge, NUDGE_ACTION,
-  claimPeople, releasePeople, nudgedUntil, personKey, PERSON_NUDGE_ACTION,
+  claimPeople, releasePeople, nudgedUntil, PERSON_NUDGE_ACTION,
   fundingStanding,
 } from '../../lib/nudge.ts';
 
@@ -13,8 +13,19 @@ type Row = { id: string; action: string; resource_id: string; created_at: string
 // what lib/nudge.ts asks of it, over rows held in memory. Every call yields
 // to the event loop before it answers, the way a network round trip does, so
 // two requests started together really do interleave.
-function fakeDb(rows: Row[] = []) {
+// `uuidColumn`: audit_logs.resource_id typed uuid, as the live table may be —
+// sql/core-schema.sql was written down after the fact, and every other
+// writer puts a uuid there. Postgres then refuses any other value, read or
+// write, with 22P02.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const field = (r: Row, col: string) => {
+  const [c, k] = col.split('->>');
+  return k === undefined ? r[c] : (r[c] as Record<string, unknown> | undefined)?.[k];
+};
+function fakeDb(rows: Row[] = [], opts: { uuidColumn?: boolean } = {}) {
   let n = 0;
+  const bad = (v: unknown) => opts.uuidColumn && !UUID.test(String(v));
+  const refused = { data: null, error: { code: '22P02', message: 'invalid input syntax for type uuid' } };
   const log: string[] = [];
   const tick = () => new Promise(r => setImmediate(r));
   const db = {
@@ -23,14 +34,16 @@ function fakeDb(rows: Row[] = []) {
       return {
         select() {
           const filters: Array<(r: Row) => boolean> = [];
+          let invalid = false;
           const q: any = {
-            eq(col: string, v: unknown) { filters.push(r => r[col] === v); return q; },
-            in(col: string, vs: unknown[]) { filters.push(r => vs.includes(r[col])); return q; },
+            eq(col: string, v: unknown) { if (col === 'resource_id' && bad(v)) invalid = true; filters.push(r => field(r, col) === v); return q; },
+            in(col: string, vs: unknown[]) { if (col === 'resource_id' && vs.some(bad)) invalid = true; filters.push(r => vs.includes(field(r, col))); return q; },
             gte(col: string, v: string) { filters.push(r => String(r[col]) >= v); return q; },
             order() { return q; },
             then(ok: (v: unknown) => void, bad?: (e: unknown) => void) {
               return tick().then(() => {
                 log.push('read');
+                if (invalid) return refused;
                 const data = rows.filter(r => filters.every(f => f(r)))
                   .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
                 return { data, error: null };
@@ -44,15 +57,18 @@ function fakeDb(rows: Row[] = []) {
           const write = async () => {
             await tick();
             log.push('insert');
+            if ((many ? input : [input]).some((row: any) => bad(row.resource_id))) return null;
             const made = (many ? input : [input]).map((row: any) => ({ id: `z${++n}`, created_at: db.now, ...row }));
             rows.push(...made);
             return made;
           };
           return {
             select: () => ({
-              single: async () => ({ data: { id: (await write())[0].id }, error: null }),
-              then: (ok: (v: unknown) => void, bad?: (e: unknown) => void) =>
-                write().then(made => ({ data: made.map((m: Row) => ({ id: m.id, resource_id: m.resource_id })), error: null })).then(ok, bad),
+              single: async () => { const made = await write(); return made ? { data: { id: made[0].id }, error: null } : refused; },
+              then: (ok: (v: unknown) => void, no?: (e: unknown) => void) =>
+                write().then(made => made
+                  ? { data: made.map((m: Row) => ({ id: m.id, resource_id: m.resource_id, metadata: m.metadata })), error: null }
+                  : refused).then(ok, no),
             }),
           };
         },
@@ -78,7 +94,8 @@ function fakeDb(rows: Row[] = []) {
 
 const at = (iso: string) => new Date(iso);
 const nudgesFor = (db: ReturnType<typeof fakeDb>, planId: string, userId: string) =>
-  db.rows.filter(r => r.action === PERSON_NUDGE_ACTION && r.resource_id === personKey(planId, userId));
+  db.rows.filter(r => r.action === PERSON_NUDGE_ACTION && r.resource_id === planId
+    && (r.metadata as { to?: string } | undefined)?.to === userId);
 
 // ─── The minute, per trip ────────────────────────────────────────────────
 
@@ -213,6 +230,28 @@ test('the faces know when each person can next be nudged', async () => {
   await claimPeople(db as never, 'plan-1', 'org', ['sam'], at('2026-09-23T12:00:00.000Z'));
   const until = await nudgedUntil(db as never, 'plan-1', ['sam', 'jo'], at('2026-09-23T13:00:00.000Z'));
   assert.deepEqual(until, { sam: '2026-09-24T00:00:00.000Z', jo: null });
+});
+
+// The live run on 2026-11-05: A nudged B to pay twice and then pressed
+// "Remind everyone", inside five seconds, and all three went — three bells
+// and three emails. Each claim was keyed '<plan>:<person>' in a column that
+// holds uuids, so every read and write was refused and the claim let the
+// nudge through uncounted. The plan's own id is the one key that column
+// takes; who was nudged goes in the metadata.
+test('the twelve hours hold where audit_logs.resource_id only takes a uuid', async () => {
+  const plan = '190b7d21-5acd-4234-8381-8e38fff8ad08';
+  const org = '0adf73af-e5ba-4135-88fd-8aa2a53f20fc';
+  const b = '74314b48-1f1c-47f7-80f6-b36297587472';
+  const db = fakeDb([], { uuidColumn: true });
+  const first = await claimPeople(db as never, plan, org, [b], at('2026-09-23T12:00:00.000Z'));
+  assert.deepEqual(first.claimed.map(c => c.userId), [b]);
+  assert.ok(first.claimed[0].claimId, 'the claim was written');
+  db.now = '2026-09-23T12:00:03.000Z';
+  const again = await claimPeople(db as never, plan, org, [b], at('2026-09-23T12:00:03.000Z'));
+  assert.deepEqual(again.claimed, [], 'a second nudge three seconds later is held');
+  assert.deepEqual(again.held.map(h => h.userId), [b]);
+  const until = await nudgedUntil(db as never, plan, [b], at('2026-09-23T13:00:00.000Z'));
+  assert.equal(until[b], '2026-09-24T00:00:00.000Z');
 });
 
 // ─── The route uses them ────────────────────────────────────────────────

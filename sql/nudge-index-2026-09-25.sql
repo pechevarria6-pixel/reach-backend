@@ -2,7 +2,7 @@
 -- lib/nudge.ts records every nudge claim in audit_logs and reads them back
 -- by action and resource_id inside a time window: once a minute per plan
 -- (prefs_nudged) and once per person per plan per twelve hours
--- (person_nudged, resource_id = '<plan id>:<user id>'). Each nudge reads
+-- (person_nudged, resource_id = the plan, metadata.to = the person). Each nudge reads
 -- twice, and audit_logs only has an index on (user_id, created_at), so
 -- each read is a scan of the whole table.
 --

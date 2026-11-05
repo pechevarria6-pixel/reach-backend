@@ -47,9 +47,17 @@ export async function claimOnceOutcome(
   db: SupabaseClient, planId: string, userId: string,
   action: string = EVERYONE_IN_ACTION, key: string = planId,
 ): Promise<'first' | 'taken' | 'error'> {
-  const first = () => db.from('audit_logs').select('id')
-    .eq('action', action).eq('resource_id', key)
-    .order('created_at', { ascending: true }).order('id', { ascending: true }).limit(1);
+  // resource_id is always the plan, and a finer key goes in the metadata. A
+  // key like '<plan>:votes' in resource_id was refused by the live table —
+  // never checked in, and every other writer puts a uuid there — so
+  // "Everyone has voted" was claimed as an error and told nobody
+  // (2026-11-05). The plain per-plan claim reads exactly as it always has.
+  const keyed = key !== planId;
+  const first = () => {
+    let q = db.from('audit_logs').select('id').eq('action', action).eq('resource_id', planId);
+    if (keyed) q = q.eq('metadata->>key', key);
+    return q.order('created_at', { ascending: true }).order('id', { ascending: true }).limit(1);
+  };
   const before = await first();
   if (before.error) {
     // Better silent than twice: this one is a courtesy, not a gate.
@@ -58,7 +66,7 @@ export async function claimOnceOutcome(
   }
   if (before.data?.length) return 'taken';
   const { data: mine, error } = await db.from('audit_logs')
-    .insert({ user_id: userId, action, resource: 'plans', resource_id: key, success: true, metadata: { plan: planId } })
+    .insert({ user_id: userId, action, resource: 'plans', resource_id: planId, success: true, metadata: keyed ? { plan: planId, key } : { plan: planId } })
     .select('id').single();
   if (error || !mine) {
     console.error('[claim-once] could not record the claim', { planId, action, code: error?.code });
