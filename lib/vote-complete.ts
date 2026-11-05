@@ -87,6 +87,26 @@ export async function tellOrganiserIfEveryoneVoted(
 }
 
 /**
+ * What the rest of the group hears when somebody opens a vote. The QA run
+ * on 2026-11-05 sent a Charleston trip to the group for a vote and the other
+ * member heard nothing: the vote waited on somebody who had no way to know
+ * it was open. Names only the options the group is shown, never a count.
+ */
+export function voteOpenedNote(p: {
+  planId: string; groupId: string; title: string | null; by: string | null; night: boolean; options: string[];
+}): Note {
+  const what = !p.title || p.title === 'Where next?' ? (p.night ? 'your next night out' : 'your next trip') : p.title;
+  const options = p.options.filter(Boolean).slice(0, 3);
+  return {
+    kind: 'vote_open',
+    title: p.by && p.by !== 'Someone' ? `${p.by} wants your vote` : 'The vote is open',
+    body: options.length ? `${options.join(' · ')} — vote on ${what}.` : `Vote on ${what}.`,
+    url: `/home?vote=${encodeURIComponent(p.planId)}&group=${encodeURIComponent(p.groupId)}`,
+    planId: p.planId,
+  };
+}
+
+/**
  * After somebody leaves a group: every vote open in it that their going
  * has completed. A failed read tells nobody — this is a courtesy, never a
  * gate, and the count itself is right whatever happens here.

@@ -12,13 +12,14 @@ import { track } from '@/lib/track';
 import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle, planTally } from '@/lib/trip-vote';
+import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle, planTally, voteTitles } from '@/lib/trip-vote';
 import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
 import { pinPlan, pinMoves } from '@/lib/trip-map';
 import { readActive, closeStale, refusalBody, refusalFor, ACTIVE_STATUSES } from '@/lib/one-active';
 import { stopPaymentsInFlight } from '@/lib/call-off-money';
+import { voteOpenedNote } from '@/lib/vote-complete';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -428,8 +429,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
   // The error used to be discarded here, so a failed or no-op update answered
   // 200 with { plan: null } and anything writing through this route could
   // silently not save.
+  // Opening a vote is announced to the rest of the group (voteOpenedNote),
+  // by whichever request moved the status: a double tap is two requests,
+  // and only one of them may find it not yet open.
+  const openingVote = updates.status === 'voting' && plan.status !== 'voting';
   const write = () => {
     let q = supabase.from('plans').update(updates).eq('id', params.planId);
+    if (openingVote) q = q.neq('status', 'voting');
     // And only on a trip still waiting: a pick from a stale vote screen must
     // not bring a called-off or closed plan back to planning.
     if (onlyIfUndecided === true) q = q.eq('destination_style', UNDECIDED).in('status', ['planning', 'voting']);
@@ -471,6 +477,27 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
       url: `/home?group=${encodeURIComponent(String(plan.group_id))}`,
       planId: params.planId,
     }, pushSender());
+  }
+  if (openingVote && !writeError && updated) {
+    // Everybody but whoever opened it: they are looking at it. A failed
+    // read of the group tells nobody — the vote is open either way, and the
+    // faces on it can still nudge.
+    const members = await membersOf(supabase, String(plan.group_id));
+    const rest = (members ?? []).map(m => m.userId).filter(id => id !== user.id);
+    if (rest.length) {
+      await notifyUsers(supabase, rest, voteOpenedNote({
+        planId: params.planId, groupId: String(plan.group_id),
+        title: updated.title ?? plan.title ?? null,
+        by: firstName(members?.find(m => m.userId === user.id)?.name ?? ''),
+        night: (updated.type ?? plan.type) === 'restaurant',
+        options: voteTitles(updated),
+      }), pushSender());
+    }
+  }
+  if (openingVote && !writeError && !updated) {
+    // The other tap opened it first. Already open is open.
+    const { data: now } = await supabase.from('plans').select('*').eq('id', params.planId).maybeSingle();
+    if (now?.status === 'voting') return NextResponse.json({ plan: now, alreadyOpen: true });
   }
   if (callingOff && !writeError && !updated) {
     // The other request called it off first. Already done is done.
