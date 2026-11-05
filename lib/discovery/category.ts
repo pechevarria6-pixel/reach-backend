@@ -47,6 +47,53 @@ export function visibleCategories(items: { category?: unknown }[]): string[] {
   return [...counts.keys()].sort((a, b) => a.localeCompare(b));
 }
 
+// ─── The groups Discover's pills are made of ────────────────────────────
+// visibleCategories gave Raleigh sixteen pills in alphabetical order,
+// straight from each provider's own words: "Sport" beside "Sports", "Music"
+// beside "Live music", "Arts & Theatre" beside "Film & theatre", and "Event"
+// and "Miscellaneous", which are both a provider saying it did not sort it.
+// The pills are a filter, not a record of who said what, so they group.
+
+export const CATEGORY_GROUPS = ['Music', 'Sport', 'Arts & stage', 'Food & drink', 'Outdoors', 'Other'] as const;
+export type CategoryGroup = (typeof CATEGORY_GROUPS)[number];
+
+// Read in this order; the first that matches wins. Outdoors before Arts so
+// "Gardens & parks" is outside; Music before Arts so "Classical music" is music.
+const GROUP_RULES: [CategoryGroup, RegExp][] = [
+  ['Outdoors', /outdoor|\bparks?\b|garden|nature|hik|trail|beach|\bzoo/i],
+  ['Music', /music|jazz|concert|\bgigs?\b|\bbands?\b|opera|nightclub|\bdj/i],
+  ['Sport', /\bsports?\b|fitness|climb|athletic|basketball|football|baseball|hockey|soccer/i],
+  ['Arts & stage', /\barts?\b|theat|\bfilm|cinema|museum|histor|galler|comedy|\bbooks?\b|talks|photo|pottery|craft/i],
+  ['Food & drink', /food|\beat\b|restaurant|coffee|caf[eé]|wine|brew|\bpubs?\b|\bbars?\b|cocktail|market|cook|drink|dining/i],
+];
+
+/** Which pill a provider's category is filed under. Anything unsorted is Other. */
+export function categoryGroup(category: unknown): CategoryGroup {
+  const text = usableCategory(category);
+  if (!text) return 'Other';
+  for (const [group, re] of GROUP_RULES) if (re.test(text)) return group;
+  return 'Other';
+}
+
+/**
+ * The pills for a set of items: each group with something behind it, most
+ * first, "Other" last whatever its count — a pill that means "unsorted" is
+ * never the first thing offered.
+ */
+export function groupPills(items: { category?: unknown }[]): { group: CategoryGroup; count: number }[] {
+  const counts = new Map<CategoryGroup, number>();
+  for (const item of items ?? []) {
+    const g = categoryGroup(item?.category);
+    counts.set(g, (counts.get(g) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([group, count]) => ({ group, count }))
+    .sort((a, b) =>
+      (a.group === 'Other' ? 1 : 0) - (b.group === 'Other' ? 1 : 0)
+      || b.count - a.count
+      || CATEGORY_GROUPS.indexOf(a.group) - CATEGORY_GROUPS.indexOf(b.group));
+}
+
 // ─── Copy that belongs to a different kind of place ─────────────────────
 // Plan f979c880 said "End the night at SPIN, a bar with … a Friday-night
 // pace good for dancing", and under it a tip about how far apart the

@@ -20,7 +20,9 @@ import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
 import { byDay, dearestDay, linesYoureOff, lineCosts } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
-import { visibleCategories } from "@/lib/discovery/category";
+import { groupPills, categoryGroup } from "@/lib/discovery/category";
+import { upcomingSections, dayRoll, capSections, rowsIn, milesOf } from "@/lib/discovery/upcoming";
+import { kindWord, withKindWord } from "@/lib/discovery/kind-word";
 import { priceLabel } from "@/lib/discovery/price-label";
 import { createPlanSteps } from "@/lib/create-plan-steps";
 import { picksFrom, seedFromPick } from "@/lib/contracts/trip-pick";
@@ -164,6 +166,20 @@ const PALETTE = {
 };
 
 const THEMES = Object.keys(PALETTE);
+
+// The type scale, in rem so it follows the reader's own text size. Discover
+// measured fourteen sizes, half of them half-pixels, all fixed in px — so a
+// phone set to large text changed nothing. Nothing here is under .75rem.
+const T = {
+  largeTitle: { fontFamily: "var(--font-display)", fontSize: "2.125rem", lineHeight: 1.1, fontWeight: 400 },
+  title2: { fontFamily: "var(--font-display)", fontSize: "1.375rem", lineHeight: 1.2, fontWeight: 400 },
+  title3: { fontFamily: "var(--font-display)", fontSize: "1.25rem", lineHeight: 1.25, fontWeight: 400 },
+  headline: { fontFamily: "var(--font-body)", fontSize: "1.0625rem", lineHeight: 1.3, fontWeight: 600 },
+  body: { fontFamily: "var(--font-body)", fontSize: "1.0625rem", lineHeight: 1.45, fontWeight: 400 },
+  subhead: { fontFamily: "var(--font-body)", fontSize: ".9375rem", lineHeight: 1.4, fontWeight: 500 },
+  footnote: { fontFamily: "var(--font-body)", fontSize: ".8125rem", lineHeight: 1.4, fontWeight: 400 },
+  caption: { fontFamily: "var(--font-body)", fontSize: ".75rem", lineHeight: 1.3, fontWeight: 500 },
+};
 // REF6 is the app's face: maroon and gold. Light is the alternative, not the
 // starting point.
 const DEFAULT_THEME = "dark";
@@ -238,8 +254,8 @@ button{min-height:44px;}
 .sc{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding-bottom:calc(90px + env(safe-area-inset-bottom));}
 .sc::-webkit-scrollbar{display:none;}
 .nb{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;background:${C.navBg};backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-top:1px solid ${C.accentBorder};padding:10px 0 max(24px,env(safe-area-inset-bottom));z-index:100;}
-.nb-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;font-family:var(--font-body);font-size:10px;font-weight:500;color:${C.t3};transition:color .15s;padding:4px 0;}
-.nb-btn.active{color:${C.accentText};}
+.nb-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;cursor:pointer;font-family:var(--font-body);font-size:min(.75rem,14px);font-weight:500;color:${C.t2};transition:color .15s;padding:4px 0;}
+.nb-btn.active{color:${C.accentText};font-weight:600;}
 .nb-btn svg{width:22px;height:22px;transition:transform .15s;}
 .nb-btn.active svg{transform:translateY(-1px);}
 .nb-dot{width:4px;height:4px;border-radius:50%;background:${C.accent};margin:0 auto;opacity:0;transition:opacity .15s;}
@@ -307,6 +323,19 @@ button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2
 /* The pin that drops when something is booked, paid or joined. */
 .pin-drop{display:inline-block;color:${C.accent};transform-origin:50% 100%;animation:pindrop .55s cubic-bezier(.3,1.4,.5,1) both;}
 .pin-drop-shadow{display:block;width:14px;height:4px;margin:2px auto 0;border-radius:50%;background:${C.accent};opacity:.35;animation:pinshadow .55s ease both;}
+/* Discover. A card is one control: it gives under a press, and under
+   reduced motion only its fill changes. Text is clamped with an ellipsis,
+   never cut with .slice(). */
+.dsc-press{transition:transform .12s ease,background-color .12s ease;}
+.dsc-press:active{transform:scale(.98);background-color:${C.s2}!important;}
+.dsc-fade{animation:fi .15s ease both;}
+.dsc-clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;}
+.dsc-roll::-webkit-scrollbar{display:none;}
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+@media (prefers-reduced-motion:reduce){
+  .dsc-press:active{transform:none;}
+  .dsc-fade{animation:none;}
+}
 /* What is coming, drawn where it will be, while it is worked out. */
 .skel{background:${C.s2};border:1px solid ${C.border};border-radius:20px;overflow:hidden;position:relative;}
 .skel-bar{background:${C.s3};border-radius:6px;height:12px;}
@@ -881,10 +910,10 @@ function PhotoFrame({src,alt,children}){
 function PhotoCredit({credit,link,style}){
   if(!credit)return null;
   const text=`Photo: ${credit}`;
-  const base={fontSize:10,color:C.t3,lineHeight:1.35,whiteSpace:"normal",overflowWrap:"anywhere",maxWidth:"100%",...style};
+  const base={fontSize:".75rem",color:C.t2,lineHeight:1.35,whiteSpace:"normal",overflowWrap:"anywhere",maxWidth:"100%",...style};
   return link&&/^https:\/\//.test(String(link))
     ?<a href={link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
-        style={{...base,display:"block",textDecoration:"none"}}>{text}</a>
+        style={{...base,display:"block",textDecoration:"none",paddingBlock:12,marginBlock:-12}}>{text}</a>
     :<div style={base}>{text}</div>;
 }
 
@@ -899,9 +928,9 @@ function photoAlt(of,title){
 // first sweep; the credit was never there.
 function OsmCredit({style}){
   return(
-    <div style={{fontSize:10.5,color:C.t3,textAlign:"center",padding:"8px 20px 0",...style}}>
+    <div style={{fontSize:".75rem",color:C.t2,textAlign:"center",padding:"8px 20px 0",...style}}>
       Venue data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer"
-        style={{color:C.t3,textDecoration:"underline"}}>OpenStreetMap contributors</a>
+        style={{color:C.t2,textDecoration:"underline",display:"inline-block",padding:"15px 0",margin:"-15px 0"}}>OpenStreetMap contributors</a>
     </div>
   );
 }
@@ -1027,12 +1056,12 @@ function ForecastNote({f,style}){
   if(!f?.line)return null;
   const sources=Array.isArray(f.sources)?f.sources:f.source?[f.source]:[];
   return(
-    <div style={{fontSize:11.5,color:C.t1,lineHeight:1.45,background:C.s2,borderRadius:10,padding:"6px 8px",...style}}>
-      <span style={{fontSize:9.5,fontWeight:700,color:C.t3,textTransform:"uppercase",letterSpacing:.4,marginRight:4}}>{f.label||"Forecast"}</span>
+    <div style={{fontSize:".8125rem",color:C.t1,lineHeight:1.4,background:C.s2,borderRadius:10,padding:"6px 8px",...style}}>
+      <span style={{fontSize:".75rem",fontWeight:700,color:C.t2,textTransform:"uppercase",letterSpacing:.4,marginRight:4}}>{f.label||"Forecast"}</span>
       {f.line}
-      <div style={{fontSize:9.5,color:C.t3,marginTop:2}}>
+      <div style={{fontSize:".75rem",color:C.t2,marginTop:2}}>
         {sources.map((s,i)=>(
-          <span key={s.name||i}>{i?" · ":""}<a href={s.link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{color:C.t3}}>{s.credit}</a></span>
+          <span key={s.name||i}>{i?" · ":""}<a href={s.link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{color:C.t2,display:"inline-block",padding:"15px 0",margin:"-15px 0"}}>{s.credit}</a></span>
         ))}
         {" · "}{fetchedAtWords(f.fetchedAt)}
       </div>
@@ -1681,10 +1710,11 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
 
   return(
     <>
-      <div {...pressable} onClick={()=>setPicking(true)}
-        style={{fontSize:13,color:C.t2,marginTop:2,cursor:setPlaceOverride?"pointer":"default"}}>
-        {city?prefix+" "+city:fallback}
-        {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap"}}>{" · change ▾"}</span>:null}
+      {/* The whole line is the control, 44pt tall: "change ▾" alone was 16pt. */}
+      <div {...pressable} data-place-line="" onClick={()=>setPicking(true)}
+        style={{fontSize:".9375rem",color:C.t2,minHeight:44,margin:"-4px 0",display:"flex",alignItems:"center",flexWrap:"wrap",cursor:setPlaceOverride?"pointer":"default"}}>
+        <span>{city?prefix+" "+city:fallback}</span>
+        {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap"}}>· change <span aria-hidden="true">▾</span></span>:null}
       </div>
       {picking&&setPlaceOverride&&(
         <div style={{marginTop:10,padding:"12px 14px",background:C.s2,
@@ -1725,6 +1755,207 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
   );
 }
 
+// ─── Discover's cards ────────────────────────────────────────────────────
+// One style per list, one action per card. Each card was a 175px hero of the
+// same orange gradient — 43 of 66 in Raleigh — with the price line set as a
+// headline, a date chip repeating the line under the title, a "Near you" that
+// repeated the 📍 chip, and a "Take a look →" doing what tapping the card
+// already did. Now the card is the one control; the ⋯ beside it holds the
+// two verdicts; every line on it is a field we hold.
+
+// A card with no photo is tinted by what it is, not painted the same orange.
+const DISCOVER_TINT={"Music":C.accentDim,"Food & drink":C.amberDim,"Outdoors":C.greenDim,
+  "Arts & stage":C.blueDim,"Sport":C.redDim,"Other":C.s2};
+
+/** "12 mi" as it is said aloud. Null when no distance is held. */
+function milesSpoken(dist){
+  const m=milesOf(dist);
+  if(m==null)return null;
+  const n=Math.round(m*10)/10;
+  return `${n} ${n===1?"mile":"miles"}`;
+}
+
+/**
+ * The price line: a held price as listed, else where to find it (priceLabel)
+ * — a caption, never a headline. A listing whose title says it is sold out
+ * says so, and that the detail has other places to look (ticketSources).
+ */
+function discoverPrice(exp){
+  if(/\bsold[\s-]*out\b/i.test(String(exp.title||"")))
+    return {text:`Sold out on ${exp.provider==="ticketmaster"?"Ticketmaster":"their site"} · other sellers inside`,known:false};
+  const p=priceLabel(exp);
+  return p.known?{text:`${p.line} as listed`,known:true}:{text:p.line,known:false};
+}
+
+/**
+ * The ⋯ beside a card: "Already done it" and "Not for me". A menu in the
+ * accessible sense — focus moves into it, arrows move within it, Escape or a
+ * tap outside closes it and puts focus back on ⋯.
+ */
+function DiscoverHide({title,open,onToggle,onClose,onRule,onPhoto}){
+  const wrap=useRef(null);
+  const btn=useRef(null);
+  const menu=useRef(null);
+  const latest=useRef(onClose);
+  latest.current=onClose;
+  useEffect(()=>{
+    if(!open)return;
+    menu.current?.querySelector('[role="menuitem"]')?.focus();
+    const close=()=>{latest.current();btn.current?.focus();};
+    const onKey=e=>{
+      if(e.key==="Escape"){e.preventDefault();close();return;}
+      if(e.key!=="ArrowDown"&&e.key!=="ArrowUp")return;
+      const items=[...(menu.current?.querySelectorAll('[role="menuitem"]')||[])];
+      if(!items.length)return;
+      e.preventDefault();
+      const i=items.indexOf(document.activeElement);
+      items[(i+(e.key==="ArrowDown"?1:-1)+items.length)%items.length].focus();
+    };
+    const onDown=e=>{ if(wrap.current&&!wrap.current.contains(e.target))close(); };
+    document.addEventListener("keydown",onKey);
+    document.addEventListener("pointerdown",onDown);
+    return()=>{document.removeEventListener("keydown",onKey);document.removeEventListener("pointerdown",onDown);};
+  },[open]);
+  const item={display:"flex",alignItems:"center",width:"100%",minHeight:44,textAlign:"left",padding:"0 16px",
+    border:"none",background:"none",cursor:"pointer",...T.subhead,color:C.t1};
+  return(
+    <div ref={wrap} style={{position:"absolute",top:4,right:4,zIndex:3}}>
+      <button ref={btn} aria-label={`Options for ${title}`} aria-haspopup="menu" aria-expanded={open}
+        onClick={onToggle}
+        style={{width:44,height:44,minHeight:44,padding:0,border:"none",background:"none",cursor:"pointer",
+          display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <span aria-hidden="true" style={{width:32,height:32,borderRadius:16,display:"flex",alignItems:"center",
+          justifyContent:"center",fontSize:"1.125rem",lineHeight:1,
+          ...(onPhoto
+            ?{background:"rgba(0,0,0,.5)",color:"#fff",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)"}
+            :{background:C.s2,color:C.t1,border:`1px solid ${C.border}`})}}>⋯</span>
+      </button>
+      {open&&(
+        <div ref={menu} role="menu" aria-label={title}
+          style={{position:"absolute",top:44,right:4,zIndex:5,background:C.s1,border:`1px solid ${C.border}`,
+            borderRadius:14,overflow:"hidden",minWidth:188,boxShadow:"0 10px 28px rgba(0,0,0,.22)"}}>
+          <button role="menuitem" tabIndex={-1} onClick={()=>onRule("done")} style={item}>Already done it</button>
+          <button role="menuitem" tabIndex={-1} onClick={()=>onRule("not_interested")}
+            style={{...item,borderTop:`1px solid ${C.border}`}}>Not for me</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "Red Hat Amphitheater · 1 mi", with the distance kept on one line. */
+function WhereLine({exp}){
+  return <>{exp.venue}{exp.venue&&exp.dist?" · ":""}{exp.dist&&<span style={{whiteSpace:"nowrap"}}>{exp.dist}</span>}</>;
+}
+
+/** A thing on: its time, its title, where and how far, its price, the forecast's word. */
+function DiscoverEventCard({exp,when,day,visited,open,onToggle,onClose,onRule,onOpen}){
+  const price=discoverPrice(exp);
+  const where=[exp.venue,exp.dist].filter(Boolean).join(" · ");
+  const spoken=[exp.title,[day,when].filter(Boolean).join(", "),
+    [exp.venue,milesSpoken(exp.dist)].filter(Boolean).join(", "),price.text,visited?"You've been":null]
+    .filter(Boolean).join(". ");
+  return(
+    <PhotoFrame src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok,img})=>(
+      <div style={{position:"relative",margin:"0 16px 8px"}}>
+        <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,boxShadow:C.cardShadow,overflow:"hidden"}}>
+          {/* Named, so it can be found: the end-to-end test opens the first. */}
+          <button id={`dsc-card-${exp.id}`} className="exp-card dsc-press" aria-label={spoken} onClick={onOpen}
+            style={{display:"flex",gap:12,alignItems:"flex-start",width:"100%",textAlign:"left",
+              padding:"16px 56px 16px 16px",background:C.s1,border:"none",cursor:"pointer",color:C.t1}}>
+            <span aria-hidden="true" style={{width:"4rem",height:"4rem",maxWidth:72,maxHeight:72,flexShrink:0,borderRadius:12,overflow:"hidden",
+              position:"relative",background:DISCOVER_TINT[categoryGroup(exp.category)],
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:"min(2rem,36px)",lineHeight:1}}>
+              {ok?img:(exp.emoji||"🎟️")}
+            </span>
+            <span style={{flex:1,minWidth:0,display:"block"}}>
+              {(when||visited)&&(
+                <span style={{display:"block",...T.footnote,fontWeight:600,color:C.t2}}>
+                  {[when,visited?"✓ You've been":null].filter(Boolean).join(" · ")}
+                </span>
+              )}
+              <span className="dsc-clamp2" style={{...T.title3,color:C.t1,marginTop:2}}>{exp.title}</span>
+              {where&&<span style={{display:"block",...T.subhead,color:C.t2,marginTop:4}}><WhereLine exp={exp}/></span>}
+              <span style={{display:"block",...T.footnote,marginTop:4,color:price.known?C.t1:C.t2,fontWeight:price.known?600:400}}>
+                {price.text}
+              </span>
+            </span>
+          </button>
+          {/* Its links are the sources' own, so it sits beside the card's
+              button rather than inside it. */}
+          {exp.weather?.line&&<div style={{padding:"0 16px 12px calc(16px + 4rem + 12px)"}}><ForecastNote f={exp.weather}/></div>}
+        </div>
+        <DiscoverHide title={exp.title} open={open} onToggle={onToggle} onClose={onClose} onRule={onRule} onPhoto={false}/>
+        {ok&&<PhotoCredit credit={exp.imageCredit} link={exp.imageLink} style={{padding:"4px 4px 0"}}/>}
+      </div>
+    )}</PhotoFrame>
+  );
+}
+
+/** A place to go: what it is, its name, where and how far, where its price is. */
+function DiscoverPlaceCard({exp,visited,open,onToggle,onClose,onRule,onOpen}){
+  const price=discoverPrice(exp);
+  const kind=kindWord(exp.kind)||exp.category||null;
+  const where=[exp.venue,exp.dist].filter(Boolean).join(" · ");
+  const because=exp.because?`Because you like ${String(exp.because).toLowerCase()}`:null;
+  const spoken=[exp.title,kind,[exp.venue,milesSpoken(exp.dist)].filter(Boolean).join(", "),
+    price.text,because,visited?"You've been":null].filter(Boolean).join(". ");
+  return(
+    <PhotoFrame src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok,img})=>{
+      const soft=ok?"rgba(255,255,255,.88)":C.t2;
+      return(
+      <div style={{position:"relative",margin:"0 16px 8px"}}>
+        <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,boxShadow:C.cardShadow,overflow:"hidden"}}>
+          <button id={`dsc-card-${exp.id}`} className="exp-card dsc-press" aria-label={spoken} onClick={onOpen}
+            style={{display:"block",width:"100%",padding:0,border:"none",background:C.s1,textAlign:"left",cursor:"pointer",color:C.t1}}>
+            <span style={{position:"relative",display:"flex",flexDirection:"column",justifyContent:"flex-end",minHeight:"9rem",
+              background:ok?"#1a1a1a":DISCOVER_TINT[categoryGroup(exp.category)],overflow:"hidden"}}>
+              {img}
+              {ok&&<span aria-hidden="true" style={{position:"absolute",inset:0,
+                background:"linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(0,0,0,.55) 62%,rgba(0,0,0,.85))"}}/>}
+              <span style={{position:"relative",display:"block",padding:"16px 56px 14px 16px"}}>
+                <span style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",...T.caption,color:soft}}>
+                  <span aria-hidden="true">{exp.emoji}</span>
+                  {kind&&<span>{kind}</span>}
+                  {visited&&<span style={{fontWeight:600,color:ok?"#fff":C.t1}}>· ✓ You've been</span>}
+                </span>
+                <span className="dsc-clamp2" style={{...T.title2,color:ok?"#fff":C.t1,marginTop:4}}>{exp.title}</span>
+                {where&&<span style={{display:"block",...T.subhead,color:soft,marginTop:2}}><WhereLine exp={exp}/></span>}
+              </span>
+            </span>
+            <span style={{display:"block",padding:"12px 16px",borderTop:`1px solid ${C.border}`}}>
+              <span style={{display:"block",...T.footnote,color:price.known?C.t1:C.t2,fontWeight:price.known?600:400}}>{price.text}</span>
+              {because&&<span style={{display:"block",...T.footnote,color:C.t2,marginTop:2}}>{because}</span>}
+            </span>
+          </button>
+          {exp.weather?.line&&<div style={{padding:"0 16px 12px"}}><ForecastNote f={exp.weather}/></div>}
+        </div>
+        <DiscoverHide title={exp.title} open={open} onToggle={onToggle} onClose={onClose} onRule={onRule} onPhoto={ok}/>
+        {ok&&<PhotoCredit credit={exp.imageCredit} link={exp.imageLink} style={{padding:"4px 4px 0"}}/>}
+      </div>
+      );
+    }}</PhotoFrame>
+  );
+}
+
+/** Three rows shaped like the cards they stand for, while the list is worked out. */
+function DiscoverSkeleton(){
+  return(
+    <div aria-hidden="true">
+      {[0,1,2].map(i=>(
+        <div key={i} className="skel" style={{margin:"0 16px 8px",borderRadius:16,padding:16,display:"flex",gap:12}}>
+          <div style={{width:"4rem",height:"4rem",borderRadius:12,background:C.s3,flexShrink:0}}/>
+          <div style={{flex:1,display:"flex",flexDirection:"column",gap:8,paddingTop:4}}>
+            <div className="skel-bar" style={{width:"30%"}}/>
+            <div className="skel-bar" style={{width:"85%",height:16}}/>
+            <div className="skel-bar" style={{width:"55%"}}/>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,onQuizChange}){
   // Whether the browser has actually been refused, or has simply never
   // answered. Both leave us without a location and they are not the same
@@ -1736,21 +1967,24 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
   // returned neither callback for over twenty seconds, past its own timeout.
   // That person was being told to allow location.
   const [geoAllowed,setGeoAllowed]=useState(null);   // null = not yet known
+  const [geoDenied,setGeoDenied]=useState(false);
   useEffect(()=>{
     let live=true;
     navigator?.permissions?.query?.({name:"geolocation"})
-      .then(p=>{ if(live)setGeoAllowed(p.state==="granted"); })
+      .then(p=>{ if(live){setGeoAllowed(p.state==="granted");setGeoDenied(p.state==="denied");} })
       .catch(()=>{});                                 // Safari, older browsers
     return ()=>{ live=false; };
   },[]);
+  // A fresh load asks /api/nearby before the device has said where it is,
+  // and the answer is no_location — which flashed "Allow location" at
+  // somebody who had. Six seconds of skeleton first, unless refused outright.
+  const [geoWaitOver,setGeoWaitOver]=useState(false);
+  useEffect(()=>{const t=setTimeout(()=>setGeoWaitOver(true),6000);return()=>clearTimeout(t);},[]);
   const [filter,setFilter]=useState("All");
   const [localRecs,setLocalRecs]=useState([]);
   // What is on day by day for the week ahead — quizzes, karaoke, a festival
   // — gathered from listings that were never on the same calendar.
   const [week,setWeek]=useState([]);
-  // The day whose whole list is open. A day with nine things on showed three
-  // and "+6 more" that could not be tapped, so six were unreachable.
-  const [openDay,setOpenDay]=useState(null);
   const [loading,setLoading]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [reason,setReason]=useState(null);
@@ -1811,7 +2045,8 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
         setLocalRecs(data.events||[]);
         try{
           if(data.events?.length)sessionStorage.setItem("reach_nearby",JSON.stringify({
-            events:data.events,city:data.city,ts:Date.now(),
+            // The week too: without it a cached list has no weekly nights.
+            events:data.events,week:data.week||[],city:data.city,ts:Date.now(),
             // Where it was for, so a cached list is only reused for the same place.
             lat:lat!=null?Math.round(lat*100)/100:null,lng:lng!=null?Math.round(lng*100)/100:null,
           }));
@@ -1834,7 +2069,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
     try{
       const cached=sessionStorage.getItem("reach_nearby");
       if(!cached)return false;
-      const {events,ts,lat,lng,city}=JSON.parse(cached);
+      const {events,week:cachedWeek,ts,lat,lng,city}=JSON.parse(cached);
       // Only for the place it was fetched for. A list cached in Raleigh was
       // shown as "near you" in Aberdeen until the refresh landed.
       const here=userLocation||{};
@@ -1843,6 +2078,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
         :!!city&&city===(here.city||here.formatted);
       if(samePlace&&Date.now()-ts<7200000&&events?.length){
         setLocalRecs(events);
+        setWeek(Array.isArray(cachedWeek)?cachedWeek:[]);
         setLoaded(true);
         return true;
       }
@@ -1962,15 +2198,86 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
   // An answer changes what is here: Discover reads it on the next look.
   const afterDrip=()=>loadLocalRecs();
 
-  const categories=visibleCategories(visible);
-  const filters=["All",...categories];
+  // ─── Two lists, not one ──────────────────────────────────────────────
+  // What is on (by day) and where to go (nearest first) were one list, and
+  // the dated things sat behind forty venue cards. Each card is in exactly
+  // one of the two (lib/discovery/upcoming.ts).
+  //
+  // The reader's own day: the device's, or the chosen place's when they are
+  // looking somewhere else — never UTC's (lib/calendar.ts).
+  const placeLng=userLocation?.lng;
+  const elsewhere=userLocation?.source==="override"&&Number.isFinite(placeLng);
+  const nowAt=new Date();
+  const todayISO=elsewhere?dayWhere(placeLng,nowAt):today(nowAt);
+  const hourNow=elsewhere
+    ?(((nowAt.getUTCHours()+Math.max(-12,Math.min(14,Math.round(placeLng/15))))%24)+24)%24
+    :nowAt.getHours();
 
-  const shown=filter==="All"?visible:visible.filter(e=>e.category===filter);
-  // Null while loading, not a second message. The spinner below already says
-  // "Finding things near you…", and this box said "Finding what's on near
-  // you…" directly underneath it — two ways of saying the same thing, at the
-  // same time, in slightly different words.
-  const emptyNote=loading?null
+  const {sections:allSections,candidates}=upcomingSections(visible,week,todayISO,hourNow);
+  const upcomingItems=allSections.flatMap(s=>[...s.near,...s.further].map(r=>r.item));
+  const places=visible.filter(e=>!candidates.has(e.id));
+
+  // Upcoming when it holds anything, else Places; a choice made here sticks.
+  const [chosen,setChosen]=useState(null);
+  const [remembered]=useState(()=>readLocal(DISCOVER_SEGMENT,null));
+  const has={upcoming:upcomingItems.length>0,places:places.length>0};
+  const segment=chosen
+    ||(remembered&&has[remembered]?remembered:has.upcoming||!has.places?"upcoming":"places");
+  const chooseSegment=(key)=>{
+    if(key===segment)return;
+    setChosen(key);writeLocal(DISCOVER_SEGMENT,key);
+    setFilter("All");setShowAll(false);
+  };
+
+  const segItems=segment==="upcoming"?upcomingItems:places;
+  const pills=groupPills(segItems);
+  const activeFilter=filter!=="All"&&pills.some(p=>p.group===filter)?filter:"All";
+  const inFilter=e=>activeFilter==="All"||categoryGroup(e.category)===activeFilter;
+  const sections=activeFilter==="All"?allSections
+    :upcomingSections(visible.filter(inFilter),week,todayISO,hourNow).sections;
+  const placesShown=places.filter(inFilter);
+
+  // Past thirty rows the rest is one tap away, with its real count.
+  const [showAll,setShowAll]=useState(false);
+  const capped=showAll?{sections,more:0}:capSections(sections,30);
+  const roll=dayRoll(sections,todayISO);
+  const [openFurther,setOpenFurther]=useState(()=>new Set());
+  const toggleFurther=day=>setOpenFurther(cur=>{const n=new Set(cur);n.has(day)?n.delete(day):n.add(day);return n;});
+
+  // A day on the roll goes to its header, and focus with it.
+  const [jump,setJump]=useState(null);
+  useEffect(()=>{
+    if(!jump)return;
+    document.getElementById("dsc-at-"+jump)?.scrollIntoView({behavior:prefersReducedMotion()?"auto":"smooth",block:"start"});
+    document.getElementById("dsc-day-"+jump)?.focus({preventScroll:true});
+    setJump(null);
+  },[jump]);
+  const goToDay=day=>{
+    if(!day)return;
+    if(!capped.sections.some(s=>s.day===day))setShowAll(true);
+    setJump(day);
+  };
+  const [focusId,setFocusId]=useState(null);
+  useEffect(()=>{
+    if(!focusId)return;
+    document.getElementById(focusId)?.focus();
+    setFocusId(null);
+  },[focusId]);
+  const showMore=()=>{
+    const shownIds=new Set(capped.sections.flatMap(s=>s.near.map(r=>r.item.id)));
+    const first=sections.flatMap(s=>s.near).find(r=>!shownIds.has(r.item.id));
+    setShowAll(true);
+    if(first)setFocusId("dsc-card-"+first.item.id);
+  };
+
+  // A dismissal takes the card away, and focus with it: it goes to Undo.
+  useEffect(()=>{ if(undo)document.getElementById("dsc-undo")?.focus({preventScroll:true}); },[undo]);
+
+  // Skeletons until there is something to say. A fresh load asks before the
+  // device has answered, and "Allow location" flashed at people who had.
+  const waitingForPlace=!userLocation&&!geoWaitOver&&!geoDenied;
+  const busy=visible.length===0&&(loading||!loaded||(reason==="no_location"&&waitingForPlace));
+  const emptyNote=busy?null
     :reason==="no_key"?"Event listings aren't switched on for this deployment yet."
     :reason==="no_location"?(geoAllowed
         ? "Your device hasn't said where it is. Pick a place above and we'll look there."
@@ -1980,364 +2287,248 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
     :null;
 
   const city=userLocation?.city||userLocation?.formatted;
-  // Where this came from, because on a trip they are different places and
-  // "near you" would be a claim we cannot make.
-  // Choosing a place by name. Geocoded through the same service the app
-  // already uses to name the place you are in, so the two agree.
-  const [pickingPlace,setPickingPlace]=useState(false);
-  const [placeQuery,setPlaceQuery]=useState("");
-  const [placeHits,setPlaceHits]=useState([]);
-  const [searchingPlace,setSearchingPlace]=useState(false);
-
-  const searchPlaces=async(q)=>{
-    const term=(q||"").trim();
-    if(term.length<3){setPlaceHits([]);return;}
-    setSearchingPlace(true);
-    try{
-      // Through our own server — see /api/geo. Called from the page this was
-      // blocked by CORS in production, so Discover's place search never
-      // returned anything at all.
-      const r=await fetch("/api/geo?limit=6&q="+encodeURIComponent(term));
-      if(!r.ok)throw new Error(String(r.status));
-      const hits=(await r.json()).hits||[];
-      setPlaceHits(hits.map(h=>({
-        label:h.label,
-        lat:h.lat, lng:h.lng,
-      })).filter(h=>Number.isFinite(h.lat)&&Number.isFinite(h.lng)));
-    }catch(e){
-      console.error("[discover] place search failed",e);
-      toast("Couldn't search for that just now — try again in a moment");
-    }
-    setSearchingPlace(false);
-  };
-
   const placePrefix=userLocation?.source==="override"?"Showing"
     :userLocation?.source==="home"?"Based on your home city,"
     :"Based on your location in";
-  // Said once, under the filters, only when there is genuinely little here.
-  // Not an error and not an apology: the sweep runs nightly and this fills in.
-  const learningNote=!loading&&thin&&visible.length>0
+  // Said once, only when there is genuinely little here. Not an error and
+  // not an apology: the sweep runs nightly and this fills in.
+  const learningNote=!busy&&thin&&visible.length>0
     ?`We're still learning ${city||"your area"} — ${visible.length} ${visible.length===1?"place":"places"} so far, and more each night.`
     :null;
 
+  const lookAgain=()=>{setLoaded(false);setLocalRecs([]);loadLocalRecs();};
+  const action=(primary)=>({minHeight:44,padding:"0 16px",borderRadius:12,cursor:"pointer",...T.subhead,fontWeight:600,
+    border:primary?"none":`1px solid ${C.border}`,background:primary?C.accent:C.s2,color:primary?C.onAccent:C.t1});
+  const note=(text,buttons)=>(
+    <div style={{margin:"0 16px 8px",padding:16,background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,boxShadow:C.cardShadow}}>
+      <div style={{...T.body,color:C.t2}}>{text}</div>
+      {buttons&&<div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>{buttons}</div>}
+    </div>
+  );
+
+  const dripCard=drip==="upgrade"
+    ?<UpgradeCard userId={user?.id} toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>
+    :drip?<DripCard id={drip} userId={user?.id} toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>:null;
+
+  const refOf=exp=>`${String(exp.source||"unknown").toLowerCase()}:${exp.id}`;
+  const cardProps=exp=>({
+    exp,visited:visited.has(refOf(exp)),
+    open:asking===exp.id,onToggle:()=>setAsking(a=>a===exp.id?null:exp.id),onClose:()=>setAsking(a=>a===exp.id?null:a),
+    onRule:verdict=>rule(exp,verdict),
+    onOpen:()=>push("expDetail",{exp,groups}),
+  });
+
+  const upcomingList=(
+    <>
+      {capped.sections.map((s,si)=>(
+        <div key={s.day} style={{marginBottom:16}}>
+          <div id={`dsc-at-${s.day}`}/>
+          <h2 id={`dsc-day-${s.day}`} tabIndex={-1}
+            style={{position:"sticky",top:0,zIndex:2,minHeight:44,margin:0,padding:"0 16px",
+              display:"flex",alignItems:"center",gap:8,background:C.navBg,
+              backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)"}}>
+            <span style={{...T.headline,color:C.t1}}>{s.label}</span>
+            {/^(Today|Tonight|Tomorrow)$/.test(s.label)&&<span style={{...T.footnote,color:C.t2}}>{s.dateWords}</span>}
+          </h2>
+          {s.near.map(row=><DiscoverEventCard key={row.item.id} {...cardProps(row.item)} when={row.when} day={s.label}/>)}
+          {s.further.length>0&&(
+            <>
+              <button aria-expanded={openFurther.has(s.day)} onClick={()=>toggleFurther(s.day)}
+                style={{margin:"0 16px 8px",minHeight:44,padding:"0 4px",background:"none",border:"none",cursor:"pointer",
+                  ...T.subhead,fontWeight:600,color:C.accentText,display:"flex",alignItems:"center",gap:6}}>
+                Further out · {s.further.length} <span aria-hidden="true">{openFurther.has(s.day)?"▴":"▾"}</span>
+              </button>
+              {openFurther.has(s.day)&&s.further.map(row=><DiscoverEventCard key={row.item.id} {...cardProps(row.item)} when={row.when} day={s.label}/>)}
+            </>
+          )}
+          {si===0&&dripCard&&<div style={{marginTop:16}}>{dripCard}</div>}
+        </div>
+      ))}
+      {capped.more>0&&(
+        <button onClick={showMore}
+          style={{display:"block",margin:"0 16px 16px",width:"calc(100% - 32px)",...action(false)}}>
+          Show {capped.more} more
+        </button>
+      )}
+    </>
+  );
+
+  const placesList=(
+    <>
+      <h2 className="sr-only">Places</h2>
+      {placesShown.map((exp,i)=>(
+        <div key={exp.id}>
+          <DiscoverPlaceCard {...cardProps(exp)}/>
+          {(i===2||(i===placesShown.length-1&&i<2))&&dripCard&&<div style={{marginTop:16}}>{dripCard}</div>}
+        </div>
+      ))}
+    </>
+  );
+
+  const segmentEmpty=!busy&&!emptyNote&&(segment==="upcoming"?sections.length===0:placesShown.length===0);
+
   return(
-    <div style={{padding:"12px 0 0"}}>
-      <div style={{padding:"10px 20px 10px"}}>
-        <div className="pt">Discover</div>
+    <div style={{padding:"4px 0 0"}}>
+      <div style={{padding:"0 16px"}}>
+        <h1 className="pt" style={{...T.largeTitle,color:C.t1}}>Discover</h1>
         <PlaceLine userLocation={userLocation} setPlaceOverride={setPlaceOverride}
           toast={toast} prefix={placePrefix} fallback="Curated for you"/>
-        {!userLocation&&(
-          <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
-            onClick={()=>toast(geoAllowed
-              ? "Your device hasn't answered. Tap \u201cchange\u201d to pick a place."
-              : "Enable location in your browser for local picks")}>
-            📍 {geoAllowed?"Your device hasn't said where it is — pick a place":"Enable location for local recommendations"}
+        {!userLocation&&!waitingForPlace&&reason!=="no_location"&&(
+          // Said, not a control: tapping it only ever showed a toast, and the
+          // way to act on it is "change" on the line above.
+          <div style={{...T.footnote,color:C.t2,marginBottom:4}}>
+            <span aria-hidden="true">📍 </span>{geoAllowed?"Your device hasn't said where it is — pick a place above":"Allow location in your browser for things near you, or pick a place above"}
           </div>
         )}
         {/* An invitation, not a gate. Everything below works without it. */}
         {loaded&&!personal&&(
-          <div style={{fontSize:12,color:C.accentText,marginTop:4,cursor:"pointer"}}
-            onClick={()=>push("taste")}>
-            A bit of everything near you. Tell us what you're into and it gets personal →
-          </div>
+          <button onClick={()=>push("taste")}
+            style={{display:"block",minHeight:44,padding:0,background:"none",border:"none",textAlign:"left",cursor:"pointer",...T.footnote,color:C.accentText}}>
+            A bit of everything near you. Tell us what you're into and it gets personal <span aria-hidden="true">→</span>
+          </button>
         )}
       </div>
 
-      {drip==="upgrade"
-        ?<UpgradeCard userId={user?.id} toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>
-        :drip?<DripCard id={drip} userId={user?.id} toast={toast} onChange={onQuizChange} onAnswered={afterDrip}/>:null}
-
-      {/* Filter pills */}
-      <div style={{display:"flex",gap:8,padding:"0 20px 14px",overflowX:"auto",scrollbarWidth:"none"}}>
-        {filters.map(f=>(
-          <button key={f} onClick={()=>setFilter(f)}
-            style={{padding:"6px 14px",borderRadius:20,
-              border:"1px solid "+(filter===f?C.accentText:C.border),
-              background:filter===f?C.accentDim:C.s1,
-              color:filter===f?C.accentText:C.t2,
-              fontSize:12,fontWeight:600,cursor:"pointer",
-              whiteSpace:"nowrap",flexShrink:0}}>
-            {f}
-          </button>
-        ))}
-      </div>
-
-      {/* No "Near you" strip. The list below is already nearest first, so
-          the strip was its first five cards again, and its "See all →" went
-          to a "Nearby" filter that has never existed. */}
-
-      {/* Loading state */}
-      {loading&&(
-        <div style={{textAlign:"center",padding:"20px",color:C.t3,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-          <div style={{width:16,height:16,border:"2px solid "+C.accentText,borderTopColor:"transparent",borderRadius:"50%",animation:"spin .8s linear infinite"}}/>
-          Finding things near you…
+      {/* Upcoming | Places. Shown while loading, so the screen does not
+          jump when the answer lands; counts are the rows held. */}
+      {(busy||visible.length>0)&&(
+        <div role="tablist" aria-label="What to show"
+          onKeyDown={e=>{if(busy)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();const k=segment==="upcoming"?"places":"upcoming";chooseSegment(k);document.getElementById("dsc-tab-"+k)?.focus();}}}
+          style={{display:"flex",gap:2,margin:"2px 16px 0",padding:2,background:C.s2,borderRadius:12,border:`1px solid ${C.border}`}}>
+          {[["upcoming","Upcoming",upcomingItems.length],["places","Places",places.length]].map(([key,label,n])=>{
+            const on=segment===key;
+            return(
+              <button key={key} role="tab" id={`dsc-tab-${key}`} aria-selected={on} aria-controls="dsc-panel"
+                tabIndex={on?0:-1} disabled={busy} onClick={()=>chooseSegment(key)}
+                style={{flex:1,minHeight:44,borderRadius:10,border:"none",cursor:busy?"default":"pointer",
+                  background:on&&!busy?C.s1:"transparent",boxShadow:on&&!busy?C.cardShadow:"none",
+                  color:on&&!busy?C.t1:C.t2,opacity:busy?.6:1,...T.subhead,fontWeight:on&&!busy?600:500}}>
+                {label}{!busy&&<span style={{color:C.t2,fontWeight:500}}>{` · ${n}`}</span>}
+              </button>
+            );
+          })}
         </div>
       )}
+
+      {/* Grouped pills for this list only; none when there is one group. */}
+      {!busy&&pills.length>1&&(
+        <div role="group" aria-label="Filter" className="dsc-roll"
+          style={{display:"flex",gap:4,padding:"8px 16px 0",overflowX:"auto",scrollbarWidth:"none",alignItems:"center"}}>
+          {[{group:"All"},...pills].map(p=>{
+            const on=activeFilter===p.group;
+            return(
+              <button key={p.group} aria-pressed={on}
+                onClick={()=>{setFilter(p.group);setShowAll(false);}}
+                style={{minHeight:44,margin:"-4px 0",padding:0,background:"none",border:"none",flexShrink:0,cursor:"pointer",display:"flex",alignItems:"center"}}>
+                <span style={{display:"inline-flex",alignItems:"center",gap:4,padding:"6px 14px",borderRadius:999,whiteSpace:"nowrap",
+                  border:`1px solid ${on?C.accentText:C.border}`,background:on?C.accentDim:C.s1,
+                  color:on?C.accentText:C.t2,...T.subhead,fontWeight:600}}>
+                  {on&&<span aria-hidden="true">✓</span>}{p.group}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* The day-roll: every one of the seven days, so a quiet one reads as
+          quiet rather than missing — and "nothing we've found", because the
+          pool is what our sources returned and a quiet day in it is our gap,
+          not a fact about the city. */}
+      {!busy&&segment==="upcoming"&&sections.length>0&&(
+        <div className="dsc-roll" role="group" aria-label="Jump to a day"
+          style={{display:"flex",gap:8,padding:"8px 16px 0",overflowX:"auto",scrollbarWidth:"none"}}>
+          {[...roll.days.map((d,i)=>({...d,cap:i===0?"Today":d.weekday,key:d.day,
+              label:d.count?`${i===0?"Today":d.weekday+" "+d.date}, ${plural(d.count,"thing","things")}`:`${d.weekday} ${d.date}, nothing we've found yet`})),
+            ...(roll.later>0?[{key:"later",day:roll.laterDay,cap:"Later",date:roll.laterDay?Number(roll.laterDay.slice(8,10)):"",count:roll.later,
+              label:`Later, ${plural(roll.later,"thing","things")}`}]:[])].map(d=>(
+            <button key={d.key} disabled={!d.count} aria-label={d.label} onClick={()=>goToDay(d.day)}
+              style={{minWidth:"3.5rem",minHeight:"4rem",flexShrink:0,borderRadius:14,padding:"6px 4px",
+                border:`1px solid ${d.count?C.accentBorder:C.border}`,background:d.count?C.s1:"transparent",
+                opacity:d.count?1:.5,cursor:d.count?"pointer":"default",color:C.t1,
+                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2}}>
+              <span style={{...T.caption,color:C.t2}}>{d.cap}</span>
+              <span style={{...T.title3,color:C.t1}}>{d.date}</span>
+              <span aria-hidden="true" style={{display:"flex",gap:3,height:5}}>
+                {Array.from({length:Math.min(3,d.count)}).map((_,i)=>(
+                  <span key={i} style={{width:5,height:5,borderRadius:3,background:C.accent}}/>
+                ))}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{height:4}}/>
 
       {learningNote&&(
-        <div style={{margin:"0 20px 12px",padding:"11px 14px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,fontSize:12.5,color:C.t2,lineHeight:1.55}}>
-          {learningNote}
-        </div>
-      )}
-      {emptyNote&&shown.length===0&&(
-        <div style={{margin:"0 20px",padding:"18px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,fontSize:13,color:C.t2,lineHeight:1.6}}>
-          <div>{emptyNote}</div>
-          {!loading&&(
-            <div style={{display:"flex",gap:8,marginTop:12,flexWrap:"wrap"}}>
-              {reason!=="no_key"&&(
-                <button className="bsm" onClick={()=>{setLoaded(false);setLocalRecs([]);loadLocalRecs();}}>
-                  Look again
-                </button>
-              )}
-              <button className="bsm bsm-p" onClick={()=>push("createPlan",{})}>
-                Plan something instead →
-              </button>
-            </div>
-          )}
-        </div>
+        <div style={{margin:"0 16px 12px",...T.footnote,color:C.t2}}>{learningNote}</div>
       )}
 
-      {/* What is on, day by day. The harvest has known about the Wednesday
-          quiz and the Thursday karaoke all along; they sat in the table as
-          prose and never reached a calendar. A recurring night is repeated
-          onto each of its days — that is what weekly means — and a one-off
-          appears on its date. Days with nothing on are shown as nothing on,
-          because that is a true and useful answer and skipping them says
-          there is no Thursday. */}
-      {week.some(d=>d.events.length>0)&&(
-        <div style={{margin:"0 0 16px"}}>
-          <div style={{padding:"0 20px 8px"}}>
-            <span className="sl">On this week</span>
-          </div>
-          <div style={{display:"flex",gap:10,padding:"0 20px 4px",overflowX:"auto",scrollbarWidth:"none"}}>
-            {week.map(d=>{
-              const names=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-              const quiet=d.events.length===0;
-              return(
-                <div key={d.day} style={{minWidth:132,maxWidth:170,flexShrink:0,
-                  background:quiet?"transparent":C.s1,
-                  border:`1px solid ${quiet?C.border:C.accentBorder}`,
-                  borderRadius:14,padding:"10px 12px"}}>
-                  <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",
-                    letterSpacing:".06em",marginBottom:6}}>
-                    {names[d.weekday]} {Number(d.day.slice(8,10))}
-                  </div>
-                  {/* "Nothing we've found", not "nothing on". The pool is
-                      whatever the sources returned — seventy things for
-                      Raleigh — and a quiet day in it is our gap, not a fact
-                      about the city. Phrasing our own thin data as a
-                      statement about a place is a mistake this app has made
-                      before and been told about. */}
-                  {quiet
-                    ?<div style={{fontSize:12,color:C.t3,lineHeight:1.45}}>Nothing we've found yet</div>
-                    :d.events.slice(0,3).map((e,i)=>(
-                      <div key={e.id||i} style={{marginBottom:6}}>
-                        <a href={e.booking_url||undefined} target="_blank" rel="noopener noreferrer"
-                          style={{fontSize:12.5,color:C.t1,lineHeight:1.35,textDecoration:"none",display:"block"}}>
-                          {String(e.title).slice(0,42)}
-                        </a>
-                        <div style={{fontSize:10.5,color:C.t3,marginTop:1}}>
-                          {e.venue_name?String(e.venue_name).slice(0,22):""}
-                          {/* Said out loud, because "every week" is the
-                              difference between a thing you missed and a
-                              thing you can still go to. */}
-                          {e.recurring?" · every week":""}
-                        </div>
-                      </div>
-                    ))}
-                  {d.events.length>3&&(
-                    <button onClick={()=>setOpenDay(d.day)}
-                      style={{background:"none",border:"none",padding:0,fontSize:11.5,fontWeight:600,
-                        color:C.accentText,cursor:"pointer"}}>
-                      See all {d.events.length} →
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* One day, everything on it. */}
-      {(()=>{
-        const d=openDay&&week.find(w=>w.day===openDay);
-        if(!d)return null;
-        const names=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-        return(
-          <Sheet fixed onClose={()=>setOpenDay(null)} label={`${names[d.weekday]} ${Number(d.day.slice(8,10))}`}
-            style={{maxHeight:"80vh",borderRadius:"20px 20px 0 0",padding:"0 20px 28px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
-                <div style={{fontSize:17,fontWeight:700,color:C.t1}}>{names[d.weekday]} {Number(d.day.slice(8,10))}</div>
-                <button onClick={()=>setOpenDay(null)} style={{background:"none",border:"none",color:C.t2,fontSize:14,cursor:"pointer"}}>Done</button>
-              </div>
-              <div style={{fontSize:12,color:C.t3,marginBottom:12}}>{plural(d.events.length,"thing","things")} we've found on</div>
-              {d.events.map((e,i)=>(
-                <PhotoFrame key={`${e.id||"e"}-${i}`} src={e.image&&e.image_credit?e.image:null} alt={photoAlt(e.image_of,e.title)}>{({ok,img})=>(
-                <div style={{padding:"11px 0",borderTop:`1px solid ${C.border}`,display:"flex",gap:12,alignItems:"flex-start"}}>
-                  {/* A small square of the thing itself, same size on every
-                      row that has one, so the list reads evenly. */}
-                  {ok&&<div style={{width:56,height:56,flexShrink:0,borderRadius:10,overflow:"hidden",position:"relative",background:C.s2}}>{img}</div>}
-                  <div style={{flex:1,minWidth:0}}>
-                  {e.booking_url
-                    ?<a href={e.booking_url} target="_blank" rel="noopener noreferrer"
-                        style={{fontSize:14,fontWeight:600,color:C.t1,textDecoration:"none",lineHeight:1.35}}>{e.title} ↗</a>
-                    :<div style={{fontSize:14,fontWeight:600,color:C.t1,lineHeight:1.35}}>{e.title}</div>}
-                  <div style={{fontSize:12,color:C.t2,marginTop:3,lineHeight:1.45}}>
-                    {[e.when_text||e.venue_name,e.recurring?"every week":null].filter(Boolean).join(" · ")}
-                  </div>
-                  {ok&&<PhotoCredit credit={e.image_credit} link={e.image_link} style={{marginTop:2}}/>}
-                  </div>
-                </div>
-                )}</PhotoFrame>
-              ))}
-          </Sheet>
-        );
-      })()}
-
-      {/* Main cards */}
       {/* Undo, because a dismissal is only as safe as the way back from a
           mistap. The row is deleted rather than reversed, so the place is
           offered again exactly as though nothing had been said. */}
       {undo&&(
-        <div style={{margin:"0 20px 12px",padding:"11px 14px",background:C.s2,
-          border:`1px solid ${C.border}`,borderRadius:14,display:"flex",
-          alignItems:"center",gap:10}}>
-          <div style={{flex:1,fontSize:12.5,color:C.t2,lineHeight:1.4}}>
+        <div role="status" style={{margin:"0 16px 12px",padding:"4px 4px 4px 16px",background:C.s2,
+          border:`1px solid ${C.border}`,borderRadius:14,display:"flex",alignItems:"center",gap:8}}>
+          <div style={{flex:1,...T.footnote,color:C.t2}}>
             {undo.verdict==="done"
               ?`${undo.title} is marked as one you've done.`
               :`We won't suggest ${undo.title} again.`}
           </div>
-          <button onClick={undoRule}
-            style={{border:"none",background:"none",fontSize:12.5,fontWeight:700,
+          <button id="dsc-undo" onClick={undoRule}
+            style={{border:"none",background:"none",minHeight:44,padding:"0 12px",...T.subhead,fontWeight:700,
               color:C.accentText,cursor:"pointer",whiteSpace:"nowrap"}}>
             Undo
           </button>
         </div>
       )}
-      {shown.map(exp=>(
-        <PhotoFrame key={exp.id} src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok:hasPhoto,img})=>(
-        /* Named, so it can be found. These were anonymous divs, which is why
-           the end-to-end test for "clicking a card opens the detail view"
-           matched nothing and passed without ever clicking one. */
-        <div className="exp-card" style={{margin:"0 20px 14px",borderRadius:20,overflow:"hidden",
-          border:"1px solid "+C.border,cursor:"pointer",position:"relative"}}
-          onClick={()=>push("expDetail",{exp,groups})}>
-          {/* A real picture of the actual place where there is one. The
-              gradient stays underneath, so a photo that fails to load leaves
-              the card as it always looked rather than a white gap, and the
-              dark overlay above keeps the title readable on any image. The
-              height is fixed, so the card is the same size either way. */}
-          <div style={{height:175,background:exp.bg,position:"relative",overflow:"hidden"}}>
-            {img}
-            <div style={{position:"absolute",inset:0,
-              background:"linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.85))",
-              display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:16}}>
-              <div style={{fontFamily:"var(--font-display)",fontSize:22,color:"white",marginBottom:3}}>
-                {exp.title}
-              </div>
-              <div style={{fontSize:12,color:"rgba(255,255,255,.65)"}}>{exp.sub}</div>
-            </div>
-            <div style={{position:"absolute",top:12,right:14,fontSize:34}}>{exp.emoji}</div>
-            {/* Bottom-right, over the dark end of the gradient. It used to
-                sit at top-right, exactly where the emoji is, so the control
-                covered the one picture the card had. The corners are spoken
-                for: chips top-left, emoji top-right, title bottom-left. */}
-            <button aria-label={`Hide ${exp.title}`}
-              onClick={e=>{e.stopPropagation();setAsking(a=>a===exp.id?null:exp.id);}}
-              style={{position:"absolute",bottom:12,right:12,zIndex:3,width:28,height:28,
-                borderRadius:14,border:"1px solid rgba(255,255,255,.28)",
-                background:"rgba(0,0,0,.42)",backdropFilter:"blur(6px)",color:"rgba(255,255,255,.92)",
-                fontSize:14,lineHeight:1,cursor:"pointer",display:"flex",
-                alignItems:"center",justifyContent:"center",padding:0}}>×</button>
-            {asking===exp.id&&(
-              <div onClick={e=>e.stopPropagation()}
-                style={{position:"absolute",bottom:46,right:12,zIndex:4,background:C.s1,
-                  border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",
-                  minWidth:168,boxShadow:"0 10px 28px rgba(0,0,0,.22)"}}>
-                <button onClick={()=>rule(exp,"done")}
-                  style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",
-                    border:"none",background:"none",fontSize:13,color:C.t1,cursor:"pointer"}}>
-                  Already done it
-                </button>
-                <button onClick={()=>rule(exp,"not_interested")}
-                  style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",
-                    borderTop:`1px solid ${C.border}`,border:"none",background:"none",
-                    fontSize:13,color:C.t1,cursor:"pointer"}}>
-                  Not for me
-                </button>
-              </div>
-            )}
-            {/* What is happening says which day. What is simply open says
-                where it is and nothing about hours, because nobody has
-                checked them and "open any time" would be a promise. */}
-            <div style={{position:"absolute",top:12,left:14,display:"flex",gap:6,flexWrap:"wrap",maxWidth:"72%"}}>
-              {/* A chip among the other chips rather than a badge floating
-                  over them. Marked, not removed: somewhere you have been
-                  stays on the screen saying so. */}
-              {visited.has(`${String(exp.source||"unknown").toLowerCase()}:${exp.id}`)&&(
-                <span style={{background:"rgba(0,0,0,.72)",borderRadius:20,padding:"3px 10px",
-                  fontSize:11,color:"white",fontWeight:600}}>
-                  ✓ You've been
-                </span>
-              )}
-              {dayLabel(exp.date)&&(
-                <span style={{background:"rgba(0,0,0,.72)",borderRadius:20,padding:"3px 10px",
-                  fontSize:11,color:"white",fontWeight:600}}>
-                  {dayLabel(exp.date)}
-                </span>
-              )}
-              {exp.isLocal&&exp.dist&&(
-                <span style={{background:"rgba(0,0,0,.6)",borderRadius:20,padding:"3px 10px",
-                  fontSize:11,color:"white"}}>
-                  📍 {exp.dist}
-                </span>
-              )}
-            </div>
-          </div>
-          <div style={{background:C.s1,padding:"12px 16px",display:"flex",
-            justifyContent:"space-between",alignItems:"center",gap:10}}>
-            <div style={{flex:1,minWidth:0}}>
-              {/* Only what we know — see lib/discovery/price-label.ts. This
-                  said "Price at the door" about parks, and "per person,
-                  all-in" under prices nobody had checked were either. */}
-              <div style={{fontFamily:"var(--font-display)",fontSize:20,color:priceLabel(exp).known?C.t1:C.t2}}>
-                {priceLabel(exp).line}
-              </div>
-              <div style={{fontSize:11,color:C.t2}}>
-                {exp.because?`Because you like ${String(exp.because).toLowerCase()}`
-                  :exp.isLocal?"Near you":(priceLabel(exp).note||"")}
-              </div>
-              {/* Whose picture it is, wherever there is one. */}
-              {hasPhoto&&<PhotoCredit credit={exp.imageCredit} link={exp.imageLink} style={{marginTop:3}}/>}
-              {/* Why it moved up or down tonight, from the forecast. */}
-              <ForecastNote f={exp.weather} style={{marginTop:6}}/>
-            </div>
-            {/* This used to be a "Share with group" button whose entire
-                handler was a toast saying it had been shared. The screen
-                that actually shares is one tap away and always has been. */}
-            <button className="bsm bsm-p"
-              onClick={e=>{e.stopPropagation();push("expDetail",{exp,groups});}}>
-              Take a look →
-            </button>
-          </div>
-        </div>
-        )}</PhotoFrame>
-      ))}
-      {shown.length>0&&<OsmCredit style={{padding:"0 20px 12px"}}/>}
 
-      {!loading&&sources.some(s=>s.status==="error")&&shown.length>0&&(
-        <div style={{margin:"0 20px 14px",padding:"10px 14px",background:C.s2,
-          border:`1px solid ${C.border}`,borderRadius:14,fontSize:12,color:C.t3,lineHeight:1.5}}>
+      <div className="sr-only" role="status" aria-live="polite">{busy?"Finding things near you…":""}</div>
+
+      <section id="dsc-panel" role="tabpanel" aria-labelledby={`dsc-tab-${segment}`} aria-busy={busy}>
+        {busy&&<DiscoverSkeleton/>}
+
+        {emptyNote&&note(emptyNote,(
+          <>
+            {reason==="no_location"&&setPlaceOverride&&(
+              <button style={action(true)} onClick={()=>{const line=document.querySelector("[data-place-line]");line?.scrollIntoView?.({block:"center"});line?.click();}}>
+                <span aria-hidden="true" className="pin-drop">📍</span> Pick a place
+              </button>
+            )}
+            {reason!=="no_key"&&reason!=="no_location"&&(
+              <button style={action(false)} onClick={lookAgain}>
+                {reason==="provider_error"?"Try again":"Look again"}
+              </button>
+            )}
+            {reason!=="no_location"&&(
+              <button style={action(true)} onClick={()=>push("createPlan",{})}>
+                Plan something instead <span aria-hidden="true">→</span>
+              </button>
+            )}
+          </>
+        ))}
+        {emptyNote&&dripCard}
+
+        {!busy&&!emptyNote&&(
+          <div key={`${segment}|${activeFilter}`} className="dsc-fade">
+            {segmentEmpty&&(segment==="upcoming"
+              ?note(`Nothing dated we've found yet${city?` for ${city}`:""}. Reach looks again every night.`,
+                  places.length>0&&<button style={action(true)} onClick={()=>chooseSegment("places")}>See places</button>)
+              :note(`No places we hold yet${city?` for ${city}`:""}. Reach looks again every night.`,
+                  upcomingItems.length>0&&<button style={action(true)} onClick={()=>chooseSegment("upcoming")}>See what's on</button>))}
+            {segmentEmpty&&dripCard}
+            {segment==="upcoming"?upcomingList:placesList}
+          </div>
+        )}
+      </section>
+
+      {!busy&&sources.some(s=>s.status==="error")&&visible.length>0&&(
+        <div style={{margin:"8px 16px 8px",...T.footnote,color:C.t2}}>
           One of our sources isn't answering, so there may be more on than this.
         </div>
       )}
-
-      {shown.length===0&&!loading&&!emptyNote&&(
-        <div style={{textAlign:"center",padding:"40px 20px",color:C.t3,fontSize:14}}>
-          Nothing under {filter}. Try another one.
-        </div>
-      )}
+      {visible.length>0&&<OsmCredit style={{padding:"8px 16px 12px"}}/>}
 
       <div style={{height:20}}/>
     </div>
@@ -2572,6 +2763,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
           // and sending somebody off expecting a checkout that does not
           // exist is worse than saying nothing.
           const ticketed=exp.provider==="ticketmaster";
+          const soldOut=/\bsold[\s-]*out\b/i.test(String(exp.title||""));
           const seller=ticketed?"Ticketmaster":null;
           return(
           <>
@@ -2588,6 +2780,30 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                 ?"Tickets are sold by Ticketmaster. You'll pay and get your confirmation there."
                 :"Opens their own page. Hours and prices are theirs, not ours."}
             </div>
+            {/* One seller is a single point of failure: a sold-out show on
+                Ticketmaster had only its ↗ and nowhere else to look. These
+                are searches, said as searches — Reach has not asked StubHub
+                what it has. The exact link stays the button above. */}
+            {(ticketed||soldOut)&&(()=>{
+              const more=ticketSources({title:exp.title,venueName:exp.venue,primaryUrl:exp.url}).filter(s=>!s.exact);
+              if(!more.length)return null;
+              return(
+                <div style={{marginBottom:12}}>
+                  <div style={{fontSize:".8125rem",color:C.t2,marginBottom:6,textAlign:"center"}}>
+                    {soldOut?"Sold out there? Other sellers may still have some — we haven't checked.":"Other places to look — searches, not checked by us."}
+                  </div>
+                  <div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+                    {more.map(src=>(
+                      <a key={src.url} href={src.url} target="_blank" rel="noopener noreferrer"
+                        style={{display:"inline-flex",alignItems:"center",minHeight:44,border:`1px solid ${C.border}`,
+                          color:C.t1,fontSize:".8125rem",fontWeight:600,padding:"0 14px",borderRadius:999,textDecoration:"none"}}>
+                        {src.label.replace(/^Also try /,"Search ")} <span aria-hidden="true" style={{marginLeft:4}}>↗</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </>
           );
         })():(
@@ -4345,8 +4561,15 @@ function expFromFinding(e){
     imageCredit:e.image&&e.imageCredit?e.imageCredit:null,
     imageLink:e.imageLink||null,
     imageOf:e.imageOf||null,
+    // The finding's own id, which the week builder carries, so a weekly
+    // thing on /api/nearby's week can be matched back to its card.
+    findingId:e.id,
     title:e.title,
-    sub:e.meta,
+    // The map's tag respelled ("marketplace" → "Market"); everything else as the source wrote it.
+    sub:withKindWord(e.meta,e.kind),
+    kind:e.kind||null,
+    // "19:30", when the listing gave a start time. Nothing is said without one.
+    time:e.time||null,
     emoji:e.emoji,
     price:e.price||null,
     dist:e.dist,
@@ -4375,6 +4598,8 @@ const DRIP_DISMISSED="reach_drip_dismissed";
 const DRIP_ANSWERED="reach_drip_answered";
 const LOCAL_PROFILE="reach_traveler_profile";
 const DISCOVER_VISITS="reach_discover_visits";
+// Upcoming or Places, as last chosen: a convenience, so localStorage (wrapped).
+const DISCOVER_SEGMENT="reach_discover_segment";
 const FROM_SHARE="reach_from_quiz_share";
 const readLocal=(key,fallback)=>{try{const v=JSON.parse(localStorage.getItem(key)||"null");return v??fallback;}catch(e){return fallback;}};
 const writeLocal=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch(e){}};
@@ -4986,7 +5211,8 @@ function DripCard({id,userId,onChange,onAnswered,toast}){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
         <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{done||q.title}</div>
         {!done&&<button onClick={dismiss} aria-label="Not now"
-          style={{background:"none",border:"none",color:C.t3,cursor:"pointer",fontSize:15,padding:0}}>✕</button>}
+          style={{background:"none",border:"none",color:C.t2,cursor:"pointer",fontSize:15,padding:0,
+            width:44,height:44,margin:"-12px -12px -12px 0",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}><span aria-hidden="true">✕</span></button>}
       </div>
       {!done&&(
         <>
@@ -5060,7 +5286,8 @@ function UpgradeCard({userId,onChange,onAnswered,toast}){
           {!done&&<div style={{fontSize:12.5,color:C.t2,marginTop:2}}>{stage+1} of 2 · {s.title}</div>}
         </div>
         {!done&&<button onClick={dismiss} aria-label="Not now"
-          style={{background:"none",border:"none",color:C.t3,cursor:"pointer",fontSize:15,padding:0}}>✕</button>}
+          style={{background:"none",border:"none",color:C.t2,cursor:"pointer",fontSize:15,padding:0,
+            width:44,height:44,margin:"-12px -12px -12px 0",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}><span aria-hidden="true">✕</span></button>}
       </div>
       {!done&&(
         <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:10}}>

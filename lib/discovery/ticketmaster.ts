@@ -111,6 +111,11 @@ export async function ticketmaster(seeker: Seeker, opts: { timeoutMs?: number } 
         category: segment,
         url: e.url,
         date: start || null,
+        // The start time only when Ticketmaster says it has one: a listing
+        // flagged timeTBA or noSpecificTime carries a placeholder clock.
+        time: !e.dates?.start?.timeTBA && !e.dates?.start?.noSpecificTime
+          && /^\d{2}:\d{2}/.test(String(e.dates?.start?.localTime ?? ''))
+          ? String(e.dates.start.localTime).slice(0, 5) : null,
         venue: venue?.name || null,
         source: 'ticketmaster',
         because: null,

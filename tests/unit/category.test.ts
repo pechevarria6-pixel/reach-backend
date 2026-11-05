@@ -1,6 +1,36 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { usableCategory, visibleCategories } from '../../lib/discovery/category.ts';
+import { usableCategory, visibleCategories, categoryGroup, groupPills } from '../../lib/discovery/category.ts';
+
+test('each provider’s word for the same thing is one pill', () => {
+  assert.equal(categoryGroup('Music'), 'Music');
+  assert.equal(categoryGroup('Live music'), 'Music');
+  assert.equal(categoryGroup('Sport'), 'Sport');
+  assert.equal(categoryGroup('Sports'), 'Sport');
+  assert.equal(categoryGroup('Arts & Theatre'), 'Arts & stage');
+  assert.equal(categoryGroup('Film & theatre'), 'Arts & stage');
+  assert.equal(categoryGroup('Museums & history'), 'Arts & stage');
+  assert.equal(categoryGroup('Places to eat'), 'Food & drink');
+  assert.equal(categoryGroup('Markets & food halls'), 'Food & drink');
+  assert.equal(categoryGroup('Gardens & parks'), 'Outdoors');
+  assert.equal(categoryGroup('Event'), 'Other');
+  assert.equal(categoryGroup('Miscellaneous'), 'Other');
+  assert.equal(categoryGroup('Trivia & board games'), 'Other');
+  assert.equal(categoryGroup('Undefined'), 'Other');
+});
+
+test('at most six pills, most first, Other last, no "Sport" beside "Sports"', () => {
+  const items = [
+    ...['Sport', 'Sports', 'Sports'].map(category => ({ category })),
+    ...['Music', 'Live music', 'Music', 'Music'].map(category => ({ category })),
+    ...['Event', 'Miscellaneous', 'Event', 'Event', 'Event'].map(category => ({ category })),
+    { category: 'Outdoors' },
+  ];
+  const pills = groupPills(items);
+  assert.deepEqual(pills.map(p => p.group), ['Music', 'Sport', 'Outdoors', 'Other']);
+  assert.deepEqual(pills.map(p => p.count), [4, 3, 1, 5]);
+  assert.ok(pills.length <= 6);
+});
 
 test('a provider saying "we do not know" is not a category', () => {
   // The real value, from Ticketmaster, that put an "Undefined" pill on

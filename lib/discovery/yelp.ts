@@ -97,6 +97,9 @@ export async function yelpEvents(seeker: Seeker, opts: { timeoutMs?: number } = 
         category: e.category ? String(e.category).replace(/[-_]/g, ' ') : 'Event',
         url: e.event_site_url,
         date: e.time_start ? String(e.time_start).slice(0, 10) : null,
+        // The clock in the listing's own offset ("2026-11-06T19:00:00-05:00"),
+        // so it is the event's local time and not the server's.
+        time: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(e.time_start ?? '')) ? String(e.time_start).slice(11, 16) : null,
         venue: e.location?.address1 || null,
         source: 'yelp-events',
         because: null,

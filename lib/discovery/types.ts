@@ -22,6 +22,11 @@ export interface Finding {
   /** ISO date for things that happen once. Null for places that are open. */
   date: string | null;
   venue: string | null;
+  /**
+   * "19:30", local to the event, when the listing gave a start time. Null or
+   * absent when it did not — a card then says no time at all, never "TBC".
+   */
+  time?: string | null;
   /** Which source found it, so the UI can say and the logs can tell. */
   source: SourceName;
   /** Set when this was found because of something the person told us. */
