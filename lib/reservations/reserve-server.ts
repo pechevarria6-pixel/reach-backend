@@ -11,6 +11,7 @@ import { pushSender } from '@/lib/push';
 import { tableProviderFor, tableProviderNamed } from '@/lib/booking/registry';
 import { report } from '@/lib/report';
 import { usableParty } from '@/lib/booking/reservations';
+import { partySize as countParty } from '@/lib/participation';
 import { tableVenueFacts } from '@/lib/reservations/table-venue';
 import { lineWhen } from '@/lib/line-when';
 import { twilioLookup } from '@/lib/reservations/policy';
@@ -64,7 +65,11 @@ export async function tableFacts(
   const when = line ? lineWhen(line.scheduled_time, { startDate: plan.start_date, endDate: plan.end_date }) : null;
   const date = when ? when.date : (/^\d{4}-\d{2}-\d{2}$/.test(String(r.date ?? '')) ? String(r.date) : null);
   const time = when ? when.clock : (r.time ?? null);
-  const partySize = usableParty(Number(payload.party ?? r.partySize));
+  // The party the quote was made for; with no quote yet, who is on the trip.
+  // It fell back to two, so a table on a trip for one was asked for two.
+  const asked = Number(payload.party ?? r.partySize);
+  const partySize = usableParty(Number.isFinite(asked) && asked >= 1 ? asked
+    : await countParty(db, plan as { group_id?: unknown; solo_mode?: boolean | null }).catch(() => NaN));
   const v = tableVenueFacts({ venue, line, stored: r, restaurant: name, city: r.city ?? null, date, time, partySize });
   const platform = v.platform;
   const reserveUrl = v.reserveUrl;

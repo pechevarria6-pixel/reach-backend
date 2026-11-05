@@ -546,3 +546,12 @@ test('what the hotel charges at the desk is said beside our price, never left ou
   const src = readFileSync('components/reach-app.jsx', 'utf8');
   assert.match(src, /info:typeof b\.detail==="string"\?b\.detail:null/);
 });
+
+test('checkout says when a share runs past the per-person budget, and the Book tab points at Lock in until there is a button', () => {
+  const src = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.match(src, /function overBudgetCents\(shareCents,budgetDollars\)/);
+  assert.match(src, /over the \$\{fmt\(Math\.round\(plan\.budget\*100\)\)\}-a-head budget/);
+  assert.match(src, /plan\.status==="approved"\?"Reach books this — Book everything below":"Reach books this once you lock the plan in"/);
+  const server = readFileSync('lib/reservations/reserve-server.ts', 'utf8');
+  assert.match(server, /await countParty\(db, plan/, 'a table with no quote is sized to the trip, not two');
+});

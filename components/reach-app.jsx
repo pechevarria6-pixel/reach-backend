@@ -12975,7 +12975,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                             <div style={{fontSize:11,color:C.t3,marginTop:2}}>
                               {[item.time,
                                 // A table says where it stands itself, below.
-                                table?null:t.who==="reach"?(t.done?"Booked by Reach":"Reach books this — Book everything below"):(t.done?(item.type==="restaurant"?"Table reserved":"Sorted"):"You book this"),
+                                table?null:t.who==="reach"?(t.done?"Booked by Reach":(plan.status==="approved"?"Reach books this — Book everything below":"Reach books this once you lock the plan in")):(t.done?(item.type==="restaurant"?"Table reserved":"Sorted"):"You book this"),
                                 item.cost_cents>0?`about $${Math.round(item.cost_cents/100)} a person, estimate`:null].filter(Boolean).join(" · ")}
                             </div>
                             {table
@@ -13815,6 +13815,13 @@ const FIX_FOR=[
   {when:/passport|document/i, section:"documents", label:"Add travel documents →"},
 ];
 function fixFor(why){ return FIX_FOR.find(f=>f.when.test(String(why||"")))||null; }
+
+/** How far a share runs past the per-person budget, in cents; 0 when it does not or there is no budget. */
+function overBudgetCents(shareCents,budgetDollars){
+  const share=Number(shareCents),budget=Number(budgetDollars);
+  if(!Number.isFinite(share)||!Number.isFinite(budget)||budget<=0)return 0;
+  return Math.max(0,Math.round(share-budget*100));
+}
 
 function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,toast,returnedIntent,redirectStatus,saveItineraryToServer,goToProfileSection,me}){
   const group=groups.find(g=>g.id===groupId);
@@ -15134,6 +15141,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                 You've paid {fmt(myPaid)}. Your share is now {fmt(funding?.myShareCents)}, so {fmt(myShareCents)} is still to pay.
               </div>
             )}
+            {/* Said before anybody pays, never found out after: the share is
+                over the budget a head the plan was made with. The Charleston
+                demo asked $969.24 of a $900 budget and said nothing. */}
+            {(()=>{const over=overBudgetCents(funding?.myShareCents,plan?.budget);return paying&&checkout.canPay&&over>0?(
+              <div role="note" style={{fontSize:12,color:C.t1,lineHeight:1.5,marginTop:6,padding:"8px 10px",borderRadius:10,background:C.s2,border:`1px solid ${C.border}`}}>
+                {`That's ${fmt(over)} over the ${fmt(Math.round(plan.budget*100))}-a-head budget this trip was planned with.`} Swap the hotel or flight on the plan, or go ahead if that's fine.
+              </div>):null;})()}
           </div>
         );
       })()}
