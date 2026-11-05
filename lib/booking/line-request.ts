@@ -106,7 +106,7 @@ export function asRequest(
       // The product's own title, not the itinerary's wording: this is what
       // was actually booked and what the confirmation will say.
       title: product.title,
-      activity: { productCode: product.productCode, date: when.date },
+      activity: { productCode: product.productCode, date: when.date, productUrl: (product as { url?: string | null }).url ?? null },
     } as BookingItemRequest & { itineraryItemId: string; title: string };
   }
 

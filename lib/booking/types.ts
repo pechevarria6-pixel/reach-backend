@@ -95,6 +95,8 @@ export interface BookingItemRequest {
   activity?: {
     productCode: string;   // Viator product code
     date: string;
+    /** The product's own Viator page, from the search that found it. */
+    productUrl?: string | null;
     optionCode?: string;
   };
   event?: {

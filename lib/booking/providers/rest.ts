@@ -65,6 +65,18 @@ export const viatorActivities: BookingProvider = {
     const json = await res.json().catch(() => null);
     // A refusal is not an answer about the date. "Not available on that
     // date" is said only when Viator answered and offered nothing for it.
+    // Our Viator access can search tours but not check or book them (403
+    // "Endpoint access denied" until the account has full booking access).
+    // That is a fact about our account, so the person is handed the tour's
+    // own page to book themselves, and nothing is said about the date.
+    if (res.status === 403 && a.productUrl && /^https:\/\/([a-z0-9-]+\.)*viator\.com\//i.test(a.productUrl)) {
+      console.error('[viator] availability check refused', { status: 403, code: json?.code ?? null });
+      return {
+        vertical: 'activity', mode: 'redirect', status: 'redirected', provider: 'viator',
+        redirectUrl: a.productUrl,
+        detail: `${a.productCode} on ${a.date} — book it on Viator; Reach can't book tours itself yet.`,
+      };
+    }
     if (!res.ok || !Array.isArray(json?.bookableItems)) {
       console.error('[viator] availability check refused', { status: res.status, code: json?.code ?? null, message: String(json?.message ?? '').slice(0, 160) });
       return { vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator', error: "Viator didn't answer for this tour just now, so we couldn't check that date." };

@@ -517,3 +517,17 @@ test('a product priced per traveller is asked for travellers, not adults', async
     assert.equal((r.raw as { ageBand?: string }).ageBand, 'TRAVELER', 'and booked the same way');
   } finally { s.restore(); }
 });
+
+test('when our Viator access cannot check a tour, the person is handed its own Viator page, not told the date is full', async () => {
+  const { viatorActivities } = await import('../../lib/booking/providers/rest.ts');
+  process.env.VIATOR_API_KEY = 'viator_unit';
+  const s = stubFetch(u => u.includes('/products/') ? { json: { pricingInfo: { ageBands: [{ ageBand: 'ADULT' }] } } }
+    : { status: 403, json: { code: 'FORBIDDEN', message: 'Endpoint access denied' } });
+  try {
+    const r = await viatorActivities.quote({ vertical: 'activity', planId: 'p', groupId: 'g', party: 2, travelers: [],
+      activity: { productCode: '444621P1', date: '2099-12-05', productUrl: 'https://www.viator.com/tours/Charleston/x/d4398-444621P1' } } as never);
+    assert.equal(r.status, 'redirected');
+    assert.equal(r.redirectUrl, 'https://www.viator.com/tours/Charleston/x/d4398-444621P1');
+    assert.doesNotMatch(String(r.detail), /Not available/);
+  } finally { s.restore(); }
+});
