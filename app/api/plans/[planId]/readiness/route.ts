@@ -14,6 +14,7 @@ import { groupReadiness, tripTravellerIds, travellerOrigins, notFlyingIds } from
 import { byDepartureAirport, travelDetails } from '@/lib/airports';
 import { planReadiness, waitingSentence, answersSentence } from '@/lib/plan-readiness';
 import { voteTitles } from '@/lib/trip-vote';
+import { isUndecided } from '@/lib/group-answers';
 
 export async function GET(_req: Request, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -33,6 +34,8 @@ export async function GET(_req: Request, { params }: { params: { planId: string 
     const p = await planReadiness(
       ctx.db, params.planId, String(ctx.plan.group_id),
       (ctx.plan as { solo_mode?: boolean }).solo_mode === true,
+      // Waiting on its destination: no "nobody asked yet" grace.
+      { undecided: isUndecided(ctx.plan as { destination_style?: unknown }) },
     );
     // A vote is only promised where there is something to vote on. A trip
     // with no options yet is waiting for the answers its options are built

@@ -12,7 +12,7 @@ import { track } from '@/lib/track';
 import { cachedDestinationPhoto } from '@/lib/discovery/destination-photo';
 import { within } from '@/lib/deadline';
 import { UNDECIDED } from '@/lib/group-answers';
-import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle } from '@/lib/trip-vote';
+import { mayPick, readIdeas, patchDecides, patchCallsOff, calledOffCopy, pickedTitle, detailTally } from '@/lib/trip-vote';
 import { membersOf, organiserOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
@@ -74,12 +74,16 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
     supabase.from('group_members').select('user_id, users(id, name, email, avatar_url)').eq('group_id', plan.group_id),
   ]);
 
-  // Build vote tally
-  const tally: Record<string, number> = {};
-  votesRes.data?.forEach(v => { tally[v.option] = (tally[v.option] || 0) + 1; });
-  const myVote = votesRes.data?.find(v => v.user_id === user.id)?.option || null;
-
   const participants = (membersRes.data || []).map(m => m.user_id);
+
+  // The tally, by the vote route's own rule (lib/trip-vote.ts detailTally):
+  // a vote on an option on the list, from somebody still in the group. This
+  // counted every row, so a leaver's vote made "Everyone's voted" true for
+  // a group whose remaining members had not.
+  const { votes: tally, myVote, totalVotes } = detailTally({
+    plan, votes: (votesRes.data ?? []) as Array<{ user_id: string; option: string }>,
+    memberIds: participants.map(String), me: user.id,
+  });
 
   return NextResponse.json({
     plan: { ...plan, participants },
@@ -88,7 +92,7 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
     itinerary: itineraryRes.data || [],
     votes: tally,
     myVote,
-    totalVotes: votesRes.data?.length || 0,
+    totalVotes,
   });
 }
 

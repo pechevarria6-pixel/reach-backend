@@ -365,6 +365,28 @@ export function tallyVotes(p: {
   };
 }
 
+/**
+ * The tally GET /api/plans/[id] hands the plan screen, by the same rule as
+ * the vote route: a vote counts on an option the group can see, from
+ * somebody still in the group, once.
+ *
+ * That route used to count every row in `votes`. Somebody who had left kept
+ * their vote, so a group of two with one leaver read "Everyone's voted —
+ * the group picked Lisbon, 2 of 2" while the one person left had not voted;
+ * and a vote on an option no longer on the list counted towards "everyone".
+ */
+export function detailTally(p: {
+  plan: { trip_options?: unknown; vote_options?: unknown };
+  votes: VoteRow[] | null | undefined;
+  memberIds: string[];
+  me: string;
+}): { votes: Record<string, number>; myVote: string | null; totalVotes: number } {
+  const view = tallyVotes({
+    titles: voteTitles(p.plan), votes: p.votes ?? [], vetoes: [], memberIds: p.memberIds, me: p.me,
+  });
+  return { votes: view.counts, myVote: view.myVote, totalVotes: view.voted };
+}
+
 // ─── One undecided group trip at a time ─────────────────────────────────
 
 export const WAITING_STATUSES = ['planning', 'voting'] as const;

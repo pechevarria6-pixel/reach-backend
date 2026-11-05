@@ -422,7 +422,7 @@ export async function POST(req: NextRequest) {
       if (readiness.wentAhead) answeredOnly = new Set(readiness.members.filter(m => m.answered).map(m => m.userId));
     }
 
-    const read = await readGroupAnswers(supabase, groupPlan.id);
+    const read = await readGroupAnswers(supabase, groupPlan.id, String(groupId));
     if (read.error && !detailTripId) {
       // Everybody has answered and we cannot read what they said. Building
       // anyway would be building from nobody's answers after making them all
@@ -878,7 +878,7 @@ export async function POST(req: NextRequest) {
     if (answersPlanId) {
       const read = groupAnswers && groupPlan?.id === answersPlanId
         ? groupAnswers
-        : await readGroupAnswers(supabase, answersPlanId);
+        : await readGroupAnswers(supabase, answersPlanId, String(groupId));
       // The days are read by the whole group too, so the same rule holds.
       wantedBlock = answersBlock(read, { group: isGroup });
       // A thing somebody said to avoid is a constraint, not a hint.

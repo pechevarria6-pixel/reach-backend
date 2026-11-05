@@ -5,6 +5,7 @@ import { track } from '@/lib/track';
 import { readIdeas, tallyVotes, mayPick, voteTitles, shownTitle, type SavedIdeas } from '@/lib/trip-vote';
 import { readVetoes, membersOf, organiserOf, organisersOf, firstName, notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
 import { claimOnce } from '@/lib/everyone-in';
+import { isUndecided } from '@/lib/group-answers';
 import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
 import { ideasWithClimateNow } from '@/lib/climate-store';
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     const readiness = await planReadiness(
       ctx.db, params.planId, String(ctx.plan.group_id),
       plan.solo_mode === true,
+      { undecided: isUndecided(plan) },
     );
     if (!readiness.allReady) {
       return NextResponse.json({

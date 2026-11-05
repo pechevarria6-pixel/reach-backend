@@ -368,17 +368,37 @@ export function attributes(
 export async function readGroupAnswers(
   db: SupabaseClient,
   planId: string,
+  /**
+   * The group the trip is for. Its answers are only those of people still
+   * in it: somebody who answered and then left kept their budget capping
+   * the trip ("the lowest budget anybody named"), their hard nos on it and
+   * their wishes in the prompt, for a trip they are not going on. The vote
+   * has always counted only current members (tallyVotes); this is the same
+   * rule for the answers.
+   */
+  groupId?: string | null,
 ): Promise<GroupAnswers & { error: string | null }> {
-  const { data, error } = await db
-    .from('plan_preferences')
-    .select('user_id, summary_text, answers, submitted_at, users(name)')
-    .eq('plan_id', planId)
-    .not('submitted_at', 'is', null);
+  const empty = { lines: [], privateLines: [], vetoes: [], userIds: [], lowestBudget: null, byUser: {} };
+  const [{ data, error }, group] = await Promise.all([
+    db.from('plan_preferences')
+      .select('user_id, summary_text, answers, submitted_at, users(name)')
+      .eq('plan_id', planId)
+      .not('submitted_at', 'is', null),
+    groupId ? db.from('group_members').select('user_id').eq('group_id', groupId) : Promise.resolve(null),
+  ]);
   if (error) {
     console.error('[group answers] could not read what the group asked for', { plan: planId, code: error.code });
-    return { lines: [], privateLines: [], vetoes: [], userIds: [], lowestBudget: null, byUser: {}, error: error.code || 'read failed' };
+    return { ...empty, error: error.code || 'read failed' };
   }
-  return { ...answersFrom(data as AnswerRow[]), error: null };
+  if (group?.error) {
+    // Not "everybody who ever answered": that is the bug this read exists
+    // to stop. Said as a failed read, which the options stage refuses on.
+    console.error('[group answers] could not read who is in the group', { plan: planId, code: group.error.code });
+    return { ...empty, error: group.error.code || 'group read failed' };
+  }
+  const inGroup = group ? new Set((group.data ?? []).map(m => String((m as { user_id: unknown }).user_id))) : null;
+  const rows = (data as AnswerRow[] | null ?? []).filter(r => !inGroup || inGroup.has(String(r.user_id)));
+  return { ...answersFrom(rows), error: null };
 }
 
 export interface Answered {

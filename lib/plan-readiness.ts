@@ -116,6 +116,17 @@ export async function planReadiness(
   planId: string,
   groupId: string,
   soloMode: boolean,
+  opts: {
+    /**
+     * The trip is still waiting on its destination (isUndecided). It was
+     * made by the flow that asks everybody, so there is no old trip to
+     * spare: nobody having answered is nobody having answered. Without
+     * this, a trip whose organiser's answers failed to save counted every
+     * member ready, named nobody, and asked nobody to answer — while the
+     * options gate refused to build anything.
+     */
+    undecided?: boolean;
+  } = {},
 ): Promise<ReadinessReport> {
   const { data: members, error } = await db
     .from('group_members')
@@ -133,7 +144,14 @@ export async function planReadiness(
   // become a trip for two. Joining clears it (lib/joining.ts), but the rule
   // is not left resting on that write: somebody who is in the group is asked,
   // whatever the plan was created as.
-  if (soloMode && isSoloCount((members ?? []).length)) {
+  //
+  // And a group of exactly one is somebody on their own, whatever the flag
+  // says: the flag is not cleared when people leave, and a plan saved while
+  // the count could not be read is saved as a group's. Nobody on their own
+  // waits on anybody, themselves included. An empty read is not that — it
+  // is a group we could not see, and stays shut.
+  const headcount = (members ?? []).length;
+  if (isSoloCount(headcount) && (soloMode || headcount === 1)) {
     return { members: [], allReady: true, waitingOn: [], solo: true };
   }
   if (soloMode) {
@@ -153,11 +171,18 @@ export async function planReadiness(
       console.error('[readiness] could not read plan preferences', { planId, code: prefsError.code });
     }
   } else {
-    for (const row of prefs ?? []) if (row.submitted_at) submitted.add(String(row.user_id));
+    // Only people still in the group. Somebody who answered and then left
+    // is not who this trip is waiting on or going with, and their answer
+    // must not make it "asked" for the people who are.
+    const inGroup = new Set((members ?? []).map(m => String((m as Record<string, unknown>).user_id)));
+    for (const row of prefs ?? []) {
+      if (row.submitted_at && inGroup.has(String(row.user_id))) submitted.add(String(row.user_id));
+    }
   }
 
-  // Nobody has been asked about this trip yet, so nobody can be behind on it.
-  const asked = submitted.size > 0;
+  // Nobody has been asked about this trip yet, so nobody can be behind on it
+  // — unless it is waiting on its destination, which is what asking is for.
+  const asked = submitted.size > 0 || opts.undecided === true;
 
   const rows: MemberReadiness[] = (members ?? []).map(m => {
     const record = m as Record<string, unknown>;
