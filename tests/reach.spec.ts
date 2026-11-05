@@ -10,12 +10,21 @@ const TEST_PASSWORD = process.env.TEST_PASSWORD || 'TestReach2026!';
 // (identifier → Continue → password → Continue), and its inputs are
 // name="identifier" / name="password" — NOT type="email"/"password"
 // on a single screen like the old custom AuthScreen.
+// "networkidle" never comes: the app asks for notifications every few
+// seconds while the tab is visible (a32950b), so the network is never quiet
+// for 500ms and every wait on it timed out. Wait for the page to load and
+// then a fixed settle instead — long enough for first renders and their
+// fetches to land.
+async function settle(page: Page, ms = 4000) {
+  await page.waitForLoadState('load').catch(() => {});
+  await page.waitForTimeout(ms);
+}
+
 async function signIn(page: Page) {
   // First visit lets Clerk's dev-instance handshake complete (it may bounce
   // through /sign-in and land at "/"); second visit then passes middleware.
   await page.goto(`${BASE_URL}/home`).catch(() => {});
-  await page.waitForLoadState('networkidle').catch(() => {});
-  await page.waitForTimeout(2000);
+  await settle(page, 2000);
   await page.goto(`${BASE_URL}/home`).catch(() => {});
   await page.waitForURL('**/home', { timeout: 20000 });
 }
@@ -273,7 +282,7 @@ test.describe('7. Performance', () => {
       page.on('pageerror', e => errors.push('uncaught: ' + e.message));
 
       await page.goto(`${BASE_URL}${path}`);
-      await page.waitForLoadState('networkidle');
+      await settle(page);
 
       const critical = errors.filter(e => !NOT_OURS.some(ok => e.includes(ok)));
       expect(critical, `${path} logged errors a person would have seen`).toEqual([]);
@@ -460,7 +469,7 @@ test.describe('14. Rendered facts', () => {
 
   async function openFirstPlanItinerary(page: Page, titled?: RegExp) {
     await page.goto(`${BASE_URL}/home`);
-    await page.waitForLoadState('networkidle');
+    await settle(page);
     const cards = page.locator('[class*="card"]').filter({ hasText: titled ?? /·/ });
     await cards.first().click({ timeout: 15000 }).catch(() => {});
     await page.getByText('Itinerary', { exact: true }).first().click({ timeout: 15000 }).catch(() => {});
@@ -518,7 +527,7 @@ test.describe('14. Rendered facts', () => {
     // the time this ran it was using a cookie that had expired thirty
     // seconds ago and got a 401. The document always has the live one.
     await page.goto(`${BASE_URL}/home`);
-    await page.waitForLoadState('networkidle');
+    await settle(page);
 
     const checked = await page.evaluate(async () => {
       const get = (u: string) => fetch(u, { cache: 'no-store' }).then(r => r.ok ? r.json() : null);
@@ -545,7 +554,7 @@ test.describe('14. Rendered facts', () => {
 
   test('money on a plan screen is a number, never an empty promise', async ({ page }) => {
     await page.goto(`${BASE_URL}/home`);
-    await page.waitForLoadState('networkidle');
+    await settle(page);
     const text = await page.locator('body').innerText();
     // "$NaN" and "$undefined" have both been on this screen.
     expect(text).not.toMatch(/\$\s*(NaN|undefined|null)/);
