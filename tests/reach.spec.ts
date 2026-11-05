@@ -100,9 +100,11 @@ test.describe('3. Discover tab', () => {
   });
 
   test('Category filter pills exist', async ({ page }) => {
-    await page.waitForTimeout(2000);
+    // The pills come with the finds, never before them: the redesign
+    // (2026-11-05) shows no lone "All" over a skeleton. So this waits as long
+    // as the card test beside it, for the same answer.
     const filters = page.locator('button:has-text("All")');
-    await expect(filters.first()).toBeVisible({ timeout: 10000 });
+    await expect(filters.first()).toBeVisible({ timeout: 25000 });
   });
 
   test('Experience cards are displayed', async ({ page }) => {
