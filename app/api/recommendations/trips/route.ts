@@ -21,6 +21,7 @@ import { snapshot } from '@/lib/recommendations/holdings';
 import { personFor } from '@/lib/recommendations/person';
 import { pickTrips } from '@/lib/recommendations/trip-picks';
 import { dressPicks } from '@/lib/recommendations/dress';
+import { forecastPicks } from '@/lib/recommendations/pick-weather';
 import { TripPicksResponse } from '@/lib/contracts/trip-pick';
 
 export const dynamic = 'force-dynamic';
@@ -44,7 +45,10 @@ export async function GET(req: NextRequest) {
     // The picture of each place and when its weather is usually best. Both are
     // kept answers after the first time, and each has a short deadline, so a
     // slow Wikipedia costs a card its photo, never Home its cards.
-    const picks = await dressPicks(ctx.db, bare);
+    // And, for tonight's night out and this weekend's drive, the forecast —
+    // only where the pick is out of doors, and only from the forecast cache.
+    const [dressed, forecasts] = await Promise.all([dressPicks(ctx.db, bare), forecastPicks(ctx.db, bare)]);
+    const picks = dressed.map((p, i) => ({ ...p, forecast: forecasts[i].forecast }));
 
     // Checked against the same contract the card reads with. A card that
     // fails it is a bug here, not something to send half-formed.

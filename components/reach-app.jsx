@@ -1011,6 +1011,12 @@ function NotificationsBell(){
 // the town. The × is "not for me", the same verdict Discover's cards use,
 // and it can be taken back while the card is still on screen.
 const BAND_PILL={night:"🌙 Night out",weekend:"🚗 Weekend",away:"✈️ Fly away"};
+// When a forecast was fetched, on this phone's clock: "fetched Thu 4:18 PM".
+const fetchedAtWords=(iso)=>{
+  const t=Date.parse(String(iso||""));
+  if(!Number.isFinite(t))return "fetched recently";
+  return "fetched "+new Date(t).toLocaleString("en-US",{weekday:"short",hour:"numeric",minute:"2-digit"});
+};
 function TripPicks({push,userLocation,toast,groups}){
   const [state,setState]=useState("loading"); // loading|ready|error
   const [data,setData]=useState({picks:[],reason:null,from:null});
@@ -1122,6 +1128,21 @@ function TripPicks({push,userLocation,toast,groups}){
               <div style={{fontSize:13,color:C.t1,lineHeight:1.45}}>{p.held}.</div>
               {p.matched&&<div style={{fontSize:12,color:C.t2,lineHeight:1.45}}>{p.matched}</div>}
               {p.leftOut&&<div style={{fontSize:11.5,color:C.t3,lineHeight:1.45}}>{p.leftOut}</div>}
+              {/* The forecast, for tonight or this weekend, when the pick is
+                  out of doors and the forecast spoils it — with each source's
+                  credit and when it was fetched, which the terms ask for. */}
+              {p.forecast?.line&&(
+                <div style={{fontSize:11.5,color:C.t1,lineHeight:1.45,background:C.s2,borderRadius:10,padding:"6px 8px"}}>
+                  <span style={{fontSize:9.5,fontWeight:700,color:C.t3,textTransform:"uppercase",letterSpacing:.4,marginRight:4}}>{p.forecast.label}</span>
+                  {p.forecast.line}
+                  <div style={{fontSize:9.5,color:C.t3,marginTop:2}}>
+                    {p.forecast.sources.map((s,i)=>(
+                      <span key={s.name}>{i?" · ":""}<a href={s.link} target="_blank" rel="noopener noreferrer" style={{color:C.t3}}>{s.credit}</a></span>
+                    ))}
+                    {" · "}{fetchedAtWords(p.forecast.fetchedAt)}
+                  </div>
+                </div>
+              )}
               {/* When the weather is usually best — averages, said as averages. */}
               {p.weather?.line&&(
                 <div style={{fontSize:11.5,color:C.t2,lineHeight:1.45}} title={p.weather.credit}>

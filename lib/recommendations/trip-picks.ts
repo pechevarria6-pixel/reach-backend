@@ -29,6 +29,7 @@ import { tasteFrom, type Profile } from '../discovery/taste.ts';
 import { nameKey } from '../discovery/regions.ts';
 import { DIALS, INTEREST_ARCHETYPE, publicProfile, type ArchetypeKey, type DialKey } from '../traveler-profile.ts';
 import type { TasteProfile } from '../taste-profile.ts';
+import { setting } from '../forecast.ts';
 
 // ─── The shapes ─────────────────────────────────────────────────────────
 
@@ -160,6 +161,32 @@ export interface TripPick {
   groupId: string | null;
   /** Deterministic score, for tests and logs. Not shown. */
   score: number;
+  /**
+   * What the forecast is read against (lib/recommendations/pick-weather.ts).
+   * Server-side only: the contract does not carry it, so it never reaches
+   * the card.
+   */
+  basis?: WeatherBasis;
+}
+
+/**
+ * Whether a pick lives or dies by the weather, decided from the rows that
+ * made it — never from the town's name or a guess about it.
+ */
+export interface WeatherBasis {
+  /** The town the card names, and where it is. */
+  name: string;
+  at: { lat: number; lng: number };
+  /**
+   * The interest that leads the pick when it is out of doors (the first
+   * non-food interest it matched, with most of its held rows on the map as
+   * parks, beaches, trails, beer gardens…); null when the pick is not.
+   */
+  outdoor: string | null;
+  /** That interest as the card says it ("the outdoors"). */
+  outdoorWords: string | null;
+  /** Up to two things with a roof the town holds, as the card says them, best fit first. */
+  indoor: string[];
 }
 
 // ─── The floor ──────────────────────────────────────────────────────────
@@ -250,7 +277,7 @@ const SAID: Record<string, string> = {
   'trivia & board games': 'trivia',
   'wine tasting': 'wine',
 };
-function said(interest: string): string {
+export function said(interest: string): string {
   const cuisine = /^(\w[\w\s]*?) restaurants$/i.exec(interest)?.[1];
   if (cuisine) return `${cuisine.charAt(0).toUpperCase()}${cuisine.slice(1)} food`;
   return SAID[interest] ?? interest;
@@ -1205,6 +1232,68 @@ export function pickTrips(
   return { picks, reason: null };
 }
 
+// ─── Indoors and out, from the rows ─────────────────────────────────────
+
+/** Interests whose rows are out of doors when the map gives no kind. */
+const OUTDOOR_INTERESTS = new Set(['outdoors', 'gardens & parks']);
+/** Things with a roof that are an evening, not only an afternoon: a museum is shut by eight. */
+const EVENING_INDOOR = new Set([
+  'live music', 'comedy', 'film & theatre', 'cocktail bars', 'pubs', 'breweries', 'nightclubs',
+  'trivia & board games', 'dancing', 'wine tasting',
+]);
+
+/**
+ * How one interest's held rows sit, by the map's own kind for each row
+ * (lib/forecast.ts setting). Rows of an outdoor interest with no kind count
+ * as outdoors; any other row with no kind is not counted either way.
+ */
+export function interestSetting(h: Holdings, interest: string): 'outdoor' | 'indoor' | null {
+  let out = 0, inn = 0, all = 0;
+  for (const [key, n] of Object.entries(h.counts ?? {})) {
+    if (!(n > 0)) continue;
+    const [i, kind = ''] = key.split('|');
+    if (i !== interest) continue;
+    all += n;
+    const s = kind ? setting(kind) : OUTDOOR_INTERESTS.has(i) ? 'outdoor' : null;
+    if (s === 'outdoor') out += n;
+    else if (s === 'indoor') inn += n;
+  }
+  if (!all) return null;
+  if (out * 2 >= all) return 'outdoor';
+  if (inn * 5 >= all * 3) return 'indoor';
+  return null;
+}
+
+/**
+ * Whether this pick is a weather pick, and what the town holds under a roof
+ * instead. The pick leads with the first non-food thing it matched; when
+ * nothing matched, it was chosen on what the town holds overall and leans
+ * on no one kind of place, so it is not a weather pick.
+ */
+export function weatherBasis(
+  s: { band: Band; h: Holdings; t: Tally; matched: string[]; shown: Place },
+  vetoes: string[],
+): WeatherBasis {
+  const lead = s.matched.find(i => !isFood(i) && (s.t.byInterest.get(i) ?? 0) > 0) ?? null;
+  const outdoor = lead && interestSetting(s.h, lead) === 'outdoor' ? lead : null;
+  const fits = (i: string) => !isFood(i) && !OUTDOOR_INTERESTS.has(i)
+    && (s.band !== 'night' || EVENING_INDOOR.has(i))
+    && interestSetting(s.h, i) === 'indoor'
+    && !vetoBreach(said(i), vetoes);
+  // What they said first, then what the town holds most of.
+  const theirs = s.matched.filter(fits);
+  const rest = [...s.t.byInterest.entries()]
+    .filter(([i, n]) => n >= 3 && fits(i) && !theirs.includes(i))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([i]) => i);
+  return {
+    name: s.shown.name,
+    at: { lat: s.shown.lat, lng: s.shown.lng },
+    outdoor,
+    outdoorWords: outdoor ? said(outdoor) : null,
+    indoor: [...theirs, ...rest].slice(0, 2).map(said),
+  };
+}
+
 /** US territories fly as domestic from the mainland: no passport, a US fare. */
 const AS_US = new Set(['US', 'PR', 'VI', 'GU']);
 const homeSide = (cc: string) => (AS_US.has(cc.toUpperCase()) ? 'US' : cc.toUpperCase());
@@ -1275,6 +1364,7 @@ function toPick(s: Scored, person: Person, ctx: { party: number; tier: Tier; gro
     cta: CTA[s.band],
     groupId: person.group?.id ?? null,
     score: s.score,
+    basis: weatherBasis(s, vetoes),
   };
 }
 

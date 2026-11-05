@@ -61,6 +61,20 @@ export const TripPickSchema = z.object({
    * never a check that a no-go passed. Absent when nothing is held.
    */
   weather: z.object({ line: z.string().min(1), credit: z.string().min(1) }).nullable().optional(),
+  /**
+   * The forecast, where the card means a time without saying it (tonight, or
+   * the coming weekend) and the pick is out of doors and the forecast spoils
+   * it: "Rain likely Saturday (70%) — Asheville's breweries and museums
+   * instead?". Always with every source's credit and when it was fetched.
+   * Absent when the forecast is fine, not held, or the pick is not a weather
+   * pick. See lib/recommendations/pick-weather.ts.
+   */
+  forecast: z.object({
+    line: z.string().min(1),
+    label: z.literal('Forecast'),
+    sources: z.array(z.object({ name: z.string().min(1), credit: z.string().min(1), link: z.string().url() })).min(1),
+    fetchedAt: z.string().min(1),
+  }).nullable().optional(),
   howFar: z.string().min(1),
   /** An estimate, and labelled as one on the card. Never a price. */
   cost: z.object({

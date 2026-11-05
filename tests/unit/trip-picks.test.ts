@@ -317,7 +317,10 @@ test('every card matches the contract the Home screen reads with', () => {
     const { picks, reason } = pickTrips(all, holdingsFor(), who, { max: 5 });
     for (const p of picks) assert.ok(TripPickSchema.safeParse(p).success, p.title);
     const round = picksFrom(JSON.parse(JSON.stringify({ picks, reason, from: 'Raleigh' })));
-    assert.deepEqual(round.picks, picks, 'nothing dropped between the route and the card');
+    // `basis` is what the forecast is read against, on the server, and is
+    // the one field that is meant never to reach the card.
+    assert.deepEqual(round.picks, picks.map(({ basis, ...p }) => p), 'nothing dropped between the route and the card');
+    assert.ok(round.picks.every(p => !('basis' in p)), 'the basis stays on the server');
     assert.equal(round.from, 'Raleigh');
   }
   // A malformed card is left out rather than drawn with a hole in it.
