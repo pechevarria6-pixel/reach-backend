@@ -12975,7 +12975,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   refuses), and the server asks who is still to answer
                   rather than telling anybody to vote — so the toast says
                   that, not "Sent round for a vote". */}
-              {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&plan.options?.length>0&&<button className="bs" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast(votingOpen?"Sent round for a vote":"The vote's open. Whoever's still to answer has been asked to, and everyone hears once they're in");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
+              {plan.status==="planning"&&!soloTrip&&plan.destStyle!=="undecided"&&plan.options?.length>0&&<button className="bs" style={{marginBottom:10}} disabled={loading} onClick={()=>updateStatus("voting",()=>{setAtab("vote");toast(votingOpen?"Sent round for a vote":"Sent for a vote. Voting opens once everyone has answered — whoever hasn't has been asked, and everyone hears when it opens");})}>{loading?"Sending…":"Send to the group for a vote"}</button>}
               <button className="bs" onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan details</button>
               {/* Settle-up reminders come after the trip, so this stays then too. */}
               <MuteReminders planId={planId} toast={toast} solo={soloTrip} night={plan.type==="restaurant"}/>

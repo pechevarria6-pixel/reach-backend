@@ -71,7 +71,8 @@ test('R3: the preferences route tells the group, once, after saving — and neve
     'the same readiness the /vote gate reads');
 });
 test('R3: the organiser is not told "Sent round for a vote" when nobody can vote yet', () => {
-  assert.match(PLAN, /toast\(votingOpen\?"Sent round for a vote":"The vote's open\. Whoever's still to answer/);
+  // Nor "The vote's open" over a Vote tab that says it isn't yet.
+  assert.match(PLAN, /toast\(votingOpen\?"Sent round for a vote":"Sent for a vote\. Voting opens once everyone has answered/);
 });
 
 // ── 4. A title is renamed only in the listing's own words ───────────────
