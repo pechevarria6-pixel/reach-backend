@@ -8,6 +8,7 @@ import { report } from '@/lib/report';
 import { sendPaymentReceipt, sendFullyFunded } from '@/lib/email';
 import Stripe from 'stripe';
 import { track } from '@/lib/track';
+import { markPlanFunded, recordContributionFailed } from '@/lib/contribution-events';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -111,9 +112,9 @@ export async function POST(req: NextRequest) {
       const intent = event.data.object as Stripe.PaymentIntent;
 
       if (intent.metadata.kind === 'reach_contribution') {
-        const { error: contribFailed } = await supabase.from('contributions')
-          .update({ status: 'failed', updated_at: new Date().toISOString() })
-          .eq('stripe_payment_intent', intent.id);
+        // Only a payment still in flight: a decline's event arriving after
+        // the second card paid must not unpay it (lib/contribution-events.ts).
+        const { error: contribFailed } = await recordContributionFailed(supabase, intent.id);
         if (contribFailed) console.error('[stripe webhook] could not record a failed contribution', { intent: intent.id, code: contribFailed.code });
         break;
       }
@@ -239,23 +240,33 @@ async function announceIfFunded(
     const { data: plan } = await supabase
       .from('plans').select('id,title,group_id,status').eq('id', planId).single();
     if (!plan) return;
-    // Already announced, or already past this point.
-    if (plan.status === 'approved' || plan.status === 'booked') return;
+    // The money is in. A plan that does not hear about it sits unapproved
+    // with every share collected, and the announcement below would then tell
+    // the group their trip was on when nothing had changed. Loud, and it
+    // stops here rather than sending that message.
+    //
+    // Moved only from planning, and only by one call: a plan already
+    // approved or booked has been announced, and one called off or finished
+    // is not brought back by money that cleared late — that is a refund to
+    // make, not a trip to announce (lib/contribution-events.ts).
+    const funded = await markPlanFunded(supabase, planId);
+    if (funded.error) {
+      console.error('[webhooks/stripe] funded but could not approve the plan', { plan: planId, code: funded.error.code });
+      return;
+    }
+    if (!funded.moved) {
+      if (plan.status === 'cancelled' || plan.status === 'completed') {
+        report(new Error(`a payment cleared on a plan that is ${plan.status}; the payer is owed it back`), {
+          where: 'webhooks/stripe', extra: { planId, collectedCents, targetCents },
+        });
+      }
+      return;
+    }
 
     void track(supabase, 'plan_fully_funded', {
       groupId: String(plan.group_id), planId,
       props: { collected_cents: collectedCents, target_cents: targetCents },
     });
-
-    // The money is in. A plan that does not hear about it sits unapproved
-    // with every share collected, and the announcement below would then tell
-    // the group their trip was on when nothing had changed. Loud, and it
-    // stops here rather than sending that message.
-    const { error: approved } = await supabase.from('plans').update({ status: 'approved' }).eq('id', planId);
-    if (approved) {
-      console.error('[webhooks/stripe] funded but could not approve the plan', { plan: planId, code: approved.code });
-      return;
-    }
 
     const { data: group } = await supabase
       .from('groups').select('name').eq('id', plan.group_id).single();

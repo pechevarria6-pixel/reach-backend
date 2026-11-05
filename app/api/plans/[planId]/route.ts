@@ -18,6 +18,7 @@ import { notifyUsers } from '@/lib/notify-user';
 import { pushSender } from '@/lib/push';
 import { pinPlan, pinMoves } from '@/lib/trip-map';
 import { readActive, closeStale, refusalBody, refusalFor, ACTIVE_STATUSES } from '@/lib/one-active';
+import { stopPaymentsInFlight } from '@/lib/call-off-money';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -239,6 +240,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
       return NextResponse.json({
         error: `Money paid towards this trip is still held, so it can't be called off from here — calling it off wouldn't give it back. ${back}`,
         paidIn: true,
+      }, { status: 409 });
+    }
+    // And money on its way: a share still clearing would land on a trip
+    // already called off, with no checkout left to take it back from.
+    const inFlight = await stopPaymentsInFlight(supabase, params.planId);
+    if (!inFlight.ok) {
+      return NextResponse.json({
+        error: inFlight.reason === 'moving'
+          ? "A payment towards this trip is still going through, so it can't be called off yet — once it has, it needs giving back before the trip is called off."
+          : "We couldn't check a payment that was started on this trip — nothing was changed. Try again in a moment.",
+        paymentInFlight: true,
       }, { status: 409 });
     }
   }
@@ -586,6 +598,17 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     return NextResponse.json({
       error: `Money paid towards this trip is still held, so it can't be deleted — that would leave nowhere to get it back from. ${back}`,
       paidIn: true,
+    }, { status: 409 });
+  }
+  // A payment still clearing would land on a trip that no longer exists,
+  // with no row left for the webhook to record it on.
+  const inFlight = await stopPaymentsInFlight(supabase, params.planId);
+  if (!inFlight.ok) {
+    return NextResponse.json({
+      error: inFlight.reason === 'moving'
+        ? "A payment towards this trip is still going through, so it can't be deleted yet — once it has, it needs giving back before the trip is deleted."
+        : "We couldn't check a payment that was started on this trip — nothing was deleted. Try again in a moment.",
+      paymentInFlight: true,
     }, { status: 409 });
   }
 
