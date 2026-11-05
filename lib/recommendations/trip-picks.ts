@@ -790,6 +790,9 @@ export function notATown(name: string | null | undefined): boolean {
   const n = String(name ?? '').trim();
   if (!n || n.length < 3 || /^null$/i.test(n)) return true;
   if (/^[A-Z]{3}$/.test(n)) return true;
+  // What a client says when it does not know the town, saved as if it were
+  // one: ingest_seeds holds a "Your location" in North Carolina.
+  if (/^(your|my|current) (location|city|position)$/i.test(n)) return true;
   if (/\b(county|parish|borough of|province|region|state)\b/i.test(n)) return true;
   const folded = nameKey(n);
   return Object.values(US_STATE_NAME).some(s => nameKey(s) === folded && folded !== 'washington');

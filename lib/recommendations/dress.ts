@@ -13,7 +13,10 @@ import type { TripPickData } from '../contracts/trip-pick.ts';
 const DEADLINE_MS = 3500;
 
 function within<T>(p: Promise<T>, ms = DEADLINE_MS): Promise<T | null> {
-  return Promise.race([p.catch(() => null), new Promise<null>(r => setTimeout(() => r(null), ms))]);
+  // The clock stops once the answer is in, so a fast answer leaves no timer behind.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clock = new Promise<null>(r => { timer = setTimeout(() => r(null), ms); });
+  return Promise.race([p.catch(() => null), clock]).finally(() => clearTimeout(timer));
 }
 
 type Deps = {
@@ -27,8 +30,9 @@ const LIVE: Deps = {
 };
 
 export async function dressPicks<P extends Pick<TripPickData, 'destination' | 'title'> & Partial<TripPickData>>(
-  db: SupabaseClient, picks: P[], deps: Deps = LIVE,
+  db: SupabaseClient, picks: P[], given: Partial<Deps> = {},
 ): Promise<Array<P & { photo: TripPickData['photo']; weather: TripPickData['weather'] }>> {
+  const deps: Deps = { ...LIVE, ...given };
   const ms = deps.deadlineMs ?? DEADLINE_MS;
   return Promise.all(picks.map(async p => {
     const place = [p.destination.city, p.destination.country].filter(Boolean).join(', ');

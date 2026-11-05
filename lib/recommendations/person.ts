@@ -18,6 +18,9 @@ const TASTE = 'id, favorite_activities, cuisines, music_genres, nightlife_style,
 
 export const TRIP_REF = 'trip:';
 
+/** The most a home-city lookup may take before Home goes without it. */
+const LOCATE_MS = 1500;
+
 export interface PersonRead {
   person: Person;
   /** How the card names where distances were measured from. */
@@ -27,17 +30,32 @@ export interface PersonRead {
 export async function personFor(
   db: SupabaseClient,
   userId: string,
-  opts: { at?: { lat: number; lng: number } | null; city?: string | null; airport?: string | null; candidates: Candidate[] },
+  opts: { at?: { lat: number; lng: number } | null; city?: string | null; airport?: string | null; candidates: Candidate[] | Promise<Candidate[]> },
 ): Promise<PersonRead> {
   // select('*') so quiz v3's traveler_profile is read when its migration has
   // run and simply absent when it has not — naming the column would fail the
   // whole read until then (42703), and the v2 answers are the fallback.
-  const { data: me, error: meErr } = await db.from('users').select('*').eq('id', userId).maybeSingle();
+  // The three reads that need nothing from each other go together: one
+  // round trip, not three, on every Home load.
+  // The profile is read alongside and dropped below if they turned
+  // personalised recommendations off: a read thrown away is cheaper than a
+  // round trip waited for. The candidates may still be loading (the route
+  // starts both at once); they are awaited only where they are needed.
+  const profileRead = readProfile(db, userId);
+  const [meRes, mineRes, fbRes] = await Promise.all([
+    db.from('users').select('*').eq('id', userId).maybeSingle(),
+    db.from('group_members').select('group_id').eq('user_id', userId),
+    db.from('recommendation_feedback')
+      .select('item_ref, verdict, created_at')
+      .eq('user_id', userId)
+      .like('item_ref', `${TRIP_REF}%`),
+  ]);
+  const { data: me, error: meErr } = meRes;
   if (meErr) console.error('[trip-picks] could not read the person', { code: meErr.code });
   const row = (me ?? {}) as Record<string, unknown> & Taste;
 
   // Groups they are in, and everybody in them.
-  const { data: mine } = await db.from('group_members').select('group_id').eq('user_id', userId);
+  const { data: mine } = mineRes;
   const groupIds = [...new Set((mine ?? []).map(r => String(r.group_id)))];
   const [membersRes, groupsRes, plansRes] = groupIds.length
     ? await Promise.all([
@@ -81,11 +99,7 @@ export async function personFor(
   }
 
   // What they said "not for me" to. The latest verdict per card wins.
-  const { data: fb, error: fbErr } = await db
-    .from('recommendation_feedback')
-    .select('item_ref, verdict, created_at')
-    .eq('user_id', userId)
-    .like('item_ref', `${TRIP_REF}%`);
+  const { data: fb, error: fbErr } = fbRes;
   if (fbErr && !/recommendation_feedback|PGRST205/i.test(`${fbErr.code} ${fbErr.message}`)) {
     console.error('[trip-picks] could not read what was dismissed', { code: fbErr.code });
   }
@@ -104,10 +118,17 @@ export async function personFor(
   if (!home && homeCity) {
     // The whole string decides, state or country included: "Athens,
     // Georgia" is not the Athens on the world list (homeTownOf).
-    const known = homeTownOf(homeCity, opts.candidates);
+    const known = homeTownOf(homeCity, await opts.candidates);
     if (known) home = { lat: known.lat, lng: known.lng };
     else {
-      const placed = await locate(homeCity).catch(() => null);
+      // Home's cards answer in a few seconds; a geocoder allowed eight
+      // would spend them all. Past the limit they get no cards measured
+      // from home this time, which pickTrips says as no_location.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const placed = await Promise.race([
+        locate(homeCity).catch(() => null),
+        new Promise<null>(r => { timer = setTimeout(() => r(null), LOCATE_MS); }),
+      ]).finally(() => clearTimeout(timer));
       if (placed) home = { lat: placed.lat, lng: placed.lng };
     }
     if (home) from = homeCity;
@@ -118,12 +139,14 @@ export async function personFor(
   // answer is on, as Profile shows it — and null on any failure, which is
   // the ranking Home had before the profile existed. Never returned to
   // anybody: pickTrips reads it to order towns and puts none of it on a card.
-  const profile = row.consent_personalized === false ? null : await readProfile(db, userId);
+  const read = await profileRead;
+  const profile = row.consent_personalized === false ? null : read;
+  const list = await opts.candidates;
 
   // Their country is the nearest town we know's, which is enough to tell a
   // flight abroad from one at home.
   const nearest = home
-    ? opts.candidates.filter(c => c.country).map(c => ({ c, d: milesBetween(home!, c) })).sort((a, b) => a.d - b.d)[0]
+    ? list.filter(c => c.country).map(c => ({ c, d: milesBetween(home!, c) })).sort((a, b) => a.d - b.d)[0]
     : null;
   const homeCountry = nearest && nearest.d <= 150 ? nearest.c.country : null;
 
