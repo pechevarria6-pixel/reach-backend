@@ -382,6 +382,22 @@ test('a cached gig shows the act\'s picture it was stored with; a class shows it
   assert.equal(findings.find(f => f.title === 'Uncredited')!.image, null);
 });
 
+// 2026-11-05 review: a harvested listing's own "6-9 pm" was the only time
+// held, and the new cards dropped it with the rest of the line under the title.
+test('a page\'s own words for when travel with the finding; our own date line does not', async () => {
+  const { db } = readDb({
+    discovery_events: [
+      { id: 1, title: 'FIRST FRIDAYS', starts_on: null, when_text: '6-9 pm', source: 'harvest', interest: 'museums & history',
+        booking_url: 'https://lace.example', venue_name: 'Lace Museum', lat: 35.78, lng: -78.64 },
+      { id: 2, title: 'Joe List', starts_on: '2099-01-01', when_text: 'Thu, Jan 1 · Goodnights', source: 'ticketmaster',
+        interest: 'museums & history', booking_url: 'https://tm.example/2', venue_name: 'Goodnights', lat: 35.80, lng: -78.70 },
+    ],
+  });
+  const { findings } = await cachedEvents(db, SEEKER);
+  assert.equal(findings.find(f => f.title === 'FIRST FRIDAYS')!.whenText, '6-9 pm');
+  assert.equal(findings.find(f => f.title === 'Joe List')!.whenText, null, 'a cached gig\'s line is ours, and the date says it');
+});
+
 // 2026-09-24 review: what a picture is of was dropped on the way to the
 // itinerary line and to the cache, so the alt text named the wrong thing —
 // the venue over the band's photo, the gig over its hall's.

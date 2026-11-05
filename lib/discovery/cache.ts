@@ -363,6 +363,9 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
         id: `${e.source || 'harvest'}_${e.id}`,
         title: e.title,
         meta: [e.when_text, venue?.name].filter(Boolean).join(' · '),
+        // A page we read said this in words. A cached Ticketmaster gig's
+        // when_text is our own "Thu, Nov 5 · Venue", which the date says.
+        whenText: !e.source || e.source === 'harvest' ? (String(e.when_text ?? '').trim() || null) : null,
         emoji: kindFor(e.interest).emoji,
         // Their words, not ours. An empty price on the page is "we are not
         // told", which is a different thing from free.

@@ -27,6 +27,14 @@ export interface Finding {
    * absent when it did not — a card then says no time at all, never "TBC".
    */
   time?: string | null;
+  /**
+   * The listing's own words for when — "6-9 pm", "Sun. Nov. 22, 2026, Noon",
+   * "Wednesdays, 7:30pm" — when a page we read said it in words rather than
+   * a provider in fields. Often the only time or schedule held, so a card
+   * shows it; null when the source said nothing, or only a date we already
+   * show.
+   */
+  whenText?: string | null;
   /** Which source found it, so the UI can say and the logs can tell. */
   source: SourceName;
   /** Set when this was found because of something the person told us. */

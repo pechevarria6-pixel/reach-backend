@@ -116,3 +116,55 @@ test('"Show N more" is exactly what appears when it is tapped', () => {
   assert.equal(capped.more, 14);
   assert.equal(shown + capped.more, sections.reduce((n, s) => n + s.near.length, 0));
 });
+
+test('who or where being TBA is not the date: a dated game with its opponent TBD stays on', () => {
+  for (const title of ['Wolfpack vs Opponent TBD', 'Madeon with special guest TBA', 'Artist w/ Support TBA', 'ACC Championship: Teams TBD']) {
+    assert.equal(dateNotSet(title, THU), false, title);
+  }
+  const { sections, candidates } = upcomingSections([
+    card('game', { title: 'Wolfpack vs Opponent TBD', date: '2026-11-07' }),
+    card('joe', { title: 'Joe List', date: '2026-11-07' }),
+  ], [], THU, 9);
+  assert.deepEqual(sections.flatMap(s => s.near).map(r => r.item.id), ['game', 'joe']);
+  assert.ok(candidates.has('game'));
+  // The date itself, said not to be set, in any of the ways listings say it.
+  assert.equal(dateNotSet('Concert · Date TBA', THU), true);
+  assert.equal(dateNotSet('Dates to be announced', THU), true);
+  assert.equal(dateNotSet('TBA · The Pour House', THU), true, 'a when-line that is only "TBA"');
+  assert.equal(dateNotSet('Doors 7pm · Time TBA', THU), false, 'a time not set is not a date not set');
+});
+
+test('a listing with no date that says it is not on yet is not offered as a place either', () => {
+  const items = [
+    card('broomstick', { title: 'Contemporary Broomstick Lace Workshop', sub: 'To be held in 2027 on a to-be-determined date · Raleigh Lace Museum' }),
+    card('bobbin', { title: 'Bobbin Lace: The Spring 2027 class', sub: 'runs for 10 weeks (2 hours per session) · Raleigh Lace Museum' }),
+    card('yelp', { title: 'Wine walk', sub: 'Date TBC · Raleigh' }),
+    card('museum', { title: 'Raleigh Lace Museum', sub: 'Museum · 133 Fayetteville Street' }),
+    card('fridays', { title: 'FIRST FRIDAYS DOWNTOWN RALEIGH', sub: '6-9 pm · Raleigh Lace Museum' }),
+  ];
+  const { sections, candidates } = upcomingSections(items, [], THU, 9);
+  assert.equal(sections.length, 0);
+  const places = items.filter(i => !candidates.has(i.id)).map(i => i.id);
+  assert.deepEqual(places, ['museum', 'fridays']);
+});
+
+test('one fair sold as several products is one row on its day; different acts and different times are not', () => {
+  const fair = (id: string, title: string, date = THU) => card(id, { title, venue: 'Crown Expo', date, dist: '54 mi' });
+  const items = [
+    fair('sip', 'Holly Day Fair Sip & Shop'),
+    fair('thu', '2026 Holly Day Fair-Thursday'),
+    fair('super', 'Holly Day Fair-Super Shopper'),
+    fair('ladies', 'Holly Day Fair-Ladies Night Out', '2026-11-06'),
+    fair('fri', '2026 Holly Day Fair-Friday', '2026-11-06'),
+    card('smith', { title: 'Comedy Night: John Smith', venue: 'Goodnights', date: THU }),
+    card('doe', { title: 'Comedy Night: Jane Doe', venue: 'Goodnights', date: THU }),
+    card('mat', { title: 'The Nutcracker matinee', venue: 'Memorial Auditorium', date: THU, time: '14:00' }),
+    card('eve', { title: 'The Nutcracker evening', venue: 'Memorial Auditorium', date: THU, time: '19:30' }),
+    card('elsewhere', { title: 'Holly Day Fair Sip & Shop', venue: 'Somewhere else', date: THU }),
+  ];
+  const { sections } = upcomingSections(items, [], THU, 9);
+  const day = (iso: string) => sections.find(s => s.day === iso)!;
+  const ids = (iso: string) => [...day(iso).near, ...day(iso).further].map(r => r.item.id).sort();
+  assert.deepEqual(ids(THU), ['doe', 'elsewhere', 'eve', 'mat', 'smith', 'thu'].sort());
+  assert.deepEqual(ids('2026-11-06'), ['fri']);
+});

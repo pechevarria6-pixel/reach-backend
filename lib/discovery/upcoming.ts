@@ -134,7 +134,33 @@ export function milesOf(dist: unknown): number | null {
   return m[2].toLowerCase() === 'km' ? n * 0.621371 : n;
 }
 
-const UNSET = /\bto[\s-]+be[\s-]+(?:determined|decided|announced|confirmed)\b|\bTBD\b|\bTBA\b/i;
+const NOT_YET = String.raw`(?:TBA|TBD|TBC|to[\s-]+be[\s-]+(?:determined|decided|announced|confirmed))`;
+/**
+ * The date, said not to be set: "date TBD", "dates to be announced", "a
+ * to-be-determined date", or a when-line that is nothing but "TBA". Only the
+ * date — "Opponent TBD", "special guest TBA" and "Venue TBC" are about who or
+ * where, on a listing with a real date and a ticket link, and reading them as
+ * the date dropped a dated game from Discover altogether.
+ */
+const UNSET_DATE = new RegExp(
+  String.raw`\b(?:dates?|day)\s*(?:is\s+|are\s+|still\s+)?(?:[:\-–—]\s*)?${NOT_YET}\b`
+  + String.raw`|\b${NOT_YET}[\s-]+(?:dates?|day)\b`,
+  'i',
+);
+const ONLY_NOT_YET = new RegExp(String.raw`^\s*${NOT_YET}\s*$`, 'i');
+
+/** Whether these words say the date is not set, wherever in the listing they sit. */
+export function saysDateUnset(text: unknown): boolean {
+  const t = String(text ?? '');
+  return UNSET_DATE.test(t) || t.split(' · ').some(part => ONLY_NOT_YET.test(part));
+}
+
+/** Whether the words name a year after `year` and never `year` itself. */
+function laterYearOnly(text: string, year: number): boolean {
+  if (!Number.isFinite(year)) return false;
+  const years = [...text.matchAll(/\b(20\d{2})\b/g)].map(m => Number(m[1]));
+  return years.some(y => y > year) && !years.includes(year);
+}
 
 /**
  * Whether the listing's own words say its date is not set — "To be held in
@@ -144,14 +170,36 @@ const UNSET = /\bto[\s-]+be[\s-]+(?:determined|decided|announced|confirmed)\b|\b
  */
 export function dateNotSet(text: unknown, filedUnder: string): boolean {
   const t = String(text ?? '');
-  if (UNSET.test(t)) return true;
-  const year = Number(filedUnder.slice(0, 4));
-  if (!Number.isFinite(year)) return false;
-  const years = [...t.matchAll(/\b(20\d{2})\b/g)].map(m => Number(m[1]));
-  return years.some(y => y > year) && !years.includes(year);
+  return saysDateUnset(t) || laterYearOnly(t, Number(filedUnder.slice(0, 4)));
 }
 
 const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+const WEEKDAY_WORD = /^(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day)?$|^(?:wednes|satur)day$/;
+
+/** A title's words, without the year or weekday a ticket product adds to it. */
+function titleWords(title: unknown): string[] {
+  return norm(title).split(' ').filter(w => w && !/^(?:19|20)\d{2}$/.test(w) && !WEEKDAY_WORD.test(w));
+}
+
+/**
+ * Two rows that are one listing: the same day and venue, and titles that are
+ * the same, or that open with the same words making up most of the shorter
+ * one ("holly day fair" of "holly day fair super shopper"). Two acts on one
+ * bill ("Comedy Night: John Smith", "Comedy Night: Jane Doe") share too
+ * little to be one, and two performances at different held times are two.
+ */
+function sameListing(a: { item: UpcomingItem; day: string; clock: string | null }, b: { item: UpcomingItem; day: string; clock: string | null }): boolean {
+  if (a.day !== b.day || norm(a.item.venue) !== norm(b.item.venue)) return false;
+  if (norm(a.item.title) === norm(b.item.title)) return true;
+  if (!norm(a.item.venue)) return false;
+  if (a.clock && b.clock && a.clock !== b.clock) return false;
+  const x = titleWords(a.item.title);
+  const y = titleWords(b.item.title);
+  let shared = 0;
+  while (shared < x.length && shared < y.length && x[shared] === y[shared]) shared++;
+  return shared >= 2 && shared >= 0.6 * Math.min(x.length, y.length);
+}
 
 function byTimeThenDistance<T>(a: UpcomingRow<T> & { clock: string | null }, b: UpcomingRow<T> & { clock: string | null }): number {
   if (a.clock && b.clock && a.clock !== b.clock) return a.clock < b.clock ? -1 : 1;
@@ -207,15 +255,25 @@ export function upcomingSections<T extends UpcomingItem>(
     }
   }
 
+  // Neither dated nor weekly, but its own words say it is not on yet — the
+  // date is to be set, or it names only a later year ("Bobbin Lace: The
+  // Spring 2027 class"). Not a place to go now either: filed under Places it
+  // was offered as one, on a card that does not show the line saying so.
+  for (const item of items ?? []) {
+    if (!item || candidates.has(item.id) || (item.date && ISO.test(item.date))) continue;
+    if (dateNotSet(`${item.title} ${item.sub ?? ''}`, today)) candidates.add(item.id);
+  }
+
   // The same thing twice — from the live lane and the copy we kept, or one
-  // festival listed three times — is one row.
-  const seen = new Set<string>();
-  const once = rows.filter(r => {
-    const key = `${norm(r.item.title)}|${norm(r.item.venue)}|${r.day}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  // fair sold as several products ("Holly Day Fair Sip & Shop", "2026 Holly
+  // Day Fair-Thursday", "Holly Day Fair-Super Shopper", all at Crown Expo
+  // that Thursday) — is one row: the one whose title names the whole thing.
+  const once: typeof rows = [];
+  for (const r of rows) {
+    const i = once.findIndex(o => sameListing(o, r));
+    if (i < 0) once.push(r);
+    else if (titleWords(r.item.title).length < titleWords(once[i].item.title).length) once[i] = r;
+  }
 
   const days = [...new Set(once.map(r => r.day))].sort();
   const sections = days.map((day): UpcomingSection<T> => {

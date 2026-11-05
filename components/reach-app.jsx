@@ -911,9 +911,14 @@ function PhotoCredit({credit,link,style}){
   if(!credit)return null;
   const text=`Photo: ${credit}`;
   const base={fontSize:".75rem",color:C.t2,lineHeight:1.35,whiteSpace:"normal",overflowWrap:"anywhere",maxWidth:"100%",...style};
+  // 44pt tall in its own space. It reached 44 by spilling 12px either side,
+  // and the spill above lay over the bottom of the card it credits: as the
+  // later box it won the tap, so the foot of every card with a photo opened
+  // Wikimedia instead of the card.
   return link&&/^https:\/\//.test(String(link))
     ?<a href={link} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
-        style={{...base,display:"block",textDecoration:"none",paddingBlock:12,marginBlock:-12}}>{text}</a>
+        style={{...base,display:"flex",alignItems:"center",minHeight:44,boxSizing:"border-box",
+          paddingTop:0,paddingBottom:0,marginTop:0,marginBottom:0,textDecoration:"none"}}>{text}</a>
     :<div style={base}>{text}</div>;
 }
 
@@ -1787,6 +1792,11 @@ function discoverPrice(exp){
   return p.known?{text:`${p.line} as listed`,known:true}:{text:p.line,known:false};
 }
 
+// The stacking of a Discover list: a card's ⋯ above the cards, an open menu
+// one above that, and the pinned day header above them all.
+const DISCOVER_MENU_Z=1;
+const DISCOVER_DAY_Z=3;
+
 /**
  * The ⋯ beside a card: "Already done it" and "Not for me". A menu in the
  * accessible sense — focus moves into it, arrows move within it, Escape or a
@@ -1819,7 +1829,10 @@ function DiscoverHide({title,open,onToggle,onClose,onRule,onPhoto}){
   const item={display:"flex",alignItems:"center",width:"100%",minHeight:44,textAlign:"left",padding:"0 16px",
     border:"none",background:"none",cursor:"pointer",...T.subhead,color:C.t1};
   return(
-    <div ref={wrap} style={{position:"absolute",top:4,right:4,zIndex:3}}>
+    // Under the pinned day header (DISCOVER_DAY_Z), so a card scrolling
+    // beneath it does not draw its ⋯ over the header and take its taps; an
+    // open menu one above the next card's ⋯.
+    <div ref={wrap} style={{position:"absolute",top:4,right:4,zIndex:open?DISCOVER_MENU_Z+1:DISCOVER_MENU_Z}}>
       <button ref={btn} aria-label={`Options for ${title}`} aria-haspopup="menu" aria-expanded={open}
         onClick={onToggle}
         style={{width:44,height:44,minHeight:44,padding:0,border:"none",background:"none",cursor:"pointer",
@@ -1849,9 +1862,12 @@ function WhereLine({exp}){
 }
 
 /** A thing on: its time, its title, where and how far, its price, the forecast's word. */
-function DiscoverEventCard({exp,when,day,visited,open,onToggle,onClose,onRule,onOpen}){
+function DiscoverEventCard({exp,when:computed,day,visited,open,onToggle,onClose,onRule,onOpen}){
   const price=discoverPrice(exp);
   const where=[exp.venue,exp.dist].filter(Boolean).join(" · ");
+  // The listing's own words when it gave them ("Wednesdays, 7:30pm" says
+  // more than "Every Wed"); else the time or weekly night worked out.
+  const when=exp.whenText||computed;
   const spoken=[exp.title,[day,when].filter(Boolean).join(", "),
     [exp.venue,milesSpoken(exp.dist)].filter(Boolean).join(", "),price.text,visited?"You've been":null]
     .filter(Boolean).join(". ");
@@ -1892,13 +1908,24 @@ function DiscoverEventCard({exp,when,day,visited,open,onToggle,onClose,onRule,on
   );
 }
 
+// The shade under a place card's words on its photo. It was laid over the
+// whole hero, clear until 35% of the way down — but the words are anchored to
+// the bottom of a hero only 9rem tall, so they started near 17% and the label
+// and first line of the title sat on bare photo (2.2:1 on a pale museum).
+// Now it belongs to the words' own block: clear at its top edge, at .6 by
+// the time the first word starts, so white over the palest pixel is 5.8:1.
+const PLACE_SCRIM_TEXT_TOP=28;
+const PLACE_SCRIM="linear-gradient(180deg,rgba(0,0,0,0) 0px,rgba(0,0,0,.6) 24px,rgba(0,0,0,.85) 100%)";
+
 /** A place to go: what it is, its name, where and how far, where its price is. */
 function DiscoverPlaceCard({exp,visited,open,onToggle,onClose,onRule,onOpen}){
   const price=discoverPrice(exp);
   const kind=kindWord(exp.kind)||exp.category||null;
   const where=[exp.venue,exp.dist].filter(Boolean).join(" · ");
   const because=exp.because?`Because you like ${String(exp.because).toLowerCase()}`:null;
-  const spoken=[exp.title,kind,[exp.venue,milesSpoken(exp.dist)].filter(Boolean).join(", "),
+  // "6-9 pm": a listing with no date of its own may still say when it is.
+  const when=exp.whenText||null;
+  const spoken=[exp.title,kind,when,[exp.venue,milesSpoken(exp.dist)].filter(Boolean).join(", "),
     price.text,because,visited?"You've been":null].filter(Boolean).join(". ");
   return(
     <PhotoFrame src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok,img})=>{
@@ -1911,9 +1938,8 @@ function DiscoverPlaceCard({exp,visited,open,onToggle,onClose,onRule,onOpen}){
             <span style={{position:"relative",display:"flex",flexDirection:"column",justifyContent:"flex-end",minHeight:"9rem",
               background:ok?"#1a1a1a":DISCOVER_TINT[categoryGroup(exp.category)],overflow:"hidden"}}>
               {img}
-              {ok&&<span aria-hidden="true" style={{position:"absolute",inset:0,
-                background:"linear-gradient(180deg,rgba(0,0,0,0) 35%,rgba(0,0,0,.55) 62%,rgba(0,0,0,.85))"}}/>}
-              <span style={{position:"relative",display:"block",padding:"16px 56px 14px 16px"}}>
+              <span style={{position:"relative",display:"block",padding:`${PLACE_SCRIM_TEXT_TOP}px 56px 14px 16px`,
+                background:ok?PLACE_SCRIM:"none"}}>
                 <span style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",...T.caption,color:soft}}>
                   <span aria-hidden="true">{exp.emoji}</span>
                   {kind&&<span>{kind}</span>}
@@ -1924,6 +1950,7 @@ function DiscoverPlaceCard({exp,visited,open,onToggle,onClose,onRule,onOpen}){
               </span>
             </span>
             <span style={{display:"block",padding:"12px 16px",borderTop:`1px solid ${C.border}`}}>
+              {when&&<span style={{display:"block",...T.footnote,fontWeight:600,color:C.t1,marginBottom:2}}>{when}</span>}
               <span style={{display:"block",...T.footnote,color:price.known?C.t1:C.t2,fontWeight:price.known?600:400}}>{price.text}</span>
               {because&&<span style={{display:"block",...T.footnote,color:C.t2,marginTop:2}}>{because}</span>}
             </span>
@@ -2318,13 +2345,11 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
     onOpen:()=>push("expDetail",{exp,groups}),
   });
 
-  const upcomingList=(
-    <>
-      {capped.sections.map((s,si)=>(
+  const daySection=s=>(
         <div key={s.day} style={{marginBottom:16}}>
           <div id={`dsc-at-${s.day}`}/>
           <h2 id={`dsc-day-${s.day}`} tabIndex={-1}
-            style={{position:"sticky",top:0,zIndex:2,minHeight:44,margin:0,padding:"0 16px",
+            style={{position:"sticky",top:0,zIndex:DISCOVER_DAY_Z,minHeight:44,margin:0,padding:"0 16px",
               display:"flex",alignItems:"center",gap:8,background:C.navBg,
               backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)"}}>
             <span style={{...T.headline,color:C.t1}}>{s.label}</span>
@@ -2341,9 +2366,22 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
               {openFurther.has(s.day)&&s.further.map(row=><DiscoverEventCard key={row.item.id} {...cardProps(row.item)} when={row.when} day={s.label}/>)}
             </>
           )}
-          {si===0&&dripCard&&<div style={{marginTop:16}}>{dripCard}</div>}
         </div>
-      ))}
+  );
+
+  // Each list in two parts, the drip card and the quiz invitation between
+  // them: after the first day, or the third place. They sit between the two
+  // parts, never inside either, because each part is keyed on the segment
+  // and filter so it fades in afresh — and a card inside it was remounted on
+  // every pill tap, so a question dismissed with ✕ came back on "Music", one
+  // answered was asked again on Places, and the two-tap upgrade restarted.
+  const PLACES_BEFORE_DRIP=3;
+  const listHead=segment==="upcoming"
+    ?capped.sections.slice(0,1).map(daySection)
+    :<><h2 className="sr-only">Places</h2>{placesShown.slice(0,PLACES_BEFORE_DRIP).map(exp=><DiscoverPlaceCard key={exp.id} {...cardProps(exp)}/>)}</>;
+  const listTail=segment==="upcoming"
+    ?<>
+      {capped.sections.slice(1).map(daySection)}
       {capped.more>0&&(
         <button onClick={showMore}
           style={{display:"block",margin:"0 16px 16px",width:"calc(100% - 32px)",...action(false)}}>
@@ -2351,18 +2389,16 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
         </button>
       )}
     </>
-  );
+    :placesShown.slice(PLACES_BEFORE_DRIP).map(exp=><DiscoverPlaceCard key={exp.id} {...cardProps(exp)}/>);
 
-  const placesList=(
-    <>
-      <h2 className="sr-only">Places</h2>
-      {placesShown.map((exp,i)=>(
-        <div key={exp.id}>
-          <DiscoverPlaceCard {...cardProps(exp)}/>
-          {(i===2||(i===placesShown.length-1&&i<2))&&dripCard&&<div style={{marginTop:16}}>{dripCard}</div>}
-        </div>
-      ))}
-    </>
+  // An invitation, not a gate: everything here works without it. Kept out of
+  // the head of the screen, where its 44pt line pushed the first card of a
+  // first-run account below the fold.
+  const invite=loaded&&!personal&&(
+    <button onClick={()=>push("taste")}
+      style={{display:"block",minHeight:44,margin:"0 16px 8px",padding:0,background:"none",border:"none",textAlign:"left",cursor:"pointer",...T.footnote,color:C.accentText}}>
+      A bit of everything near you. Tell us what you're into and it gets personal <span aria-hidden="true">→</span>
+    </button>
   );
 
   const segmentEmpty=!busy&&!emptyNote&&(segment==="upcoming"?sections.length===0:placesShown.length===0);
@@ -2379,13 +2415,6 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
           <div style={{...T.footnote,color:C.t2,marginBottom:4}}>
             <span aria-hidden="true">📍 </span>{geoAllowed?"Your device hasn't said where it is — pick a place above":"Allow location in your browser for things near you, or pick a place above"}
           </div>
-        )}
-        {/* An invitation, not a gate. Everything below works without it. */}
-        {loaded&&!personal&&(
-          <button onClick={()=>push("taste")}
-            style={{display:"block",minHeight:44,padding:0,background:"none",border:"none",textAlign:"left",cursor:"pointer",...T.footnote,color:C.accentText}}>
-            A bit of everything near you. Tell us what you're into and it gets personal <span aria-hidden="true">→</span>
-          </button>
         )}
       </div>
 
@@ -2508,17 +2537,26 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
             )}
           </>
         ))}
-        {emptyNote&&dripCard}
-
         {!busy&&!emptyNote&&(
-          <div key={`${segment}|${activeFilter}`} className="dsc-fade">
+          <div key={`${segment}|${activeFilter}|head`} className="dsc-fade">
             {segmentEmpty&&(segment==="upcoming"
               ?note(`Nothing dated we've found yet${city?` for ${city}`:""}. Reach looks again every night.`,
                   places.length>0&&<button style={action(true)} onClick={()=>chooseSegment("places")}>See places</button>)
               :note(`No places we hold yet${city?` for ${city}`:""}. Reach looks again every night.`,
                   upcomingItems.length>0&&<button style={action(true)} onClick={()=>chooseSegment("upcoming")}>See what's on</button>))}
-            {segmentEmpty&&dripCard}
-            {segment==="upcoming"?upcomingList:placesList}
+            {listHead}
+          </div>
+        )}
+        {/* The one place the drip card is drawn: outside both keyed parts. */}
+        {!busy&&(invite||dripCard)&&(
+          <div key="dsc-between" style={{marginTop:16}}>
+            {invite}
+            {dripCard}
+          </div>
+        )}
+        {!busy&&!emptyNote&&(
+          <div key={`${segment}|${activeFilter}|tail`} className="dsc-fade">
+            {listTail}
           </div>
         )}
       </section>
@@ -4570,6 +4608,10 @@ function expFromFinding(e){
     kind:e.kind||null,
     // "19:30", when the listing gave a start time. Nothing is said without one.
     time:e.time||null,
+    // The listing's own words for when ("6-9 pm", "Wednesdays, 7:30pm"),
+    // from a page we read. Often the only time held: a card that drops it
+    // turns a Friday-night thing into a timeless place.
+    whenText:e.whenText||null,
     emoji:e.emoji,
     price:e.price||null,
     dist:e.dist,
@@ -5230,7 +5272,8 @@ function DripCard({id,userId,onChange,onAnswered,toast}){
                   style={{padding:"7px 11px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",
                     border:"1.5px solid "+(on?C.accent:C.border),background:on?C.accentDim:C.s2,
                     color:on?C.accentText:C.t1,fontFamily:"var(--font-body)"}}>
-                  {o.e} {o.l}
+                  {/* The picture is decoration: VoiceOver read "cocktail glass Cocktails". */}
+                  <span aria-hidden="true">{o.e}</span> {o.l}
                 </button>
               );
             })}
@@ -5296,7 +5339,7 @@ function UpgradeCard({userId,onChange,onAnswered,toast}){
               style={{display:"flex",gap:10,alignItems:"center",padding:"9px 11px",borderRadius:12,cursor:"pointer",
                 border:`1px solid ${C.border}`,background:C.s2,color:C.t1,fontSize:13,fontWeight:600,
                 textAlign:"left",fontFamily:"var(--font-body)"}}>
-              <span style={{fontSize:18}}>{o.e}</span>{o.l}
+              <span aria-hidden="true" style={{fontSize:18}}>{o.e}</span>{o.l}
             </button>
           ))}
         </div>
