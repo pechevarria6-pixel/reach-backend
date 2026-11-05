@@ -195,3 +195,10 @@ test('leaving a group checks the open votes it may have completed', () => {
   const vote = read('app/api/plans/[planId]/vote/route.ts');
   assert.match(vote, /from '@\/lib\/vote-complete'/, 'the vote and the leaving share one announcement');
 });
+
+test('a veto read that failed announces nothing, rather than a leader with its vetoes left out', () => {
+  const src = readFileSync(new URL('../../lib/vote-complete.ts', import.meta.url), 'utf8');
+  const fn = src.slice(src.indexOf('export async function tellOrganiserIfEveryoneVoted'));
+  const guard = fn.indexOf('vetoRead as { error?: unknown }).error) return false');
+  assert.ok(guard > 0 && guard < fn.indexOf('claimOnce('), 'checked before the one announcement is claimed');
+});

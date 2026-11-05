@@ -21,14 +21,23 @@ export async function stopPaymentsInFlight(
   cancelIntent: (intentId: string) => Promise<CancelOutcome> = id => cancelUnpaidIntent(id),
 ): Promise<InFlightOutcome> {
   const { data, error } = await db.from('contributions')
-    .select('id, status, stripe_payment_intent').eq('plan_id', planId).eq('status', 'pending');
+    .select('id, status, stripe_payment_intent').eq('plan_id', planId).in('status', ['pending', 'failed']);
   if (error) {
     console.error('[call-off] could not read payments in flight', { planId, code: error.code });
     return { ok: false, reason: 'read_failed' };
   }
   let worst: 'moving' | 'unknown' | null = null;
-  for (const c of (data ?? []) as { id: unknown; stripe_payment_intent?: unknown }[]) {
+  for (const c of (data ?? []) as { id: unknown; status?: unknown; stripe_payment_intent?: unknown }[]) {
     const intent = typeof c.stripe_payment_intent === 'string' ? c.stripe_payment_intent : '';
+    // A declined share is 'failed' here, but its intent goes back to
+    // requires_payment_method at Stripe and the open checkout can still pay
+    // it with another card. It is cancelled too; its row is already off.
+    if (c.status === 'failed') {
+      if (!intent) continue;
+      const outcome = await cancelIntent(intent);
+      if (outcome !== 'canceled' && (outcome === 'moving' || !worst)) worst = outcome;
+      continue;
+    }
     // A pending row with no intent can never take money.
     const outcome: CancelOutcome = intent ? await cancelIntent(intent) : 'canceled';
     if (outcome !== 'canceled') {

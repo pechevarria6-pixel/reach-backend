@@ -70,7 +70,10 @@ export async function tellOrganiserIfEveryoneVoted(
     db.from('votes').select('user_id, option').eq('plan_id', plan.id),
     readVetoes(db, plan.id),
   ]);
-  if (!members || error) return false;
+  // A veto read that failed would say "Most votes: Porto" with the vetoes
+  // against it left out, and the one announcement is spent on it. Say
+  // nothing this time; the next vote or leave reads again.
+  if (!members || error || (vetoRead as { error?: unknown }).error) return false;
   const notice = everyoneVotedNotice({
     plan, members, actorId,
     votes: (votes ?? []).map(v => ({ user_id: String(v.user_id), option: String(v.option) })),

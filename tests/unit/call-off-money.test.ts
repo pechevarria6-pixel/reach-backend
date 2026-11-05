@@ -18,6 +18,7 @@ function fakeDb(rows: Row[], opts: { failRead?: boolean } = {}) {
         select() { return q; },
         update(p: Row) { patch = p; return q; },
         eq(c: string, v: unknown) { preds.push(r => r[c] === v); return q; },
+        in(c: string, vs: unknown[]) { preds.push(r => vs.includes(r[c])); return q; },
         then(res: (v: unknown) => unknown) {
           if (opts.failRead && !patch) return Promise.resolve({ data: null, error: { code: 'XX000' } }).then(res);
           const hit = rows.filter(r => preds.every(p => p(r)));
@@ -76,4 +77,28 @@ test('calling a plan off stops payments in flight before it writes', () => {
   const stopDel = src.indexOf('await stopPaymentsInFlight(supabase, params.planId)', del);
   const gone = src.indexOf(".from('plans').delete()", del);
   assert.ok(del > 0 && stopDel > del && stopDel < gone, 'a delete must stop payments in flight before the plan goes');
+});
+
+test('a declined share whose form is still open is cancelled at Stripe too, and stays off', async () => {
+  const rows = [{ id: 'c1', plan_id: 'p1', status: 'failed', stripe_payment_intent: 'pi_declined' }];
+  const s = stripe({ pi_declined: 'canceled' });
+  const out = await stopPaymentsInFlight(fakeDb(rows), 'p1', s.cancel);
+  assert.deepEqual(out, { ok: true });
+  assert.deepEqual(s.asked, ['pi_declined']);
+  assert.equal(rows[0].status, 'failed');
+});
+
+test('a declined share paid since with another card stops the call-off', async () => {
+  const rows = [{ id: 'c1', plan_id: 'p1', status: 'failed', stripe_payment_intent: 'pi_retry' }];
+  const s = stripe({ pi_retry: 'moving' });
+  const out = await stopPaymentsInFlight(fakeDb(rows), 'p1', s.cancel);
+  assert.deepEqual(out, { ok: false, reason: 'moving' });
+});
+
+test('a called-off or finished trip refuses a new payment before Stripe is asked', () => {
+  const src = readFileSync(new URL('../../app/api/plans/[planId]/funding/route.ts', import.meta.url), 'utf8');
+  const post = src.slice(src.indexOf('export async function POST'));
+  const gate = post.indexOf("planStatus === 'cancelled' || planStatus === 'completed'");
+  assert.ok(gate > 0, 'POST checks the plan status');
+  assert.ok(gate < post.indexOf('STRIPE_SECRET_KEY'), 'before anything else');
 });

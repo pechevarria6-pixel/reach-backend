@@ -105,7 +105,7 @@ test('once every drive and enough flights are counted, Home does not wait out th
   await settle(400);
 });
 
-test('a read that never answers is given up at its own limit', async () => {
+test('a read that never answers is given up at its own limit', { timeout: 5000 }, async () => {
   const list = [town('Aberdeen', 35.13, -79.43)];
   const { db } = fakeDb([], { hang: true });
   const started = Date.now();

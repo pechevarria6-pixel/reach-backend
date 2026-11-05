@@ -441,3 +441,17 @@ test('the M2 fallback names M2', () => {
   const readme = read('ENGINE-README.md');
   assert.doesNotMatch(readme, /skipFundingCheck|executeNow/);
 });
+
+test('a confirmed flight keeps the quote\'s way home, so its return pings can name the flight', async () => {
+  process.env.DUFFEL_API_KEY = 'duffel_test_unit';
+  const { restore } = stubFetch(u => u.includes('/air/orders')
+    ? { json: { data: { id: 'ord_1', booking_reference: 'ABC123', total_amount: '500.00', total_currency: 'USD' } } }
+    : { json: offer('500.00') });
+  try {
+    const r = await duffelFlights.book({ ...flightReq, maxPriceCents: 50000 });
+    assert.equal(r.status, 'confirmed');
+    const raw = r.raw as Record<string, unknown>;
+    assert.equal(raw.orderId, 'ord_1');
+    assert.ok('option' in raw, 'the quote\'s option (with .back) is still on the confirmed row');
+  } finally { restore(); }
+});

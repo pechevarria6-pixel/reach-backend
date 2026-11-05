@@ -456,7 +456,13 @@ export const duffelFlights: BookingProvider = {
       priceCents: amountToCents(order?.total_amount) ?? q.priceCents,
       currency: order?.total_currency || q.currency || 'USD',
       detail: q.detail,
+      // The quote's facts carried onto the confirmed row: approval replaces
+      // response_payload with this, and it used to be the three ids alone, so
+      // a confirmed round trip lost its flight home (option.back) and the
+      // return morning-of ping could never name a flight. Conditions and the
+      // airline's own page go on being shown after booking too.
       raw: {
+        ...((q.raw && typeof q.raw === 'object') ? q.raw as Record<string, unknown> : {}),
         orderId: order?.id ?? null,
         bookingReference: order?.booking_reference ?? null,
         flightIdent: (q.raw as { flightIdent?: string | null })?.flightIdent ?? null,

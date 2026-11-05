@@ -156,6 +156,20 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
 
+  // A trip that was called off or is over takes no new money. Calling off
+  // leaves quotes awaiting approval where they are, so the target stays above
+  // zero and a checkout left open after the call-off could still start a
+  // payment on the cancelled plan.
+  const planStatus = String((ctx.plan as { status?: unknown })?.status ?? '');
+  if (planStatus === 'cancelled' || planStatus === 'completed') {
+    return NextResponse.json(
+      { error: planStatus === 'cancelled'
+          ? 'This trip was called off, so it is not taking payments. Nothing has been charged.'
+          : 'This trip is over, so it is not taking payments. Nothing has been charged.' },
+      { status: 409 },
+    );
+  }
+
   // A secret key starts sk_. What was configured here was mk_1U4lD…, which is
   // the *identifier* of a key rather than the key, so Stripe answered with its
   // own message and the app relayed it verbatim onto a payment screen. Catch
