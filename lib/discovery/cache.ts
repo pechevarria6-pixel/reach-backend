@@ -86,11 +86,11 @@ const DISCOVER_RINGS = [3, 15];
 /** Rows asked for per interest per box. */
 const PER_INTEREST = 60;
 
-const VENUE_COLUMNS = 'osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url, image_source';
+const VENUE_COLUMNS = 'id, osm_type, osm_id, name, lat, lng, city, website, interest, kind, street, image_url, image_source';
 /** The credit and page of a Wikimedia photo: sql/place-photos-2026-09-24.sql. */
 const PHOTO_COLUMNS = ', image_credit, image_link';
 type CachedVenue = {
-  osm_type: string; osm_id: number; name: string; lat: number; lng: number; city: string | null;
+  id?: string | null; osm_type: string; osm_id: number; name: string; lat: number; lng: number; city: string | null;
   website: string | null; interest: string; kind: string | null; street: string | null;
   image_url?: string | null; image_source?: string | null; image_credit?: string | null; image_link?: string | null;
 };
@@ -197,6 +197,8 @@ export async function cachedVenues(db: SupabaseClient, seeker: Seeker): Promise<
         date: null,
         venue: v.street || null,
         source: 'osm',
+        // The row itself, so a card can cite it (a table watch, lib/watch/tables.ts) — never its name.
+        venueRef: typeof v.id === 'string' ? v.id : null,
         because: becauseOf(seeker, v.interest),
         miles,
       };

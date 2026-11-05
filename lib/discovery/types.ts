@@ -26,6 +26,8 @@ export interface Finding {
   source: SourceName;
   /** Set when this was found because of something the person told us. */
   because: string | null;
+  /** The discovery_venues row this card is, when it is one: what a table watch cites. */
+  venueRef?: string | null;
   /** Where it actually is, when the source knows. Null when it does not. */
   lat?: number | null;
   lng?: number | null;

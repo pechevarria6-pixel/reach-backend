@@ -1,0 +1,79 @@
+# The table watches (app/api/cron/watches, lib/watch), every fifteen minutes.
+#
+# Not a vercel.json cron: this account is on Hobby, which runs a cron once a
+# day, and a sub-daily schedule there silently rejects the deployment. A
+# table that opens at a hard-to-get restaurant goes in minutes, so once a day
+# would find nothing; every fifteen minutes is the most the watch asks for
+# (lib/watch/tables.ts TABLE_WATCH), and hourly for nights more than two days
+# off.
+#
+# Needs the same two repository secrets as pings.yml:
+#   CRON_SECRET   the same value as the deployment's CRON_SECRET
+#   APP_URL       the deployment's address, e.g. https://alcanzar.io
+#
+# Nothing is watched until a table platform's keys are set on the deployment
+# too (OPENTABLE_CLIENT_ID and _SECRET, or YELP_RESERVATIONS_API_KEY — lib/booking/registry.ts): without them a run
+# asks nobody anything and only notes that it ran.
+#
+# The repository is public, so: the secrets reach the step only through
+# `env:`, nothing prints them, the endpoint answers with counts only, and the
+# workflow can read the repository and nothing more.
+name: Watches
+
+on:
+  schedule:
+    # Off the quarter-hours everybody else picks.
+    - cron: '4,19,34,49 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: 'Count what is due and check nothing'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+# One at a time. Two overlapping runs would still check each watch once (a
+# claim on the row's version), but there is no reason to make them race.
+concurrency:
+  group: watches
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Check what is due
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Call the watches endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ secrets.APP_URL }}
+          DRY: ${{ github.event.inputs.dry }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          # Not switched on yet is not a failure every fifteen minutes: the
+          # owner adds the two secrets when watching should start. A run
+          # started by hand still fails, so a missing secret is never silent
+          # when somebody asks.
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_URL" ]; then
+            if [ "$EVENT" = "schedule" ]; then
+              echo "::notice::Watches are off: add CRON_SECRET and APP_URL as repository secrets to switch them on"
+              exit 0
+            fi
+            echo "::error::CRON_SECRET and APP_URL must both be set as repository secrets"
+            exit 1
+          fi
+          query=""
+          if [ "$DRY" = "true" ]; then query="?dry=1"; fi
+          status=$(curl -sS -o body.json -w '%{http_code}' --max-time 300 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "${APP_URL%/}/api/cron/watches${query}")
+          # Counts only — the endpoint never names a plan, a person or a place.
+          cat body.json; echo
+          if [ "$status" != "200" ]; then
+            echo "::error::watches answered $status"
+            exit 1
+          fi

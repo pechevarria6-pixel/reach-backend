@@ -496,6 +496,12 @@ export interface TableStore {
   /** Move the itinerary line to the night and time booked — only while its words are still `from`. */
   retime(itemId: string, from: string | null, to: string): Promise<boolean>;
   members(groupId: string | null): Promise<string[]>;
+  /**
+   * Whether a live table watch asked for this booking's call to ask about a
+   * cancellation list (lib/watch/tables.ts). Absent or false: the call asks
+   * for the table and nothing more.
+   */
+  cancellationList?(bookingId: string): Promise<boolean>;
   notify(userIds: string[], note: { kind: string; title: string; body: string; url: string | null; planId: string }): Promise<void>;
 }
 
@@ -527,6 +533,14 @@ export interface ReserveInput {
     change?: boolean;
     /** The person says they have not booked it themselves (a row already handed to them). */
     notBookedElsewhere?: boolean;
+    /**
+     * Press one from a table watch (lib/watch/tables.ts), never from a
+     * request body (reserve-server.ts chosenFrom does not read it): hold
+     * exactly this night and time or do nothing. Anything else the platform
+     * answers — another time, no table, a card — writes nothing and tells
+     * nobody, because nobody pressed anything: the watch just keeps looking.
+     */
+    watch?: boolean;
   };
   /** The held venue, as the call needs it (hours, longitude). */
   venue: PlaceInput['venue'];
@@ -782,7 +796,12 @@ async function viaCall(input: ReserveInput, deps: ReserveDeps, f: TableFacts, b:
     plan: input.plan,
     requester: { id: input.requester.id, firstName: input.requester.firstName },
     venue: input.venue,
-    chosen: { date: f.date!, time: f.time!, partySize: f.partySize, notes: input.chosen.notes?.slice(0, 300) ?? null },
+    chosen: {
+      date: f.date!, time: f.time!, partySize: f.partySize, notes: input.chosen.notes?.slice(0, 300) ?? null,
+      // Somebody asked Reach to watch this table and the venue books by
+      // phone (lib/watch/tables.ts): the same call asks about a cancellation list.
+      cancellationList: (await deps.store.cancellationList?.(b.id)) === true,
+    },
     now: input.now,
   }, deps.call);
   if (placed.ok === false) {
@@ -873,7 +892,8 @@ async function viaPlatform(
   // Our failure, or the platform's, before anything was held: the row goes
   // back to what it said, so a press nobody answered changes nothing.
   const giveBack = async (a: FlowAnswer): Promise<ReserveResult> => {
-    if (reopened && (a.status >= 500 || a.status === 429)) {
+    // A watch's press is nobody's: whatever stopped it, the row says what it said before.
+    if (reopened && (a.status >= 500 || a.status === 429 || input.chosen.watch === true)) {
       const back = await deps.store.write(row.id, 'awaiting_approval', row.updated_at, { status: b.status, error: b.error ?? null, updated_at: stamp() });
       if (!back) console.error('[reserve] a press the platform never answered could not give its row back', { booking: b.id, code: a.body.code });
     }
@@ -896,7 +916,19 @@ async function viaPlatform(
       return { status: 502, body: { code: 'provider_failed', error: `Reach couldn't get an answer from ${name} just now, so nothing was booked. ${nextSaid(f)}` } };
     }
   };
-  const card = (url: string | null | undefined) => handoff(input, deps, f, row, reserveMarkOf(row),
+  // A watch asks for one exact slot and takes nothing else (ReserveInput.chosen.watch).
+  const quietly = input.chosen.watch === true && !changing;
+  // Nothing was held, so a row reopened for this press goes back to what it said.
+  const passed = async (code: ReserveCode, error: string): Promise<ReserveResult> => {
+    if (reopened) {
+      const back = await deps.store.write(row.id, 'awaiting_approval', row.updated_at, { status: b.status, error: b.error ?? null, updated_at: stamp() });
+      if (!back) console.error('[reserve] a watch press could not give its row back', { booking: b.id, code });
+    }
+    return { ok: false, code, status: 409, error, alternatives };
+  };
+  const card = (url: string | null | undefined) => quietly
+    ? passed('needs_card', `${f.restaurant} wants a card for that time, so Reach did not hold it.`)
+    : handoff(input, deps, f, row, reserveMarkOf(row),
     `${f.restaurant} wants a card to hold ${tableWhen(f.date, f.time)}, so Reach won't book it — book it on ${name} with your own card.`,
     url ?? f.reserveUrl);
 
@@ -910,6 +942,7 @@ async function viaPlatform(
     }
     const read = readSlots((o.body.slots ?? []) as SlotSeen[], f.date!, f.time!);
     if (read.kind === 'card') return card(read.handoffUrl);
+    if (quietly && read.kind !== 'exact') return passed('slot_gone', `That time at ${f.restaurant} went before Reach could hold it.`);
     if (read.kind === 'other') {
       const mark: ReserveMark = { state: 'offered', path: 'instant', platform: instant.provider.platform, date: f.date, time: f.time, partySize: f.partySize, offeredTimes: read.times, at: stamp() };
       const w = stateWords(f, mark)!;

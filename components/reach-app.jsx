@@ -1437,6 +1437,8 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
           nothing else on Home does: "＋ New plan" and "Sort one evening"
           start a blank one. */}
       <TripPicks push={push} userLocation={userLocation} toast={toast} groups={groups}/>
+      {/* The tables Reach is watching for them, with Stop. Nothing when there are none. */}
+      <WatchesCard toast={toast}/>
       {/* Answering this makes every other screen better, so it sits above
           the ways in rather than buried in a settings list. It goes away the
           moment it is answered. */}
@@ -2559,6 +2561,9 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
             🎯 Book Now
           </button>
         )}
+        {/* A restaurant this card is a venue row for: watched for a table
+            on the nights picked, where Reach really can (WatchTable). */}
+        {exp.venueRef&&(isRestaurant||/restaurant|food|brunch|dinner|bistro/i.test(exp.category||""))&&<div style={{marginBottom:12}}><WatchTable venueRef={exp.venueRef} restaurant={exp.title} toast={toast}/></div>}
         {/* The one real way to put this in front of people: it becomes a
             plan in the group, which everybody can open. The button beside
             it used to say "Share with a Group" and only showed a toast. */}
@@ -4314,6 +4319,8 @@ function expFromFinding(e){
     url:e.url||null,
     date:e.date||null,
     venue:e.venue||null,
+    // The venue row the card is, when it is one: what a table watch cites.
+    venueRef:e.venueRef||null,
     tags:[e.category||"Event"],
     because:e.because||null,
     provider:e.source||null,
@@ -9178,7 +9185,7 @@ const tableLink={display:"inline-flex",alignItems:"center",gap:6,border:`1px sol
  * `noPrimary` where the screen's own button already books this table
  * (checkout's Book it), so the same press is not on screen twice.
  */
-function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null,onMarkLine,makeRow,noPrimary=false}){
+function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null,onMarkLine,makeRow,noPrimary=false,noWatch=false}){
   const [answer,setAnswer]=useState(seed);
   const [warning,setWarning]=useState(seed?.warning||null);
   const [busy,setBusy]=useState(false);
@@ -9559,6 +9566,14 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
           {entry.manage.phone&&<a href={`tel:${String(entry.manage.phone).replace(/[^\d+]/g,"")}`} style={{color:C.accentText,fontWeight:600,textDecoration:"none"}}>📞 Call them</a>}
         </div>
       )}
+
+      {/* Hard to get into: Reach watches for a table on the nights picked,
+          where it really can (WatchTable). Not beside a hold, a booking, or
+          a booking in doubt — and not in checkout, whose Book it is the one
+          thing to press there. */}
+      {via==="reserve"&&!noWatch&&id&&entry.open&&!inDoubt&&shownAnswer?.kind!=="hold"&&shownAnswer?.kind!=="done"&&(
+        <WatchTable bookingId={id} restaurant={name} party={entry.partySize} toast={toast}/>
+      )}
     </div>
   );
 }
@@ -9600,6 +9615,258 @@ function TableSheet({ask,list,planId,solo,toast,onChanged,onClose}){
         {!entry?<div style={{fontSize:13,color:C.t2}}>Reading how this table goes…</div>
           :!ready?<div style={{fontSize:13,color:C.t2}}>{`Asking for ${entry.when?.said||"the table"}…`}</div>
           :<TableReserve entry={entry} planId={planId} solo={solo} toast={toast} onChanged={onChanged} seed={seed}/>}
+      </div>
+    </Sheet>
+  );
+}
+
+// ─── Watch for a table ───────────────────────────────────────────────────
+// Owner, 5 November: a restaurant that is really hard to get into, watched
+// until a table opens inside the trip. What Reach can and can't do is the
+// server's to say (GET /api/watches/options, lib/watch/tables.ts offerFor):
+// only where Reach really checks a platform does the panel say it will, and
+// otherwise it hands over the platform's own alert or the restaurant's
+// number. A table that opens is HELD, never booked: the notification lands
+// on the same terms and the same button as Book it (WatchLanding below).
+
+/** GET /api/watches, shared for a few seconds across every line on screen. */
+const WATCH_READ={at:0,p:null};
+function readWatches(fresh=false){
+  if(!fresh&&WATCH_READ.p&&Date.now()-WATCH_READ.at<8000)return WATCH_READ.p;
+  WATCH_READ.at=Date.now();
+  WATCH_READ.p=fetchWithin("/api/watches",{},12000,"your table watches")
+    .then(async r=>{
+      if(!r.ok){console.error("[watch] could not read the watches",{status:r.status});return null;}
+      return await r.json().catch(()=>null);
+    })
+    .catch(e=>{console.error("[watch] could not read the watches",e);return null;});
+  return WATCH_READ.p;
+}
+/** Every watch list on screen reads again after a change. */
+function watchesChanged(){WATCH_READ.p=null;try{window.dispatchEvent(new Event("reach:watches"));}catch(e){console.error("[watch] could not tell the lists to read again",e);}}
+function useWatches(){
+  const [got,setGot]=useState(null);
+  useEffect(()=>{
+    let live=true;
+    const load=async(fresh)=>{const d=await readWatches(fresh);if(live&&d)setGot(d);};
+    load(false);
+    const again=()=>load(true);
+    window.addEventListener("reach:watches",again);
+    return()=>{live=false;window.removeEventListener("reach:watches",again);};
+  },[]);
+  return {ready:got?.ready===true,list:Array.isArray(got?.watches)?got.watches:[]};
+}
+/** Opens the landing for one watch from anywhere (ReachApp listens). */
+const openWatch=id=>{try{window.dispatchEvent(new CustomEvent("reach:watch",{detail:id}));}catch(e){console.error("[watch] could not open the watch",e);}};
+
+const nightLabel=d=>{const t=Date.parse(`${d}T12:00:00Z`);return Number.isFinite(t)?new Date(t).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",timeZone:"UTC"}):d;};
+const shiftClock=(hhmm,mins)=>{
+  const m=/^(\d{2}):(\d{2})$/.exec(hhmm||"");if(!m)return null;
+  const t=Math.max(0,Math.min(23*60+59,Number(m[1])*60+Number(m[2])+mins));
+  return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(t%60).padStart(2,"0")}`;
+};
+
+/**
+ * "Watch for a table" for one restaurant: a plan's table (bookingId) or a
+ * Discover card's venue row (venueRef). Shows the live watch, with Stop,
+ * when there is one; otherwise the offer, read only when pressed.
+ */
+function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
+  const {ready,list}=useWatches();
+  const [open,setOpen]=useState(false);
+  const [view,setView]=useState(null);
+  const [err,setErr]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const [pick,setPick]=useState({nights:[],from:"",to:"",party:party||2});
+  const mine=list.find(w=>w.live&&(bookingId?w.bookingId===bookingId:(!w.bookingId&&w.targetRef===venueRef)));
+  const quiet={fontSize:12,color:C.t2,lineHeight:1.5};
+
+  const load=async()=>{
+    setOpen(true);setErr(null);
+    if(view)return;
+    const q=bookingId?`bookingId=${encodeURIComponent(bookingId)}`:`venueRef=${encodeURIComponent(venueRef)}&party=${encodeURIComponent(party||2)}`;
+    try{
+      const r=await fetchWithin(`/api/watches/options?${q}`,{},15000,"whether Reach can watch this");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok){setErr(d.error||"Couldn't check that just now.");return;}
+      setView(d);
+      const t=d.start?.time||null;
+      setPick({nights:d.nights?.length===1?[d.nights[0]]:[],from:t?shiftClock(t,-60):"18:00",to:t?shiftClock(t,60):"21:00",party:d.start?.party||party||2});
+    }catch(e){console.error("[watch] could not read the offer",e);setErr("Couldn't check that just now. Nothing is being watched.");}
+  };
+  const start=async()=>{
+    if(busy)return;
+    setBusy(true);setErr(null);
+    try{
+      const r=await fetchWithin("/api/watches",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...(bookingId?{bookingId}:{venueRef}),nights:pick.nights,from:pick.from,to:pick.to,party:Number(pick.party)})},20000,"the table watch");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok){setErr(d.error||"Couldn't start watching. Nothing is being watched.");if(d.offer)setView(v=>v?{...v,offer:d.offer}:v);}
+      else{setOpen(false);toast(`Watching ${restaurant}`);watchesChanged();}
+    }catch(e){console.error("[watch] could not start a watch",e);setErr("We didn't hear back. Check your watches before trying again.");watchesChanged();}
+    setBusy(false);
+  };
+  const stop=async()=>{
+    if(busy||!mine)return;
+    setBusy(true);
+    try{
+      const r=await fetchWithin(`/api/watches/${mine.id}`,{method:"DELETE"},15000,"stopping the watch");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)toast(d.error||"Couldn't stop it just now. Reach is still watching.");
+      else{toast(`Stopped watching ${restaurant}`);watchesChanged();}
+    }catch(e){console.error("[watch] could not stop a watch",e);toast("We didn't hear back. Check again in a moment.");}
+    setBusy(false);
+  };
+
+  if(mine){
+    return(
+      <div style={{marginTop:8,padding:"10px 12px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:12}}>
+        <div style={{fontSize:12.5,fontWeight:600,color:C.t1}}>👀 {mine.said}</div>
+        <div style={{...quiet,marginTop:2}}>{mine.window}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+          {mine.held&&<button className="bsm bsm-p" onClick={()=>openWatch(mine.id)}>See the held table</button>}
+          <button disabled={busy} style={tableLink} onClick={stop}>{busy?"Stopping…":"Stop watching"}</button>
+        </div>
+      </div>
+    );
+  }
+  if(!open)return(
+    <button style={{...tableLink,marginTop:8}} onClick={load}>👀 Watch for a table</button>
+  );
+  const offer=view?.offer;
+  const can=offer&&offer.can!=="none";
+  const toggle=d=>setPick(p=>({...p,nights:p.nights.includes(d)?p.nights.filter(n=>n!==d):p.nights.length>=(view?.limits?.nights||7)?p.nights:[...p.nights,d].sort()}));
+  const ok=pick.nights.length>0&&/^\d{2}:\d{2}$/.test(pick.from)&&/^\d{2}:\d{2}$/.test(pick.to)&&pick.from<=pick.to&&Number(pick.party)>=1;
+  return(
+    <div style={{marginTop:8,padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
+        <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Watch {restaurant} for a table</div>
+        <button onClick={()=>setOpen(false)} aria-label="Close" style={{background:"none",border:"none",color:C.t3,cursor:"pointer",fontSize:14}}>✕</button>
+      </div>
+      {!view&&!err&&<div style={{...quiet,marginTop:4}}>Checking what Reach can do here…</div>}
+      {offer&&<div style={{...quiet,color:C.t1,marginTop:4}}>{offer.what}</div>}
+      {can&&(
+        <>
+          <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginTop:10}}>Which nights (up to {view.limits?.nights||7})</div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:4}}>
+            {(view.nights||[]).map(d=>(
+              <button key={d} onClick={()=>toggle(d)} aria-pressed={pick.nights.includes(d)}
+                className={pick.nights.includes(d)?"bsm bsm-p":"bsm"}>{nightLabel(d)}</button>
+            ))}
+            {!(view.nights||[]).length&&<div style={quiet}>No nights left on this trip to watch.</div>}
+          </div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10,alignItems:"center"}}>
+            <label style={{...quiet,display:"flex",gap:6,alignItems:"center",flex:"1 1 130px"}}>From
+              <input className="inp" type="time" value={pick.from} onChange={e=>setPick(p=>({...p,from:e.target.value}))} style={{flex:1,minWidth:0}}/></label>
+            <label style={{...quiet,display:"flex",gap:6,alignItems:"center",flex:"1 1 130px"}}>to
+              <input className="inp" type="time" value={pick.to} onChange={e=>setPick(p=>({...p,to:e.target.value}))} style={{flex:1,minWidth:0}}/></label>
+            <label style={{...quiet,display:"flex",gap:6,alignItems:"center",flex:"0 1 110px"}}>Party
+              <input className="inp" type="number" min={1} max={view.limits?.partyMax||20} value={pick.party} onChange={e=>setPick(p=>({...p,party:e.target.value}))} style={{flex:1,minWidth:0}}/></label>
+          </div>
+          <button className="bp" disabled={busy||!ok} style={{marginTop:10,width:"100%"}} onClick={start}>{busy?"Starting…":"Start watching"}</button>
+          {offer.can==="platform"&&(
+            <div style={{fontSize:11,color:C.t3,lineHeight:1.5,marginTop:6,textAlign:"center"}}>
+              Reach never books on its own: when a table opens you read {offer.platformName}'s terms and tap to book.
+            </div>
+          )}
+        </>
+      )}
+      {offer&&offer.can==="none"&&(
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+          {offer.alert&&<a href={offer.alert.href} target="_blank" rel="noopener noreferrer" style={tableLink}>{offer.alert.label} →</a>}
+          {offer.phone&&<a href={`tel:${String(offer.phone).replace(/[^\d+]/g,"")}`} style={tableLink}>📞 Call {restaurant}</a>}
+        </div>
+      )}
+      {offer?.alert&&offer.can==="none"&&<div style={{...quiet,marginTop:6}}>{offer.alert.say}</div>}
+      {err&&<div style={{...quiet,color:C.t1,marginTop:8}}>{err}</div>}
+      {!ready&&view&&can&&<div style={{...quiet,marginTop:6}}>Reach can't save watches yet.</div>}
+    </div>
+  );
+}
+
+/** "Tables you're watching", with Stop and the held table's button. Nothing shown when there are none. */
+function WatchesCard({toast}){
+  const {list}=useWatches();
+  const [busy,setBusy]=useState(null);
+  const live=list.filter(w=>w.live);
+  if(!live.length)return null;
+  const stop=async w=>{
+    if(busy)return;
+    setBusy(w.id);
+    try{
+      const r=await fetchWithin(`/api/watches/${w.id}`,{method:"DELETE"},15000,"stopping the watch");
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok)toast(d.error||"Couldn't stop it just now. Reach is still watching.");
+      else{toast(`Stopped watching ${w.restaurant}`);watchesChanged();}
+    }catch(e){console.error("[watch] could not stop a watch",e);toast("We didn't hear back. Check again in a moment.");}
+    setBusy(null);
+  };
+  return(
+    <div style={{margin:"0 20px 16px",padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:16}}>
+      <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Tables you're watching</div>
+      {live.map((w,i)=>(
+        <div key={w.id} style={{padding:"8px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+          <div style={{fontSize:13.5,fontWeight:600,color:C.t1}}>{w.restaurant}</div>
+          <div style={{fontSize:12,color:C.t2,lineHeight:1.45}}>{w.window}</div>
+          <div style={{fontSize:12,color:w.held?C.accentText:C.t2,lineHeight:1.45,marginTop:2}}>{w.said}</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:6}}>
+            {w.held&&<button className="bsm bsm-p" onClick={()=>openWatch(w.id)}>See the held table</button>}
+            <button disabled={busy===w.id} style={tableLink} onClick={()=>stop(w)}>{busy===w.id?"Stopping…":"Stop watching"}</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Where a watch's notification lands (/home?watch=<id>). A table held for it
+ * is shown on the same TableReserve as Book it, seeded with the hold the
+ * watch took, so the restaurant's policy, the platform's terms, the
+ * countdown and the button are the ones press two always has. A hold that
+ * has run out is said as that, with the watch's own words.
+ */
+function WatchLanding({id,toast,push,onClose}){
+  const [d,setD]=useState(null);
+  const [entry,setEntry]=useState(null);
+  const [failed,setFailed]=useState(false);
+  useEffect(()=>{
+    let live=true;
+    (async()=>{
+      try{
+        const r=await fetchWithin(`/api/watches/${encodeURIComponent(id)}`,{},15000,"the table watch");
+        const got=await r.json().catch(()=>null);
+        if(!r.ok||!got){if(live)setFailed(true);return;}
+        if(got.seed&&got.planId&&got.bookingId){
+          const list=await readTables(got.planId,true);
+          if(live)setEntry(tableFor(list,{bookingId:got.bookingId}));
+        }
+        if(live)setD(got);
+      }catch(e){console.error("[watch] could not open the watch",e);if(live)setFailed(true);}
+    })();
+    return()=>{live=false;};
+  },[id]);
+  const w=d?.watch;
+  const seed=d?.seed&&entry?readTableAnswer(409,d.seed,{path:"instant"}):null;
+  return(
+    <Sheet onClose={onClose} label={w?.restaurant||"Table watch"}>
+      <div style={{padding:"4px 20px 24px"}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1,marginBottom:4}}>{w?.restaurant||"Table watch"}</div>
+        {failed?<div style={{fontSize:13,color:C.t2}}>Couldn't open this watch just now. Nothing was booked.</div>
+          :!d?<div style={{fontSize:13,color:C.t2}}>Reading the watch…</div>
+          :seed?(
+            <TableReserve entry={entry} planId={d.planId} solo={d.solo} toast={toast} seed={seed} noWatch
+              onChanged={async()=>{watchesChanged();}}/>
+          ):(
+            <div>
+              <div style={{fontSize:13,color:C.t1,lineHeight:1.5}}>{w.said}</div>
+              <div style={{fontSize:12,color:C.t2,marginTop:2}}>{w.window}</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
+                {w.link&&<a href={w.link} target="_blank" rel="noopener noreferrer" style={tableLink}>Book it on {w.platformName||"their page"} →</a>}
+                {d.planId&&d.groupId&&<button style={tableLink} onClick={()=>{onClose();push("planDetail",{planId:d.planId,groupId:d.groupId});}}>Open the plan</button>}
+              </div>
+            </div>
+          )}
       </div>
     </Sheet>
   );
@@ -15317,6 +15584,14 @@ export default function ReachApp({realUser,onSignOut}={}){
   // rather than on an empty user object.
   const [identityLoaded,setIdentityLoaded]=useState(false);
   const [toastMsg,setToastMsg]=useState(null);
+  // The table watch a notification opened (/home?watch=<id>), or one a
+  // "Book the held table" button asked for (openWatch).
+  const [watchOpen,setWatchOpen]=useState(null);
+  useEffect(()=>{
+    const on=e=>{if(typeof e?.detail==="string")setWatchOpen(e.detail);};
+    window.addEventListener("reach:watch",on);
+    return()=>window.removeEventListener("reach:watch",on);
+  },[]);
   const [undoMsg,setUndoMsg]=useState(null);
   const [stack,setStack]=useState([]);
   // Which page of Profile to land on, when something sent somebody there to
@@ -15451,6 +15726,16 @@ export default function ReachApp({realUser,onSignOut}={}){
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
         push("checkout",{planId,groupId,returnedIntent,redirectStatus});
+      }
+      // From a table watch's notification (lib/watch/tables.ts): the held
+      // table's terms and button, or where the watch stands. Cleared so a
+      // refresh does not reopen it.
+      if(params.get("watch")){
+        const watchId=params.get("watch");
+        params.delete("watch");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        if(/^[0-9a-f-]{36}$/i.test(watchId))setWatchOpen(watchId);
       }
       // From the funding nudge ("Your share is still to pay"): straight to
       // that trip's checkout, where paying is.
@@ -16324,6 +16609,7 @@ export default function ReachApp({realUser,onSignOut}={}){
               )}
           </>
         </div>
+        {watchOpen&&<WatchLanding key={watchOpen} id={watchOpen} toast={showToast} push={push} onClose={()=>setWatchOpen(null)}/>}
         {undoMsg&&<UndoToast key={undoMsg.undoId} id={undoMsg.undoId} msg={undoMsg.msg} onGone={()=>setUndoMsg(u=>u&&u.undoId===undoMsg.undoId?null:u)}/>}
         {toastMsg&&<Toast key={typeof toastMsg==="object"?toastMsg.msg:toastMsg} msg={toastMsg} below={!!undoMsg} onDone={()=>setToastMsg(null)}/>}
       </div>
