@@ -179,7 +179,7 @@ function fakeDb(tables: Record<string, Row[]>) {
       return { data: (tables[table] ?? []).filter(r => filters.every(f => f(r))), error: null };
     };
     const q: Record<string, unknown> = {
-      select: () => q, not: () => q, lte: () => q, or: () => q, limit: () => q, order: () => q,
+      select: () => q, not: () => q, lte: () => q, or: () => q, limit: () => q, order: () => q, range: () => q,
       eq: (c: string, v: unknown) => { filters.push(r => r[c] === v); return q; },
       neq: (c: string, v: unknown) => { filters.push(r => r[c] !== v); return q; },
       gte: (c: string, v: string) => { filters.push(r => String(r[c]) >= v); return q; },

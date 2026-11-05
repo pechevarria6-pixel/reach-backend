@@ -309,6 +309,7 @@ function fakeDb(tables: Record<string, Row[]>, opts: { noPingLog?: boolean } = {
   const from = (table: string) => {
     const filters: ((r: Row) => boolean)[] = [];
     let pending: { op: 'insert' | 'update'; rows: unknown } | null = null;
+    let span: [number, number] | null = null;
     const result = async () => {
       if (pending?.op === 'insert' && table === 'ping_log') {
         if (opts.noPingLog) return { data: null, error: { code: 'PGRST205', message: 'Could not find the table' } };
@@ -322,10 +323,12 @@ function fakeDb(tables: Record<string, Row[]>, opts: { noPingLog?: boolean } = {
       }
       if (pending?.op === 'insert') { log.push({ table, op: 'insert', rows: pending.rows }); return { data: null, error: null }; }
       if (pending?.op === 'update') return { data: null, error: null };
-      return { data: (tables[table] ?? []).filter(r => filters.every(f => f(r))), error: null };
+      const hit = (tables[table] ?? []).filter(r => filters.every(f => f(r)));
+      return { data: span ? hit.slice(span[0], span[1] + 1) : hit, error: null };
     };
     const q: Record<string, unknown> = {
       select: () => q, not: () => q, lte: () => q, or: () => q, limit: () => q, order: () => q,
+      range: (a: number, b: number) => { span = [a, b]; return q; },
       eq: (c: string, v: unknown) => { filters.push(r => r[c] === v); return q; },
       in: (c: string, vs: unknown[]) => { filters.push(r => vs.includes(r[c])); return q; },
       insert: (rows: unknown) => { pending = { op: 'insert', rows }; return q; },
@@ -433,4 +436,15 @@ test('the trip\'s clock is the zone the point is in, daylight saving and all', a
   assert.equal(localClock(-3.7, new Date('2026-07-10T20:30:00Z'), 40.42)?.hour, 22);
   assert.equal(localClock(null, july, 35.78), null, 'nobody placed it: no clock');
   assert.equal(zoneAt(0, 0), null, 'Null Island is not a place');
+});
+
+test('the run reads every line, past a thousand rows and across many plans', async () => {
+  const { readAllIn } = await import('../../lib/pings.ts');
+  const rows = Array.from({ length: 2500 }, (_, i) => ({ id: `l${i}`, plan_id: `p${i % 250}` }));
+  const { db } = fakeDb({ itinerary_items: rows });
+  const ids = Array.from({ length: 250 }, (_, i) => `p${i}`);
+  const r = await readAllIn(db, 'itinerary_items', 'id, plan_id', 'plan_id', ids, { chunk: 100, page: 1000 });
+  assert.equal(r.error, null);
+  assert.equal(r.data!.length, 2500);
+  assert.equal(new Set(r.data!.map(x => x.id)).size, 2500, 'no row twice');
 });

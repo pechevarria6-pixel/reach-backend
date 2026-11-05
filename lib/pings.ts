@@ -837,6 +837,36 @@ export function dueSettleUps(input: SettleInput, now: Date = new Date()): Planne
   return out;
 }
 
+/**
+ * Every row whose `col` is one of `values`, however many. One `.in()` over
+ * every plan answered at most 1,000 rows and said nothing of the rest, so
+ * past a few hundred active plans lines and bookings were silently dropped
+ * (a reserved dinner read as unreserved, a flight vanished), and a long id
+ * list ran into the URL limit. Read in chunks of ids, each paged by range.
+ */
+export async function readAllIn(
+  db: SupabaseClient, table: string, cols: string, col: string, values: string[],
+  opts: { chunk?: number; page?: number; order?: string[] } = {},
+): Promise<{ data: Record<string, unknown>[] | null; error: { code?: string; message?: string } | null }> {
+  const chunk = opts.chunk ?? 100;
+  const page = opts.page ?? 1000;
+  const out: Record<string, unknown>[] = [];
+  for (let i = 0; i < values.length; i += chunk) {
+    const part = values.slice(i, i + chunk);
+    for (let from = 0; ; from += page) {
+      // Ordered on a unique key, so a page boundary never skips or repeats a row.
+      let q = db.from(table).select(cols).in(col, part);
+      for (const o of opts.order ?? [col]) q = q.order(o);
+      const { data, error } = await q.range(from, from + page - 1);
+      if (error) return { data: null, error };
+      const rows = (data ?? []) as unknown as Record<string, unknown>[];
+      out.push(...rows);
+      if (rows.length < page) break;
+    }
+  }
+  return { data: out, error: null };
+}
+
 // ── Claiming and sending ─────────────────────────────────────────────────
 
 export interface PingReport {
@@ -1122,10 +1152,10 @@ async function runCountdown(db: SupabaseClient, opts: PingOpts): Promise<PingRep
   const ids = rows.map(p => p.id);
   const groups = [...new Set(rows.map(p => p.group_id))];
   const [members, lines, bookings, optouts] = await Promise.all([
-    db.from('group_members').select('group_id, user_id').in('group_id', groups),
-    db.from('itinerary_items').select('id, plan_id, type, title, subtitle, scheduled_time, is_confirmed').in('plan_id', ids),
-    db.from('bookings').select('id, plan_id, itinerary_item_id, vertical, mode, status, provider_ref, confirmation_number, detail, request_payload, response_payload').in('plan_id', ids),
-    db.from('item_optouts').select('plan_id, item_ref, user_id').in('plan_id', ids),
+    readAllIn(db, 'group_members', 'group_id, user_id', 'group_id', groups, { order: ['group_id', 'user_id'] }),
+    readAllIn(db, 'itinerary_items', 'id, plan_id, type, title, subtitle, scheduled_time, is_confirmed', 'plan_id', ids, { order: ['plan_id', 'id'] }),
+    readAllIn(db, 'bookings', 'id, plan_id, itinerary_item_id, vertical, mode, status, provider_ref, confirmation_number, detail, request_payload, response_payload', 'plan_id', ids, { order: ['plan_id', 'id'] }),
+    readAllIn(db, 'item_optouts', 'plan_id, item_ref, user_id', 'plan_id', ids, { order: ['plan_id', 'item_ref', 'user_id'] }),
   ]);
   // Without the members or the lines nothing can be said; without the
   // bookings a flight is invisible and a reserved dinner looks unreserved;
