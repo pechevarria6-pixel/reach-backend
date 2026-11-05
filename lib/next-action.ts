@@ -801,7 +801,11 @@ export function getNextAction(input: NextActionInput): NextAction | null {
         : { label: 'Open the list →', ...nav('planDetail', 'bookings') };
     return say({
       state: 'finish_elsewhere', title: `Book ${name}`,
-      body: `Reach can't book this one. ${line.venue_website ? "It's booked on their own site" : line.venue_phone ? 'They take bookings by phone' : 'It needs booking ahead'} — say once it's done.${tableNight(line)}`,
+      // Where to try, never how the place takes bookings: a homepage is not
+      // a booking page and a number is not a booking policy. "It's booked on
+      // their own site" sat beside the Book tab's "books by phone" for the
+      // same café on the QA Charleston trip (2026-11-05), and neither was held.
+      body: `Reach can't book this one. ${line.venue_website ? 'Try their own site' : line.venue_phone ? 'Ring them to ask' : 'It needs booking ahead'} — say once it's done.${tableNight(line)}`,
       cta, secondary: line.id ? { label: "I've got it ✓", kind: 'confirm', itemId: line.id } : null,
       chip: 'Almost there',
     });

@@ -309,7 +309,7 @@ export function offerFor(f: OfferFacts, s: OfferState): WatchOffer {
   if (s.instant && !s.running) return theirs(`Reach's table watch isn't running yet.`, 'not_running');
 
   if (!name && f.phone) {
-    return theirs(`${f.restaurant} books by phone, so there's nothing online for Reach to watch. Ring them and ask whether they keep a cancellation list.`, 'phone_only');
+    return theirs(`We hold only a phone number for ${f.restaurant}, so there's nothing online for Reach to watch. Ring them and ask whether they keep a cancellation list.`, 'phone_only');
   }
   if (name) {
     return theirs(alert

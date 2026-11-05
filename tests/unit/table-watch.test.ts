@@ -135,6 +135,8 @@ test('a phone-only restaurant is never offered as a watch: nothing checks a phon
     assert.equal(o.phone, OT.phone, 'their number is the next option');
     assert.match(o.what, /nothing online for Reach to watch\. Ring them and ask whether they keep a cancellation list\.$/);
     assert.doesNotMatch(o.what, /Reach (calls|checks|watches|asks)/, 'no promise of a call or a check nothing makes');
+    // A number is what we hold, not how they take tables (2026-11-05).
+    assert.doesNotMatch(o.what, /books by phone/);
   }
 });
 

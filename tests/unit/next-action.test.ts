@@ -682,3 +682,18 @@ test('a driver off the flight is not asked for travel details, and the group doe
   const mine = run(base({ ...flightWaiting, me: SAM, plan: { id: 'p1', itinerary: [HOTEL_LINE, FLIGHT_LINE], createdBy: ME } , essentials: driverMissing }));
   assert.notEqual(mine.state, 'needs_travel_details');
 });
+
+// The QA Charleston trip (2026-11-05): after Babas on Cannon went onto the
+// dinner line, the Book tab said "Babas on Cannon books by phone" and the
+// next-step card said "It's booked on their own site". Neither is held: a
+// homepage is not a booking page and a number is not a booking policy. The
+// card says what to try, not how the place takes bookings.
+test('a dinner Reach cannot book says where to try, never how the place takes bookings', () => {
+  const site = run(base({ plan: { id: 'p1', itinerary: [HOTEL_LINE, DINNER_LINE] }, bookings: [hotel('confirmed')], funding: FUNDED }));
+  assert.equal(site.state, 'finish_elsewhere');
+  assert.doesNotMatch(site.body ?? '', /booked on their own site|take bookings by phone/);
+  assert.match(site.body ?? '', /Reach can't book this one\. Try their own site/);
+  const phoned = line({ id: 'l-dinner', title: 'Dinner', venue_name: 'Desert Bistro', type: 'restaurant', booking_mode: 'ahead', venue_phone: '+14355550100' });
+  const call = run(base({ plan: { id: 'p1', itinerary: [HOTEL_LINE, phoned] }, bookings: [hotel('confirmed')], funding: FUNDED }));
+  assert.match(call.body ?? '', /Reach can't book this one\. Ring them to ask/);
+});

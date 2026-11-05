@@ -305,7 +305,9 @@ export function decide(f: TableFacts, a: Availability, row?: DecideRow | null, n
     what = first.kind === 'link'
       ? `${name ? `Book it on ${name}` : 'Book it on their site'} with your own account — Reach can't book ${f.restaurant} itself yet.`
       : first.kind === 'phone'
-        ? `${f.restaurant} books by phone: ${prettyPhone(toE164(f.phone) ?? f.phone ?? '')}. Reach can't book it itself yet.`
+        // We hold their number, not how they take tables: "books by phone"
+        // was read from there being no booking link (2026-11-05).
+        ? `Reach can't book ${f.restaurant} itself yet. Ring them on ${prettyPhone(toE164(f.phone) ?? f.phone ?? '')} to ask for a table.`
         : `Reach doesn't hold a way to book ${f.restaurant} yet. If you've booked it, say so.`;
     alternatives.push(...handoffOptions(f));
   }

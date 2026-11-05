@@ -1301,3 +1301,12 @@ test('the platform letting a card table go hands the row back: mode "redirect", 
   assert.equal(m.get().mode, 'redirect');
   assert.equal(reachBooked(m.get()), false);
 });
+
+// "Babas on Cannon books by phone" (2026-11-05) was read from the absence of
+// a booking link: we hold their number, not how they take tables.
+test('a place we hold only a number for is rung, not said to book by phone', () => {
+  const v = decide(facts({ platform: 'none', reserveUrl: null, urls: [] }), { instant: null, call: CLOSED });
+  assert.equal(v.path, 'handoff');
+  assert.doesNotMatch(v.what, /books by phone/);
+  assert.match(v.what, /^Reach can't book Luigi's itself yet\. Ring them on .+ to ask for a table\.$/);
+});
