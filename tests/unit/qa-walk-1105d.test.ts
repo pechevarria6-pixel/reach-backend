@@ -17,6 +17,7 @@ test('"Find them →" on a plan for one finds, instead of a locked button under 
 
 test('a plan for one keeps the ideas it found, and tells nobody else about them', () => {
   assert.match(gen, /if \(groupPlan && ideasAvailable\) \{/);
+  assert.doesNotMatch(gen, /if \(!detailTripId && isGroup\) \{\s*\n\s*const read = await readSavedIdeas/, 'the saved-ideas read runs for one too, or nothing is saved');
   assert.match(gen, /if \(isGroup\) await tellTheGroup\(/);
 });
 

@@ -345,7 +345,9 @@ export async function POST(req: NextRequest) {
     // a second Find shows the saved three rather than building three more
     // over a vote in progress — and costs nothing. Only the organiser can
     // ask for different ones, because that throws everybody's votes away.
-    if (!detailTripId && isGroup) {
+    // A plan for one too: its ideas are saved and shown again rather than
+    // built afresh on every Find (b2dcb17 saved them only if this ran).
+    if (!detailTripId) {
       const read = await readSavedIdeas(supabase, groupPlan.id);
       if ('error' in read) {
         // Building anyway could put a second set over a vote in progress.
