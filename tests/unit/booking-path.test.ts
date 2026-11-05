@@ -455,3 +455,9 @@ test('a confirmed flight keeps the quote\'s way home, so its return pings can na
     assert.ok('option' in raw, 'the quote\'s option (with .back) is still on the confirmed row');
   } finally { restore(); }
 });
+
+test('a refused model key is said to be on our side, never "please try again"', () => {
+  const src = read('app/api/trips/generate/route.ts');
+  assert.equal((src.match(/ourSide\(e\) \? 503/g) ?? []).length, 2, 'both the ideas and the days');
+  assert.match(src, /e\?\.status === 401 \|\| e\?\.status === 403/);
+});

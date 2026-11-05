@@ -1464,9 +1464,9 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       console.error('[trips itinerary] generation failed', {
         destination, nights, status: e?.status, message: e?.message,
       });
-      const status = e?.status === 429 ? 429 : 502;
+      const status = ourSide(e) ? 503 : e?.status === 429 ? 429 : 502;
       return NextResponse.json(
-        { error: status === 429
+        { error: status === 503 ? OUR_SIDE : status === 429
             ? 'Reach is busy right now — try again in a moment.'
             : 'Could not build an itinerary — please try again.' },
         { status },
@@ -2049,15 +2049,26 @@ Return JSON only, shaped exactly like this:
     console.error('[trips generate] generation failed', {
       groupId, nights, effectiveBudget, status: e?.status, message: e?.message,
     });
-    const status = e?.status === 429 ? 429 : 502;
+    const status = ourSide(e) ? 503 : e?.status === 429 ? 429 : 502;
     return NextResponse.json(
-      { error: status === 429
+      { error: status === 503 ? OUR_SIDE : status === 429
           ? 'Reach is busy right now — try again in a moment.'
           : 'Trip generation failed — please try again.' },
       { status },
     );
   }
 }
+
+/**
+ * The model refused our own credentials (a revoked or wrong key, or the
+ * account out of credit). "Please try again" there is untrue: no retry by
+ * the person will ever work, so say it is on our side.
+ */
+function ourSide(e: any): boolean {
+  return e?.status === 401 || e?.status === 403
+    || /credit balance|authentication_error|invalid x-api-key/i.test(String(e?.message ?? ''));
+}
+const OUR_SIDE = "Reach can't write ideas just now. The problem is on our side, not yours, so trying again won't help yet.";
 
 /** The saved set as a screen sees it. */
 function publicIdeas(ideas: SavedIdeas) {
