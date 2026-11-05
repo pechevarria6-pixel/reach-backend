@@ -15,6 +15,10 @@ const BASE_URL = process.env.TEST_URL || 'https://www.alcanzar.io';
 const TEST_EMAIL = process.env.TEST_EMAIL || 'test+clerk_test@reach-test.com';
 
 export const SESSION_FILE = path.resolve(__dirname, '../playwright/.auth/session.json');
+// A second test account, for anything that needs two people: a group that
+// waits for both answers, two votes, a nudge that reaches the other one.
+const TEST_EMAIL_2 = process.env.TEST_EMAIL_2 || '';
+export const SESSION_FILE_2 = path.resolve(__dirname, '../playwright/.auth/session2.json');
 const FALLBACK_JAR = path.resolve(__dirname, '../playwright/.auth/user.json');
 
 function useFallback(reason: string) {
@@ -56,4 +60,19 @@ setup('sign in the test account', async ({ page }) => {
   } catch (e) {
     useFallback(`Clerk sign-in failed: ${(e as Error).message.split('\n')[0]}`);
   }
+});
+
+setup('sign in the second test account', async ({ page }) => {
+  if (!TEST_EMAIL_2 || process.env.E2E_CLERK_SKIP) return;
+  await page.goto(`${BASE_URL}/sign-in`);
+  await Promise.race([
+    (async () => {
+      await clerk.signIn({ page, emailAddress: TEST_EMAIL_2 });
+      await page.goto(`${BASE_URL}/home`);
+      await page.waitForURL('**/home', { timeout: 15000 });
+    })(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Clerk did not answer within 30s')), 30000)),
+  ]);
+  await page.context().storageState({ path: SESSION_FILE_2 });
+  console.log(`[auth.setup] Signed in ${TEST_EMAIL_2} with Clerk testing helpers.`);
 });
