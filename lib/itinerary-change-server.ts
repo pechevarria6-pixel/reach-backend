@@ -15,7 +15,7 @@ import { atVersion } from '@/lib/booking/claim';
 import { lockedIn, changeRight, bookedBy, shownSuggestions, type Right, type ShownSuggestion, type SuggestionRow, type VoteRow } from '@/lib/itinerary-change';
 import { bookingOnSwap, type LineBooking } from '@/lib/itinerary-bookings';
 import { replaceLine } from '@/lib/itinerary-replace';
-import { alternativesFor, placeByRef, placeOfLine, placeRef, swappedLine, type PlanLine } from '@/lib/itinerary-alternatives';
+import { alternativesFor, placeByRef, placeOfLine, placeRef, planCenter, swappedLine, type PlanLine } from '@/lib/itinerary-alternatives';
 import { track } from '@/lib/track';
 
 type PlanRow = {
@@ -244,6 +244,7 @@ export function candidateFor(lc: LineContext, places: RealPlace[], ref: unknown,
     lines: lc.lines, places, nightOut: lc.nightOut,
     startDate: lc.plan.start_date ?? null, countryCode: lc.plan.destination_country ?? null,
     count: Infinity, anyType: !!opts.anyType,
+    center: planCenter(lc.plan),
   });
   if (got.status !== 'ok' || !got.alternatives.some(a => a.ref === ref)) return null;
   return placeByRef(ref, places);

@@ -151,11 +151,24 @@ export function dateOfLine(time: unknown, startDate: unknown, nightOut: boolean)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-const located = (p: RealPlace | null | undefined): p is RealPlace & { lat: number; lng: number } =>
+type Point = { lat?: number | null; lng?: number | null };
+const located = <T extends Point>(p: T | null | undefined): p is T & { lat: number; lng: number } =>
   !!p && p.lat != null && p.lng != null && Number.isFinite(p.lat) && Number.isFinite(p.lng);
 
+/**
+ * The plan's own point (plans.destination_lat/lng), or null. Null Island is
+ * not a point: a missing coordinate read as 0 has put a plan there before.
+ */
+export function planCenter(plan: Record<string, unknown> | null | undefined): { lat: number; lng: number } | null {
+  const raw = (v: unknown) => (v === null || v === undefined || v === '' ? NaN : Number(v));
+  const lat = raw(plan?.destination_lat), lng = raw(plan?.destination_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01) return null;
+  return { lat, lng };
+}
+
 /** Kilometres from a place to the nearest of some others, or null. */
-function kmToNearest(p: RealPlace, others: RealPlace[]): number | null {
+function kmToNearest(p: RealPlace, others: Point[]): number | null {
   if (!located(p)) return null;
   let best: number | null = null;
   for (const o of others) {
@@ -224,6 +237,12 @@ export interface AlternativesInput {
    * out of doors is offered, and somewhere with a roof comes first.
    */
   preferIndoor?: boolean;
+  /**
+   * The plan's own point (planCenter). "Near" is measured from it when
+   * nothing on the day is on the map — a day of hand-written lines — so the
+   * list is the places closest to the town's middle rather than A to Z.
+   */
+  center?: { lat: number; lng: number } | null;
 }
 
 const PRICE_NOTE = "We hold no price for this place, so this line's estimate stays as it is.";
@@ -293,7 +312,13 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
   const dayStops = sameDay.map(l => placeOfLine(l, places)).filter((p): p is RealPlace => !!p);
   // Where the line is now counts as part of the day when nothing else on it
   // is on the map: a dinner swapped for one across town is still a move.
-  const anchors = dayStops.some(located) ? dayStops : (current ? [current] : []);
+  // And when nothing is, the town's own point: a day of hand-written lines
+  // on the QA Charleston trip was offered A.C.'s Bar & Grill, Alcove Market
+  // and American Gardens — the menu's first three by name (2026-11-05).
+  const anchors: Point[] = dayStops.some(located) ? dayStops
+    : located(current) ? [current]
+    : input.center && located(input.center) ? [input.center]
+    : (current ? [current] : []);
 
   // Nothing already on the plan, anywhere on it, is offered again.
   const onPlan = new Set(

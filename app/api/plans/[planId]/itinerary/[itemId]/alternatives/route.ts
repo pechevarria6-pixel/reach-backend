@@ -21,7 +21,7 @@ import { NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
 import { readLine, menuFor } from '@/lib/itinerary-change-server';
 import { refusal, suggestionsClosed } from '@/lib/itinerary-change';
-import { alternativesFor, placeOfLine, MENU_TYPES } from '@/lib/itinerary-alternatives';
+import { alternativesFor, placeOfLine, planCenter, MENU_TYPES } from '@/lib/itinerary-alternatives';
 import { lineWeather } from '@/lib/forecast-plan';
 import { bookingOnSwap } from '@/lib/itinerary-bookings';
 
@@ -64,6 +64,7 @@ export async function GET(_req: Request, { params }: { params: { planId: string;
     line, lines: lc.lines, places, nightOut: lc.nightOut,
     startDate: lc.plan.start_date ?? null, countryCode: lc.plan.destination_country ?? null,
     preferIndoor: !!weather,
+    center: planCenter(lc.plan),
   });
 
   if (result.status === 'booking_line') {

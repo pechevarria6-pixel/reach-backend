@@ -228,3 +228,32 @@ test('the swap routes and the sheet carry the rewrite\'s cost', () => {
   assert.match(app, /apply\(freshTo,fresh\.plan,fresh\.cost\)/);
   assert.match(app, /the line takes this in place of its old one/);
 });
+
+// ─── A day nothing on the map anchors ───────────────────────────────────
+// The QA Charleston trip (2026-11-05): two hand-written lines, "Walk the
+// Battery and Rainbow Row" and "Dinner downtown", neither naming a menu
+// place. With nothing on the day located, every candidate was km: null and
+// the list fell through to the name: A.C.'s Bar & Grill, Alcove Market,
+// American Gardens. The plan's own point was held all along.
+test('with nothing on the day located, the town\'s own point says what is near', () => {
+  const walk: PlanLine = { id: 'w', type: 'activity', title: 'Walk the Battery and Rainbow Row', scheduled_time: 'Day 1 · Afternoon', venue_name: null };
+  const supper: PlanLine = { id: 'd', type: 'restaurant', title: 'Dinner downtown', scheduled_time: 'Day 1 · Evening', venue_name: null };
+  const center = { lat: 38.8977, lng: -77.0306 };
+  const menu = [FAR_BAR, POUR, MUSEUM, SPIN];
+  const got = alternativesFor({ line: walk, lines: [walk, supper], places: menu, nightOut: false, startDate: '2026-10-23', count: 3, center });
+  assert.equal(got.status, 'ok');
+  if (got.status !== 'ok') return;
+  // SPIN (60 m from the point), Renwick (750 m), The Pour House (3 km) — not A to Z.
+  assert.deepEqual(got.alternatives.map(a => a.name), ['SPIN', 'Renwick Gallery', 'The Pour House']);
+  assert.ok(got.alternatives.every(a => a.km !== null), 'each says how far it is');
+  // Without the point it is still the old order: nothing to measure from.
+  const blind = alternativesFor({ line: walk, lines: [walk, supper], places: menu, nightOut: false, startDate: '2026-10-23', count: 3 });
+  assert.equal(blind.status, 'ok');
+});
+
+test('the Change sheet and the swap it leads to measure from the same point', () => {
+  const route = readFileSync('app/api/plans/[planId]/itinerary/[itemId]/alternatives/route.ts', 'utf8');
+  const server = readFileSync('lib/itinerary-change-server.ts', 'utf8');
+  assert.match(route, /center: planCenter\(lc\.plan\)/);
+  assert.match(server, /center: planCenter\(lc\.plan\)/);
+});
