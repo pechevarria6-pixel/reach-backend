@@ -9,10 +9,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   parseMet, parseNwsHourly, parseNwsPoints, forecastDays, forecastPoint, nwsMayCover, sunTimes, setting,
-  forecastPromptBlock, unbackedWeatherTip, forecastUserAgent, skyFromNws, windFromNws, addDays, metMinIntervalMs,
+  forecastPromptBlock, forecastTip, forecastUserAgent, skyFromNws, windFromNws, addDays, metMinIntervalMs,
   indoorSwaps, SOURCES, type Parsed, type Step,
 } from '../../lib/forecast.ts';
-import { weatherClashes, scrubWeatherTips, lineWeatherFrom, type GenerationForecast } from '../../lib/forecast-plan.ts';
+import { weatherClashes, scrubWeatherTips, lineWeatherFrom, lineIsOutdoor, partFor, type GenerationForecast } from '../../lib/forecast-plan.ts';
 import type { HeldDay } from '../../lib/forecast-store.ts';
 
 const fixture = (name: string) => JSON.parse(readFileSync(new URL(`./fixtures/forecast/${name}`, import.meta.url), 'utf8'));
@@ -228,17 +228,34 @@ test('the prompt lists only the days held, says whose forecast and when, and off
   assert.equal(forecastPromptBlock([]), '');
 });
 
-test('a tip stating a forecast we do not hold loses the tip', () => {
-  const [fri] = held(nws(), SEATTLE, RECORDED).filter(d => d.date === '2026-11-06');
-  assert.equal(unbackedWeatherTip('Rain is forecast this afternoon, bring a jacket', null), true);
-  assert.equal(unbackedWeatherTip('Rain is forecast this afternoon, bring a jacket', fri.parts.afternoon), false);
-  assert.equal(unbackedWeatherTip('It will be hot by noon', fri.parts.afternoon), true);
-  assert.equal(unbackedWeatherTip('Bring water and go early', null), false);
-  const days = [{ day: 1, afternoon: { plan: 'Pike Place', tip: 'Showers are forecast after lunch' }, morning: { plan: 'x', tip: 'Rain is forecast' } }];
-  // Friday's morning is not rain likely; its afternoon is.
-  assert.equal(scrubWeatherTips(days, '2026-11-06', genFc([fri])), 1);
-  assert.equal(days[0].afternoon.tip, 'Showers are forecast after lunch');
+test('a tip stating a forecast loses the tip, held or not: saved, it would carry no source and go stale', () => {
+  assert.equal(forecastTip('Rain is forecast this afternoon, bring a jacket'), true);
+  assert.equal(forecastTip('It will be hot by noon'), true);
+  assert.equal(forecastTip('Rain is likely after lunch, so the gallery first'), true);
+  assert.equal(forecastTip('Bring water and go early'), false);
+  assert.equal(forecastTip('Arrive before the lunch rush'), false);
+  // Friday's afternoon really is rain likely — the tip still goes: written on
+  // the 5th, it is the line's subtitle on the 8th, with nothing behind it.
+  const days = [{
+    day: 1, afternoon: { plan: 'Pike Place', tip: 'Showers are forecast after lunch' }, morning: { plan: 'x', tip: 'Rain is forecast' },
+    evening: { plan: 'Dinner', tip: 'Book the window table' },
+    daytime: [{ plan: 'Hike the Rattlesnake Ledge trail', tip: 'Rain is forecast, so go early' }],
+  }];
+  assert.equal(scrubWeatherTips(days), 3);
+  assert.equal(days[0].afternoon.tip, '');
   assert.equal(days[0].morning.tip, '');
+  assert.equal(days[0].daytime[0].tip, '');
+  assert.equal(days[0].evening.tip, 'Book the window table');
+});
+
+test('the prompt asks for no forecast in the answer, and tells a night out which parts its stops are', () => {
+  const days = held(nws(), SEATTLE, RECORDED).filter(d => d.date === '2026-11-06');
+  const block = forecastPromptBlock(genFc(days).prompt);
+  assert.match(block, /Never mention the weather forecast in a tip/);
+  assert.doesNotMatch(block, /You may say in a tip/);
+  assert.match(block, /daytime 8:00-20:00 overall: [^;]*RAIN LIKELY/);
+  assert.doesNotMatch(block, /one evening out/);
+  assert.match(forecastPromptBlock(genFc(days).prompt, [], { night: true }), /judge every one of them by the forecast evening/);
 });
 
 test('an outdoor stop in a spoiled part of a day is a clash; an indoor one is not', () => {
@@ -259,4 +276,80 @@ test('a line\'s verdict: outdoors, in a spoiled part, with the source behind it'
   assert.equal(v?.source.name, 'weather.gov');
   assert.equal(lineWeatherFrom({ time: 'Day 2 · Afternoon', title: 'Seattle Art Museum', kind: 'museum' }, fri, false), null);
   assert.equal(lineWeatherFrom({ time: 'Day 2 · Morning', title: 'Discovery Park loop', kind: 'park' }, fri, false), null);
+});
+
+// ── review fixes, 2026-11-05 ──
+
+test('a night out\'s stops are judged by the forecast evening, its daytime ideas by the day', () => {
+  // Synthetic day at longitude 0: a wet morning, a dry evening.
+  const wetMorning = held(dayOf('2026-11-06', 6, 12, { precipMm: 1, sky: 'rain' }), AT0, EARLY);
+  const evening = [{ day: 1, morning: { plan: 'Pints at the Biergarten', kind: 'biergarten' }, afternoon: { plan: 'The gig', kind: 'music venue' }, evening: { plan: 'Dessert', kind: 'cafe' } }];
+  // "To start" is a 6pm drink: the wet morning is nothing to it.
+  assert.deepEqual(weatherClashes(evening, '2026-11-06', genFc(wetMorning), true), []);
+  // A wet evening is — and it is said as the evening, the slot as "morning".
+  const wetEvening = held(dayOf('2026-11-06', 18, 24, { precipMm: 1, sky: 'rain' }), AT0, EARLY);
+  const c = weatherClashes(evening, '2026-11-06', genFc(wetEvening), true);
+  assert.equal(c.length, 1);
+  assert.equal(c[0].slot, 'morning');
+  assert.equal(c[0].part, 'evening');
+  // The daytime ideas are checked, against the day's own verdict.
+  const wetAfternoon = held(dayOf('2026-11-06', 12, 18, { precipMm: 1, sky: 'rain' }), AT0, EARLY);
+  const withDay = [{ ...evening[0], daytime: [{ plan: 'Museum first', kind: 'museum' }, { plan: 'Hike the ridge trail', kind: null }] }];
+  const d = weatherClashes(withDay, '2026-11-06', genFc(wetAfternoon), true);
+  assert.deepEqual(d.map(x => [x.slot, x.index, x.part]), [['daytime', 1, 'day']]);
+  // A trip's slots are still their own parts.
+  const trip = weatherClashes([{ day: 1, afternoon: { plan: 'Park loop', kind: 'park' } }], '2026-11-06', genFc(wetAfternoon));
+  assert.deepEqual(trip.map(x => [x.slot, x.part]), [['afternoon', 'afternoon']]);
+});
+
+test('a meal is never outdoors because of its name; only the venue\'s kind says so', () => {
+  for (const name of ['Dinner at Olive Garden', 'Lunch at Park Tavern', 'Drinks at The Beach House', 'Coffee at Trailhead Coffee']) {
+    assert.equal(setting(null, name), null, name);
+    assert.equal(lineIsOutdoor({ title: name, type: 'restaurant', kind: null }), false, name);
+  }
+  // A meal line whose title is the bare name: its type says it is a meal.
+  assert.equal(setting(null, 'Olive Garden'), 'outdoor');
+  assert.equal(lineIsOutdoor({ title: 'Olive Garden', type: 'restaurant', kind: null }), false);
+  assert.equal(lineIsOutdoor({ title: 'Lunch at the biergarten', type: 'restaurant', kind: 'biergarten' }), true);
+  assert.equal(lineIsOutdoor({ title: 'Hike the Delicate Arch trail', type: 'activity', kind: null }), true);
+  // A restaurant line with no kind, in a forecast downpour: no verdict, no ping.
+  const [fri] = held(nws(), SEATTLE, RECORDED).filter(x => x.date === '2026-11-06');
+  assert.equal(lineWeatherFrom({ time: 'Day 2 · Afternoon', title: 'Lunch at Park Tavern', type: 'restaurant' }, fri, false), null);
+});
+
+test('a line that only names its day is said with the figure from the hours that raised the worry', () => {
+  // Seattle, 7 November: 61% through the daytime, 96% only from 10pm.
+  const sat = held(nws(), SEATTLE, RECORDED).find(x => x.date === '2026-11-07') as HeldDay;
+  const v = lineWeatherFrom({ time: 'Day 3', title: 'Hike Discovery Park trail' }, sat, false);
+  assert.equal(v?.headline, 'Rain likely (61%)');
+  assert.equal(partFor(sat, 'day')?.rainChance, 61);
+  assert.deepEqual(sat.verdictHours, [8, 20]);
+  // The day's figures and its verdict agree everywhere: no rain likely beside a dry verdict.
+  for (const d of held(nws(), SEATTLE, RECORDED)) {
+    if (d.verdictHours && d.rainChance !== null) assert.equal(d.worries.includes('rain'), d.rainChance >= 60, d.date);
+  }
+});
+
+test('a six-hour max or min counts only for a part that holds most of its hours', () => {
+  // Moab, recorded: from the 8th the periods are six-hourly. The step that
+  // covers the morning peaks at 12.2; the 11:00-17:00 step\'s 14.9 is the afternoon\'s.
+  const days = forecastDays(met('met-moab.json'), MOAB, RECORDED);
+  const sun = days.find(d => d.date === '2026-11-08');
+  assert.equal(sun?.parts.morning?.highC, 12);
+  assert.equal(sun?.parts.afternoon?.highC, 15);
+  // A July afternoon step of 38: the morning that touches one hour of it is not VERY HOT.
+  const hot: Parsed = {
+    source: 'met_norway', updatedAt: null, tz: null,
+    steps: ['00', '06', '12', '18'].flatMap(h => [
+      step(`2026-07-10T${h}:00:00.000Z`, { hours: 6, tempC: h === '12' ? 30 : 20, maxC: h === '12' ? 38 : h === '06' ? 26 : 22, minC: h === '00' ? 18 : 21 }),
+    ]).concat(['00', '06', '12', '18'].map(h => step(`2026-07-11T${h}:00:00.000Z`, { hours: 6, tempC: 20, maxC: 22, minC: 18 }))),
+  };
+  // Longitude -15: an hour behind, so the hot 12Z step is 11:00-17:00 local
+  // and touches one hour of the morning; the 06Z one is 05:00-11:00.
+  const [d] = forecastDays(hot, { lat: 38, lng: -15 }, new Date('2026-07-09T12:00:00Z'));
+  assert.equal(d.date, '2026-07-10');
+  // 30 is the hot step's own reading at 11:00, inside the morning; its 38 is not.
+  assert.equal(d.parts.morning?.highC, 30);
+  assert.ok(!d.parts.morning?.worries.includes('heat'));
+  assert.ok(d.parts.afternoon?.worries.includes('heat'));
 });

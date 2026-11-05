@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { heldForecast, forecastFor, planWeather, MAX_AGE_MS, type ForecastRow } from '../../lib/forecast-store.ts';
+import { heldForecast, forecastFor, planWeather, askNws, MAX_AGE_MS, type ForecastRow } from '../../lib/forecast-store.ts';
 
 const raw = (name: string) => readFileSync(new URL(`./fixtures/forecast/${name}`, import.meta.url), 'utf8');
 const RECORDED = new Date('2026-11-05T16:20:00Z');
@@ -266,4 +266,24 @@ test('an evening is its one date', async () => {
   const { db } = fakeDb({ climate: moabClimate });
   const w = await planWeather(db, plan({ type: 'restaurant', start_date: '2026-11-07', end_date: '2026-11-09' }), { now: RECORDED, fetch: moabFetch().f });
   assert.deepEqual(w.days.map(d => d.date), ['2026-11-07']);
+});
+
+test('the NWS grid is re-checked once a week, and the re-check restarts the week', async () => {
+  const { f, calls } = fakeFetch(url => {
+    if (url.includes('/points/')) return json(raw('nws-points-seattle.json'));
+    return json(raw('nws-hourly-seattle.json'), { expires: 'Thu, 05 Nov 2026 17:18:24 GMT' });
+  });
+  const old = { hourlyUrl: 'https://api.weather.gov/gridpoints/SEW/125,68/forecast/hourly', tz: 'America/Los_Angeles', grid: 'SEW/125,68', checkedAt: '2026-10-27T16:00:00.000Z' };
+  const first = await askNws(SEATTLE, old, { now: RECORDED, fetch: f });
+  assert.equal(first.kind, 'ok');
+  assert.equal(calls.filter(c => c.url.includes('/points/')).length, 1);
+  // Same link as before — and still the week starts again from now.
+  const meta = (first as { meta?: Record<string, unknown> }).meta as Record<string, unknown>;
+  assert.equal(meta.checkedAt, RECORDED.toISOString());
+  const later = new Date(RECORDED.getTime() + 3_600_000);
+  await askNws(SEATTLE, meta, { now: later, fetch: f });
+  assert.equal(calls.filter(c => c.url.includes('/points/')).length, 1, 'an hour later /points is not asked again');
+  // Inside the week, the stamp it was given is kept.
+  const kept = await askNws(SEATTLE, meta, { now: later, fetch: f });
+  assert.equal((kept as { meta?: Record<string, unknown> }).meta?.checkedAt, RECORDED.toISOString());
 });

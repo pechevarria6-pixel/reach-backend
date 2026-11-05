@@ -5,16 +5,21 @@
 //   - an outdoor stop in a part of a day the forecast spoils is a clash, and
 //     is logged and returned with the days, so the screen can say so and
 //     offer Change — never silently passed off as fine;
-//   - a tip that states a forecast the data does not hold ("rain is
-//     forecast" on a day we hold no forecast for, or a dry one) loses the
-//     tip. The slot stays; only the invented weather goes.
+//   - a tip that states a forecast loses the tip, held or not: it would be
+//     saved as the line's subtitle with no source, time or credit, and go
+//     stale. The slot stays; the screen shows the forecast itself.
+//
+// A night out's slots are not the clock's parts: its "morning", "afternoon"
+// and "evening" are "To start", "The main event" and "After", all after
+// six, and are read against the forecast's evening; its "daytime" ideas
+// ("Earlier that day") against the day's own verdict (08:00-20:00).
 //
 // Only a saved plan has a point on the map (plans.destination_lat/lng), so
 // only a saved plan's days get a forecast. An idea's days are written from
 // the climate normals alone, as before.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  addDays, forecastPoint, indoorSwaps, setting, unbackedWeatherTip, worryHeadline, rainFigure, SOURCES,
+  addDays, forecastPoint, indoorSwaps, setting, forecastTip, worryHeadline, rainFigure, SOURCES,
   type ForecastPart, type PartName, type PromptDay, type Worry,
 } from './forecast.ts';
 import { slotWindow, dateOfLine } from './itinerary-alternatives.ts';
@@ -74,12 +79,26 @@ export function indoorMenu<T extends { ref: string; name: string; kind: string }
 }
 
 interface SlotLike { plan?: string | null; kind?: string | null; tip?: string | null; venue?: string | null }
-interface DayLike { day?: number; morning?: SlotLike | null; afternoon?: SlotLike | null; evening?: SlotLike | null }
+interface DayLike {
+  day?: number; morning?: SlotLike | null; afternoon?: SlotLike | null; evening?: SlotLike | null;
+  daytime?: Array<SlotLike | null> | null;
+}
+
+export type SlotKey = 'morning' | 'afternoon' | 'evening' | 'daytime';
 
 export interface Clash {
   day: number;
   date: string;
-  part: PartName;
+  /** Which slot of the day it is: the key the answer carries it under. */
+  slot: SlotKey;
+  /** For a 'daytime' slot, its place in the list. */
+  index?: number;
+  /**
+   * The part of the forecast day it was judged against: a trip's slot is
+   * its own part; a night out's stops are all 'evening', its daytime ideas
+   * 'day' (08:00-20:00).
+   */
+  part: PartName | 'day';
   /** What the slot says it is, as written. */
   plan: string;
   worries: Worry[];
@@ -89,6 +108,19 @@ export interface Clash {
 
 /** The date of trip day `n` (day 1 is the start), or null for a day with no number. */
 const dateOf = (start: string, n: unknown) => (Number.isInteger(n) && (n as number) >= 1 ? addDays(start, (n as number) - 1) : null);
+
+/** Every slot of a day, with the part of the forecast day it is judged against. */
+export function slotsWithParts(d: DayLike, night: boolean): Array<{ slot: SlotLike; key: SlotKey; index?: number; part: PartName | 'day' }> {
+  const out: Array<{ slot: SlotLike; key: SlotKey; index?: number; part: PartName | 'day' }> = [];
+  for (const key of ['morning', 'afternoon', 'evening'] as const) {
+    const slot = d[key];
+    if (slot) out.push({ slot, key, part: night ? 'evening' : key });
+  }
+  (Array.isArray(d.daytime) ? d.daytime : []).forEach((slot, index) => {
+    if (slot) out.push({ slot, key: 'daytime', index, part: 'day' });
+  });
+  return out;
+}
 
 /**
  * Outdoor stops in parts of days the forecast spoils. "Outdoor" from the
@@ -102,31 +134,28 @@ export function weatherClashes(days: DayLike[], startDate: string, fc: Generatio
     const date = night ? startDate : dateOf(startDate, d.day);
     const f = date ? fc.byDate.get(date) : null;
     if (!date || !f) continue;
-    for (const part of ['morning', 'afternoon', 'evening'] as PartName[]) {
-      const slot = d[part];
-      const p = f.parts[part];
-      if (!slot?.plan || !p?.worries.length) continue;
+    for (const { slot, key, index, part } of slotsWithParts(d, night)) {
+      const p = partFor(f, part);
+      if (!slot.plan || !p?.worries.length) continue;
       if (setting(slot.kind, slot.plan) !== 'outdoor') continue;
-      out.push({ day: Number(d.day), date, part, plan: String(slot.plan).slice(0, 120), worries: p.worries, source: SOURCES[f.source].name, fetchedAt: f.fetchedAt });
+      out.push({
+        day: Number(d.day), date, slot: key, ...(index !== undefined ? { index } : {}), part,
+        plan: String(slot.plan).slice(0, 120), worries: p.worries, source: SOURCES[f.source].name, fetchedAt: f.fetchedAt,
+      });
     }
   }
   return out;
 }
 
 /**
- * Takes out every tip that states a forecast the data does not hold. Returns
- * how many went, so the route can log it.
+ * Takes out every tip that states a forecast, every slot including a night
+ * out's daytime ideas. Returns how many went, so the route can log it.
  */
-export function scrubWeatherTips(days: DayLike[], startDate: string | null, fc: GenerationForecast | null, night = false): number {
+export function scrubWeatherTips(days: DayLike[]): number {
   let n = 0;
   for (const d of days) {
-    const date = startDate ? (night ? startDate : dateOf(startDate, d.day)) : null;
-    const f = date ? fc?.byDate.get(date) ?? null : null;
-    for (const part of ['morning', 'afternoon', 'evening'] as PartName[]) {
-      const slot = d[part];
-      if (!slot?.tip) continue;
-      const p: ForecastPart | null = f ? f.parts[part] ?? f : null;
-      if (unbackedWeatherTip(slot.tip, p)) { slot.tip = ''; n++; }
+    for (const { slot } of slotsWithParts(d, false)) {
+      if (slot.tip && forecastTip(slot.tip)) { slot.tip = ''; n++; }
     }
   }
   return n;
@@ -157,7 +186,11 @@ export function partOfLine(time: unknown, nightOut: boolean): PartName | 'day' {
   return w === 'night' ? 'evening' : w;
 }
 
-/** The forecast part a line falls in, or the daytime for a line that only says which day. */
+/**
+ * The forecast part a line falls in, or the day's own verdict for a line that
+ * only says which day — whose figures are its daytime's (ForecastDay
+ * verdictHours), the same hours its worries come from.
+ */
 export function partFor(day: HeldDay, part: PartName | 'day'): ForecastPart | null {
   return part === 'day' ? day : day.parts[part];
 }
@@ -167,11 +200,22 @@ export function partFor(day: HeldDay, part: PartName | 'day'): ForecastPart | nu
  * forecast spoils its part of the day — else null. What the Change sheet and
  * the weather ping both stand on.
  */
+/**
+ * Whether a saved line is out of doors. A meal line is never judged from its
+ * words: "Dinner at Olive Garden" says nothing about a terrace, and only the
+ * venue's map kind may (a biergarten is). Everything else as setting().
+ */
+export function lineIsOutdoor(line: { title?: unknown; kind?: string | null; type?: unknown }): boolean {
+  const kind = line.kind ?? null;
+  if (!kind && String(line.type ?? '').toLowerCase() === 'restaurant') return false;
+  return setting(kind, String(line.title ?? '')) === 'outdoor';
+}
+
 export function lineWeatherFrom(
-  line: { time?: unknown; title?: unknown; kind?: string | null }, day: HeldDay | null | undefined, nightOut: boolean,
+  line: { time?: unknown; title?: unknown; kind?: string | null; type?: unknown }, day: HeldDay | null | undefined, nightOut: boolean,
 ): LineWeather | null {
   if (!day) return null;
-  if (setting(line.kind ?? null, String(line.title ?? '')) !== 'outdoor') return null;
+  if (!lineIsOutdoor(line)) return null;
   const part = partOfLine(line.time, nightOut);
   const p = partFor(day, part);
   const said = p ? worryHeadline(p) : null;
@@ -189,12 +233,12 @@ export function lineWeatherFrom(
 export async function lineWeather(
   db: SupabaseClient,
   plan: { start_date?: string | null; destination_lat?: unknown; destination_lng?: unknown; destination_country?: string | null },
-  line: { time?: unknown; title?: unknown; kind?: string | null }, nightOut: boolean, opts: StoreOpts = {},
+  line: { time?: unknown; title?: unknown; kind?: string | null; type?: unknown }, nightOut: boolean, opts: StoreOpts = {},
 ): Promise<LineWeather | null> {
   const date = dateOfLine(line.time, plan.start_date ?? null, nightOut);
   const at = forecastPoint(plan.destination_lat, plan.destination_lng);
   if (!date || !at) return null;
-  if (setting(line.kind ?? null, String(line.title ?? '')) !== 'outdoor') return null;
+  if (!lineIsOutdoor(line)) return null;
   try {
     const got = await within(forecastFor(db, at, { dates: [date], country: plan.destination_country ?? null }, opts), GENERATION_WAIT_MS, 'the forecast');
     return lineWeatherFrom(line, got.days.find(d => d.date === date), nightOut);

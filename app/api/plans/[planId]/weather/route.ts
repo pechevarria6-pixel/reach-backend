@@ -7,6 +7,10 @@
 //                    chance and amount, wind, conditions, morning / afternoon
 //                    / evening, sunrise and sunset — with `source` (name,
 //                    credit, link) and `fetchedAt`. Labelled "Forecast".
+//                    The day's rain, wind, conditions and worries are its
+//                    daytime's (`verdictHours`, [8, 20] local), so a figure
+//                    is never shown beside a verdict it did not raise; the
+//                    high and low are the whole day's.
 //   kind 'usually'   past the range: what the month is usually like there,
 //                    from NASA POWER's normals. Labelled "Usually", never
 //                    "forecast", with its own credit.

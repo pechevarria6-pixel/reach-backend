@@ -58,7 +58,7 @@ export async function GET(_req: Request, { params }: { params: { planId: string;
   // out of doors is offered, and somewhere with a roof comes first.
   const weather = MENU_TYPES.has(String(lc.item.type ?? '').toLowerCase())
     ? await lineWeather(ctx.db, ctx.plan as Record<string, unknown> & { start_date?: string | null; destination_country?: string | null },
-      { time: lc.item.time, title: lc.item.title, kind: placeOfLine(line, places)?.kind ?? null }, lc.nightOut)
+      { time: lc.item.time, title: lc.item.title, kind: placeOfLine(line, places)?.kind ?? null, type: lc.item.type }, lc.nightOut)
     : null;
   const result = alternativesFor({
     line, lines: lc.lines, places, nightOut: lc.nightOut,

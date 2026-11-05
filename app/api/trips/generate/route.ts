@@ -988,7 +988,7 @@ export async function POST(req: NextRequest) {
       supabase, detailIsPlan ? String(detailTripId) : null, startDate ? String(startDate) : null,
       isNightPlan ? 1 : Math.max(1, nights), { night: isNightPlan },
     );
-    const forecastBlock = dayForecast ? `\n${forecastPromptBlock(dayForecast.prompt, indoorMenu(realPlaces))}\n` : '';
+    const forecastBlock = dayForecast ? `\n${forecastPromptBlock(dayForecast.prompt, indoorMenu(realPlaces), { night: isNightPlan })}\n` : '';
 
     const nightKind = (nightPrefs.kind || []).join(', ');
     const nightFood = wantFood.join(', ');
@@ -1102,7 +1102,7 @@ export async function POST(req: NextRequest) {
       // The forecast for this one day only, when we hold one.
       const slotDate = startDate ? addDays(String(startDate), isNightPlan ? 0 : slotAsk.day - 1) : null;
       const slotForecast = dayForecast && slotDate
-        ? forecastPromptBlock(dayForecast.prompt.filter(p => p.day.date === slotDate), indoorMenu(realPlaces))
+        ? forecastPromptBlock(dayForecast.prompt.filter(p => p.day.date === slotDate), indoorMenu(realPlaces), { night: isNightPlan })
         : '';
       const slotForecastBlock = slotForecast ? `\n${slotForecast}\n` : '';
 
@@ -1175,9 +1175,10 @@ Return one slot.`;
         // per-item PATCH and a suggestion take (lib/itinerary-alternatives
         // placeRef) — so it lands on that one line, not by rewriting the plan.
         const named = placeOf(out.slot, realPlaces);
-        // A tip that states a forecast we do not hold loses the tip.
-        if (part !== 'daytime' && scrubWeatherTips([{ day: slotAsk.day, [part]: out.slot }], startDate ? String(startDate) : null, dayForecast, isNightPlan)) {
-          console.log('[trips slot] a tip stated weather we do not hold — taken out', { plan: detailTripId, day: slotAsk.day, part });
+        // A tip that states a forecast loses the tip: saved, it would carry
+        // no source or time and go stale. A daytime idea is a slot too.
+        if (scrubWeatherTips([part === 'daytime' ? { day: slotAsk.day, daytime: [out.slot] } : { day: slotAsk.day, [part]: out.slot }])) {
+          console.log('[trips slot] a tip stated the forecast — taken out', { plan: detailTripId, day: slotAsk.day, part });
         }
         return NextResponse.json({
           slot: out.slot, day: slotAsk.day, part, ...(index !== null ? { index } : {}), label: LABEL[part],
@@ -1392,10 +1393,12 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       // slot through.
       days.splice(0, days.length, ...readBackDays(days, readBackEnv(vouchers)));
       // ── The weather it was given, read back ─────────────────────────
-      // A tip claiming a forecast we do not hold goes; an outdoor stop in a
-      // spoiled part of a day is said, not hidden (lib/forecast-plan.ts).
-      const scrubbed = scrubWeatherTips(days, startDate ? String(startDate) : null, dayForecast, isNightPlan);
-      if (scrubbed) console.log('[trips itinerary] tips stated weather we do not hold — taken out', { plan: detailTripId ?? null, tips: scrubbed });
+      // A tip stating a forecast goes — it would be saved as the line's
+      // subtitle with no source, time or credit, and go stale; the screen
+      // shows the forecast itself. An outdoor stop in a spoiled part of a
+      // day is said, not hidden (lib/forecast-plan.ts).
+      const scrubbed = scrubWeatherTips(days);
+      if (scrubbed) console.log('[trips itinerary] tips stated the forecast — taken out', { plan: detailTripId ?? null, tips: scrubbed });
       const clashes = startDate ? weatherClashes(days, String(startDate), dayForecast, isNightPlan) : [];
       if (clashes.length) {
         console.error('[trips itinerary] an outdoor stop is in forecast bad weather', {

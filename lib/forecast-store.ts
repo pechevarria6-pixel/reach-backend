@@ -170,6 +170,10 @@ export async function askNws(at: Point, meta: Record<string, unknown> | null, op
   let grid = meta && typeof meta.hourlyUrl === 'string' && now - Date.parse(String(meta.checkedAt ?? '')) < GRID_RECHECK_MS
     ? { hourlyUrl: meta.hourlyUrl as string, tz: (meta.tz as string | null) ?? null, grid: String(meta.grid ?? '') }
     : null;
+  // Set only when /points was asked now: the re-check is what restarts the
+  // week. Keeping the old stamp because the link had not moved meant every
+  // call after day seven asked /points again.
+  let checkedAt = typeof meta?.checkedAt === 'string' ? meta.checkedAt : null;
   if (!grid) {
     let res: Response;
     try {
@@ -182,8 +186,9 @@ export async function askNws(at: Point, meta: Record<string, unknown> | null, op
     const p = parseNwsPoints(await res.json().catch(() => null));
     if ('error' in p) return { kind: 'not_covered' };
     grid = p;
+    checkedAt = new Date(now).toISOString();
   }
-  const gridMeta = { hourlyUrl: grid.hourlyUrl, tz: grid.tz, grid: grid.grid, checkedAt: meta?.hourlyUrl === grid.hourlyUrl && meta?.checkedAt ? meta.checkedAt : new Date(now).toISOString() };
+  const gridMeta = { hourlyUrl: grid.hourlyUrl, tz: grid.tz, grid: grid.grid, checkedAt: checkedAt ?? new Date(now).toISOString() };
   let res: Response;
   try {
     res = await call(`${grid.hourlyUrl}?units=si`, headers, opts, 'the NWS');

@@ -435,6 +435,12 @@ export interface ForecastDay extends ForecastPart {
   source: ForecastSource;
   /** Today, from now on: the figures are for the hours still to come, not the whole day. */
   restOfDay: boolean;
+  /**
+   * The local hours the day's rain, wind, conditions and worries describe
+   * ([8, 20]); the high and low are the whole day's. Null where the daytime
+   * held nothing to summarise and the whole day's figures stand.
+   */
+  verdictHours: [number, number] | null;
   parts: Record<PartName, ForecastPart | null>;
   sun: {
     /** ISO instants. Null on a polar day or night. */
@@ -449,16 +455,40 @@ export interface ForecastDay extends ForecastPart {
 
 /** Hours of the day that must be in the forecast for it to describe the day. */
 const DAY_FROM = 6, DAY_TO = 22;
+/** The hours a day's own verdict — rain, wind, conditions, worries — is read from. */
+export const DAYTIME: [number, number] = [8, 20];
 
 const cToF = (c: number) => Math.round(c * 9 / 5 + 32);
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
-type Hour = { step: Step; local: { day: string; hour: number } };
+/** One hour of a step; `first` when it is the hour the step starts, the instant its tempC is for. */
+type Hour = { step: Step; local: { day: string; hour: number }; first: boolean };
+
+/**
+ * The highs and lows a set of hours can stand behind. An instant reading
+ * counts where its instant is among the hours. A six-hour max or min counts
+ * only where most of its six hours are — it may fall anywhere in the step,
+ * so a morning that overlaps one hour of an 11:00–17:00 step does not take
+ * that step's afternoon peak (Moab, recorded 2026-11-05: the morning of the
+ * 8th read 15 °C, the steps covering the morning peak at 12.2 °C; in July
+ * the same step would have called the morning VERY HOT).
+ */
+function extremes(hours: Hour[]): { highs: number[]; lows: number[] } {
+  const highs: number[] = [], lows: number[] = [];
+  const count = new Map<Step, number>();
+  for (const h of hours) count.set(h.step, (count.get(h.step) ?? 0) + 1);
+  for (const [s, n] of count) {
+    const most = n * 2 >= s.hours;
+    if (most && s.maxC !== null) highs.push(s.maxC);
+    if (most && s.minC !== null) lows.push(s.minC);
+    if (s.tempC !== null && hours.some(h => h.step === s && h.first)) { highs.push(s.tempC); lows.push(s.tempC); }
+  }
+  return { highs, lows };
+}
 
 function summarise(hours: Hour[]): ForecastPart | null {
   if (!hours.length) return null;
-  const highs = hours.map(h => h.step.maxC ?? h.step.tempC).filter((v): v is number => v !== null);
-  const lows = hours.map(h => h.step.minC ?? h.step.tempC).filter((v): v is number => v !== null);
+  const { highs, lows } = extremes(hours);
   if (!highs.length || !lows.length) return null;
   const steps = [...new Set(hours.map(h => h.step))];
   const chances = steps.map(s => s.rainChance).filter((v): v is number => v !== null);
@@ -517,7 +547,7 @@ export function forecastDays(parsed: Parsed, at: Point, now: Date = new Date()):
       const local = clock(ms);
       if (local.day < today.day || local.day > last) continue;
       const list = byDay.get(local.day) ?? [];
-      list.push({ step, local });
+      list.push({ step, local, first: i === 0 });
       byDay.set(local.day, list);
     }
   }
@@ -542,11 +572,20 @@ export function forecastDays(parsed: Parsed, at: Point, now: Date = new Date()):
       parts[name] = whole ? summarise(hours.filter(h => h.local.hour >= a && h.local.hour < z)) : null;
     }
     // The day's own verdict is its daytime: a shower at four in the morning
-    // does not spoil a day out.
-    const daytime = summarise(hours.filter(h => h.local.hour >= 8 && h.local.hour < 20));
+    // does not spoil a day out. Its rain, wind, conditions and worries are
+    // all that window's, so a figure said beside the verdict is the figure
+    // that raised it — Seattle, 7 November: 61% in the daytime, 96% only
+    // from ten at night, and "Rain likely (96%)" was said of the day. The
+    // high and low stay the whole day's.
+    const daytime = summarise(hours.filter(h => h.local.hour >= DAYTIME[0] && h.local.hour < DAYTIME[1]));
     const sun = sunTimes(day, at.lat, at.lng);
     out.push({
-      ...all, worries: daytime?.worries ?? all.worries,
+      ...all,
+      ...(daytime ? {
+        rainChance: daytime.rainChance, precipMm: daytime.precipMm, windMs: daytime.windMs, gustMs: daytime.gustMs,
+        sky: daytime.sky, conditions: daytime.conditions, worries: daytime.worries,
+      } : {}),
+      verdictHours: daytime ? DAYTIME : null,
       date: day, source: parsed.source, restOfDay: day === today.day, parts,
       sun: {
         rise: sun.rise === null ? null : new Date(sun.rise).toISOString(),
@@ -616,7 +655,7 @@ export function rainFigure(p: ForecastPart): string {
 }
 
 /** One part, for a prompt or a screen: "afternoon: light rain, rain likely (80%), 14°C / 57°F". */
-export function partLine(name: PartName, p: ForecastPart, fFirst = false): string {
+export function partLine(name: string, p: ForecastPart, fFirst = false): string {
   const bits = [
     p.conditions,
     p.rainChance !== null ? `${p.rainChance}% chance of rain` : null,
@@ -659,6 +698,12 @@ const INDOOR_KINDS = new Set([
   'public art gallery', 'social centre', 'winery', 'distillery', 'concert hall', 'casino', 'amusement arcade',
 ]);
 const OUTDOOR_WORDS = /\b(hik(e|es|ed|ing)|trails?|trailhead|walk(s|ing)?|stroll|beach|picnic|kayak\w*|canoe\w*|paddle\w*|snorkel\w*|surf\w*|swim(ming)?(?! pool)|bike ride|cycl(e|ing)|park|gardens?|viewpoint|overlook|lookout|zoo|boat tour|sail\w*|climb\w*|outdoors?|national park|canyon|waterfall|summit|scenic drive)\b/i;
+/**
+ * A meal or a drink. A place to eat called Olive Garden, Park Tavern or The
+ * Beach House is not out of doors because of its name: whether it has a
+ * terrace is a fact about the venue, and only its row can say it.
+ */
+const DINING_WORDS = /\b(dinner|lunch|breakfast|brunch|supper|dine|dining|drinks?|cocktails?|coffee|caf[eé]s?|restaurant|tavern|bistro|brasserie|trattoria|osteria|diner|grill|kitchen|eatery|steakhouse|pizzeria|pizza|tacos?|sushi|ramen|bbq|barbecue|bakery|pub|bar|wine|brewery|brewpub|taproom|house)\b/i;
 const INDOOR_WORDS = /\b(museum|gallery|cinema|movie|theat(re|er)|spa|aquarium|bowling|escape room|library|indoors?|concert hall|cooking class|workshop|planetarium)\b/i;
 
 /**
@@ -673,6 +718,7 @@ export function setting(kind?: string | null, words?: string | null): 'outdoor' 
   if (INDOOR_KINDS.has(k)) return 'indoor';
   if (k) return null;
   const w = String(words ?? '');
+  if (DINING_WORDS.test(w)) return null;
   const out = OUTDOOR_WORDS.test(w), inn = INDOOR_WORDS.test(w);
   return out && !inn ? 'outdoor' : inn && !out ? 'indoor' : null;
 }
@@ -694,6 +740,7 @@ export interface PromptDay { label: string; day: ForecastDay; fetchedAt: string 
 export function forecastPromptBlock(
   days: PromptDay[],
   indoor: Array<{ ref: string; name: string; kind: string }> = [],
+  opts: { night?: boolean } = {},
 ): string {
   if (!days.length) return '';
   const said = [...new Set(days.map(d => `${SOURCES[d.day.source].name}, ${fetchedWords(d.fetchedAt)}`))];
@@ -703,7 +750,13 @@ export function forecastPromptBlock(
   for (const { label, day } of days) {
     const parts = (Object.keys(PARTS) as PartName[])
       .map(n => (day.parts[n] ? partLine(n, day.parts[n] as ForecastPart) : null)).filter(Boolean);
+    if (day.verdictHours) parts.unshift(partLine(`daytime ${day.verdictHours[0]}:00-${day.verdictHours[1]}:00 overall`, day));
     lines.push(`- ${label}: high ${day.highC}°C / ${day.highF}°F, low ${day.lowC}°C / ${day.lowF}°F${parts.length ? `; ${parts.join('; ')}` : ''}.`);
+  }
+  if (opts.night) {
+    // The answer's "morning", "afternoon" and "evening" are the stops of one
+    // evening, not the clock's — read against the forecast's evening.
+    lines.push(`This is one evening out: its stops ("morning", "afternoon" and "evening" in your answer) are all after 6pm, so judge every one of them by the forecast evening above, never its morning or afternoon. The "daytime" ideas are earlier that day: judge them by that day's "daytime ${DAYTIME[0]}:00-${DAYTIME[1]}:00 overall".`);
   }
   const spoiled = days.some(d => (Object.values(d.day.parts) as Array<ForecastPart | null>).some(p => p?.worries.length) || d.day.worries.length);
   if (spoiled) {
@@ -714,28 +767,27 @@ export function forecastPromptBlock(
         : 'The menu holds no indoor place to go: for a spoiled part, plan something that needs no venue and is under a roof, or leave it free — never invent a place.',
     );
   }
+  // A tip is saved with the plan and read days later, with no source, no
+  // time and no credit beside it: the forecast changes and the tip would
+  // not. The screen shows the forecast itself, from the row, credited.
   lines.push(
-    'You may say in a tip that rain (or heat, wind, snow) is forecast for that part of that day, as a forecast. Never say it will certainly happen, never give a figure that is not above, and never say anything about the forecast for a day that is not listed.',
+    'Use the forecast to decide what goes where. Never mention the weather forecast in a tip or anywhere else in your answer: the plan screen shows the live forecast with its source, and a sentence saved with the plan would go out of date.',
   );
   return lines.join('\n');
 }
 
 /**
- * A tip that states a forecast the data does not hold. "Rain is forecast this
- * afternoon" on a day we hold no forecast for is an invented fact about the
- * weather; it is taken out, and the rest of the slot stays.
+ * A tip that states what the weather is forecast to do. Every such tip is
+ * taken out, backed or not: a tip is saved as the line's subtitle and read
+ * days later with no source, no fetch time and no credit beside it, so
+ * "rain is forecast this afternoon" written on the 5th is still saying it on
+ * the 8th when the forecast is dry. A day we hold no forecast for makes it
+ * an invented fact outright. The rest of the slot stays; the screen shows
+ * the forecast itself, from /api/plans/{id}/weather, credited and dated.
  */
-const FORECAST_CLAIM = /\b(forecast(ed)?|expected to (rain|pour|storm|snow)|(will|going to) (rain|pour|storm|snow|be (wet|rainy|stormy|hot|windy)))\b/i;
-export function unbackedWeatherTip(tip: unknown, part: ForecastPart | null): boolean {
-  const t = String(tip ?? '');
-  if (!FORECAST_CLAIM.test(t)) return false;
-  if (!part) return true;
-  const says = (re: RegExp, w: Worry[]) => re.test(t) && !w.some(x => part.worries.includes(x));
-  return says(/\b(rain|pour|wet|shower|drizzle)/i, ['rain', 'storms'])
-    || says(/\b(storm|thunder)/i, ['storms'])
-    || says(/\bsnow/i, ['snow'])
-    || says(/\b(hot|heat)\b/i, ['heat'])
-    || says(/\bwind/i, ['wind']);
+const FORECAST_CLAIM = /\b(forecast(ed|s)?|expected to (rain|pour|storm|snow)|(will|going to) (rain|pour|storm|snow|be (wet|rainy|stormy|hot|windy|sunny|dry))|(rain|showers|storms?|thunderstorms?|snow|wind) (is |are )?(likely|expected|due|on the way))\b/i;
+export function forecastTip(tip: unknown): boolean {
+  return FORECAST_CLAIM.test(String(tip ?? ''));
 }
 
 // ── Climate normals for a day past the forecast ──────────────────────────

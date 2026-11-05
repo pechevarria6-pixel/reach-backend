@@ -521,7 +521,7 @@ export function dueWeatherPings(input: WeatherPingInput, now: Date = new Date())
   const nightOut = plan.type === 'restaurant';
   const out: PlannedPing[] = [];
   for (const line of due.lines) {
-    const verdict = lineWeatherFrom({ time: line.scheduled_time, title: line.title, kind: input.kinds.get(line.id) ?? null }, tomorrow, nightOut);
+    const verdict = lineWeatherFrom({ time: line.scheduled_time, title: line.title, kind: input.kinds.get(line.id) ?? null, type: line.type }, tomorrow, nightOut);
     if (!verdict) continue;
     const part = partFor(tomorrow, partOfLine(line.scheduled_time, nightOut));
     const said = part ? worryHeadline(part) : null;
