@@ -35,7 +35,9 @@ export async function GET(req: NextRequest) {
 
   const params = req.nextUrl.searchParams;
   const at = whereFrom(params);
-  const city = String(params.get('city') ?? '').trim().slice(0, 120) || null;
+  // A placeholder an older client sends in place of a town is not one.
+  const rawCity = String(params.get('city') ?? '').trim().slice(0, 120);
+  const city = rawCity && !/^your (location|city)$/i.test(rawCity) ? rawCity : null;
   const airport = String(params.get('airport') ?? '').trim().slice(0, 3) || null;
 
   try {

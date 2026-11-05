@@ -15996,15 +15996,17 @@ export default function ReachApp({realUser,onSignOut}={}){
           const res=await fetch("/api/geo?lat="+lat+"&lng="+lng);
           if(res.ok){
             const geo=(await res.json()).hits?.[0]||{};
-            const city=geo.city||"Your city";
+            // No town found is no town: a placeholder here was shown as one,
+            // "A night out in Your location" on Home's own card.
+            const city=geo.city||null;
             const state=geo.state||"";
             // Find nearest major airport (simplified - use city)
             const airport=getNearestAirport(city,state);
-            setUserLocation({lat,lng,city,state,airport,formatted:city+(state?", "+state:""),source:"device"});
+            setUserLocation({lat,lng,city,state,airport,formatted:city?city+(state?", "+state:""):null,source:"device"});
           }else{
-            setUserLocation({lat,lng,city:"Your location",airport:null,source:"device"});
+            setUserLocation({lat,lng,city:null,airport:null,source:"device"});
           }
-        }catch(e){setUserLocation({lat:pos.coords.latitude,lng:pos.coords.longitude,city:"Your location",airport:null,source:"device"});}
+        }catch(e){setUserLocation({lat:pos.coords.latitude,lng:pos.coords.longitude,city:null,airport:null,source:"device"});}
       }),
       // Denied, or the device simply cannot say. Somebody who has told us
       // where they live should not then be asked where they are: the order
