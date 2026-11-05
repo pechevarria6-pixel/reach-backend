@@ -40,7 +40,7 @@ jobs:
   ping:
     name: Send what is due
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Call the pings endpoint
         env:
@@ -69,5 +69,28 @@ jobs:
           cat body.json; echo
           if [ "$status" != "200" ]; then
             echo "::error::pings answered $status"
+            exit 1
+          fi
+
+      # The table watches ride along. watches.yml's own schedule has never
+      # been run by GitHub (0 runs since 2026-11-05 11:48), and this one does
+      # run — three to six times a day rather than hourly, which is still
+      # better than never. A failure here does not fail the pings.
+      - name: Check the table watches too
+        continue-on-error: true
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ secrets.APP_URL }}
+          DRY: ${{ github.event.inputs.dry }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_URL" ]; then exit 0; fi
+          query=""
+          if [ "$DRY" = "true" ]; then query="?dry=1"; fi
+          status=$(curl -sS -o watches.json -w '%{http_code}' --max-time 240 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "${APP_URL%/}/api/cron/watches${query}")
+          cat watches.json; echo
+          if [ "$status" != "200" ]; then
+            echo "::warning::watches answered $status"
             exit 1
           fi
