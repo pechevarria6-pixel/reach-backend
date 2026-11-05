@@ -32,7 +32,10 @@ const milesFrom = (metres?: number | null) =>
   typeof metres === 'number' && Number.isFinite(metres) ? `${Math.max(1, Math.round(metres / MILES))} mi` : null;
 
 // ── What's on near you ──────────────────────────────────────────────────
-export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {
+/** How long Discover waits for Yelp (see ticketmaster.ts PROVIDER_TIMEOUT_MS). */
+const PROVIDER_TIMEOUT_MS = 6000;
+
+export async function yelpEvents(seeker: Seeker, opts: { timeoutMs?: number } = {}): Promise<SourceResult> {
   const headers = auth();
   if (!headers) return { source: 'yelp-events', status: 'no_key', findings: [] };
 
@@ -48,7 +51,7 @@ export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {
 
   let json: any;
   try {
-    const res = await fetch(url, { headers, next: { revalidate: 1800 } });
+    const res = await fetch(url, { headers, next: { revalidate: 1800 }, signal: AbortSignal.timeout(opts.timeoutMs ?? PROVIDER_TIMEOUT_MS) });
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
       // Yelp's Events API is behind a developer beta, and a key that works
@@ -113,12 +116,12 @@ export async function yelpEvents(seeker: Seeker): Promise<SourceResult> {
 // so the map and Yelp cannot disagree about what "pottery" means.
 export { searchTermFor };
 
-async function placesFor(interest: string, seeker: Seeker, headers: Record<string, string>): Promise<Finding[]> {
+async function placesFor(interest: string, seeker: Seeker, headers: Record<string, string>, timeoutMs: number): Promise<Finding[]> {
   const term = searchTermFor(interest);
   const url = `${BASE}/businesses/search?latitude=${seeker.lat}&longitude=${seeker.lng}`
     + `&term=${encodeURIComponent(term)}&radius=${RADIUS}&limit=4&sort_by=rating`;
 
-  const res = await fetch(url, { headers, next: { revalidate: 3600 } });
+  const res = await fetch(url, { headers, next: { revalidate: 3600 }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
     console.error('[discover/yelp-places] returned', res.status, 'for', term, detail.slice(0, 160));
@@ -157,7 +160,7 @@ async function placesFor(interest: string, seeker: Seeker, headers: Record<strin
     .filter((f: Finding) => notRuledOut(`${f.title} ${f.meta}`, seeker.avoid));
 }
 
-export async function yelpPlaces(seeker: Seeker): Promise<SourceResult> {
+export async function yelpPlaces(seeker: Seeker, opts: { timeoutMs?: number } = {}): Promise<SourceResult> {
   const headers = auth();
   if (!headers) return { source: 'yelp-places', status: 'no_key', findings: [] };
   // Three at once. Every interest would be a dozen round trips inside one
@@ -166,7 +169,7 @@ export async function yelpPlaces(seeker: Seeker): Promise<SourceResult> {
   // the spare searches rather than an empty lane.
   const wanted = [...seeker.interests, ...(seeker.browse ?? [])].slice(0, 3);
   if (!wanted.length) return { source: 'yelp-places', status: 'ok', findings: [] };
-  const settled = await Promise.allSettled(wanted.map(i => placesFor(i, seeker, headers)));
+  const settled = await Promise.allSettled(wanted.map(i => placesFor(i, seeker, headers, opts.timeoutMs ?? PROVIDER_TIMEOUT_MS)));
 
   const findings = settled.flatMap(r => r.status === 'fulfilled' ? r.value : []);
   const failed = settled.filter(r => r.status === 'rejected').length;

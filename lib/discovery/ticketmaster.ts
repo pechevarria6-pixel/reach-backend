@@ -8,7 +8,7 @@
 // the same shape. Neither could be bought. An empty answer that says why is
 // worth more than a fixture.
 import type { Finding, SourceResult, Seeker } from './types.ts';
-import { usableCategory } from './category';
+import { usableCategory } from './category.ts';
 import { notRuledOut } from './rules.ts';
 import { eventPhoto } from './place-photo.ts';
 
@@ -39,7 +39,15 @@ function notPast(e: any): boolean {
   return new Date(`${day}T23:59:59`).getTime() >= today.getTime();
 }
 
-export async function ticketmaster(seeker: Seeker): Promise<SourceResult> {
+/**
+ * How long Discover waits for Ticketmaster. It had no limit: a hung
+ * connection held /api/nearby until its 30s maxDuration and the whole
+ * screen was a 504 — the map's venues, already read, thrown away with it.
+ * Past this it is one source that did not answer, said as such.
+ */
+export const PROVIDER_TIMEOUT_MS = 6000;
+
+export async function ticketmaster(seeker: Seeker, opts: { timeoutMs?: number } = {}): Promise<SourceResult> {
   const key = process.env.TICKETMASTER_API_KEY;
   if (!key) {
     console.error('[discover/ticketmaster] TICKETMASTER_API_KEY is not set');
@@ -57,7 +65,7 @@ export async function ticketmaster(seeker: Seeker): Promise<SourceResult> {
 
   let data: any;
   try {
-    const res = await fetch(url, { next: { revalidate: 3600 } });
+    const res = await fetch(url, { next: { revalidate: 3600 }, signal: AbortSignal.timeout(opts.timeoutMs ?? PROVIDER_TIMEOUT_MS) });
     if (!res.ok) {
       console.error('[discover/ticketmaster] returned', res.status);
       return { source: 'ticketmaster', status: 'error', findings: [], detail: String(res.status) };
