@@ -68,6 +68,7 @@
 // Delivery is the bell plus push (lib/notify-user.ts). Email is not used:
 // it is broken in production and is optional by the owner's rule.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import tzlookup from '@photostructure/tz-lookup';
 import { notifyUsers, mutedFor, type Note, type Sender } from './notify-user.ts';
 import { rowWhen, clockOf, validDay } from './ics.ts';
 import { tripTiming } from './calendar.ts';
@@ -86,11 +87,29 @@ export type PingKind = typeof PING_KINDS[number];
 
 // ── The trip's clock ─────────────────────────────────────────────────────
 
-/** The day and the hour at a longitude — the same rounding as dayWhere. */
-export function localClock(lng: unknown, now: Date = new Date()): { day: string; hour: number } | null {
+/** The IANA zone at a point, or null. A fixed fact of the map, never a guess. */
+export function zoneAt(lat: unknown, lng: unknown): string | null {
+  const y = typeof lat === 'number' ? lat : typeof lat === 'string' && lat.trim() ? Number(lat) : NaN;
+  const x = typeof lng === 'number' ? lng : typeof lng === 'string' && lng.trim() ? Number(lng) : NaN;
+  if (!Number.isFinite(y) || !Number.isFinite(x) || Math.abs(y) > 90 || Math.abs(x) > 180) return null;
+  if (Math.abs(y) < 0.01 && Math.abs(x) < 0.01) return null;
+  try { return tzlookup(y, x) || null; } catch { return null; }
+}
+
+/**
+ * The day and the hour where the trip is. With the point's latitude too,
+ * read on the zone the point is in, so daylight saving and real borders
+ * count: by longitude alone every US trip ran an hour behind all summer, and
+ * a 7:30 PM dinner in Raleigh got "Tonight" at 7:40 PM. Without one, the
+ * longitude's rounding, the same as dayWhere.
+ */
+export function localClock(lng: unknown, now: Date = new Date(), lat?: unknown): { day: string; hour: number } | null {
   const deg = typeof lng === 'number' ? lng : typeof lng === 'string' && lng.trim() ? Number(lng) : NaN;
   // Null is not 0: a plan nobody placed is not in Greenwich.
   if (!Number.isFinite(deg) || deg < -180 || deg > 180) return null;
+  const zone = lat === undefined ? null : zoneAt(lat, deg);
+  const inZone = zone ? zoneClock(zone, now) : null;
+  if (inZone) return inZone;
   const hours = Math.max(-12, Math.min(14, Math.round(deg / 15)));
   const there = new Date(now.getTime() + hours * 3_600_000);
   return { day: there.toISOString().slice(0, 10), hour: there.getUTCHours() };
@@ -381,7 +400,7 @@ export const settleUrl = (plan: Pick<PingPlan, 'id' | 'group_id'>) =>
 export function duePings(input: PingInput, now: Date = new Date()): PlannedPing[] {
   const { plan } = input;
   if (!plan?.id || OVER.has(String(plan.status ?? ''))) return [];
-  const clock = localClock(plan.destination_lng, now);
+  const clock = localClock(plan.destination_lng, now, plan.destination_lat);
   if (!clock) return [];
   const start = validDay(plan.start_date);
   if (!start) return [];
@@ -548,7 +567,7 @@ export interface WeatherPingInput extends PingInput {
 
 /** The lines of tomorrow worth asking the forecast about: ours, typed for it, and on tomorrow. */
 export function linesForTomorrow(plan: PingPlan, lines: PingLine[], now: Date): { day: string; lines: PingLine[] } | null {
-  const clock = localClock(plan.destination_lng, now);
+  const clock = localClock(plan.destination_lng, now, plan.destination_lat);
   if (!clock || !inWindow('weather', clock.hour) || OVER.has(String(plan.status ?? ''))) return null;
   const tomorrow = shiftDay(clock.day, 1);
   if (!tomorrow) return null;
@@ -564,7 +583,7 @@ const whenWords = (part: string) => (part === 'day' ? 'tomorrow' : `tomorrow ${p
 export function dueWeatherPings(input: WeatherPingInput, now: Date = new Date()): PlannedPing[] {
   const { plan, tomorrow } = input;
   if (!plan?.id || !tomorrow) return [];
-  const clock = localClock(plan.destination_lng, now);
+  const clock = localClock(plan.destination_lng, now, plan.destination_lat);
   const due = linesForTomorrow(plan, input.lines, now);
   if (!clock || !due || tomorrow.date !== due.day) return [];
   const { people, solo } = audience(plan, input.memberIds);
@@ -768,7 +787,7 @@ export function dueSettleUps(input: SettleInput, now: Date = new Date()): Planne
   const members = [...new Set(input.memberIds.filter(Boolean).map(String))];
   if (audience(plan, members).solo) return [];
 
-  const clock = localClock(plan.destination_lng, now);
+  const clock = localClock(plan.destination_lng, now, plan.destination_lat);
   if (!clock) return [];
   if (!inWindow('settle_up', clock.hour)) return [];
   const last = lastDayOfPlan(plan);
@@ -923,7 +942,7 @@ export async function runSettleUps(db: SupabaseClient, opts: PingOpts, report: P
     skip('settle_up_plans_unreadable');
     return report;
   }
-  const placed = ((plans ?? []) as SettlePlan[]).filter(p => localClock(p.destination_lng, now) !== null);
+  const placed = ((plans ?? []) as SettlePlan[]).filter(p => localClock(p.destination_lng, now, p.destination_lat) !== null);
   if (!placed.length) return report;
   const ids = placed.map(p => p.id);
 
@@ -1150,7 +1169,7 @@ async function runCountdown(db: SupabaseClient, opts: PingOpts): Promise<PingRep
   const readForecast = opts.forecast ?? ((d: SupabaseClient, at: { lat: number; lng: number }, want: { dates: string[]; country?: string | null }) => forecastFor(d, at, want, { now }));
 
   for (const plan of rows) {
-    if (localClock(plan.destination_lng, now) === null) { skip('no_place'); continue; }
+    if (localClock(plan.destination_lng, now, plan.destination_lat) === null) { skip('no_place'); continue; }
     const optOuts = new Map<string, Set<string>>();
     for (const o of optBy.get(plan.id) ?? []) {
       const ref = String(o.item_ref);

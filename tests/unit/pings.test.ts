@@ -421,3 +421,16 @@ test('a dry run works out what is due and claims and sends nothing', async () =>
   assert.equal(claimed.size, 0);
   assert.equal(log.length, 0);
 });
+
+test('the trip\'s clock is the zone the point is in, daylight saving and all', async () => {
+  const { localClock, zoneAt } = await import('../../lib/pings.ts');
+  // 23:40 UTC on 10 July is 7:40 PM in Raleigh (EDT); longitude alone said 6 PM.
+  const july = new Date('2026-07-10T23:40:00Z');
+  assert.equal(zoneAt(35.78, -78.64), 'America/New_York');
+  assert.deepEqual(localClock(-78.64, july, 35.78), { day: '2026-07-10', hour: 19 });
+  assert.deepEqual(localClock(-78.64, july), { day: '2026-07-10', hour: 18 }, 'no latitude: the longitude, as before');
+  // Madrid sits west of Greenwich and keeps Central European time.
+  assert.equal(localClock(-3.7, new Date('2026-07-10T20:30:00Z'), 40.42)?.hour, 22);
+  assert.equal(localClock(null, july, 35.78), null, 'nobody placed it: no clock');
+  assert.equal(zoneAt(0, 0), null, 'Null Island is not a place');
+});
