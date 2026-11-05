@@ -1,3 +1,4 @@
+import { leaveDay, trimLeaveDay, type LeaveDay } from '@/lib/leave-day';
 import { NextRequest, NextResponse } from 'next/server';
 import { archetypeFor, playbookGuidance, PlaybookSchema } from '@/lib/playbooks';
 import { datedDays } from '@/lib/calendar';
@@ -178,6 +179,8 @@ export async function POST(req: NextRequest) {
     // they live.
     nightPlace = null,
     detailTripId = null, // if set, generate full itinerary for one trip
+    // Plan the morning they leave too (lib/leave-day.ts). On unless switched off.
+    homeDay = true,
     // A night out is not a short trip. No flights, no hotel, one evening, and
     // the only thing it needs asking that the taste quiz has not already
     // stored is roughly where it should be.
@@ -1063,7 +1066,25 @@ export async function POST(req: NextRequest) {
         shapeBlock = ['', shape, ''].join('\n');
       }
     }
-    const calendarDays = datedDays(startDate ? String(startDate) : null, isNightPlan ? 1 : Math.max(1, nights));
+    // ── The day they leave ──────────────────────────────────────────────
+    // One day per night left the last day blank. Fitted to the flight home
+    // when one is held with a time; a light morning otherwise; off if asked.
+    let leave: LeaveDay = { parts: [], until: null, because: 'not a stay' };
+    if (!isNightPlan && nights >= 1 && endDate) {
+      let returnDeparts: unknown = null;
+      if (detailIsPlan) {
+        const { data: flights } = await supabase.from('bookings')
+          .select('status, response_payload').eq('plan_id', String(detailTripId)).eq('vertical', 'flight')
+          .not('status', 'in', '("failed","cancelled")').limit(5);
+        for (const f of flights ?? []) {
+          const back = (f.response_payload as { option?: { back?: { departs?: unknown } } } | null)?.option?.back;
+          if (back?.departs) { returnDeparts = back.departs; break; }
+        }
+      }
+      leave = leaveDay({ wanted: homeDay !== false, returnDeparts });
+    }
+    const leaveCount = leave.parts.length ? 1 : 0;
+    const calendarDays = datedDays(startDate ? String(startDate) : null, isNightPlan ? 1 : Math.max(1, nights) + leaveCount);
     const whenLine = calendarDays.length
       ? (isNightPlan ? `THE EVENING: ${calendarDays[0].replace(/^Day 1 — /, '')}.` : `THE DAYS:\n${calendarDays.join('\n')}\nPut anything that only happens on certain weekdays on the right day.`)
       : 'The dates are not fixed yet. Do not tie anything to a weekday or a season.';
@@ -1309,7 +1330,9 @@ three costs add up to roughly that day's cost_today.
 
 Never write "placeholder", "TBD", "N/A", "Activity" or any other filler.
 
-Write one entry for each of the ${nights} days. All of them. The days come
+${leaveCount ? `The last day, Day ${nights + 1}, is the day they leave: ${leave.because}. Plan only ${leave.parts.join(' and ')} that day, all of it over by ${leave.until}, close to where they have been staying — nothing that needs booking ahead. Write the parts of that day after they leave as "Head home." with cost 0.
+
+` : ''}Write one entry for each of the ${nights + leaveCount} days. All of them. The days come
 from the dates they are going; the venues come from the verified list, and
 those are separate things. A short list is not a reason to give somebody a
 shorter trip — they are still there on the Thursday.
@@ -1366,7 +1389,10 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       const parsed = parseModelJSON(textOf(res), ItinerarySchema, 'trips itinerary');
       // A day whose slots say "placeholder" is worse than a missing day: it
       // looks planned. Drop it rather than write a hole into somebody's trip.
-      const days = dropFillerDays(parsed?.itinerary ?? []);
+      // The day they leave keeps only the parts they are there for.
+      const raw = (parsed?.itinerary ?? []).map(d =>
+        leaveCount && Number(d?.day) === nights + 1 ? trimLeaveDay(d, leave) : d);
+      const days = dropFillerDays(raw);
       // Far fewer days than were asked for.
       //
       // A seven-night Puerto Vallarta came back as one day — three rows and

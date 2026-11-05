@@ -6832,7 +6832,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
                   be one tip for the whole day, and on the saved plan it
                   landed under dinner as if it described dinner. */}
               <div style={{fontSize:12,color:C.t2,lineHeight:1.7}}>
-                {[["☀️",day.morning],["🌤️",day.afternoon],["🌙",day.evening]].map(([ic,v],k)=>{
+                {[["☀️",day.morning],["🌤️",day.afternoon],["🌙",day.evening]].filter(([,v])=>txt(v)).map(([ic,v],k)=>{
                   const tip=typeof v?.tip==="string"?v.tip.replace(/^\s*💡\s*/u,"").trim():"";
                   return(
                     <div key={k}>
@@ -11694,6 +11694,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
 
   const [loadFailed,setLoadFailed]=useState(false);
   const [building,setBuilding]=useState(false);
+  // Plan the morning they leave too (lib/leave-day.ts), fitted to the flight
+  // home. On unless they switch it off.
+  const [homeDay,setHomeDay]=useState(true);
   const [emailing,setEmailing]=useState(false);
   // The line whose Change sheet is open, and every open suggestion on the
   // plan ("Sam suggests … · 👍 2"), each under the line it is about.
@@ -11975,6 +11978,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         body:JSON.stringify({
           groupId, startDate, endDate, detailTripId:planId,
           mode:oneEvening?"night":"trip",
+          homeDay:!oneEvening&&homeDay,
           location:where, goalBlurb:about,
           tripData:{
             destination:where, city:where,
@@ -13056,6 +13060,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 </div>
                 {!loadFailed&&(
                   <>
+                    {plan.type!=="restaurant"&&plan.endDate&&plan.endDate!==plan.startDate&&(
+                      <label style={{display:"flex",alignItems:"center",gap:10,minHeight:44,fontSize:13,color:C.t1,marginBottom:6,cursor:"pointer"}}>
+                        <input type="checkbox" checked={homeDay} onChange={e=>setHomeDay(e.target.checked)} style={{width:20,height:20}}/>
+                        <span>Plan the day {soloTrip?"you leave":"you all leave"} too <span style={{color:C.t2}}>— fitted to the flight home, or a light morning if there isn't one</span></span>
+                      </label>
+                    )}
                     <button className="bp" disabled={building||(!votingOpen&&!!prefs)} onClick={buildItinerary} style={{marginBottom:10}}>
                       {building?"Building your days…":(!votingOpen&&prefs)?"Waiting on the group":buildError?.retry?"↻ Try again":"✨ Plan my days for me"}
                     </button>

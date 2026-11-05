@@ -529,5 +529,8 @@ export function isFiller(text: unknown): boolean {
 /** Drops any day that contains filler, rather than saving a hole. */
 export function dropFillerDays<T extends { morning?: any; afternoon?: any; evening?: any }>(days: T[]): T[] {
   return (days || []).filter(d =>
-    ![d.morning, d.afternoon, d.evening].some(s => isFiller(typeof s === 'string' ? s : s?.plan)));
+    // A part left empty on purpose (the day they leave: lib/leave-day.ts) is
+    // not filler; a day with nothing in it at all is.
+    [d.morning, d.afternoon, d.evening].some(s => s != null)
+    && ![d.morning, d.afternoon, d.evening].filter(s => s != null).some(s => isFiller(typeof s === 'string' ? s : s?.plan)));
 }
