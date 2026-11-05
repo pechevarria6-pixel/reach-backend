@@ -233,6 +233,54 @@ test('two confirmed flights the same day and nothing saying whose is whose: neit
   assert.match(due.find(p => p.userId === 'ben')?.note.body ?? '', /PIT/);
 });
 
+test('a round trip gets its flight back too: check-in the day before and the morning of, on the return airport\'s clock', () => {
+  // The shape of a real booking (2026-10-23): every trip with an end date is
+  // quoted as a return (lib/booking/line-request.ts), so the way back is on
+  // the same row — returnDate in the request, the return leg in the
+  // response's option. Only the way out was ever pinged about.
+  const pvr = plan({ destination_lng: -105.22, start_date: '2026-11-02', end_date: '2026-11-09' });
+  const round: PingBooking = {
+    ...flight, detail: 'American Airlines · RDU → PVR · 2026-11-02',
+    request_payload: { flight: { origin: 'RDU', destination: 'PVR', departDate: '2026-11-02', returnDate: '2026-11-09', seats: 2 } },
+    response_payload: {
+      flightIdent: 'AA1234',
+      option: {
+        airline: 'American Airlines',
+        out: { from: 'RDU', to: 'PVR', departs: '2026-11-02T08:00:00', flights: 'AA1234' },
+        back: { from: 'PVR', to: 'RDU', departs: '2026-11-09T13:15:00', flights: 'AA1235, AA88' },
+      },
+    },
+  };
+  const run = (iso: string) => duePings(input({ plan: pvr, bookings: [round], lines: [] }), new Date(iso));
+
+  // 11:07 AM on the 8th in Puerto Vallarta (UTC-6): the day before the flight back.
+  const checkin = run('2026-11-08T17:07:00Z');
+  assert.deepEqual(kinds(checkin), ['flight_checkin:ana', 'flight_checkin:ben']);
+  assert.equal(checkin[0].localDay, '2026-11-08');
+  // It names the flight back, never the way out's detail.
+  assert.match(checkin[0].note.body ?? '', /PVR → RDU/);
+  assert.doesNotMatch(checkin[0].note.body ?? '', /RDU → PVR|2026-11-02/);
+  assert.match(checkin[0].note.body ?? '', /Booking reference MHW2Y3/);
+
+  // 7:07 AM on the 9th there: the morning of, asked about the return's own flight number.
+  const day = run('2026-11-09T13:07:00Z').filter(p => p.kind === 'flight_day');
+  assert.deepEqual(kinds(day), ['flight_day:ana', 'flight_day:ben']);
+  assert.deepEqual(day[0].flight, { ident: 'AA1235', departDate: '2026-11-09' });
+
+  // The way out is still the way out's: the day before it, on Raleigh's clock.
+  const out = run('2026-11-01T15:07:00Z');
+  assert.deepEqual(kinds(out), ['flight_checkin:ana', 'flight_checkin:ben']);
+  assert.match(out[0].note.body ?? '', /RDU → PVR/);
+
+  // Only the request to go on (no option saved): the return date and airports from it.
+  const asked: PingBooking = { ...round, response_payload: { flightIdent: 'AA1234' } };
+  const bare = duePings(input({ plan: pvr, bookings: [asked], lines: [] }), new Date('2026-11-08T17:07:00Z'));
+  assert.deepEqual(kinds(bare), ['flight_checkin:ana', 'flight_checkin:ben']);
+  assert.match(bare[0].note.body ?? '', /PVR → RDU/);
+  // And no flight number for the way back: no morning-of ping, never the way out's number.
+  assert.deepEqual(duePings(input({ plan: pvr, bookings: [asked], lines: [] }), new Date('2026-11-09T13:07:00Z')).filter(p => p.kind === 'flight_day'), []);
+});
+
 test('the morning of: only what AeroAPI says, in the departure airport\'s own zone', () => {
   const note = flightDayNote('AA1234', '2026-11-06', [
     { status: 'Scheduled', scheduled_out: '2026-11-07T13:00:00Z', origin: { code_iata: 'RDU', timezone: 'America/New_York' } },

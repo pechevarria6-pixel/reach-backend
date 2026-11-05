@@ -99,8 +99,9 @@ export function localClock(lng: unknown, now: Date = new Date()): { day: string;
 /**
  * The IANA zone of a departure airport, by IATA code. A fixed fact per
  * airport, not a guess: every airport lib/airports.ts hands out as a home
- * airport, plus the large international departure points. Absent is absent —
- * see the header.
+ * airport, plus the large international departure points, plus the
+ * destination airports trips have been booked to — a return flight leaves
+ * from there (flightLegs). Absent is absent — see the header.
  */
 export const AIRPORT_ZONES: Record<string, string> = {
   // US Eastern
@@ -125,9 +126,12 @@ export const AIRPORT_ZONES: Record<string, string> = {
   FAT: 'America/Los_Angeles', SMF: 'America/Los_Angeles', LGB: 'America/Los_Angeles', SNA: 'America/Los_Angeles',
   BFL: 'America/Los_Angeles', BUR: 'America/Los_Angeles',
   ANC: 'America/Anchorage', HNL: 'Pacific/Honolulu', OGG: 'Pacific/Honolulu', SJU: 'America/Puerto_Rico',
+  BQN: 'America/Puerto_Rico',
   // Canada, Mexico
   YYZ: 'America/Toronto', YUL: 'America/Toronto', YVR: 'America/Vancouver', YYC: 'America/Edmonton',
-  MEX: 'America/Mexico_City', CUN: 'America/Cancun',
+  // Puerto Vallarta (Jalisco) keeps Central time, UTC-6 with no DST since
+  // 2022 — not the Pacific time of Mazatlán up the coast.
+  MEX: 'America/Mexico_City', CUN: 'America/Cancun', PVR: 'America/Mexico_City',
   // Europe
   LHR: 'Europe/London', LGW: 'Europe/London', MAN: 'Europe/London', EDI: 'Europe/London', DUB: 'Europe/Dublin',
   CDG: 'Europe/Paris', ORY: 'Europe/Paris', AMS: 'Europe/Amsterdam', FRA: 'Europe/Berlin', MUC: 'Europe/Berlin',
@@ -291,11 +295,60 @@ export function departZoneOf(b: PingBooking): string | null {
   return AIRPORT_ZONES[code] ?? null;
 }
 
+const IDENT = /^[A-Z0-9]{2,3}\d{1,4}[A-Z]?$/;
+
 function identOf(b: PingBooking): string | null {
   const fromBook = clean(obj(b.response_payload)?.flightIdent);
   const fromAsk = clean(obj(obj(b.request_payload)?.flight)?.flightNumber);
   const ident = (fromBook || fromAsk).toUpperCase();
-  return /^[A-Z0-9]{2,3}\d{1,4}[A-Z]?$/.test(ident) ? ident : null;
+  return IDENT.test(ident) ? ident : null;
+}
+
+/** One way of a flight booking: the day it leaves, on whose clock, and what to call it. */
+export interface FlightLeg {
+  way: 'out' | 'back';
+  /** YYYY-MM-DD, the departure airport's own date. */
+  day: string;
+  /** The departure airport's IANA zone, or null when we do not hold it. */
+  zone: string | null;
+  /** The flight to ask AeroAPI about on the morning, or null: then no morning-of ping. */
+  ident: string | null;
+  /** What the check-in ping calls it. */
+  what: string;
+}
+
+/**
+ * The ways of a flight booking. Every trip with an end date is quoted as a
+ * return (lib/booking/line-request.ts), so the flight back is on the same
+ * row as the flight out — returnDate in the request, the return leg in the
+ * provider's option (lib/booking/duffel-map.ts offerOption.back). Reading
+ * only departDate said nothing at all about the way home.
+ *
+ * The way back leaves from the destination airport, on that airport's
+ * clock; its flight number is the return leg's first, never the way out's
+ * (flightIdent is the first segment of the first slice).
+ */
+export function flightLegs(b: PingBooking): FlightLeg[] {
+  const ask = obj(obj(b.request_payload)?.flight);
+  const option = obj(obj(b.response_payload)?.option);
+  const legs: FlightLeg[] = [];
+  const outDay = departDateOf(b);
+  if (outDay) legs.push({ way: 'out', day: outDay, zone: departZoneOf(b), ident: identOf(b), what: clean(b.detail) });
+
+  const back = obj(option?.back);
+  const backDay = validDay(clean(back?.departs).slice(0, 10)) ?? validDay(ask?.returnDate);
+  if (backDay && backDay !== outDay) {
+    const from = (clean(back?.from) || clean(ask?.destination)).toUpperCase();
+    const to = (clean(back?.to) || clean(ask?.origin)).toUpperCase();
+    const first = clean(String(back?.flights ?? '').split(',')[0]).toUpperCase();
+    legs.push({
+      way: 'back', day: backDay,
+      zone: AIRPORT_ZONES[from] ?? null,
+      ident: IDENT.test(first) ? first : null,
+      what: [clean(option?.airline) || null, from && to ? `${from} → ${to}` : null, backDay].filter(Boolean).join(' · '),
+    });
+  }
+  return legs;
 }
 
 /** What a traveller quotes at the airline desk — never Duffel's own order id. */
@@ -380,30 +433,30 @@ export function duePings(input: PingInput, now: Date = new Date()): PlannedPing[
   // ── flights: T-1 check-in, and the morning of ──
   // Read on the departure airport's clock, never the destination's: the
   // departDate is that airport's date (see the header).
-  const flightClock = new Map<string, { day: string; hour: number } | null>();
+  // Each way of each booking: the way out, and the way back of a return.
+  const legsOf = new Map<string, Array<FlightLeg & { at: { day: string; hour: number } | null }>>();
   for (const b of flights) {
-    const day = departDateOf(b);
-    if (!day) continue;
-    const zone = departZoneOf(b);
-    const c = zone ? zoneClock(zone, now) : null;
-    flightClock.set(b.id, c);
+    const legs = flightLegs(b).map(l => ({ ...l, at: l.zone ? zoneClock(l.zone, now) : null }));
+    legsOf.set(b.id, legs);
     // Only worth saying near the flight: the trip's clock is within a day
     // or so of any airport's, so this counts a flight whose ping could be
     // due about now and cannot be read, not every flight on every run.
-    if (!c && [shiftDay(day, -1), day].includes(clock.day)) input.onSkip?.('flight_no_origin_zone');
+    for (const l of legs) {
+      if (!l.at && [shiftDay(l.day, -1), l.day].includes(clock.day)) input.onSkip?.('flight_no_origin_zone');
+    }
   }
   for (const userId of people) {
-    const theirs = flights.filter(b => !sitsOut(b.id, userId)).map(b => ({ b, day: departDateOf(b) })).filter(f => f.day);
+    const theirs = flights.filter(b => !sitsOut(b.id, userId)).flatMap(b => (legsOf.get(b.id) ?? []).map(leg => ({ b, leg, day: leg.day })));
     // Two confirmed flights leaving the same day and nothing saying which
     // one is theirs (one per departure airport, say): naming either could
     // send somebody to the wrong desk, so neither is named.
     const sameDay = (d: string | null) => theirs.filter(f => f.day === d).length;
-    for (const { b, day } of theirs) {
+    for (const { b, leg, day } of theirs) {
       if (sameDay(day) !== 1) continue;
-      const at = flightClock.get(b.id);
+      const at = leg.at;
       if (!at) continue;
       if (at.day === shiftDay(day as string, -1) && inWindow('flight_checkin', at.hour)) {
-        const what = clean(b.detail);
+        const what = leg.what;
         const ref = referenceOf(b);
         out.push({
           kind: 'flight_checkin', userId, localDay: at.day,
@@ -416,7 +469,7 @@ export function duePings(input: PingInput, now: Date = new Date()): PlannedPing[
         });
       }
       if (at.day === day && inWindow('flight_day', at.hour)) {
-        const ident = identOf(b);
+        const ident = leg.ident;
         if (ident) {
           out.push({
             kind: 'flight_day', userId, localDay: at.day,
