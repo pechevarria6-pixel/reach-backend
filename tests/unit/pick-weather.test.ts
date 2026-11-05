@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { windowFor, pickForecastLine, forecastPicks, forgetPickForecasts } from '../../lib/recommendations/pick-weather.ts';
-import { weatherBasis, interestSetting, tally, type Holdings, type WeatherBasis } from '../../lib/recommendations/trip-picks.ts';
+import { weatherBasis, interestSetting, tally, scoreOf, type Holdings, type WeatherBasis } from '../../lib/recommendations/trip-picks.ts';
 import { picksFrom } from '../../lib/contracts/trip-pick.ts';
 import type { ForecastPart, Worry } from '../../lib/forecast.ts';
 import type { HeldDay } from '../../lib/forecast-store.ts';
@@ -90,20 +90,50 @@ test('an interest is outdoors by its rows\' kinds; one with no kinds is outdoors
 test('a pick led by the outdoors is a weather pick; one led by museums, or by nothing they said, is not', () => {
   const h = H({ 'places to eat|restaurant': 40, 'outdoors|park': 30, 'breweries|brewery': 12, 'museums & history|museum': 8, 'live music|music venue': 5 });
   const t = tally(h, [], false);
-  const out = weatherBasis({ band: 'weekend', h, t, matched: ['places to eat', 'outdoors', 'breweries'], shown }, []);
+  const out = weatherBasis({ band: 'weekend', h, t, asked: ['places to eat', 'outdoors', 'breweries'], shown }, []);
   assert.equal(out.outdoor, 'outdoors');
   assert.deepEqual(out.indoor, ['breweries', 'museums']);
-  assert.equal(weatherBasis({ band: 'weekend', h, t, matched: ['museums & history', 'outdoors'], shown }, []).outdoor, null);
-  assert.equal(weatherBasis({ band: 'weekend', h, t, matched: [], shown }, []).outdoor, null);
+  assert.equal(weatherBasis({ band: 'weekend', h, t, asked: ['museums & history', 'outdoors'], shown }, []).outdoor, null);
+  assert.equal(weatherBasis({ band: 'weekend', h, t, asked: [], shown }, []).outdoor, null);
+});
+
+test('what the pick is for is the order they said it, not how many parks the map holds', () => {
+  // Parks outnumber everything almost everywhere, so how much is held puts
+  // the outdoors first in `matched` for anybody who ticked it at all. A night
+  // out for somebody who said live music and cocktail bars first is not a
+  // night in the parks, and its rain line must not offer its own contents
+  // back as the alternative.
+  const h = H({ 'live music|music venue': 12, 'cocktail bars|bar': 8, 'outdoors|park': 400 });
+  const t = tally(h, [], false);
+  const durham = { key: 'durham|us', name: 'Durham', country: 'US', label: 'Durham, North Carolina', lat: 35.99, lng: -78.9 };
+  const lean = { primary: null, secondary: null, dials: {} };
+  const night = scoreOf(t, durham, 'night', 20, ['live music', 'cocktail bars', 'outdoors'], [], lean);
+  assert.equal(night.matched[0], 'outdoors');
+  assert.deepEqual(night.asked, ['live music', 'cocktail bars', 'outdoors']);
+  const at = { name: 'Durham', label: durham.label, lat: durham.lat, lng: durham.lng };
+  assert.equal(weatherBasis({ band: 'night', h, t, asked: night.asked, shown: at }, []).outdoor, null);
+  // A weekend for somebody who said museums first and the outdoors last.
+  const hw = H({ 'museums & history|museum': 9, 'breweries|brewery': 6, 'outdoors|park': 400 });
+  const tw = tally(hw, [], false);
+  const weekend = scoreOf(tw, durham, 'weekend', 120, ['museums & history', 'breweries', 'outdoors'], [], lean);
+  assert.equal(weatherBasis({ band: 'weekend', h: hw, t: tw, asked: weekend.asked, shown: at }, []).outdoor, null);
+  // Somebody who said the outdoors first is still read as an outdoor pick,
+  // and offered what else they said before what the town merely holds.
+  const keen = scoreOf(tw, durham, 'weekend', 120, ['outdoors', 'breweries'], [], lean);
+  const b = weatherBasis({ band: 'weekend', h: hw, t: tw, asked: keen.asked, shown: at }, []);
+  assert.equal(b.outdoor, 'outdoors');
+  assert.deepEqual(b.indoor, ['breweries', 'museums']);
+  // A member's interest comes after every one of the reader's own.
+  assert.deepEqual(scoreOf(tw, durham, 'weekend', 120, ['breweries'], ['outdoors'], lean).asked, ['breweries', 'outdoors']);
 });
 
 test('a night out is offered only what is open at night, and nothing a no-go rules out', () => {
   const h = H({ 'outdoors|park': 30, 'museums & history|museum': 20, 'live music|music venue': 5, 'breweries|brewery': 12 });
   const t = tally(h, [], false);
-  const night = weatherBasis({ band: 'night', h, t, matched: ['outdoors'], shown }, []);
+  const night = weatherBasis({ band: 'night', h, t, asked: ['outdoors'], shown }, []);
   assert.ok(!night.indoor.includes('museums'));
   assert.deepEqual(night.indoor, ['breweries', 'live music']);
-  const vetoed = weatherBasis({ band: 'weekend', h, t, matched: ['outdoors'], shown }, ['breweries']);
+  const vetoed = weatherBasis({ band: 'weekend', h, t, asked: ['outdoors'], shown }, ['breweries']);
   assert.ok(!vetoed.indoor.includes('breweries'));
 });
 

@@ -179,7 +179,7 @@ export interface WeatherBasis {
   at: { lat: number; lng: number };
   /**
    * The interest that leads the pick when it is out of doors (the first
-   * non-food interest it matched, with most of its held rows on the map as
+   * non-food interest it matched, in the order they said it, with most of its held rows on the map as
    * parks, beaches, trails, beer gardens…); null when the pick is not.
    */
   outdoor: string | null;
@@ -1047,6 +1047,8 @@ export function inferredOf(profile: TasteProfile | null | undefined, mine: strin
 
 interface Scored {
   c: Candidate; band: Band; miles: number; t: Tally; h: Holdings; score: number; matched: string[];
+  /** The shared interests in the order they were said (see scoreOf). */
+  asked: string[];
   /** The town the card names: the candidate, or the folded town they live in. */
   shown: Place; shownMiles: number;
 }
@@ -1088,7 +1090,7 @@ function crowdAverse(lean: Leaning, vetoes: string[]): Leaning {
  * kind is drawn to. The log is deliberate: a city with two thousand
  * restaurants is not a hundred times the dinner of a town with twenty.
  */
-export function scoreOf(t: Tally, c: Candidate, band: Band, miles: number, mine: string[], theirs: string[], lean: Leaning, inferred: Inferred | null = null): { score: number; matched: string[] } {
+export function scoreOf(t: Tally, c: Candidate, band: Band, miles: number, mine: string[], theirs: string[], lean: Leaning, inferred: Inferred | null = null): { score: number; matched: string[]; asked: string[] } {
   // What each shared interest added, so the card can lead with the ones
   // that did most to choose the town rather than whichever was ticked first.
   const adds: Array<{ i: string; w: number }> = [];
@@ -1119,6 +1121,11 @@ export function scoreOf(t: Tally, c: Candidate, band: Band, miles: number, mine:
     if (n) score += 0.4 * v * Math.log2(1 + n);
   }
   const matched = adds.map((a, k) => ({ ...a, k })).sort((a, b) => b.w - a.w || a.k - b.k).map(a => a.i);
+  // The same interests in the order they were said (theirs, then their
+  // members'). `matched` is ordered by how much is held, and parks outnumber
+  // everything on the map almost everywhere, so it says what the town is
+  // biggest at, not what the pick is for them. weatherBasis reads this.
+  const asked = adds.map(a => a.i);
   const drawn = (a: Archetype | null, w: number) => {
     if (!a) return;
     let n = 0;
@@ -1147,7 +1154,7 @@ export function scoreOf(t: Tally, c: Candidate, band: Band, miles: number, mine:
   if (band === 'weekend') score -= Math.max(0, miles - 250) / 100;
   // A night out is the nearest good town, full stop.
   if (band === 'night') score -= miles / 10;
-  return { score: Math.round(score * 100) / 100, matched };
+  return { score: Math.round(score * 100) / 100, matched, asked };
 }
 
 function nightsFor(band: Band, abroad: boolean, miles: number): number {
@@ -1201,9 +1208,9 @@ export function pickTrips(
     // this town's name or any town folded into it.
     const list = person.planned[band === 'night' ? 'nights' : 'trips'];
     if (placesOf(c).some(pl => isPlanned(list, pl, c.country))) continue;
-    const { score, matched } = scoreOf(t, c, band, miles, mine, theirs, lean, inferred);
+    const { score, matched, asked } = scoreOf(t, c, band, miles, mine, theirs, lean, inferred);
     const shown = shownPlace(c, person.home);
-    scored.push({ c, band, miles, t, h, score, matched, shown, shownMiles: milesBetween(person.home, shown) });
+    scored.push({ c, band, miles, t, h, score, matched, asked, shown, shownMiles: milesBetween(person.home, shown) });
   }
 
   const order = (a: Scored, b: Scored) => b.score - a.score || a.c.name.localeCompare(b.c.name);
@@ -1266,22 +1273,26 @@ export function interestSetting(h: Holdings, interest: string): 'outdoor' | 'ind
 
 /**
  * Whether this pick is a weather pick, and what the town holds under a roof
- * instead. The pick leads with the first non-food thing it matched; when
- * nothing matched, it was chosen on what the town holds overall and leans
- * on no one kind of place, so it is not a weather pick.
+ * instead. The pick is for the first non-food thing they said that the town
+ * holds — in the order they said it, never by how much of it is held: a
+ * town's parks outnumber its music venues almost everywhere, and somebody
+ * who put live music first and the outdoors last is not going out in the
+ * parks after dark. When nothing matched, it was chosen on what the town
+ * holds overall and leans on no one kind of place, so it is not a weather
+ * pick.
  */
 export function weatherBasis(
-  s: { band: Band; h: Holdings; t: Tally; matched: string[]; shown: Place },
+  s: { band: Band; h: Holdings; t: Tally; asked: string[]; shown: Place },
   vetoes: string[],
 ): WeatherBasis {
-  const lead = s.matched.find(i => !isFood(i) && (s.t.byInterest.get(i) ?? 0) > 0) ?? null;
+  const lead = s.asked.find(i => !isFood(i) && (s.t.byInterest.get(i) ?? 0) > 0) ?? null;
   const outdoor = lead && interestSetting(s.h, lead) === 'outdoor' ? lead : null;
   const fits = (i: string) => !isFood(i) && !OUTDOOR_INTERESTS.has(i)
     && (s.band !== 'night' || EVENING_INDOOR.has(i))
     && interestSetting(s.h, i) === 'indoor'
     && !vetoBreach(said(i), vetoes);
   // What they said first, then what the town holds most of.
-  const theirs = s.matched.filter(fits);
+  const theirs = s.asked.filter(fits);
   const rest = [...s.t.byInterest.entries()]
     .filter(([i, n]) => n >= 3 && fits(i) && !theirs.includes(i))
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([i]) => i);
