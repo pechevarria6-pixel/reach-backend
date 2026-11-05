@@ -2035,7 +2035,9 @@ Return JSON only, shaped exactly like this:
       console.log('[generate] organiser went ahead with who has answered', { plan: groupPlan.id, ...goAhead });
     }
 
-    if (groupPlan && isGroup && ideasAvailable) {
+    // A plan for one keeps its ideas too: they were shown once and lost, so
+    // coming back to a solo "where next?" found nothing to pick from.
+    if (groupPlan && ideasAvailable) {
       const ideas = ideasFrom(trips as unknown as Array<Record<string, unknown>>, {
         set: randomUUID(), foundBy: ctx.user.id, foundAt: new Date().toISOString(),
         mode: isNightPlan ? 'night' : 'trip',
@@ -2043,7 +2045,7 @@ Return JSON only, shaped exactly like this:
       const saved = await saveIdeas(supabase, groupPlan.id, ideas, replacing);
       if (saved.outcome === 'saved') {
         if (replacing) await clearVotes(supabase, groupPlan.id);
-        await tellTheGroup(supabase, groupPlan.id, String(groupId), groupPlan.created_by, ctx.user.id, isNightPlan, !!replacing, ideas.options.length);
+        if (isGroup) await tellTheGroup(supabase, groupPlan.id, String(groupId), groupPlan.created_by, ctx.user.id, isNightPlan, !!replacing, ideas.options.length);
         return NextResponse.json({ success: true, trips: withForecast(await ideasWithClimateNow(supabase, ideas.options, { start: startDate, end: endDate })), ideas: publicIdeas(ideas), saved: false, shared: true, meta });
       }
       if (saved.outcome === 'taken') {

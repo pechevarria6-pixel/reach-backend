@@ -362,7 +362,9 @@ export async function cachedEvents(db: SupabaseClient, seeker: Seeker): Promise<
       return {
         id: `${e.source || 'harvest'}_${e.id}`,
         title: e.title,
-        meta: [e.when_text, venue?.name].filter(Boolean).join(' · '),
+        // A cached Ticketmaster gig's when_text is already "Thu, Nov 5 ·
+        // Crown Coliseum": the venue is said once, not twice.
+        meta: [e.when_text, venue?.name && !String(e.when_text ?? '').toLowerCase().includes(String(venue.name).toLowerCase()) ? venue.name : null].filter(Boolean).join(' · '),
         // A page we read said this in words. A cached Ticketmaster gig's
         // when_text is our own "Thu, Nov 5 · Venue", which the date says.
         whenText: !e.source || e.source === 'harvest' ? (String(e.when_text ?? '').trim() || null) : null,

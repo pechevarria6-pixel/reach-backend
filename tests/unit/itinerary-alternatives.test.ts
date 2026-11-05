@@ -64,8 +64,9 @@ test('a restaurant line is never offered a museum, and a museum line never a res
   assert.equal(food.status, 'ok');
   if (food.status === 'ok') assert.deepEqual(food.alternatives.map(a => a.name), ['Lincoln Restaurant']);
   const art = alternativesFor({ line: museum, lines: LINES, places: MENU, nightOut: false, startDate: '2026-10-23', count: 20 });
-  assert.equal(art.status, 'ok');
-  if (art.status === 'ok') assert.ok(art.alternatives.every(a => a.kind !== 'restaurant'));
+  // The menu's other daytime activities here are all bars, which are never
+  // offered before the evening — so nothing, said plainly, beats a pub.
+  if (art.status === 'ok') assert.ok(art.alternatives.every(a => a.kind !== 'restaurant' && a.kind !== 'bar'));
 });
 
 test('every alternative says its price is an estimate and claims no difference we do not hold', () => {
@@ -243,8 +244,9 @@ test('with nothing on the day located, the town\'s own point says what is near',
   const got = alternativesFor({ line: walk, lines: [walk, supper], places: menu, nightOut: false, startDate: '2026-10-23', count: 3, center });
   assert.equal(got.status, 'ok');
   if (got.status !== 'ok') return;
-  // SPIN (60 m from the point), Renwick (750 m), The Pour House (3 km) — not A to Z.
-  assert.deepEqual(got.alternatives.map(a => a.name), ['SPIN', 'Renwick Gallery', 'The Pour House']);
+  // Renwick (750 m from the point) — not A to Z, and never SPIN or The Pour
+  // House: bars are not offered for an afternoon walk.
+  assert.deepEqual(got.alternatives.map(a => a.name), ['Renwick Gallery']);
   assert.equal(got.like, false, 'no park on the menu: these are "Nearby", not like a walk');
   assert.ok(got.alternatives.every(a => a.km !== null), 'each says how far it is');
   // Measured from the town's middle, and said so — never "from the rest of Day 1",
@@ -297,4 +299,14 @@ test('a beach morning is offered beaches; words naming no kind leave the list "N
 test('the Change sheet calls an unlike list "Nearby"', () => {
   const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
   assert.match(app, /d\.like===false\?"Nearby":mayApply\?"Pick another":"Others like it"/);
+});
+
+test('a beach morning with no beach held is offered somewhere near and outside, never a bar', () => {
+  const beach: PlanLine = { id: 'b', type: 'activity', title: 'Morning on Folly Beach', scheduled_time: 'Day 2 · Morning', venue_name: null };
+  const park = P({ name: 'Franklin Park', kind: 'park', street: '', lat: 38.9010, lng: -77.0300 });
+  const got = alternativesFor({ line: beach, lines: [beach], places: [SPIN, POUR, MUSEUM, park], nightOut: false, startDate: '2026-10-23', count: 3, center: { lat: 38.8977, lng: -77.0306 } });
+  assert.equal(got.status, 'ok');
+  if (got.status !== 'ok') return;
+  assert.ok(got.alternatives.every(a => a.kind !== 'bar'), got.alternatives.map(a => a.name).join(', '));
+  assert.equal(got.alternatives[0].name, 'Franklin Park', 'outside first for a line that is outside');
 });

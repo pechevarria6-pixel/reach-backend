@@ -3581,18 +3581,13 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                     <span style={{color:C.t1,fontWeight:600}}>Voting on: </span>{plan.options.join(" · ")}
                   </div>
                 )}
+                {/* The group list never carries the counts (plan.votes is the
+                    plan screen's), so this drew 0 / 0 / 0 over a vote with
+                    real votes in it. The options are named, as the ideas
+                    vote above them is; the count is on the vote itself. */}
                 {plan.status==="voting"&&!plan.hasIdeas&&plan.options.length>0&&(
-                  <div style={{background:C.s2,borderRadius:12,padding:10,marginBottom:10}}>
-                    <div style={{fontSize:11,color:C.t3,marginBottom:8,textTransform:"uppercase",letterSpacing:".06em"}}>Vote in progress</div>
-                    {plan.options.map(opt=>(
-                      <div key={opt} style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-                        <div style={{fontSize:12,color:C.t1,width:60}}>{opt}</div>
-                        <div style={{flex:1,height:5,background:C.s3,borderRadius:3,overflow:"hidden"}}>
-                          <div style={{height:"100%",background:C.accent,width:`${((plan.votes[opt]||0)/group.memberIds.length)*100}%`,borderRadius:3}}/>
-                        </div>
-                        <div style={{fontSize:11,color:C.t2}}>{plan.votes[opt]||0}</div>
-                      </div>
-                    ))}
+                  <div style={{background:C.s2,borderRadius:12,padding:10,marginBottom:10,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+                    <span style={{color:C.t1,fontWeight:600}}>Vote in progress: </span>{plan.options.join(" · ")}
                   </div>
                 )}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
@@ -7465,11 +7460,16 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   // button, so it never starts what the button would refuse.
   const findAsked=useRef(false);
   useEffect(()=>{
-    if(!find||findAsked.current||step!=="wait"||generating||isSolo)return;
+    if(!find||findAsked.current||step!=="wait"||generating)return;
     const wp=(group?.plans||[]).find(p=>p.id===waitPlanId);
     if(!wp||wp.destStyle!=="undecided"||wp.status==="voting")return;
     const ms=answered?.members||[];
-    if(!(ms.length>0&&ms.every(m=>m.answered)))return;
+    // A plan for one waits on nobody: readiness says so (solo, allReady).
+    // It was skipped here, and "Find them →" on a solo plan opened a locked
+    // "Find our trips" under "Everyone answers first" — a wall with nothing
+    // behind it (QA walk, 2026-11-05).
+    const ready=isSolo?(!!answered&&answered.allReady!==false):(ms.length>0&&ms.every(m=>m.answered));
+    if(!ready)return;
     findAsked.current=true;
     findOurTrips(wp);
   },[find,step,answered,group,waitPlanId,generating,isSolo]);
@@ -7997,7 +7997,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             {step===0
               ?"Tell us about it"
               :step==="wait"
-              ?(waitPlan?.status==="voting"?"Vote on the ideas":"Everyone answers first")
+              ?(waitPlan?.status==="voting"?(isSolo?"Pick your trip":"Vote on the ideas"):(isSolo?"Your trip ideas":"Everyone answers first"))
               :step===1
                 ?(nightOut?"Finding you a night out…":"Finding your perfect trips…")
                 :(nightOut?"Pick your night":"Pick your trip")}
@@ -8135,7 +8135,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // Strict: answered for this trip. The lenient `ready` would let a
         // trip nobody has answered for through, which is the thing this
         // screen exists to stop.
-        const allAnswered=!isSolo&&members.length>0&&members.every(m=>m.answered);
+        const allAnswered=isSolo
+          ?(!!answered&&answered.allReady!==false)
+          :members.length>0&&members.every(m=>m.answered);
         const othersOut=members.some(m=>!m.answered&&m.userId!==me);
         const first=n=>String(n||"").trim().split(/\s+/)[0]||"Someone";
         const nightWait=wp.type==="restaurant";
@@ -8258,10 +8260,12 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             ):(
               <>
                 <button className="bp" disabled={!allAnswered||generating} onClick={()=>findOurTrips(wp)}>
-                  {allAnswered?"":"🔒 "}{nightWait?"Find our nights out":"Find our trips"}
+                  {allAnswered?"":"🔒 "}{isSolo?(nightWait?"Find my nights out":"Find my trips"):(nightWait?"Find our nights out":"Find our trips")}
                 </button>
                 <div style={{fontSize:12,color:C.t3,marginTop:8,lineHeight:1.5,textAlign:"center"}}>
-                  {allAnswered
+                  {isSolo
+                    ?(allAnswered?null:"Say what you want from this trip first, and this opens.")
+                    :allAnswered
                     ?"Anyone in the group can press this."
                     :"Unlocks when everyone's in"}
                 </div>

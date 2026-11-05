@@ -122,6 +122,11 @@ const PART_WINDOW: Record<SlotPart, Window> = {
   morning: 'morning', afternoon: 'afternoon', evening: 'after_six', night: 'night', day: 'day',
 };
 
+/** Where people go to drink: not something offered for a morning or an afternoon. */
+const DRINKING = new Set(['bar', 'pub', 'nightclub', 'brewery', 'winery', 'distillery', 'biergarten', 'cocktail bar', 'wine bar']);
+/** Words that say a line is out of doors. */
+const OUTSIDE_WORDS = /\b(beach|walk|stroll|wander|park|garden|trail|hike|shore|waterfront|outdoors?|picnic|lake|river)\b/i;
+
 export function slotWindow(time: unknown, nightOut: boolean): SlotPart {
   const t = String(time ?? '');
   const h = clockHour(t);
@@ -396,11 +401,20 @@ export function alternativesFor(input: AlternativesInput): AlternativesResult {
   const roofed = (p: RealPlace) => (input.preferIndoor && setting(p.kind) === 'indoor' ? 1 : 0);
   const matching = wanted.size ? pool.filter(wants) : [];
   const like = !!current || matching.length > 0;
-  const ranked = (matching.length ? matching : pool)
+  // Nothing of the kind its words ask for ("a morning on Folly Beach" and no
+  // beach held): what is near, but never drinking before the evening — the
+  // QA walk was offered three King Street bars for a beach morning. And when
+  // the words asked for somewhere outside, outside places first.
+  const daytime = window === 'morning' || window === 'afternoon' || window === 'day';
+  const nearby = pool.filter(p => !(daytime && DRINKING.has(kindOf(p.kind))));
+  const outsideFirst = !current && !matching.length && OUTSIDE_WORDS.test(String(line.title ?? ''));
+  const outside = (p: RealPlace) => (outsideFirst && setting(p.kind) === 'outdoor' ? 1 : 0);
+  const ranked = (matching.length ? matching : nearby)
     .map(p => ({ p, km: kmToNearest(p, anchors), same: sameKind(p) }))
     .sort((a, b) =>
       roofed(b.p) - roofed(a.p)
       || Number(b.same) - Number(a.same)
+      || outside(b.p) - outside(a.p)
       || (a.km === null ? 1 : 0) - (b.km === null ? 1 : 0)
       || (a.km ?? 0) - (b.km ?? 0)
       || a.p.name.localeCompare(b.p.name));
