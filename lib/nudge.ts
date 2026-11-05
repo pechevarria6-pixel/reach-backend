@@ -312,13 +312,43 @@ export function fundingStanding(
   // The budget is a guess only until money has come in — checkout's rule.
   const guessCents = netCollectedCents(contributions) > 0 ? 0 : Math.max(0, budgetCents || 0);
   const shares = planShares(bookings, guessCents, memberIds, skips);
+  // And a guess is never asked for: with nothing priced checkout refuses to
+  // take a payment ("We're still pricing this") and shows "Nothing to pay".
+  // B was nudged three times that "Your share is still to pay" on exactly
+  // such a plan (2026-11-05). Nobody owes until something has a price.
+  const priced = bookings.some(b => (b.price_cents || 0) > 0);
   const out: FundingStanding = { done: new Set(), notNeeded: new Set(), shares, remaining: {} };
   for (const id of memberIds) {
     const paid = netCollectedCents(contributions, id);
-    const owe = Math.max(0, (shares[id] ?? 0) - paid);
+    const owe = priced ? Math.max(0, (shares[id] ?? 0) - paid) : 0;
     out.remaining[id] = owe;
     if (owe > 0) continue;
     (paid > 0 ? out.done : out.notNeeded).add(id);
   }
   return out;
+}
+
+/**
+ * What a nudge says when there is nobody to send it to. "Everyone else has
+ * already answered" on a trip for one is group copy on a screen somebody
+ * reached alone (2026-11-05); "Everyone has already paid" on a plan nothing
+ * is priced on yet is a payment nobody made.
+ */
+export function nobodyToNudge(p: {
+  kind: 'vote' | 'funding' | 'prefs';
+  /** Every member but whoever pressed it. */
+  others: string[];
+  /** Members with nothing to do here (fundingStanding's notNeeded). */
+  notNeeded: Set<string>;
+  night: boolean;
+}): string {
+  const what = p.night ? 'night out' : 'trip';
+  if (!p.others.length) return `It's just you on this ${what}, so there's nobody to nudge.`;
+  if (p.kind === 'prefs') return 'Everyone else has already answered';
+  if (p.kind === 'funding') {
+    return p.others.every(id => p.notNeeded.has(id))
+      ? `Nobody else has anything to pay on this ${what}.`
+      : 'Everyone has already paid';
+  }
+  return 'Everyone has already done this';
 }

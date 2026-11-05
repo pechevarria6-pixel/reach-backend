@@ -118,12 +118,20 @@ export type PlanBooking = { id: string | number; price_cents?: number | null };
 
 /**
  * What every member owes a plan: its priced bookings, less anything each of
- * them is sitting out; before anything is priced, an even share of the budget.
+ * them is sitting out; before anything is priced, the budget.
  *
  * Funding charges this, the participation route shows it, the reminder email
  * quotes it and the ledger apportions by it, so no two screens can disagree
- * about what somebody owes. The shares always add up to the bookings' total,
- * which is what the approval gate compares collected money against.
+ * about what somebody owes. Once anything is priced the shares add up to the
+ * bookings' total, which is what the approval gate compares collected money
+ * against.
+ *
+ * `budgetCents` is per person — plans.budget_cents is the quiz's budget per
+ * person, an idea's total_per_person once picked, and the plan screen shows it
+ * as "$800/person". It was split as if it were the trip's total, so each of
+ * two people on an $800/person trip read a $400 share, and the one left when
+ * the other went read $800 (2026-11-05). A guess, never charged: checkout
+ * takes nothing while nothing is priced.
  */
 export function planShares(
   bookings: PlanBooking[], budgetCents: number, memberIds: string[], skips: Skip[] = [],
@@ -132,8 +140,8 @@ export function planShares(
   if (priced.length) {
     return sharesWithSkips(priced.map(b => ({ ref: String(b.id), priceCents: b.price_cents || 0 })), memberIds, skips);
   }
-  const even = evenSplit(budgetCents, memberIds.length);
-  return Object.fromEntries(memberIds.map((id, i) => [id, even[i] ?? 0]));
+  const each = Math.max(0, Math.round(budgetCents || 0));
+  return Object.fromEntries(memberIds.map(id => [id, each]));
 }
 
 /**

@@ -120,8 +120,16 @@ test('a booking everybody sat out is still paid for, by everybody', () => {
   assert.deepEqual(shares, { ana: 4500, ben: 4500 });
 });
 
-test('before anything is priced, a share is an even split of the budget', () => {
-  assert.deepEqual(planShares([], 30000, ['ana', 'ben', 'cam']), { ana: 10000, ben: 10000, cam: 10000 });
+// plans.budget_cents is per person: the quiz's budgetPerPerson, an idea's
+// total_per_person when it is picked, and "$800/person" on the plan screen.
+// Splitting it as if it were the trip's total told each of two people their
+// share of an $800/person Charleston trip was $400 (2026-11-05), and A's
+// share doubled to $800 when B left.
+test('before anything is priced, everybody\'s share is the per-person budget', () => {
+  assert.deepEqual(planShares([], 30000, ['ana', 'ben', 'cam']), { ana: 30000, ben: 30000, cam: 30000 });
+  assert.deepEqual(planShares([], 80000, ['a', 'b']), { a: 80000, b: 80000 });
+  // Somebody leaving does not change what the rest are guessed to pay.
+  assert.deepEqual(planShares([], 80000, ['a']), { a: 80000 });
 });
 
 test('checkout charges exactly the share the plan screen shows', () => {

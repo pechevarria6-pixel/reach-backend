@@ -28,7 +28,7 @@ import { appUrl } from '@/lib/app-url';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { sendVoteNeeded, sendFundingNeeded, sendAnswersNeeded, type SendResult } from '@/lib/email';
 import { planSkips } from '@/lib/participation';
-import { claimNudge, releaseNudge, limitsNudge, claimPeople, releasePeople, nudgedUntil, fundingStanding } from '@/lib/nudge';
+import { claimNudge, releaseNudge, limitsNudge, claimPeople, releasePeople, nudgedUntil, fundingStanding, nobodyToNudge } from '@/lib/nudge';
 import { z } from 'zod';
 import { readIdeas, shownTitle, votedMembers } from '@/lib/trip-vote';
 import { notMigrated, MIGRATION } from '@/lib/trip-ideas-store';
@@ -221,8 +221,10 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   if (!outstanding.length) {
     return NextResponse.json({
       notified: 0,
-      message: kind === 'prefs' ? 'Everyone else has already answered'
-        : kind === 'funding' ? 'Everyone has already paid' : 'Everyone has already done this',
+      message: nobodyToNudge({
+        kind, others: memberIds.filter(id => id !== ctx.user.id),
+        notNeeded: who.notNeeded, night: plan.type === 'restaurant',
+      }),
     });
   }
   const aimedAt = target ? [target] : outstanding;

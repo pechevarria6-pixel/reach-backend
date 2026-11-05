@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   claimNudge, releaseNudge, limitsNudge, NUDGE_ACTION,
   claimPeople, releasePeople, nudgedUntil, PERSON_NUDGE_ACTION,
-  fundingStanding,
+  fundingStanding, nobodyToNudge,
 } from '../../lib/nudge.ts';
 
 type Row = { id: string; action: string; resource_id: string; created_at: string; [k: string]: unknown };
@@ -313,8 +313,22 @@ test('once money is in, the budget is not a share — as checkout has it', () =>
   assert.ok(s.done.has('al'));
 });
 
-test('before anything is paid or priced, the budget is split evenly and everyone owes', () => {
+// Checkout refuses to take a payment while nothing is priced ("We're still
+// pricing this"), and showed both QA accounts "Nothing to pay" — yet the
+// funding faces marked them both as owing and B was nudged three times that
+// "Your share is still to pay" (2026-11-05). A share of a guess is not money
+// anybody can pay, so nobody is chased for it.
+test('before anything is priced, nobody is chased to pay — checkout has nothing to take', () => {
   const s = fundingStanding([], 40000, [], ['al', 'jo']);
+  assert.equal(s.remaining.al, 0);
+  assert.equal(s.remaining.jo, 0);
+  assert.ok(s.notNeeded.has('al') && s.notNeeded.has('jo'));
+  // The guess is still each person's share, per person, for the screen.
+  assert.equal(s.shares.al, 40000);
+});
+
+test('once something is priced, the unpaid owe it and are chased', () => {
+  const s = fundingStanding([{ id: 'h', price_cents: 40000 }], 80000, [], ['al', 'jo']);
   assert.equal(s.remaining.al, 20000);
   assert.equal(s.done.size + s.notNeeded.size, 0);
 });
@@ -323,4 +337,22 @@ test('the notify route reads paid from fundingStanding, not from any succeeded r
   assert.match(route, /fundingStanding\(/);
   assert.doesNotMatch(route, /status === 'succeeded'\) out\.done/);
   assert.doesNotMatch(route, /planShares\(/);
+});
+
+// A solo plan answered "Everyone else has already answered" (2026-11-05):
+// group copy to the one person on it.
+test('with nobody to nudge, the reply fits who is on the plan', () => {
+  const none = new Set<string>();
+  assert.equal(nobodyToNudge({ kind: 'prefs', others: [], notNeeded: none, night: false }),
+    "It's just you on this trip, so there's nobody to nudge.");
+  assert.equal(nobodyToNudge({ kind: 'funding', others: [], notNeeded: none, night: true }),
+    "It's just you on this night out, so there's nobody to nudge.");
+  assert.equal(nobodyToNudge({ kind: 'prefs', others: ['b'], notNeeded: none, night: false }),
+    'Everyone else has already answered');
+  // Nothing priced: nobody has paid, so "already paid" is not true.
+  assert.equal(nobodyToNudge({ kind: 'funding', others: ['b'], notNeeded: new Set(['b']), night: false }),
+    'Nobody else has anything to pay on this trip.');
+  assert.equal(nobodyToNudge({ kind: 'funding', others: ['b'], notNeeded: none, night: false }),
+    'Everyone has already paid');
+  assert.match(route, /message: nobodyToNudge\(/);
 });
