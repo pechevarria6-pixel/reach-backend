@@ -193,7 +193,7 @@ export interface PlaceInput {
   /** The held venue: its own number, hours and longitude. */
   venue: { name: string; phone: string | null; opening_hours: string | null; lng: number | null; reserveUrl: string | null } | null;
   /** What the person chose for this call. */
-  chosen: { date?: string; time?: string; partySize?: number; notes?: string | null; cancellationList?: boolean };
+  chosen: { date?: string; time?: string; partySize?: number; notes?: string | null };
   /**
    * The status a call that books nothing puts the row back to, when the
    * caller already took the row for this call (reserve.ts marks it 'pending'
@@ -254,7 +254,6 @@ export async function placeCall(input: PlaceInput, deps: PlaceDeps): Promise<Pla
     partySize: input.chosen.partySize ?? b.request_payload?.restaurant?.partySize,
     firstName: input.requester.firstName ?? '',
     notes: input.chosen.notes ?? null,
-    cancellationList: input.chosen.cancellationList === true,
   });
   if (checked.ok === false) {
     if (checked.missing.length === 1 && checked.missing[0] === 'venue_phone') return no('number_unreadable');

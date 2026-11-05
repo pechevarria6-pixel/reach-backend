@@ -38,7 +38,7 @@ export interface WatchRow {
   item_id: string | null;
   /** What is watched. For a table: the discovery_venues row's id, never a name. */
   target_ref: string;
-  /** How it is watched. For a table: 'platform' (Reach asks the platform) or 'call_list' (asked on Reach's call). */
+  /** How it is watched. For a table: 'platform' (Reach asks the platform) — the only way there is. */
   method: string;
   platform: string | null;
   /** The kind's own facts: a table's nights, times and party. */

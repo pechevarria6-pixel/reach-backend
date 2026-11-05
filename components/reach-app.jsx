@@ -9678,6 +9678,9 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
   const [err,setErr]=useState(null);
   const [busy,setBusy]=useState(false);
   const [pick,setPick]=useState({nights:[],from:"",to:"",party:party||2});
+  // The table was handed to them: asked once, here, whether they booked it
+  // themselves (POST answers ask_first), never at each table that opens.
+  const [askFirst,setAskFirst]=useState(null);
   const mine=list.find(w=>w.live&&(bookingId?w.bookingId===bookingId:(!w.bookingId&&w.targetRef===venueRef)));
   const quiet={fontSize:12,color:C.t2,lineHeight:1.5};
 
@@ -9694,14 +9697,15 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
       setPick({nights:d.nights?.length===1?[d.nights[0]]:[],from:t?shiftClock(t,-60):"18:00",to:t?shiftClock(t,60):"21:00",party:d.start?.party||party||2});
     }catch(e){console.error("[watch] could not read the offer",e);setErr("Couldn't check that just now. Nothing is being watched.");}
   };
-  const start=async()=>{
+  const start=async(notBookedElsewhere=false)=>{
     if(busy)return;
-    setBusy(true);setErr(null);
+    setBusy(true);setErr(null);setAskFirst(null);
     try{
       const r=await fetchWithin("/api/watches",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({...(bookingId?{bookingId}:{venueRef}),nights:pick.nights,from:pick.from,to:pick.to,party:Number(pick.party)})},20000,"the table watch");
+        body:JSON.stringify({...(bookingId?{bookingId}:{venueRef}),nights:pick.nights,from:pick.from,to:pick.to,party:Number(pick.party),...(notBookedElsewhere?{notBookedElsewhere:true}:{})})},20000,"the table watch");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok){setErr(d.error||"Couldn't start watching. Nothing is being watched.");if(d.offer)setView(v=>v?{...v,offer:d.offer}:v);}
+      if(!r.ok&&d.code==="ask_first")setAskFirst(d.error||`Have you already booked ${restaurant} yourself?`);
+      else if(!r.ok){setErr(d.error||"Couldn't start watching. Nothing is being watched.");if(d.offer)setView(v=>v?{...v,offer:d.offer}:v);}
       else{setOpen(false);toast(`Watching ${restaurant}`);watchesChanged();}
     }catch(e){console.error("[watch] could not start a watch",e);setErr("We didn't hear back. Check your watches before trying again.");watchesChanged();}
     setBusy(false);
@@ -9763,7 +9767,14 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
             <label style={{...quiet,display:"flex",gap:6,alignItems:"center",flex:"0 1 110px"}}>Party
               <input className="inp" type="number" min={1} max={view.limits?.partyMax||20} value={pick.party} onChange={e=>setPick(p=>({...p,party:e.target.value}))} style={{flex:1,minWidth:0}}/></label>
           </div>
-          <button className="bp" disabled={busy||!ok} style={{marginTop:10,width:"100%"}} onClick={start}>{busy?"Starting…":"Start watching"}</button>
+          {askFirst?(
+            <div style={{marginTop:10}}>
+              <div style={{...quiet,color:C.t1}}>{askFirst}</div>
+              <button className="bp" disabled={busy||!ok} style={{marginTop:8,width:"100%"}} onClick={()=>start(true)}>{busy?"Starting…":"I haven't booked it — start watching"}</button>
+            </div>
+          ):(
+            <button className="bp" disabled={busy||!ok} style={{marginTop:10,width:"100%"}} onClick={()=>start(false)}>{busy?"Starting…":"Start watching"}</button>
+          )}
           {offer.can==="platform"&&(
             <div style={{fontSize:11,color:C.t3,lineHeight:1.5,marginTop:6,textAlign:"center"}}>
               Reach never books on its own: when a table opens you read {offer.platformName}'s terms and tap to book.
@@ -9859,6 +9870,13 @@ function WatchLanding({id,toast,push,onClose}){
               onChanged={async()=>{watchesChanged();}}/>
           ):(
             <div>
+              {/* The table the notification was about, kept until it has
+                  gone (lib/watch/tables.ts kept), with where to book it. */}
+              {w.opened&&(
+                <div style={{fontSize:13,color:C.t1,lineHeight:1.5,marginBottom:8}}>
+                  A table opened for {w.opened.when}{w.opened.card?`. ${w.restaurant} wants a card for it, which only ${w.platformName||"their page"} takes`:""}. It may have gone since.
+                </div>
+              )}
               <div style={{fontSize:13,color:C.t1,lineHeight:1.5}}>{w.said}</div>
               <div style={{fontSize:12,color:C.t2,marginTop:2}}>{w.window}</div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>

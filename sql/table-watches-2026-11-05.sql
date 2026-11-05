@@ -27,11 +27,11 @@ create table if not exists public.watches (
   -- What is watched: for a table, the discovery_venues row the line cites.
   -- Never a name.
   target_ref      text not null check (length(target_ref) between 1 and 200),
-  -- 'platform': Reach asks the platform. 'call_list': Reach's own call (when
-  -- calling is open) asks about a cancellation list.
-  method          text not null check (method in ('platform', 'call_list')),
+  -- 'platform': Reach asks the platform. The only way: a restaurant that
+  -- books by phone has nothing for Reach to check, so it is never watched.
+  method          text not null check (method in ('platform')),
   platform        text,
-  -- table: { restaurant, nights: [YYYY-MM-DD], from: 'HH:MM', to: 'HH:MM', party, lng, lapses }
+  -- table: { restaurant, nights: [YYYY-MM-DD], from: 'HH:MM', to: 'HH:MM', party, lng, lapses, notBookedElsewhere? }
   spec            jsonb not null default '{}'::jsonb,
   status          text not null default 'active'
                   check (status in ('active', 'held', 'booked', 'stopped', 'expired', 'ended')),

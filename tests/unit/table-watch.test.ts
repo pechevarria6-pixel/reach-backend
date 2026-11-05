@@ -7,7 +7,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   readWindow, offerFor, pickSlot, checkTable, nightsOffered, expiresAtFor, clockBetween, windowSaid, PRE_ACCEPTED, TABLE_WATCH,
-  type TableWatchDeps, type LoadedTable,
+  clashes, counted, tableTaken, blockedForWatch, tableWatcher, HOLD_CALLS,
+  type TableWatchDeps, type LoadedTable, type TakenTable,
 } from '../../lib/watch/tables.ts';
 import { runWatches } from '../../lib/watch/run.ts';
 import type { WatchRow, WatchStore, CheckCtx, WatchStep } from '../../lib/watch/types.ts';
@@ -15,7 +16,6 @@ import { reserveTable, type TableRow, type TableStore, type ReserveInput, type R
 import { pickTable } from '../../lib/booking/tables/pick.ts';
 import type { Openings, OpeningsAsk, TableProvider, TableSlot } from '../../lib/booking/tables/types.ts';
 import type { TableStore as FlowStore } from '../../lib/booking/tables/flow.ts';
-import { checkFacts, instructions } from '../../lib/reservations/script.ts';
 
 // 13:00 in Raleigh by the longitude estimate.
 const NOW = new Date('2026-11-04T18:00:00Z');
@@ -87,7 +87,7 @@ test('the picker offers the trip\'s nights from today, and a watch ends after it
 // ── the offer ───────────────────────────────────────────────────────────
 
 const OT = { restaurant: "Luigi's", platform: 'opentable' as const, reserveUrl: 'https://www.opentable.com/r/luigis', phone: '(919) 555-0100', onPlan: true, cited: true };
-const ON = { instant: platform().instant, call: { ok: false as const, why: 'calls_off' as const }, migrated: true, running: true };
+const ON = { instant: platform().instant, migrated: true, running: true };
 
 test('Reach says it watches only where a platform deal, the migration and a running schedule are all there', () => {
   const yes = offerFor(OT, ON);
@@ -126,31 +126,20 @@ test('a platform Reach has no deal with: that platform\'s own alert, said as the
   assert.equal(yelp.can === 'none' && yelp.alert, null, "Yelp's waitlist is a same-day queue, not an alert");
 });
 
-test('a phone-only restaurant: a cancellation list asked on Reach\'s own call only when calling is really open', () => {
+test('a phone-only restaurant is never offered as a watch: nothing checks a phone line, so their number and the cancellation-list ask are theirs', () => {
   const phoneOnly = { ...OT, platform: 'none' as const, reserveUrl: null };
-  const open = offerFor(phoneOnly, { ...ON, instant: null, call: { ok: true } });
-  assert.equal(open.can, 'call_list');
-  assert.match(open.what, /When Reach calls them for this table, it also asks whether they keep a cancellation list\./);
-  const shut = offerFor(phoneOnly, { ...ON, instant: null });
-  assert.equal(shut.can === 'none' && shut.why, 'phone_only');
-  assert.match(shut.what, /Reach can't call for you yet\. Ring them/);
-  // A Discover card has no booking for a call to be about.
-  assert.equal(offerFor({ ...phoneOnly, onPlan: false }, { ...ON, instant: null, call: { ok: true } }).can, 'none');
+  for (const o of [offerFor(phoneOnly, { ...ON, instant: null }), offerFor({ ...phoneOnly, onPlan: false }, { ...ON, instant: null })]) {
+    assert.equal(o.can, 'none');
+    if (o.can !== 'none') return;
+    assert.equal(o.why, 'phone_only');
+    assert.equal(o.phone, OT.phone, 'their number is the next option');
+    assert.match(o.what, /nothing online for Reach to watch\. Ring them and ask whether they keep a cancellation list\.$/);
+    assert.doesNotMatch(o.what, /Reach (calls|checks|watches|asks)/, 'no promise of a call or a check nothing makes');
+  }
 });
 
 test('no platform lets Reach book on terms accepted in advance, so nothing is pre-accepted', () => {
   assert.deepEqual(Object.keys(PRE_ACCEPTED), []);
-});
-
-test('the call asks about a cancellation list only when a watch asked it to', () => {
-  const base = { restaurant: "Luigi's", venuePhone: '+19195550100', date: '2026-11-07', time: '19:30', partySize: 4, firstName: 'Maria' };
-  const plain = checkFacts(base);
-  const asked = checkFacts({ ...base, cancellationList: true });
-  assert.ok(plain.ok && asked.ok);
-  if (!plain.ok || !asked.ok) return;
-  assert.doesNotMatch(instructions(plain.facts), /cancellation list/);
-  assert.match(instructions(asked.facts), /ask whether they keep a cancellation list/);
-  assert.match(instructions(asked.facts), /Do not give a phone number or put anybody on a list yourself/);
 });
 
 // ── which slot ──────────────────────────────────────────────────────────
@@ -182,22 +171,27 @@ function watch(over: Partial<WatchRow> = {}): WatchRow {
 
 const LOADED: LoadedTable = {
   restaurant: "Luigi's", urls: [OT_PROFILE], reserveUrl: 'https://www.opentable.com/r/luigis', lng: LNG,
-  booking: { status: 'failed', confirmed: false, theirs: false, busy: false, holdId: null },
+  booking: { status: 'failed', confirmed: false, theirs: false, busy: false, holdId: null, holdExpiresAt: null, owed: false },
 };
 
-function checkDeps(o: { loaded?: LoadedTable | { gone: true } | null; instant?: InstantTable | null; hold?: (s: { date: string; time: string }) => ReserveResult } = {}) {
+function checkDeps(o: {
+  loaded?: LoadedTable | { gone: true } | null; instant?: InstantTable | null;
+  hold?: (s: { date: string; time: string }) => ReserveResult; holdCalls?: number; taken?: TakenTable[] | null;
+} = {}) {
   const held: { date: string; time: string }[] = [];
   const deps: TableWatchDeps = {
     load: async () => (o.loaded === undefined ? LOADED : o.loaded),
     instantFor: urls => (o.instant === undefined ? null : o.instant && pickTable([o.instant.provider], urls)),
     async hold(_row, s) {
       held.push(s);
-      return o.hold ? o.hold(s) : {
+      const result: ReserveResult = o.hold ? o.hold(s) : {
         ok: false, code: 'terms_required', status: 409, alternatives: [], error: 'Read the terms.',
         hold: { holdId: 'lock_9', platform: 'opentable', platformLabel: 'OpenTable', date: s.date, time: s.time, covers: 4, expiresAt: new Date(NOW.getTime() + 300_000).toISOString(), cancellationPolicy: null, policies: [], terms: null, fee: null, cancelBy: null, notes: null, editable: true },
         button: 'Complete reservation', title: 'Held for five minutes', body: 'Nothing is booked yet.', changeNote: null,
       };
+      return { result, calls: o.holdCalls ?? 2 };
     },
+    taken: async () => (o.taken === undefined ? [] : o.taken),
   };
   return { deps, held };
 }
@@ -216,7 +210,7 @@ test('a table that opens is HELD through press one and the person told to tap �
   assert.equal(step.note?.body, 'OpenTable is holding it for five minutes. Tap to read the terms and book it.');
   assert.equal(step.note?.url, '/home?watch=w1');
   assert.doesNotMatch(`${step.note?.title} ${step.note?.body}`, /\bbooked\b|confirmed/i);
-  assert.equal(step.calls, 2);
+  assert.equal(step.calls, 4, "the two openings and press one's own two requests");
 });
 
 test('while the hold is live nothing is asked; booked by their tap ends it quietly as booked', async () => {
@@ -262,8 +256,10 @@ test('nothing is polled where Reach cannot: no platform keys, a phone-only list,
   assert.equal(off.calls, 0);
   assert.equal((off.patch.last_result as { found?: string }).found, 'platform_off');
 
+  // A row from before phone-only restaurants stopped being watches: ended, never left looking as if checked.
   const list = await checkTable(watch({ method: 'call_list' }), CTX, checkDeps({ instant: pl.instant }).deps);
   assert.equal(list.calls, 0);
+  assert.equal(list.patch.status, 'ended');
 
   const theirs = await checkTable(watch(), CTX, checkDeps({ instant: pl.instant, loaded: { ...LOADED, booking: { ...LOADED.booking!, theirs: true } } }).deps);
   assert.equal(theirs.patch.status, 'ended');
@@ -299,7 +295,7 @@ test('a watch with no plan tells, with the platform\'s page, and holds nothing',
   const step = await checkTable(watch({ plan_id: null, booking_id: null }), CTX, deps);
   assert.equal(held.length, 0);
   assert.equal(step.patch.status, undefined);
-  assert.equal((step.patch.last_result as { link?: string }).link, 'https://www.opentable.com/booking/slot');
+  assert.equal((step.patch.last_result as { opening?: { link?: string } }).opening?.link, 'https://www.opentable.com/booking/slot');
   assert.match(step.note!.body, /^Reach can't hold it from here\. Book it on OpenTable/);
 });
 
@@ -449,4 +445,159 @@ test('the limits are the ones the screens and the migration describe', () => {
   assert.equal(TABLE_WATCH.perPerson, 3);
   assert.equal(TABLE_WATCH.nights, 7);
   assert.ok(TABLE_WATCH.nearMinutes >= 15, 'checked more often than every fifteen minutes');
+});
+
+// ── review fixes, 2026-11-05 ────────────────────────────────────────────
+
+test('press one\'s own requests count against the run\'s budget, and a slow down said to the hold leaves the platform alone', async () => {
+  // counted(): every request to the provider is tallied; what it knows without asking is not.
+  const pl = platform(() => ({ ok: true, slots: [] }));
+  const tally = { n: 0 };
+  const c = counted(pl.p, tally);
+  c.venueIdFrom([OT_PROFILE]); c.enabled();
+  await c.openings('1038007', { date: '2026-11-07', time: '20:00', covers: 4 });
+  await c.hold('1038007', { date: '2026-11-07', time: '20:00', covers: 4, uniqueId: 'b1' });
+  await c.release({} as never);
+  assert.equal(tally.n, 3);
+  assert.equal(pl.asked.length, 1, 'the counted provider still asks the real one');
+
+  // The hold's requests are added to the check's.
+  const open = platform(() => ({ ok: true, slots: [slot('2026-11-07', '20:30')] }));
+  const step = await checkTable(watch(), CTX, checkDeps({ instant: open.instant, holdCalls: 3 }).deps);
+  assert.equal(step.calls, 5);
+
+  // No room left for press one: nothing held, the slot left for the next run.
+  const tight = checkDeps({ instant: open.instant });
+  const deferred = await checkTable(watch(), { ...CTX, budget: 2 + HOLD_CALLS - 1 }, tight.deps);
+  assert.equal(tight.held.length, 0, 'held with no budget left for its requests');
+  assert.equal(deferred.patch.seen, undefined);
+  assert.equal((deferred.patch.last_result as { found?: string }).found, 'deferred');
+
+  // 429 during the hold: throttled, so the run asks that platform nothing more.
+  const slow = checkDeps({ instant: open.instant, hold: () => ({ ok: false, code: 'rate_limited' as never, status: 429, error: 'slow down', alternatives: [] }) });
+  const s429 = await checkTable(watch(), CTX, slow.deps);
+  assert.equal(s429.throttled, 'opentable');
+  assert.equal(s429.note, undefined);
+
+  // Through a run: the second watch is never polled after the first one's hold heard 429.
+  const run = platform(() => ({ ok: true, slots: [slot('2026-11-07', '20:30')] }));
+  const d = checkDeps({ instant: run.instant, hold: () => ({ ok: false, code: 'rate_limited' as never, status: 429, error: 'slow down', alternatives: [] }) });
+  const s = runStore([watch({ id: 'a' }), watch({ id: 'b', booking_id: 'b2' })]);
+  const r = await runWatches(s.store, [tableWatcher(d.deps)], { now: NOW, budget: 60 });
+  assert.equal(run.asked.length, 2, 'the second watch polled a platform that had just said slow down');
+  assert.equal(r.calls, 4);
+});
+
+test('press two answered "add a card on the platform": not a lapse, nothing said, and the watch ends', async () => {
+  const pl = platform(() => ({ ok: true, slots: [slot('2026-11-07', '21:00')] }));
+  const h = { holdId: 'lock_9', date: '2026-11-07', time: '20:30', expiresAt: new Date(NOW.getTime() + 60_000).toISOString(), platform: 'opentable', button: 'Complete reservation', title: '', body: '', changeNote: null };
+  const { deps, held } = checkDeps({ instant: pl.instant, loaded: { ...LOADED, booking: { ...LOADED.booking!, status: 'pending', holdId: null, owed: true } } });
+  const step = await checkTable(watch({ status: 'held', hold: h }), CTX, deps);
+  assert.equal(step.patch.status, 'ended');
+  assert.equal((step.patch.last_result as { found?: string }).found, 'card_owed');
+  assert.equal(step.note, undefined, 'told "Nothing was booked" over a reservation waiting on their card');
+  assert.equal(held.length, 0);
+  assert.equal(pl.asked.length, 0);
+});
+
+test('never a second table within 2.5 hours of one they already have: another watch\'s hold, a booked dinner, a hold on another line', async () => {
+  assert.equal(clashes({ date: '2026-11-07', time: '20:30' }, [{ date: '2026-11-07', time: '20:00' }]), true);
+  assert.equal(clashes({ date: '2026-11-07', time: '20:30' }, [{ date: '2026-11-07', time: '18:00' }]), false, 'exactly 2.5 hours apart is allowed');
+  assert.equal(clashes({ date: '2026-11-07', time: '20:30' }, [{ date: '2026-11-06', time: '20:30' }]), false);
+
+  const pl = platform(ask => ({ ok: true, slots: ask.date === '2026-11-06' ? [slot('2026-11-06', '20:00')] : [slot('2026-11-07', '20:30')] }));
+  const { deps, held } = checkDeps({ instant: pl.instant, taken: [{ date: '2026-11-06', time: '19:30' }] });
+  const step = await checkTable(watch(), CTX, deps);
+  assert.deepEqual(held, [{ date: '2026-11-07', time: '20:30' }], 'held a table beside one they already have');
+  assert.equal(step.patch.status, 'held');
+
+  const both = checkDeps({ instant: pl.instant, taken: [{ date: '2026-11-06', time: '20:00' }, { date: '2026-11-07', time: '20:00' }] });
+  const none = await checkTable(watch(), CTX, both.deps);
+  assert.equal(both.held.length, 0);
+  assert.equal(none.note, undefined);
+
+  // Their tables unreadable: nothing held or told until they can be read.
+  const blind = checkDeps({ instant: pl.instant, taken: null });
+  const unread = await checkTable(watch(), CTX, blind.deps);
+  assert.equal(blind.held.length, 0);
+  assert.equal(unread.note, undefined);
+
+  // What counts as a table they have.
+  const later = new Date(NOW.getTime() + 120_000).toISOString();
+  assert.deepEqual(tableTaken({ status: 'confirmed', request_payload: { restaurant: { date: '2026-11-07', time: '19:30' } }, response_payload: { booked: { date: '2026-11-07', time: '20:00' } } }, NOW), { date: '2026-11-07', time: '20:00' });
+  assert.deepEqual(tableTaken({ status: 'pending', request_payload: { restaurant: { date: '2026-11-07', time: '19:30' } } }, NOW), { date: '2026-11-07', time: '19:30' });
+  assert.deepEqual(tableTaken({ status: 'awaiting_approval', response_payload: { table: { platform: 'opentable', hold: { holdId: 'x', date: '2026-11-07', time: '20:15', expiresAt: later } } } }, NOW), { date: '2026-11-07', time: '20:15' });
+  assert.equal(tableTaken({ status: 'awaiting_approval', response_payload: { table: { platform: 'opentable', hold: { holdId: 'x', date: '2026-11-07', time: '20:15', expiresAt: NOW.toISOString() } } } }, NOW), null, 'a hold that ran out is nobody\'s');
+  assert.equal(tableTaken({ status: 'failed', request_payload: { restaurant: { date: '2026-11-07', time: '19:30' } } }, NOW), null);
+});
+
+test('a table that opened but could not be held stays on the landing, with its link, until it has gone', async () => {
+  const opening = { date: '2026-11-07', time: '20:30', link: 'https://www.opentable.com/booking/slot', card: false };
+  const told = watch({ plan_id: null, booking_id: null, seen: ['2026-11-07T20:30'], last_result: { at: NOW.toISOString(), found: 'opened', opening } });
+  const keep = (step: WatchStep) => (step.patch.last_result as { opening?: unknown }).opening;
+
+  // Still listed: kept.
+  const still = platform(() => ({ ok: true, slots: [slot('2026-11-07', '20:30')] }));
+  assert.deepEqual(keep(await checkTable(told, CTX, checkDeps({ instant: still.instant, loaded: { ...LOADED, booking: null } }).deps)), opening);
+  // That night not answered (the platform failed): kept.
+  const down = platform(() => ({ ok: false, code: 'platform_down', error: 'no' }));
+  assert.deepEqual(keep(await checkTable(told, CTX, checkDeps({ instant: down.instant, loaded: { ...LOADED, booking: null } }).deps)), opening);
+  // Platform off: kept.
+  assert.deepEqual(keep(await checkTable(told, CTX, checkDeps({ instant: null, loaded: { ...LOADED, booking: null } }).deps)), opening);
+  // Asked that night and no longer listed: gone, so dropped.
+  const taken = platform(() => ({ ok: true, slots: [] }));
+  assert.equal(keep(await checkTable(told, CTX, checkDeps({ instant: taken.instant, loaded: { ...LOADED, booking: null } }).deps)), undefined);
+  // Its time has gone: dropped.
+  assert.equal(keep(await checkTable(told, { ...CTX, now: new Date('2026-11-08T02:00:00Z') }, checkDeps({ instant: still.instant, loaded: { ...LOADED, booking: null } }).deps)), undefined);
+
+  // A card-only table on a plan's watch is kept the same way.
+  const card = platform(() => ({ ok: true, slots: [slot('2026-11-07', '20:30', true)] }));
+  const first = await checkTable(watch(), CTX, checkDeps({ instant: card.instant }).deps);
+  assert.deepEqual((first.patch.last_result as { opening?: unknown }).opening, { date: '2026-11-07', time: '20:30', link: 'https://www.opentable.com/booking/card', card: true });
+  const next = await checkTable(watch({ seen: first.patch.seen as string[], last_result: first.patch.last_result as Record<string, unknown> }), CTX, checkDeps({ instant: card.instant }).deps);
+  assert.equal((next.patch.last_result as { found?: string }).found, 'nothing');
+  assert.ok((next.patch.last_result as { opening?: unknown }).opening, 'the link was lost after one more check');
+});
+
+test('a watch never holds over somebody\'s own Book it hold, and their press over the watch\'s hold is not a lapse', async () => {
+  const pl = platform(() => ({ ok: true, slots: [slot('2026-11-06', '19:30')] }));
+  const theirs = new Date(NOW.getTime() + 180_000).toISOString();
+  // Active watch, a live hold on the row that isn't the watch's: nothing asked, nothing held.
+  const { deps, held } = checkDeps({ instant: pl.instant, loaded: { ...LOADED, booking: { ...LOADED.booking!, status: 'awaiting_approval', holdId: 'H1', holdExpiresAt: theirs } } });
+  const wait = await checkTable(watch(), CTX, deps);
+  assert.equal(held.length, 0, 'held over a hold somebody is reading the terms for');
+  assert.equal(pl.asked.length, 0);
+  assert.equal(wait.patch.next_check_at, new Date(Date.parse(theirs) + 60_000).toISOString());
+
+  // Held watch whose hold was replaced by their own press: no lapse, nothing said.
+  const h = { holdId: 'H2', date: '2026-11-07', time: '20:30', expiresAt: new Date(NOW.getTime() + 120_000).toISOString(), platform: 'opentable', button: 'Complete reservation', title: '', body: '', changeNote: null };
+  const swapped = await checkTable(watch({ status: 'held', hold: h }), CTX, checkDeps({ instant: pl.instant, loaded: { ...LOADED, booking: { ...LOADED.booking!, status: 'awaiting_approval', holdId: 'H3', holdExpiresAt: theirs } } }).deps);
+  assert.equal(swapped.patch.status, 'active');
+  assert.equal(swapped.note, undefined, 'told "wasn\'t booked in time" while they were booking it');
+  assert.equal((swapped.patch.spec as { lapses?: number } | undefined)?.lapses, undefined, 'counted as a lapse');
+  assert.equal(swapped.patch.next_check_at, new Date(Date.parse(theirs) + 60_000).toISOString());
+
+  // And the booking path itself refuses a watch's press over a live hold on the row.
+  const m = memory(bookingRow({ status: 'awaiting_approval', response_payload: { table: { platform: 'opentable', venueId: '1038007', hold: { holdId: 'H1', platform: 'opentable', venueId: '1038007', date: '2026-11-07', time: '19:30', covers: 4, expiresAt: theirs, heldBy: 'u2', policies: [] } } } }));
+  const open = platform(ask => ({ ok: true, slots: [slot(ask.date, '20:30')] }));
+  const r = await reserveTable(pressOne(m.get(), '20:30'), reserveDeps(m.store, open.p));
+  assert.equal(r.ok === false && r.code, 'in_progress');
+  assert.equal(open.holds.length, 0);
+  assert.equal(open.asked.length, 0);
+  assert.equal((m.get().response_payload as { table?: { hold?: { holdId?: string } } }).table?.hold?.holdId, 'H1', 'their hold was written over');
+});
+
+test('a table handed to them: asked once when the watch is set, and a watch that meets "ask first" later stops, told once', async () => {
+  assert.equal(blockedForWatch({ status: 'redirected' }, "Luigi's", false)?.code, 'ask_first');
+  assert.equal(blockedForWatch({ status: 'redirected' }, "Luigi's", true), null, 'they said they haven\'t booked it');
+  assert.equal(blockedForWatch({ status: 'failed' }, "Luigi's", false), null);
+  assert.equal(blockedForWatch({ status: 'pending', mode: 'native', provider_ref: 'ot-1' }, "Luigi's", true)?.code, 'booked', 'held for their card at the platform');
+  assert.match(blockedForWatch({ status: 'redirected' }, "Luigi's", false)!.error, /Have you already booked Luigi's yourself\?/);
+
+  const pl = platform(() => ({ ok: true, slots: [slot('2026-11-07', '20:30')] }));
+  const { deps } = checkDeps({ instant: pl.instant, hold: () => ({ ok: false, code: 'ask_first', status: 409, error: 'Have you?', alternatives: [] }) });
+  const step = await checkTable(watch(), CTX, deps);
+  assert.equal(step.patch.status, 'ended', 'kept checking a table it can never hold');
+  assert.equal(step.note?.title, "Reach stopped watching Luigi's");
+  assert.match(step.note!.body, /handed to you to book, so Reach didn't hold it\. If you haven't booked it, start watching again and say so\.$/);
 });

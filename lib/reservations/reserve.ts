@@ -496,12 +496,6 @@ export interface TableStore {
   /** Move the itinerary line to the night and time booked — only while its words are still `from`. */
   retime(itemId: string, from: string | null, to: string): Promise<boolean>;
   members(groupId: string | null): Promise<string[]>;
-  /**
-   * Whether a live table watch asked for this booking's call to ask about a
-   * cancellation list (lib/watch/tables.ts). Absent or false: the call asks
-   * for the table and nothing more.
-   */
-  cancellationList?(bookingId: string): Promise<boolean>;
   notify(userIds: string[], note: { kind: string; title: string; body: string; url: string | null; planId: string }): Promise<void>;
 }
 
@@ -676,6 +670,13 @@ export async function reserveTable(input: ReserveInput, deps: ReserveDeps): Prom
       : no('in_progress', 409, 'Reach is booking this table right now.', { alternatives: [] });
   }
 
+  // A watch never holds over a hold somebody is reading the terms for: the
+  // platform would keep both locked in their name, and theirs would be gone
+  // from the row when they tapped (holdStep writes whatever it holds).
+  if (input.chosen.watch === true && shownHold && Date.parse(shownHold.expiresAt) > now.getTime()) {
+    return no('in_progress', 409, `Somebody is reading the terms for a table at ${f.restaurant} now.`, { alternatives: [] });
+  }
+
   let path: ReservePath = 'instant';
   let instant: InstantTable | null = null;
   let others: ReserveOption[] = next;
@@ -796,12 +797,7 @@ async function viaCall(input: ReserveInput, deps: ReserveDeps, f: TableFacts, b:
     plan: input.plan,
     requester: { id: input.requester.id, firstName: input.requester.firstName },
     venue: input.venue,
-    chosen: {
-      date: f.date!, time: f.time!, partySize: f.partySize, notes: input.chosen.notes?.slice(0, 300) ?? null,
-      // Somebody asked Reach to watch this table and the venue books by
-      // phone (lib/watch/tables.ts): the same call asks about a cancellation list.
-      cancellationList: (await deps.store.cancellationList?.(b.id)) === true,
-    },
+    chosen: { date: f.date!, time: f.time!, partySize: f.partySize, notes: input.chosen.notes?.slice(0, 300) ?? null },
     now: input.now,
   }, deps.call);
   if (placed.ok === false) {

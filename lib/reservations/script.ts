@@ -23,12 +23,6 @@ export interface CallFacts {
   firstName: string;
   /** What they wrote for the restaurant, if anything. */
   notes?: string | null;
-  /**
-   * They asked Reach to watch for this table (lib/watch/tables.ts): if there
-   * is none, ask whether the restaurant keeps a cancellation list. The
-   * assistant still gives no number and puts nobody on anything itself.
-   */
-  cancellationList?: boolean;
 }
 
 export type FactProblem = 'restaurant' | 'venue_phone' | 'date' | 'time' | 'party_size' | 'first_name' | 'notes';
@@ -54,7 +48,7 @@ export function checkFacts(f: Partial<CallFacts>): { ok: true; facts: CallFacts 
   if (!Number.isInteger(party) || party < 1 || party > 20) missing.push('party_size');
   if (!firstName || firstName.length > 40) missing.push('first_name');
   if (missing.length) return { ok: false, missing };
-  return { ok: true, facts: { restaurant, venuePhone, date, time, partySize: party, firstName, notes, ...(f.cancellationList === true ? { cancellationList: true } : {}) } };
+  return { ok: true, facts: { restaurant, venuePhone, date, time, partySize: party, firstName, notes } };
 }
 
 /** "19:30" → "7:30". The research's own wording ("ask for 7:30 for 4"). */
@@ -115,10 +109,6 @@ export function instructions(f: CallFacts): string {
     'If they ask not to be called again, say you will not call again, thank them and end the call.',
     `Ask only for ${spokenClock(f.time)} for ${f.partySize}. If that time is not available, ask which times near it they have, `
       + `thank them, say ${f.firstName} will call back to take one, and end the call. Never accept a different time or party size yourself.`,
-    ...(f.cancellationList ? [
-      `If they have no table for ${spokenClock(f.time)}, ask whether they keep a cancellation list or a waitlist for that night, and how ${f.firstName} can get on it. `
-        + 'Do not give a phone number or put anybody on a list yourself: thank them and say the guest will contact them.',
-    ] : []),
     'If they need a phone number, a card, a deposit or to speak to the guest, say the guest will contact them directly, thank them and end the call.',
     'If you reach voicemail or an automated menu with no way to a person, hang up without leaving a message.',
     'Never say the table is booked or confirmed yourself. If they confirm it, repeat back the time, party size and name, thank them and end the call.',

@@ -1,11 +1,14 @@
 // ─── /api/watches — the tables somebody has asked Reach to watch ────────
 // GET  → 200 { ready, watches: WatchView[] }   ready false: the migration has not run
-// POST { bookingId | venueRef, nights: ['YYYY-MM-DD'], from: 'HH:MM', to: 'HH:MM', party }
+// POST { bookingId | venueRef, nights: ['YYYY-MM-DD'], from: 'HH:MM', to: 'HH:MM', party, notBookedElsewhere?: true }
 //   201 { watch }                         saved; the next scheduled check looks
 //   409 { code: 'cannot_watch', offer }   Reach can't watch it: offer carries the next options
 //   409 { code: 'already_watching' }      one live watch per restaurant per person, and per table
 //   409 { code: 'limit' }                 three live watches each
-//   409 { code: 'booked' }                the table is already booked
+//   409 { code: 'booked' }                the table is already booked, or held at the platform for their card
+//   409 { code: 'calling' }               Reach is on the phone about this table now
+//   409 { code: 'ask_first' }             the table was handed to them: POST again with
+//                                         notBookedElsewhere: true if they haven't booked it
 //   422 { code: 'bad_window' | 'details_missing', error, missing? }
 //   503 { code: 'not_ready' }             sql/table-watches-2026-11-05.sql has not run
 //
@@ -17,7 +20,7 @@ import { dayWhere } from '@/lib/calendar';
 import { requesterOf } from '@/lib/reservations/reserve-server';
 import { offerOf, resolveTarget, watchView } from '@/lib/watch/routes';
 import { WATCH_COLUMNS, rowOf } from '@/lib/watch/store';
-import { TABLE_WATCH, expiresAtFor, readWindow } from '@/lib/watch/tables';
+import { TABLE_WATCH, blockedForWatch, expiresAtFor, readWindow } from '@/lib/watch/tables';
 import { LIVE, missingTable } from '@/lib/watch/types';
 
 export const dynamic = 'force-dynamic';
@@ -44,6 +47,11 @@ export async function POST(req: NextRequest) {
   if (t.booking?.status === 'confirmed' || String((t.booking as { confirmation_number?: string | null } | null)?.confirmation_number ?? '').trim()) {
     return NextResponse.json({ code: 'booked', error: `${t.facts.restaurant} is already booked on this plan.` }, { status: 409 });
   }
+  // A table handed to them: a hold the watch takes would be refused "ask
+  // first" every time, so it is asked now, once, not at each table that opens.
+  const notBookedElsewhere = body.notBookedElsewhere === true;
+  const blocked = t.booking ? blockedForWatch(t.booking, t.facts.restaurant, notBookedElsewhere) : null;
+  if (blocked) return NextResponse.json(blocked, { status: 409 });
   const view = await offerOf(db, t);
   const offer = view.offer;
   if (offer.can === 'none') {
@@ -87,7 +95,7 @@ export async function POST(req: NextRequest) {
     kind: 'table', user_id: userId,
     plan_id: t.plan?.id ?? null, booking_id: t.booking?.id ?? null, item_id: t.line?.id ?? t.booking?.itinerary_item_id ?? null,
     target_ref: t.venueRef, method: offer.can, platform: offer.can === 'platform' ? offer.platform : null,
-    spec: { restaurant: t.facts.restaurant, ...w.window, lng: t.lng, lapses: 0 },
+    spec: { restaurant: t.facts.restaurant, ...w.window, lng: t.lng, lapses: 0, ...(t.booking && notBookedElsewhere ? { notBookedElsewhere: true } : {}) },
     status: 'active', expires_at: expiresAtFor(w.window.nights), next_check_at: new Date().toISOString(),
   }).select(WATCH_COLUMNS).single();
   if (error) {

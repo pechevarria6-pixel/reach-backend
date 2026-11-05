@@ -21,7 +21,15 @@
 //     there is none, and no screen offers it.
 //   · Hold one table, never a spare: OpenTable refuses a second booking
 //     within 2.5 hours on the same day, and holding a backup to trade up is
-//     the hoarding that gets accounts closed.
+//     the hoarding that gets accounts closed. So a slot within 2.5 hours of
+//     a table the person already has — held by another of their watches,
+//     booked, or held on another line of the plan — is never taken
+//     (deps.taken, clashes), and a watch never holds over a hold somebody is
+//     reading the terms for on its own row.
+//   · Every request a check makes counts against the run's budget, the
+//     ones press one makes as well (deps.hold reports them), and a platform
+//     that says slow down during a hold is left alone like one that says it
+//     to an openings request.
 //   · A hold that runs out is said as that, and the watch carries on — but
 //     the same slot is never held twice, and three lapsed holds stop the
 //     watch. A hold blocks other diners for five minutes; doing that over
@@ -34,10 +42,10 @@
 //     page for the night and party — and said plainly that Reach is not the
 //     one watching. No platform documents a link that opens its form filled
 //     in, so none is promised.
-//   · a restaurant that books by phone: Reach's own call, when calling is
-//     really open (lib/reservations/gate.ts and the landline check), asks
-//     about a cancellation list too. Only through that gate; never a call of
-//     its own.
+//   · a restaurant that books by phone: nothing for Reach to check, so no
+//     watch is offered or saved — their number, and the suggestion to ask
+//     whether they keep a cancellation list. A watch that nothing checks is
+//     a promise nobody keeps.
 //
 // Facts come only from the venue row the line cites (venue_ref), never a
 // name match, the same rule as booking (lib/reservations/table-venue.ts).
@@ -48,9 +56,10 @@ import { PLATFORM_LABEL, isRefusal } from '../booking/tables/types.ts';
 import { PLATFORM_NAME, type Platform } from '../booking/reservations.ts';
 import { dayWhere } from '../calendar.ts';
 import { localMinute } from '../reservations/policy.ts';
-import { tableWhen } from '../reservations/reserve-state.ts';
+import { reserveMarkOf, tableWhen } from '../reservations/reserve-state.ts';
+import { tableStateOf } from '../booking/tables/flow.ts';
 import { clockSaid, dateSaid } from '../line-when.ts';
-import type { CallCheck, InstantTable, ReserveResult } from '../reservations/reserve.ts';
+import type { InstantTable, ReserveResult } from '../reservations/reserve.ts';
 import type { CheckCtx, WatchRow, WatchStep, Watcher, WatchNote } from './types.ts';
 
 // ─── The rules ──────────────────────────────────────────────────────────
@@ -105,6 +114,13 @@ export interface TableSpec extends TableWindow {
   lng: number | null;
   /** Holds that ran out unbooked. */
   lapses?: number;
+  /**
+   * The table had been handed to them to book, and when they set the watch
+   * they said they hadn't booked it themselves (POST /api/watches,
+   * notBookedElsewhere): press one may hold it, as the reserve route's own
+   * notBookedElsewhere lets a person's press.
+   */
+  notBookedElsewhere?: boolean;
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -181,23 +197,36 @@ export const slotKey = (date: string, time: string) => `${date}T${time}`;
 
 const minutes = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
 
+/** OpenTable refuses a second booking within 2.5 hours on the same day. */
+export const CLASH_MINUTES = 150;
+
+/** A table the person already has, or has held for them: another watch's hold, a booking, a hold on another line. */
+export interface TakenTable { date: string; time: string }
+
+/** Within 2.5 hours, on the same night, of a table they already have. */
+export function clashes(s: { date: string; time: string }, taken: readonly TakenTable[]): boolean {
+  return taken.some(t => t.date === s.date && CLOCK.test(t.time) && Math.abs(minutes(t.time) - minutes(s.time)) < CLASH_MINUTES);
+}
+
 /**
  * The slot to hold from what a platform listed: on a night watched, inside
  * the time range, not gone at the restaurant, never one already held or
- * told — and one Reach may book (no card). Earliest night first, then the
- * time nearest the middle of the range. `card` is what matched but wants a
- * card, which only the platform's own page takes.
+ * told, never within 2.5 hours of a table they already have (`avoid`) —
+ * and one Reach may book (no card). Earliest night first, then the time
+ * nearest the middle of the range. `card` is what matched but wants a card,
+ * which only the platform's own page takes.
  */
 export function pickSlot(
   slots: readonly TableSlot[],
   w: TableWindow,
-  ctx: { now: Date; lng: number | null; seen: readonly string[] },
+  ctx: { now: Date; lng: number | null; seen: readonly string[]; avoid?: readonly TakenTable[] },
 ): { slot: TableSlot | null; card: TableSlot | null } {
   const here = localMinute(ctx.lng, ctx.now) ?? ctx.now.toISOString().slice(0, 16);
   const mid = (minutes(w.from) + minutes(w.to)) / 2;
   const ok = slots
     .filter(s => w.nights.includes(s.date) && s.time >= w.from && s.time <= w.to)
     .filter(s => slotKey(s.date, s.time) > here && !ctx.seen.includes(slotKey(s.date, s.time)))
+    .filter(s => !clashes(s, ctx.avoid ?? []))
     .sort((a, b) => a.date.localeCompare(b.date) || Math.abs(minutes(a.time) - mid) - Math.abs(minutes(b.time) - mid));
   return { slot: ok.find(s => !s.needsCard) ?? null, card: ok.find(s => s.needsCard) ?? null };
 }
@@ -219,7 +248,6 @@ export type WatchOffer =
       /** One sentence: exactly what Reach will do. */
       what: string;
     }
-  | { can: 'call_list'; what: string; phone: string | null }
   | {
       can: 'none';
       why: 'not_ready' | 'not_running' | 'no_venue' | 'no_deal' | 'phone_only' | 'nothing_held';
@@ -245,7 +273,6 @@ export interface OfferFacts {
 
 export interface OfferState {
   instant: InstantTable | null;
-  call: CallCheck;
   /** The watches table exists (sql/table-watches-2026-11-05.sql has run). */
   migrated: boolean;
   /** The scheduled check has run recently (a watch_runs row in the last two hours). */
@@ -254,8 +281,9 @@ export interface OfferState {
 
 /**
  * What Reach offers for this restaurant: to watch it on a platform it has a
- * deal with, to ask about a cancellation list on its own call, or neither —
- * and then the platform's own alert or their number, said as theirs.
+ * deal with, or not — and then the platform's own alert or their number,
+ * said as theirs. A restaurant that books by phone has nothing Reach can
+ * check, so it is never offered as a watch.
  * "Reach watches" appears only where every switch it needs is on.
  */
 export function offerFor(f: OfferFacts, s: OfferState): WatchOffer {
@@ -281,13 +309,7 @@ export function offerFor(f: OfferFacts, s: OfferState): WatchOffer {
   if (s.instant && !s.running) return theirs(`Reach's table watch isn't running yet.`, 'not_running');
 
   if (!name && f.phone) {
-    if (f.onPlan && s.call.ok && s.running) {
-      return {
-        can: 'call_list', phone: f.phone,
-        what: `${f.restaurant} books by phone. When Reach calls them for this table, it also asks whether they keep a cancellation list.`,
-      };
-    }
-    return theirs(`${f.restaurant} books by phone, and Reach can't call for you yet. Ring them and ask whether they keep a cancellation list.`, 'phone_only');
+    return theirs(`${f.restaurant} books by phone, so there's nothing online for Reach to watch. Ring them and ask whether they keep a cancellation list.`, 'phone_only');
   }
   if (name) {
     return theirs(alert
@@ -295,6 +317,53 @@ export function offerFor(f: OfferFacts, s: OfferState): WatchOffer {
       : `Reach can't watch ${name} for you yet.`, 'no_deal');
   }
   return theirs(`Reach doesn't hold a way to book ${f.restaurant}, so it can't watch it.`, 'nothing_held');
+}
+
+// ─── What a plan's table already says ───────────────────────────────────
+
+const dayIn = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+const clockIn = (v: unknown) => (typeof v === 'string' && /^\d{2}:\d{2}/.test(v) ? v.slice(0, 5) : null);
+
+/**
+ * A booking row as a table somebody has, or has held: booked (or said
+ * booked), pending at the platform or on a call, or with a live hold on it.
+ * Its night and time are what was booked, else what the line asks for.
+ */
+export function tableTaken(b: Record<string, any>, now: Date): TakenTable | null {
+  const booked = (b.response_payload?.booked ?? {}) as Record<string, unknown>;
+  const asked = (b.request_payload?.restaurant ?? {}) as Record<string, unknown>;
+  const hold = tableStateOf(b as never)?.hold ?? null;
+  const has = b.status === 'confirmed' || b.status === 'pending' || !!String(b.confirmation_number ?? '').trim();
+  if (has) {
+    const date = dayIn(booked.date) ?? dayIn(asked.date);
+    const time = clockIn(booked.time) ?? clockIn(asked.time);
+    return date && time ? { date, time } : null;
+  }
+  if (hold && Date.parse(hold.expiresAt) > now.getTime()) return { date: hold.date, time: hold.time };
+  return null;
+}
+
+/**
+ * Why a plan's table can't take a new watch as it stands, or null. Mirrors
+ * reserveTable's own order: a card owed at the platform, a call ringing, then
+ * a table handed to them that they haven't said they didn't book — which
+ * would make every hold the watch tried come back "ask first".
+ */
+export function blockedForWatch(
+  b: { status: string; mode?: string | null; provider_ref?: string | null; response_payload?: unknown },
+  restaurant: string, notBookedElsewhere: boolean,
+): { code: 'booked' | 'calling' | 'ask_first'; error: string } | null {
+  if (b.status === 'pending' && b.mode === 'native' && b.provider_ref) {
+    return { code: 'booked', error: `${restaurant} is held for you until you add a card on the platform's page. It isn't booked until you do.` };
+  }
+  const mark = reserveMarkOf(b as never);
+  if (b.status === 'pending' && (mark?.state === 'calling' || mark?.state === 'requested')) {
+    return { code: 'calling', error: `Reach is asking ${restaurant} about this table now. Watch it once that's done.` };
+  }
+  if ((b.status === 'redirected' || (b.status === 'pending' && mark?.state !== 'not_booked')) && !notBookedElsewhere) {
+    return { code: 'ask_first', error: `Have you already booked ${restaurant} yourself? If not, Reach will watch for a table and hold one when it opens.` };
+  }
+  return null;
 }
 
 // ─── What the person is told ────────────────────────────────────────────
@@ -321,8 +390,8 @@ export const WATCH_COPY = {
     body: `${s.restaurant} wants a card for it, which only ${platform}'s own page takes. Reach didn't hold it. Reach is still watching.`,
   }),
   askFirst: (s: TableSpec, date: string, time: string) => ({
-    title: `A table for ${s.party} at ${s.restaurant} opened: ${tableWhen(date, time)}`,
-    body: `Reach didn't hold it, because this table was handed to you to book. If you haven't booked it, open it and say so.`,
+    title: `Reach stopped watching ${s.restaurant}`,
+    body: `A table opened for ${tableWhen(date, time)}, but this table was handed to you to book, so Reach didn't hold it. If you haven't booked it, start watching again and say so.`,
   }),
   expired: (s: TableSpec) => ({
     title: `Reach stopped watching ${s.restaurant}`,
@@ -347,7 +416,15 @@ export interface LoadedTable {
     theirs: boolean;
     /** Mid-claim: somebody is pressing two right now. */
     busy: boolean;
+    /** The hold on the row now — this watch's, or one somebody took pressing Book it — and when it runs out. */
     holdId: string | null;
+    holdExpiresAt: string | null;
+    /**
+     * Reach booked it on the platform and the platform is holding it for a
+     * card on its own page ('pending' with a reservation id): a table
+     * exists, waiting on them. Not booked, and not lapsed either.
+     */
+    owed: boolean;
   } | null;
 }
 
@@ -355,8 +432,40 @@ export interface TableWatchDeps {
   /** The table as it stands. Null when it cannot be read just now (tried again later), or is gone. */
   load(row: WatchRow): Promise<{ gone: true } | LoadedTable | null>;
   instantFor(urls: readonly (string | null | undefined)[]): InstantTable | null;
-  /** Press one through the one booking path (reserveTable with chosen.watch): hold this slot exactly, or nothing. */
-  hold(row: WatchRow, slot: { date: string; time: string }): Promise<ReserveResult>;
+  /**
+   * Press one through the one booking path (reserveTable with chosen.watch):
+   * hold this slot exactly, or nothing. `calls` is every request it made to
+   * a platform (its own openings, the hold, a release), counted against the
+   * run's budget like the check's own.
+   */
+  hold(row: WatchRow, slot: { date: string; time: string }): Promise<{ result: ReserveResult; calls: number }>;
+  /**
+   * The tables this watch's person already has, other than the one watched:
+   * their other watches' live holds, and tables booked or held on their
+   * plans. Null when that cannot be read: nothing is held or told until it can.
+   */
+  taken(row: WatchRow): Promise<TakenTable[] | null>;
+}
+
+/** The most requests press one makes: its openings, the hold, and a release when the hold cannot be saved. */
+export const HOLD_CALLS = 3;
+
+const ASKS = ['openings', 'hold', 'release', 'reserve', 'modify', 'status', 'cancel', 'quote', 'book'] as const;
+
+/**
+ * The same provider, counting every request made to it into `tally` — how
+ * press one's own requests reach the run's budget. What it knows without
+ * asking (enabled, allows, venueIdFrom) is not counted.
+ */
+export function counted<P extends TableProvider>(p: P, tally: { n: number }): P {
+  const c = Object.create(p) as P;
+  for (const k of ASKS) {
+    const f = (p as unknown as Record<string, unknown>)[k];
+    if (typeof f === 'function') {
+      (c as unknown as Record<string, unknown>)[k] = (...args: unknown[]) => { tally.n++; return (f as (...a: unknown[]) => unknown).apply(p, args); };
+    }
+  }
+  return c;
 }
 
 export function specOf(row: WatchRow): TableSpec {
@@ -368,7 +477,18 @@ export function specOf(row: WatchRow): TableSpec {
     party: Number(s.party) || 1,
     lng: typeof s.lng === 'number' && Number.isFinite(s.lng) ? s.lng : null,
     lapses: Number(s.lapses) || 0,
+    ...(s.notBookedElsewhere === true ? { notBookedElsewhere: true } : {}),
   };
+}
+
+/** A table that opened which Reach told about but could not hold: kept for the landing until it is gone. */
+export interface Opening { date: string; time: string; link: string | null; card: boolean }
+
+export function openingOf(last: WatchRow['last_result']): Opening | null {
+  const o = (last as { opening?: Partial<Opening> } | null)?.opening;
+  return o && typeof o.date === 'string' && typeof o.time === 'string'
+    ? { date: o.date, time: o.time, link: typeof o.link === 'string' && /^https:\/\//.test(o.link) ? o.link : null, card: o.card === true }
+    : null;
 }
 
 /** What watches.hold keeps while a table is held. */
@@ -398,16 +518,30 @@ export function tableWatcher(deps: TableWatchDeps): Watcher {
 export async function checkTable(row: WatchRow, ctx: CheckCtx, deps: TableWatchDeps): Promise<WatchStep> {
   const spec = specOf(row);
   const { now } = ctx;
+  const at = now.toISOString();
   const later = (ms: number) => new Date(now.getTime() + ms).toISOString();
+  const after = (iso: string) => new Date(Date.parse(iso) + 60_000).toISOString();
+  const live = (iso: string | null | undefined) => !!iso && Date.parse(iso) > now.getTime();
   const note = (w: { title: string; body: string }): WatchNote => ({ ...w, url: landing(row.id), planId: row.plan_id });
-  const expired = (): WatchStep => ({ patch: { status: 'expired', hold: null, last_result: { at: now.toISOString(), found: 'expired' } }, note: note(WATCH_COPY.expired(spec)), calls: 0 });
+  const expired = (): WatchStep => ({ patch: { status: 'expired', hold: null, last_result: { at, found: 'expired' } }, note: note(WATCH_COPY.expired(spec)), calls: 0 });
+
+  // A table told about but not held stays on the landing — with its link —
+  // until its time has gone, or a later check asked that night and it was
+  // no longer listed. Every last_result this check writes carries it, so a
+  // notification tapped hours later still lands on a way to book.
+  const here = localMinute(spec.lng, now) ?? at.slice(0, 16);
+  const before = openingOf(row.last_result);
+  const kept = (answered: ReadonlySet<string> = new Set(), listed: readonly TableSlot[] = []) =>
+    before && slotKey(before.date, before.time) > here
+      && (!answered.has(before.date) || listed.some(s => s.date === before.date && s.time === before.time))
+      ? { opening: before } : {};
 
   if (Date.parse(row.expires_at) <= now.getTime()) return expired();
 
   const loaded = await deps.load(row);
-  if (!loaded) return { patch: { next_check_at: later(30 * 60_000), last_result: { at: now.toISOString(), found: 'unreadable' } }, calls: 0 };
+  if (!loaded) return { patch: { next_check_at: later(30 * 60_000), last_result: { at, found: 'unreadable', ...kept() } }, calls: 0 };
   // The dinner left the plan, or the venue row went: nothing left to watch, nobody to tell.
-  if ('gone' in loaded) return { patch: { status: 'ended', hold: null, last_result: { at: now.toISOString(), found: 'gone' } }, calls: 0 };
+  if ('gone' in loaded) return { patch: { status: 'ended', hold: null, last_result: { at, found: 'gone' } }, calls: 0 };
 
   const b = loaded.booking;
   const held = heldOf(row);
@@ -415,25 +549,38 @@ export async function checkTable(row: WatchRow, ctx: CheckCtx, deps: TableWatchD
   // nothing more is said (the booking itself told everybody).
   if (b && (b.confirmed || b.theirs)) {
     const ours = row.status === 'held' && b.confirmed;
-    return { patch: { status: ours ? 'booked' : 'ended', hold: null, last_result: { at: now.toISOString(), found: ours ? 'booked' : 'booked_elsewhere' } }, calls: 0 };
+    return { patch: { status: ours ? 'booked' : 'ended', hold: null, last_result: { at, found: ours ? 'booked' : 'booked_elsewhere' } }, calls: 0 };
   }
+  // Press two went through and the platform wants a card on its own page: a
+  // reservation exists there, waiting on them (their tap was answered with
+  // that page). Not a lapse, and nothing more to hold.
+  if (b?.owed) return { patch: { status: 'ended', hold: null, last_result: { at, found: 'card_owed' } }, calls: 0 };
 
   let seen = [...(row.seen ?? [])];
   let lapses = spec.lapses ?? 0;
   if (row.status === 'held' && held) {
     // Somebody is pressing two right now: look again in a minute.
     if (b?.busy) return { patch: { next_check_at: later(60_000) }, calls: 0 };
-    if (b && b.holdId === held.holdId && Date.parse(held.expiresAt) > now.getTime()) {
-      return { patch: { next_check_at: new Date(Date.parse(held.expiresAt) + 60_000).toISOString() }, calls: 0 };
+    if (b && b.holdId === held.holdId && live(held.expiresAt)) {
+      return { patch: { next_check_at: after(held.expiresAt) }, calls: 0 };
+    }
+    seen = [...new Set([...seen, slotKey(held.date, held.time)])];
+    // Somebody pressed Book it on this line over the watch's hold: the row
+    // holds theirs now. Not a lapse and nothing said — they are on it — and
+    // nothing is held over theirs while it is live.
+    if (b && b.holdId && b.holdId !== held.holdId) {
+      return {
+        patch: { status: 'active', hold: null, seen, last_result: { at, found: 'replaced' }, next_check_at: live(b.holdExpiresAt) ? after(b.holdExpiresAt!) : later(60_000) },
+        calls: 0,
+      };
     }
     // Ran out unbooked. Said, and that slot is never held again by this watch.
     lapses += 1;
-    seen = [...new Set([...seen, slotKey(held.date, held.time)])];
     const more = lapses < TABLE_WATCH.lapses;
     return {
       patch: {
         status: more ? 'active' : 'ended', hold: null, seen, spec: { ...row.spec, lapses },
-        last_result: { at: now.toISOString(), found: 'lapsed', lapses },
+        last_result: { at, found: 'lapsed', lapses },
         next_check_at: later(60_000),
       },
       note: note(WATCH_COPY.lapsed(spec, held.date, held.time, more)),
@@ -441,18 +588,24 @@ export async function checkTable(row: WatchRow, ctx: CheckCtx, deps: TableWatchD
     };
   }
 
-  const here = dayWhere(spec.lng, now);
-  const nights = spec.nights.filter(n => n >= here);
+  // A hold on the row that is not this watch's: somebody pressed Book it and
+  // is reading the terms. Nothing asked, nothing held over it.
+  if (b && b.holdId && live(b.holdExpiresAt)) {
+    return { patch: { next_check_at: after(b.holdExpiresAt!), last_result: { at, found: 'their_hold', ...kept() } }, calls: 0 };
+  }
+
+  const today = dayWhere(spec.lng, now);
+  const nights = spec.nights.filter(n => n >= today);
   if (!nights.length) return expired();
 
-  // A phone-only restaurant: asked on Reach's own call, when somebody asks
-  // Reach to call. Nothing to poll.
-  if (row.method !== 'platform') return { patch: { next_check_at: later(6 * 3_600_000) }, calls: 0 };
+  // Only a platform is ever watched (offerFor). A row saying otherwise is
+  // from before that: ended, never left looking as if something checks it.
+  if (row.method !== 'platform') return { patch: { status: 'ended', hold: null, last_result: { at, found: 'cannot_watch' } }, calls: 0 };
 
   const instant = deps.instantFor(loaded.urls);
   // Its keys were taken off, or the venue no longer carries the id: nothing
   // is asked, and the watch waits rather than pretending to look.
-  if (!instant) return { patch: { next_check_at: later(3_600_000), last_result: { at: now.toISOString(), found: 'platform_off' } }, calls: 0 };
+  if (!instant) return { patch: { next_check_at: later(3_600_000), last_result: { at, found: 'platform_off', ...kept() } }, calls: 0 };
   const platform = instant.provider.platform;
   const on = PLATFORM_LABEL[platform];
   if (ctx.throttled.has(platform)) return { patch: { next_check_at: later(3_600_000) }, calls: 0, throttled: platform };
@@ -460,6 +613,7 @@ export async function checkTable(row: WatchRow, ctx: CheckCtx, deps: TableWatchD
   const w: TableWindow = { nights, from: spec.from, to: spec.to, party: spec.party };
   const ask = clockBetween(spec.from, spec.to);
   const slots: TableSlot[] = [];
+  const answered = new Set<string>();
   let calls = 0;
   let throttled: string | null = null;
   const problems: string[] = [];
@@ -472,46 +626,73 @@ export async function checkTable(row: WatchRow, ctx: CheckCtx, deps: TableWatchD
       if (o.code === 'rate_limited') { throttled = platform; break; }
       continue;
     }
+    answered.add(night);
     slots.push(...o.slots);
   }
-  const next = throttled ? later(3_600_000) : nextCheck(now, nights, spec.lng);
-  const result = { at: now.toISOString(), asked: calls, ...(problems.length ? { problems } : {}) };
-  const { slot, card } = pickSlot(slots, w, { now, lng: spec.lng, seen });
+  const next = () => throttled ? later(3_600_000) : nextCheck(now, nights, spec.lng);
+  const result = (extra: Record<string, unknown>) => ({ at, asked: calls, ...(problems.length ? { problems } : {}), ...kept(answered, slots), ...extra });
+  const quiet = (extra: Record<string, unknown>, more: Partial<WatchStep['patch']> = {}): WatchStep =>
+    ({ patch: { next_check_at: next(), platform, ...more, last_result: result(extra) }, calls, throttled });
+
+  let pick = pickSlot(slots, w, { now, lng: spec.lng, seen });
+  if (pick.slot || pick.card) {
+    // Never a second table within 2.5 hours of one they already have.
+    const taken = await deps.taken(row);
+    if (!taken) return quiet({ found: 'unreadable' });
+    pick = pickSlot(slots, w, { now, lng: spec.lng, seen, avoid: taken });
+  }
+  const { slot, card } = pick;
 
   if (!slot) {
     if (card) {
       // Told once, with the platform's own page: theirs to take with their card.
+      const opening: Opening = { date: card.date, time: card.time, link: card.handoffUrl ?? loaded.reserveUrl, card: true };
       return {
-        patch: { seen: [...seen, slotKey(card.date, card.time)], next_check_at: next, platform, last_result: { ...result, found: 'card', link: card.handoffUrl ?? loaded.reserveUrl } },
-        note: note(WATCH_COPY.card(spec, on, card.date, card.time)), calls, throttled,
+        ...quiet({ found: 'card', opening }, { seen: [...seen, slotKey(card.date, card.time)] }),
+        note: note(WATCH_COPY.card(spec, on, card.date, card.time)),
       };
     }
-    return { patch: { next_check_at: next, platform, last_result: { ...result, found: 'nothing' } }, calls, throttled };
+    return quiet({ found: 'nothing' });
   }
 
   const key = slotKey(slot.date, slot.time);
   // No plan to hold it on: told, with where to book it, and never told twice.
   if (!b) {
+    const opening: Opening = { date: slot.date, time: slot.time, link: slot.handoffUrl ?? loaded.reserveUrl, card: false };
     return {
-      patch: { seen: [...seen, key], next_check_at: next, platform, last_result: { ...result, found: 'opened', link: slot.handoffUrl ?? loaded.reserveUrl, date: slot.date, time: slot.time } },
-      note: note(WATCH_COPY.opened(spec, on, slot.date, slot.time)), calls, throttled,
+      ...quiet({ found: 'opened', opening }, { seen: [...seen, key] }),
+      note: note(WATCH_COPY.opened(spec, on, slot.date, slot.time)),
     };
   }
 
-  const r = await deps.hold(row, { date: slot.date, time: slot.time });
+  // Press one makes requests of its own: only with room for all of them in
+  // this run's budget. Otherwise the slot waits for the next run, untouched.
+  if (ctx.budget - calls < HOLD_CALLS) return quiet({ found: 'deferred' }, { next_check_at: at });
+
+  const pressed = await deps.hold(row, { date: slot.date, time: slot.time });
+  calls += pressed.calls;
+  const r = pressed.result;
+  if (r.ok === false && (r.code === 'rate_limited' || r.status === 429)) {
+    // Slow down, said to the hold: the same as said to an openings request.
+    throttled = platform;
+    return quiet({ found: 'not_held', code: 'rate_limited' });
+  }
   if (r.ok === false && r.code === 'terms_required' && r.hold) {
     const h: HeldNow = {
       holdId: r.hold.holdId, date: r.hold.date, time: r.hold.time, expiresAt: r.hold.expiresAt, platform,
       button: r.button ?? 'Book this table', title: r.title ?? '', body: r.body ?? '', changeNote: r.changeNote ?? null,
     };
     return {
-      patch: { status: 'held', hold: h as unknown as Record<string, unknown>, seen: [...seen, key], platform, next_check_at: new Date(Date.parse(h.expiresAt) + 60_000).toISOString(), last_result: { ...result, found: 'held', date: h.date, time: h.time } },
+      patch: { status: 'held', hold: h as unknown as Record<string, unknown>, seen: [...seen, key], platform, next_check_at: after(h.expiresAt), last_result: result({ found: 'held', date: h.date, time: h.time }) },
       note: note(WATCH_COPY.held(spec, on, h.date, h.time)), calls, throttled,
     };
   }
   if (r.ok === false && r.code === 'ask_first') {
+    // Handed to them after the watch was set, and nobody has said they
+    // haven't booked it: Reach can never hold it, so it stops — told once,
+    // not once for every table that opens.
     return {
-      patch: { seen: [...seen, key], next_check_at: next, platform, last_result: { ...result, found: 'ask_first', date: slot.date, time: slot.time } },
+      patch: { status: 'ended', hold: null, seen: [...seen, key], platform, last_result: result({ found: 'ask_first', date: slot.date, time: slot.time }) },
       note: note(WATCH_COPY.askFirst(spec, slot.date, slot.time)), calls, throttled,
     };
   }
@@ -520,10 +701,7 @@ export async function checkTable(row: WatchRow, ctx: CheckCtx, deps: TableWatchD
   // path will never hold for this table (a card, a night off the trip, a way
   // of booking it no longer open) is not asked for again.
   const never = r.ok === false && NEVER_AGAIN.has(r.code);
-  return {
-    patch: { next_check_at: next, platform, ...(never ? { seen: [...seen, key] } : {}), last_result: { ...result, found: 'not_held', code: r.ok === false ? r.code : r.outcome } },
-    calls, throttled,
-  };
+  return quiet({ found: 'not_held', code: r.ok === false ? r.code : r.outcome }, never ? { seen: [...seen, key] } : {});
 }
 
 const NEVER_AGAIN = new Set(['needs_card', 'path_unavailable', 'date_outside_trip', 'date_past', 'time_past', 'party_size', 'details_missing', 'already_settled', 'booked_elsewhere', 'not_a_table']);

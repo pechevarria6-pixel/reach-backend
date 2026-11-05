@@ -14,7 +14,8 @@ import { tableVenueFacts } from '@/lib/reservations/table-venue';
 import { reserveTable, type TableFacts, type TableRow } from '@/lib/reservations/reserve';
 import { TABLE_ROW, lineOf, planOf, requesterOf, reserveDeps, tableFacts, type Line } from '@/lib/reservations/reserve-server';
 import type { PlaceInput } from '@/lib/reservations/call';
-import { specOf, type LoadedTable, type TableWatchDeps } from './tables';
+import { counted, specOf, heldOf, tableTaken, type LoadedTable, type TableWatchDeps, type TakenTable } from './tables';
+import { rowOf } from './store';
 import type { WatchRow } from './types';
 
 const NOWHERE = { at: null, country: null };
@@ -69,12 +70,16 @@ async function readPlan(db: SupabaseClient, id: string): Promise<{ plan: Record<
 
 /** How a booking row stands, as a watch needs to know it. */
 export function bookingState(b: TableRow & { confirmation_number?: string | null }): NonNullable<LoadedTable['booking']> {
+  const hold = tableStateOf(b as never)?.hold ?? null;
   return {
     status: b.status,
     confirmed: b.status === 'confirmed',
     theirs: !!String(b.confirmation_number ?? '').trim(),
     busy: b.status === 'booking' || midClaim(b),
-    holdId: tableStateOf(b as never)?.hold?.holdId ?? null,
+    holdId: hold?.holdId ?? null,
+    holdExpiresAt: hold?.expiresAt ?? null,
+    // flow.ts reserveStep: booked on the platform, which holds it for a card on its own page.
+    owed: b.status === 'pending' && b.mode === 'native' && !!b.provider_ref,
   };
 }
 
@@ -105,17 +110,66 @@ export function tableWatchDeps(db: SupabaseClient): TableWatchDeps {
       // Read fresh: the row's version is what every write below is conditional on.
       const { row: b } = await readBooking(db, row.booking_id!);
       const { plan } = b ? await readPlan(db, b.plan_id) : { plan: null };
-      if (!b || !plan) return { ok: false, code: 'changed', status: 409, error: 'The table changed.', alternatives: [] };
+      if (!b || !plan) return { result: { ok: false, code: 'changed', status: 409, error: 'The table changed.', alternatives: [] }, calls: 0 };
       const t = await bookingTarget(db, plan, b);
       const requester = await requesterOf(db, row.user_id);
-      return reserveTable(
+      const spec = specOf(row);
+      // Every request press one makes, counted into the run's budget.
+      const tally = { n: 0 };
+      const base = reserveDeps(db);
+      const deps = {
+        ...base,
+        instantFor: (urls: readonly (string | null | undefined)[]) => {
+          const i = base.instantFor(urls);
+          return i ? { ...i, provider: counted(i.provider, tally) } : null;
+        },
+        bookedOn: (name: unknown) => {
+          const p = base.bookedOn(name);
+          return p ? counted(p, tally) : null;
+        },
+      };
+      const result = await reserveTable(
         {
           // The party the watch was set for; the hold books that many.
-          booking: b, facts: { ...t.facts, partySize: specOf(row).party }, plan: planOf(plan), requester, venue: t.venue, line: t.line,
-          chosen: { path: 'instant', date: slot.date, time: slot.time, watch: true },
+          booking: b, facts: { ...t.facts, partySize: spec.party }, plan: planOf(plan), requester, venue: t.venue, line: t.line,
+          chosen: {
+            path: 'instant', date: slot.date, time: slot.time, watch: true,
+            // Said by them when they set the watch on a table handed to them.
+            ...(spec.notBookedElsewhere ? { notBookedElsewhere: true } : {}),
+          },
         },
-        reserveDeps(db),
+        deps,
       );
+      return { result, calls: tally.n };
+    },
+
+    async taken(row) {
+      const now = new Date();
+      const out: TakenTable[] = [];
+      // Their other watches' live holds.
+      const { data: holds, error: holdError } = await db.from('watches').select('id, hold, status')
+        .eq('user_id', row.user_id).eq('status', 'held').neq('id', row.id);
+      if (holdError) { console.error('[watch] could not read the other holds', { code: holdError.code }); return null; }
+      for (const w of holds ?? []) {
+        const h = heldOf(rowOf(w as Record<string, unknown>));
+        if (h && Date.parse(h.expiresAt) > now.getTime()) out.push({ date: h.date, time: h.time });
+      }
+      // Tables booked in their name on any plan (flow.ts reserveStep writes booked.by) …
+      const mine = db.from('bookings').select('*').eq('vertical', 'restaurant')
+        .in('status', ['confirmed', 'pending']).eq('response_payload->booked->>by', row.user_id);
+      // … and every other table on this plan: a dinner already booked, being
+      // called about, or held by somebody pressing Book it.
+      const plan = row.plan_id
+        ? db.from('bookings').select('*').eq('vertical', 'restaurant').eq('plan_id', row.plan_id)
+        : null;
+      const [a, p] = await Promise.all([mine, plan]);
+      if (a.error || p?.error) { console.error('[watch] could not read their tables', { code: a.error?.code ?? p?.error?.code }); return null; }
+      for (const b of [...(a.data ?? []), ...(p?.data ?? [])] as Record<string, any>[]) {
+        if (b.id === row.booking_id) continue;
+        const t = tableTaken(b, now);
+        if (t) out.push(t);
+      }
+      return out;
     },
   };
 }

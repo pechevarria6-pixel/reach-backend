@@ -79,19 +79,6 @@ export function supabaseTableStore(db: SupabaseClient, send: Sender | null): Tab
       return (data ?? []).map(r => String((r as { user_id: unknown }).user_id));
     },
 
-    async cancellationList(bookingId) {
-      // A live watch on a phone-only restaurant (lib/watch/tables.ts). Before
-      // its migration there is no table and nobody asked; any other failure
-      // asks nothing extra — the call is the same call without it.
-      const { data, error } = await db.from('watches')
-        .select('id').eq('booking_id', bookingId).eq('method', 'call_list').in('status', ['active', 'held']).limit(1);
-      if (error) {
-        if (error.code !== '42P01' && error.code !== 'PGRST205') console.error('[reserve] could not read the table watch', { bookingId, code: error.code });
-        return false;
-      }
-      return (data ?? []).length > 0;
-    },
-
     async notify(userIds, note) {
       const delivery = await notifyUsers(db, userIds, note, send);
       if (!delivery.stored) console.error('[reserve] the bell was not written', { kind: note.kind, planId: note.planId });

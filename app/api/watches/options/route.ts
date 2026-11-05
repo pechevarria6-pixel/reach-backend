@@ -3,8 +3,7 @@
 //
 // 200 { offer, restaurant, nights, start: { time, party }, limits }
 //   offer.can 'platform'  — Reach checks the platform it has a deal with; offer.what says exactly what happens
-//   offer.can 'call_list' — a phone-only restaurant: Reach's own call (calling is open) asks about a cancellation list
-//   offer.can 'none'      — Reach can't watch it: offer.why, offer.what, and the next options —
+//   offer.can 'none'      — Reach can't watch it (a phone-only restaurant among them: nothing to check): offer.why, offer.what, and the next options —
 //                           offer.alert (the platform's own Notify, on its page) and offer.phone (their number)
 //
 // Reads only. Nothing is saved and no platform is asked.
