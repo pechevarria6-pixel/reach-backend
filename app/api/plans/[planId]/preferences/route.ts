@@ -118,5 +118,12 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // group could not be read.
   const everyone = announced ? true : await everyoneHasAnswered(ctx.db, params.planId, String(plan.group_id)).catch(() => null);
 
+  // "Pat is waiting on you" is answered now: it leaves this person's bell
+  // rather than sitting there asking for what they just gave. Never fails
+  // the save.
+  const { error: readErr } = await ctx.db.from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('user_id', ctx.user.id).eq('plan_id', params.planId).eq('kind', 'prefs').is('read_at', null);
+  if (readErr) console.error('[plan preferences POST] could not clear the ask from the bell', { planId: params.planId, code: readErr.code });
   return NextResponse.json({ saved: true, everyoneIn: everyone, announced });
 }

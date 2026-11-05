@@ -39,3 +39,8 @@ test('a night out is an evening on its own screen: who is going, which evening, 
   assert.match(app, /l:plan\.type==="restaurant"\?"Going":soloTrip\?"Traveller":"Travellers"/);
   assert.match(app, /night\?"Mute reminders for this night out":"Mute reminders for this trip"/);
 });
+
+test('answering clears "… is waiting on you" from that person\'s bell', () => {
+  const route = readFileSync('app/api/plans/[planId]/preferences/route.ts', 'utf8');
+  assert.match(route, /\.eq\('user_id', ctx\.user\.id\)\.eq\('plan_id', params\.planId\)\.eq\('kind', 'prefs'\)\.is\('read_at', null\)/);
+});
