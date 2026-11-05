@@ -482,3 +482,23 @@ test('a hotel is searched at the trip\'s own point, never by a city name another
   assert.equal(r?.hotel?.lat, 32.788);
   assert.equal(r?.hotel?.lng, -79.94);
 });
+
+test('Viator is asked in dollars, and a refusal is never said to be the tour being unavailable', async () => {
+  const { viatorActivities } = await import('../../lib/booking/providers/rest.ts');
+  process.env.VIATOR_API_KEY = 'viator_unit';
+  const req = { vertical: 'activity' as const, planId: 'p', groupId: 'g', party: 2, travelers: [], activity: { productCode: '444621P1', date: '2099-12-05' } };
+  let s = stubFetch(() => ({ status: 400, json: { code: 'BAD_REQUEST', message: 'currency is required' } }));
+  try {
+    const r = await viatorActivities.quote(req as never);
+    assert.equal(r.status, 'failed');
+    assert.doesNotMatch(String(r.error), /Not available/);
+    assert.equal((s.seen[0].body as { currency?: string }).currency, 'USD');
+  } finally { s.restore(); }
+  s = stubFetch(() => ({ json: { bookableItems: [{ optionCode: 'A', available: false }, { optionCode: 'B', available: true, totalPrice: { price: { recommendedRetailPrice: 120 } } }] } }));
+  try {
+    const r = await viatorActivities.quote(req as never);
+    assert.equal(r.status, 'quoted', 'an open option is used even when the first is full');
+    assert.equal(r.providerRef, 'B');
+    assert.equal(r.priceCents, 12000);
+  } finally { s.restore(); }
+});

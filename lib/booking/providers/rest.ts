@@ -31,14 +31,24 @@ export const viatorActivities: BookingProvider = {
       headers: { 'Content-Type': 'application/json', 'exp-api-key': process.env.VIATOR_API_KEY!, 'Accept': 'application/json;version=2.0' },
       body: JSON.stringify({
         productCode: a.productCode, travelDate: a.date,
+        // Viator requires the currency on an availability check; without it
+        // every check was refused, and the refusal was shown as the tour
+        // being unavailable.
+        currency: 'USD',
         // The party, not whoever is named: nobody is at quote time, and an
         // activity priced for one person is not the price for four.
         paxMix: [{ ageBand: 'ADULT', numberOfTravelers: headcount(req) }],
       }),
     });
-    const json = await res.json();
-    const opt = json?.bookableItems?.[0];
-    if (!opt?.available) return { vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator', error: 'Not available on that date' };
+    const json = await res.json().catch(() => null);
+    // A refusal is not an answer about the date. "Not available on that
+    // date" is said only when Viator answered and offered nothing for it.
+    if (!res.ok || !Array.isArray(json?.bookableItems)) {
+      console.error('[viator] availability check refused', { status: res.status, code: json?.code ?? null, message: String(json?.message ?? '').slice(0, 160) });
+      return { vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator', error: "Viator didn't answer for this tour just now, so we couldn't check that date." };
+    }
+    const opt = (json.bookableItems as { available?: boolean }[]).find(b => b?.available) as any;
+    if (!opt) return { vertical: 'activity', mode: 'native', status: 'failed', provider: 'viator', error: 'Not available on that date' };
     const total = opt?.totalPrice?.price?.recommendedRetailPrice;
     return {
       vertical: 'activity', mode: 'native', status: 'quoted', provider: 'viator',
