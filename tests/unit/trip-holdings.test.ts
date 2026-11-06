@@ -162,3 +162,49 @@ test('out of time after a page, what was read stands as a floor rather than noth
   const seen = Object.values(h!.counts).reduce((a, b) => a + b, 0);
   assert.ok(seen >= 1000 && seen % 1000 === 0, `whole pages only, got ${seen}`);
 });
+
+// ── Shared between instances (town_holdings) ──────────────────────────
+/** The venue table and town_holdings side by side, as supabase-js sees them. */
+function sharedDb(rows: Row[], kept: Array<{ key: string; counts: Record<string, number>; floor: boolean; counted_at: string }> | 'missing') {
+  const venue = fakeDb(rows);
+  const writes: any[] = [];
+  const holdingsTable = () => {
+    const b: any = {
+      select() { return b; }, in(_c: string, keys: string[]) { b._keys = keys; return b; }, gte() { return b; },
+      then(resolve: (v: unknown) => void) {
+        if (kept === 'missing') return resolve({ data: null, error: { code: 'PGRST205', message: 'town_holdings not found' } });
+        resolve({ data: kept.filter(k => b._keys.includes(k.key)), error: null });
+      },
+      upsert(row: any) { writes.push(row); return Promise.resolve({ error: kept === 'missing' ? { code: 'PGRST205' } : null }); },
+    };
+    return b;
+  };
+  const db = { from: (t: string) => (t === 'town_holdings' ? holdingsTable() : venue.db.from(t)) } as any;
+  return { db, calls: venue.calls, writes };
+}
+
+test('a town another instance counted is read from town_holdings, not counted again', async () => {
+  const aberdeen = town('Aberdeen', 35.13, -79.43);
+  const { db, calls, writes } = sharedDb(rowsAround(aberdeen, 50), [
+    { key: aberdeen.key, counts: { 'places to eat|restaurant': 41 }, floor: false, counted_at: new Date().toISOString() },
+  ]);
+  const got = await holdingsFor(db, [aberdeen], HOME, { budgetMs: 1000 });
+  assert.equal(got.holdings.get(aberdeen.key)?.counts['places to eat|restaurant'], 41);
+  assert.equal(calls.reads, 0, 'no venue rows read');
+  assert.equal(writes.length, 0);
+});
+
+test('a town counted here is kept for every instance; without the table, counting is as it was', async () => {
+  const aberdeen = town('Aberdeen', 35.13, -79.43);
+  const shared = sharedDb(rowsAround(aberdeen, 30), []);
+  const a = await holdingsFor(shared.db, [aberdeen], HOME, { budgetMs: 1000 });
+  assert.ok(a.holdings.get(aberdeen.key));
+  await settle(20);
+  assert.equal(shared.writes.length, 1);
+  assert.equal(shared.writes[0].key, aberdeen.key);
+
+  forgetHoldings();
+  const missing = sharedDb(rowsAround(aberdeen, 30), 'missing');
+  const b = await holdingsFor(missing.db, [aberdeen], HOME, { budgetMs: 1000 });
+  assert.equal(Object.values(b.holdings.get(aberdeen.key)!.counts).reduce((x, y) => x + y, 0), 30);
+});

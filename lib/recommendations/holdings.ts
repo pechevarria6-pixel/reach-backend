@@ -56,8 +56,62 @@ let candidatesInFlight: Promise<Candidate[]> | null = null;
 const towns = new Map<string, Kept<Holdings>>();
 const counting = new Map<string, Promise<Holdings | null>>();
 
+// ── Shared between instances ────────────────────────────────────────────
+// The map above lives and dies with one server instance, so every cold
+// instance counted hundreds of towns from scratch — sixteen thousand rows
+// for London alone — and while it did, Discover's reads queued behind it on
+// the same database (a 25s skeleton in e2e, 2026-11-06). town_holdings
+// (sql/town-holdings-2026-11-06.sql) keeps each count for every instance. A
+// day, because the counts move with the weekly load and the nightly sweep.
+// Until the table exists this is exactly the per-instance cache it was.
+export const SHARED_TTL_MS = 24 * 60 * 60 * 1000;
+let sharedMissing = false;
+const tableMissing = (e: { code?: string; message?: string } | null | undefined) =>
+  !!e && (e.code === 'PGRST205' || e.code === '42P01' || /town_holdings/.test(e.message || ''));
+
+async function readShared(db: SupabaseClient, keys: string[], now: number): Promise<Map<string, Kept<Holdings>>> {
+  const out = new Map<string, Kept<Holdings>>();
+  if (sharedMissing || !keys.length) return out;
+  const since = new Date(now - SHARED_TTL_MS).toISOString();
+  for (let i = 0; i < keys.length; i += 200) {
+    let data: unknown[] | null = null;
+    let error: { code?: string; message?: string } | null = null;
+    // Never fatal: a failed read is counting as before, not a broken Home.
+    try {
+      ({ data, error } = await db.from('town_holdings').select('key, counts, floor, counted_at')
+        .in('key', keys.slice(i, i + 200)).gte('counted_at', since));
+    } catch (e) {
+      error = { message: e instanceof Error ? e.message : 'read failed' };
+    }
+    if (error) {
+      if (tableMissing(error)) sharedMissing = true;
+      else console.error('[trip-picks] could not read kept counts', { code: error.code });
+      return out;
+    }
+    for (const r of (data ?? []) as Array<{ key: string; counts: Record<string, number> | null; floor: boolean | null; counted_at: string }>) {
+      if (r.counts && typeof r.counts === 'object') {
+        out.set(r.key, { at: Date.parse(r.counted_at), value: { counts: r.counts, floor: !!r.floor } });
+      }
+    }
+  }
+  return out;
+}
+
+async function keepShared(db: SupabaseClient, key: string, h: Holdings, at: number): Promise<void> {
+  if (sharedMissing) return;
+  try {
+    const { error } = await db.from('town_holdings')
+      .upsert({ key, counts: h.counts, floor: h.floor, counted_at: new Date(at).toISOString() }, { onConflict: 'key' });
+    if (error) {
+      if (tableMissing(error)) sharedMissing = true;
+      else console.error('[trip-picks] could not keep a count', { key, code: error.code });
+    }
+  } catch { /* a courtesy to the next instance, never this request's problem */ }
+}
+
 /** For tests: forget everything kept. */
 export function forgetHoldings() {
+  sharedMissing = false;
   candidatesKept = null;
   candidatesInFlight = null;
   towns.clear();
@@ -184,11 +238,19 @@ export async function holdingsFor(
 ): Promise<HeldFor> {
   const now = opts.now ?? Date.now;
   const holdings = new Map<string, Holdings>();
-  const todo: Candidate[] = [];
+  let todo: Candidate[] = [];
   for (const c of countOrder(list, home)) {
     const kept = towns.get(c.key);
     if (kept && now() - kept.at < TTL_MS) holdings.set(c.key, kept.value);
     else todo.push(c);
+  }
+  // What another instance already counted, in one read, before counting.
+  if (todo.length) {
+    const shared = await readShared(db, todo.map(c => c.key), now());
+    if (shared.size) {
+      for (const [key, kept] of shared) { towns.set(key, kept); holdings.set(key, kept.value); }
+      todo = todo.filter(c => !shared.has(c.key));
+    }
   }
   if (!todo.length) return { holdings, unread: 0 };
 
@@ -212,7 +274,11 @@ export async function holdingsFor(
     const p = holdingsAt(db, c, AbortSignal.timeout(opts.readLimitMs ?? READ_LIMIT_MS))
       .catch(() => null)
       .then(h => {
-        if (h) towns.set(c.key, { at: now(), value: h });
+        if (h) {
+          const at = now();
+          towns.set(c.key, { at, value: h });
+          void keepShared(db, c.key, h, at);
+        }
         return h;
       })
       .finally(() => counting.delete(c.key));
