@@ -2108,7 +2108,22 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
       if(lat&&lng)url+=`?lat=${lat}&lng=${lng}&city=${city}`;
       else if(city)url+=`?city=${city}`;
 
-      const res=await fetch(url);
+      // A request that hangs is asked once more rather than waited on: a cold
+      // server counting Home's towns held Discover on skeletons for over
+      // twenty-five seconds (e2e, 2026-11-06), and the second ask lands on a
+      // warm one. Twelve seconds is five times its usual answer.
+      const ask=async(ms)=>{
+        const ctl=new AbortController();
+        const timer=setTimeout(()=>ctl.abort(),ms);
+        try{return await fetch(url,{signal:ctl.signal});}finally{clearTimeout(timer);}
+      };
+      let res;
+      try{res=await ask(12000);}
+      catch(e){
+        if(e?.name!=="AbortError")throw e;
+        console.warn("[discover] nearby took over 12s; asking again");
+        res=await ask(20000);
+      }
       if(res.ok){
         const data=await res.json();
         setReason(data.reason||null);
