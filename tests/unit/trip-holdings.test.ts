@@ -149,3 +149,16 @@ test('"Your location" is a placeholder somebody saved, not a town to suggest', (
   });
   assert.deepEqual(c, []);
 });
+
+test('out of time after a page, what was read stands as a floor rather than nothing', async () => {
+  // London: sixteen thousand venues, and under load the fifth page missed
+  // the limit — so every page already read was thrown away and it was
+  // never suggested (production logs, 2026-11-06).
+  const at = { lat: 51.51, lng: -0.13 };
+  const { db } = fakeDb(rowsAround(at, 6200), { delayMs: 40 });
+  const h = await holdingsAt(db, at, AbortSignal.timeout(100));
+  assert.ok(h, 'a town with rows read is counted');
+  assert.equal(h!.floor, true);
+  const seen = Object.values(h!.counts).reduce((a, b) => a + b, 0);
+  assert.ok(seen >= 1000 && seen % 1000 === 0, `whole pages only, got ${seen}`);
+});

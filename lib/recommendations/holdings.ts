@@ -121,6 +121,11 @@ export async function holdingsAt(
       let built = q.order('id').limit(PAGE);
       if (signal) built = built.abortSignal(signal);
       const { data, error } = await built;
+      // Out of time after a page or more: what was read is real rows, a
+      // floor — the card says "+". Throwing it away left London (sixteen
+      // thousand venues, rank 3) uncounted on every load under any load,
+      // so it was never suggested at all (production logs, 2026-11-06).
+      if (error && page > 0 && signal?.aborted) return { error: null, floor: true };
       if (error) return { error, floor: false };
       const rows = (data ?? []) as Array<{ id: string; name: string | null; interest: string | null; kind: string | null }>;
       for (const r of rows) {
