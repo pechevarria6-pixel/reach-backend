@@ -623,3 +623,17 @@ test('a town read from two states\' map files is not given whichever state came 
   assert.equal(label('Aberdeen'), 'Aberdeen, North Carolina', 'one file, one state');
   assert.equal(c.filter(x => x.name === 'Alexandria').length, 1);
 });
+
+test('a night out talks about the evening: no parks or museums on it, while the weekend keeps them', () => {
+  // The QA account (outdoors, sport, museums) saw "14 parks and nature
+  // spots" and "you're into the outdoors… and museums" on a night out in
+  // Southern Pines (Home, 2026-11-06).
+  const outdoorsy = person({ me: { favorite_activities: ['Outdoors', 'Museums & history', 'Live music'], cuisines: [], no_way_jose: [], budget_range: '$100 – $200' } });
+  const { picks } = pickTrips(all, holdingsFor(), outdoorsy, { max: 10 });
+  const night = picks.find(p => p.band === 'night')!;
+  assert.doesNotMatch(night.held, /parks|museum/i);
+  assert.doesNotMatch(night.matched ?? '', /outdoors|museum/i);
+  assert.match(night.matched ?? '', /live music/);
+  const weekend = picks.find(p => p.band === 'weekend')!;
+  assert.match(`${weekend.held} ${weekend.matched}`, /outdoors|parks|museum/i);
+});

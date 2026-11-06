@@ -671,7 +671,7 @@ const PLAN_TYPE: Record<Band, TripPick['planType']> = { night: 'restaurant', wee
  * these has a dinner in it, then the two biggest things they are into that
  * the town actually has, then anything else worth a mention.
  */
-export function heldLine(t: Tally, interests: string[], around: string[] = []): string {
+export function heldLine(t: Tally, interests: string[], around: string[] = [], fits: (i: string) => boolean = () => true): string {
   const plus = t.floor ? '+' : '';
   const parts: string[] = [];
   const used = new Set<string>();
@@ -691,7 +691,7 @@ export function heldLine(t: Tally, interests: string[], around: string[] = []): 
   // Nothing they asked for beyond food: say the town's next biggest thing,
   // so the line is not only restaurants.
   if (parts.length < 2) {
-    const next = [...t.byInterest.entries()].filter(([i]) => !used.has(i)).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    const next = [...t.byInterest.entries()].filter(([i]) => !used.has(i) && fits(i)).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
     if (next) parts.push(`${fmt(next[1])}${plus} ${noun(next[0], next[1])}`);
   }
   // Towns folded into one box share its counts: "around Aberdeen and
@@ -1356,7 +1356,14 @@ function toPick(s: Scored, person: Person, ctx: { party: number; tier: Tier; gro
     ? !ctx.tier ? 'a typical night out'
       : ctx.group ? 'going by the tightest budget in the group' : 'going by what you said a night out costs you'
     : s.band === 'weekend' ? 'room share, food and fuel' : 'flight, room share and food';
-  const matchedLineText = matchedLine(s.matched, ctx.group);
+  // A night out is an evening: "14 parks and nature spots" and "you said
+  // you're into the outdoors and museums" are true of the town and beside
+  // the point after dark (Home, 2026-11-06). Food and what has a roof at
+  // night stay; the rest belongs on the weekend and the trip cards.
+  const evening = (i: string) => isFood(i) || EVENING_INDOOR.has(i);
+  const fitsBand = s.band === 'night' ? evening : () => true;
+  const matchedHere = s.matched.filter(fitsBand);
+  const matchedLineText = matchedLine(matchedHere, ctx.group);
   const flights = s.band !== 'away' ? null
     : refusesLongFlights(mine) ? `Kept under ${fmt(LONG_FLIGHT_MILES)} miles, since you ruled out long flights.`
       : refusesLongFlights(theirs) ? `Kept under ${fmt(LONG_FLIGHT_MILES)} miles — somebody in the group ruled out long flights.`
@@ -1372,7 +1379,7 @@ function toPick(s: Scored, person: Person, ctx: { party: number; tier: Tier; gro
   const around = (s.c.aliases?.length ? [s.shown, ...placesOf(s.c).filter(p => p !== s.shown && p.name !== s.shown.name)] : []).map(p => p.name);
   const lines = {
     title: titleFor(s.band, { ...s.c, name: s.shown.name }, nights),
-    held: heldLine(s.t, s.matched.length ? s.matched : [], around),
+    held: heldLine(s.t, matchedHere, around, fitsBand),
     matched: matchedLineText,
     leftOut,
   };
