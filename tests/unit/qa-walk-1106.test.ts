@@ -27,3 +27,16 @@ test('a trip card credits its photo on one line, over a scrim', () => {
   assert.ok(at > 0);
   assert.match(app.slice(at, at + 500), /whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"/);
 });
+
+test('"Sort one evening" opens a fresh plan that remembers it is an evening', () => {
+  assert.match(app, /cta:"Sort one evening →",action:\(\)=>push\("createPlan",\{fresh:true,evening:true\}\)/);
+  assert.match(app, /const \[allKinds,setAllKinds\]=useState\(!evening\);/);
+  assert.match(app, /\.filter\(t=>allKinds\|\|t\.id===planType\|\|t\.id==="restaurant"\|\|t\.id==="concert"\)/);
+  assert.match(app, /Planning something bigger\? A trip or a weekend →/);
+});
+
+test('with nobody to pick, the first plan screen still offers friends, by starting a group', () => {
+  assert.match(app, /\{withOthers\.length===0&&\(\s*\n\s*<div \{\.\.\.pressable\} onClick=\{\(\)=>push\("createGroup"\)\}/);
+  assert.match(app, />With friends</);
+  assert.doesNotMatch(app, /Select a group and what you're planning\./);
+});

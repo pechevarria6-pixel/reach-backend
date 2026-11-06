@@ -1612,7 +1612,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
         // by what they ask of you — look at something real, book one evening,
         // then plan the whole thing.
         {emoji:"🧭",text:"Have a look at what's on near you tonight. Costs nothing to browse.",cta:"Open Discover →",action:()=>setTab("discover")},
-        {emoji:"🍽️",text:"Just booking one dinner or one gig? That counts as a plan.",cta:"Sort one evening →",action:()=>push("createPlan",{})},
+        {emoji:"🍽️",text:"Just booking one dinner or one gig? That counts as a plan.",cta:"Sort one evening →",action:()=>push("createPlan",{fresh:true,evening:true})},
         {emoji:"✈️",text:"Or do the whole thing — solo, or with everyone.",cta:"Plan a trip →",action:()=>push("createGroup")},
       ]).filter(Boolean).map((ins,i)=>(
         <div key={i} {...pressable} onClick={ins.action} style={{margin:"0 20px 10px",background:C.s1,border:"1px solid "+C.border,borderRadius:16,padding:14,display:"flex",gap:12,cursor:"pointer"}}>
@@ -8386,7 +8386,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 }
 
 
-function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user,departure,fresh,seed,updatePlanOnServer}){
+function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroupId,push,savePlanToServer,saveGroupToServer,setGroups,me,user,departure,fresh,seed,updatePlanOnServer,evening=false}){
   // ── Draft persistence: load saved progress on mount ──────
   const DRAFT_KEY="reach_plan_draft";
   // SSR-safe localStorage helpers — only run in browser
@@ -8404,6 +8404,10 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   // Every field stays theirs to change.
   const [planName,setPlanName]=useState(seed?.planName||"");
   const [planType,setPlanType]=useState(seed?.planType||null);
+  // "Sort one evening" said what this is: a dinner or a gig. The kinds offer
+  // those two first and the rest behind one tap, rather than asking again
+  // from four (new-user walk, 2026-11-06).
+  const [allKinds,setAllKinds]=useState(!evening);
   const [eventDate,setEventDate]=useState("");
   const [eventTime,setEventTime]=useState("");
   const [startDate,setStartDate]=useState("");
@@ -8490,6 +8494,8 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
   // Solo mode is first-class: a group of one gets the same flow with the
   // voting UI absent and enable_voting false.
   const isSoloGroup=(selGroup?.memberIds?.length??1)<=1;
+  // The groups with somebody else in them: the ones a plan can be shared with.
+  const withOthers=groups.filter(g=>(g.memberIds||[]).length>1);
 
   // "Just me" needs somewhere for the plan to live, because a plan belongs to
   // a group. Reuse the personal group if there is one, otherwise make it once
@@ -8824,7 +8830,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               {/* Out of how many is the kind's to say: a dinner has five
                   screens and a trip seven, so before the kind is picked
                   any total would be one that changes on the next screen. */}
-              <div style={{fontSize:11,color:C.t3}}>{planType?`${step+1} / ${STEPS.length}`:`${step+1}`}</div>
+              <div style={{fontSize:11,color:C.t3}}>{planType?`${step+1} / ${STEPS.length}`:`Step ${step+1}`}</div>
             </div>
             <div style={{display:"flex",gap:3,marginBottom:2}}>
               {/* The bar says the same total as the count: none before the
@@ -8847,8 +8853,9 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
         {label==="Type"&&(
           <div>
             <div className="pt" style={{marginBottom:6}}>Who's joining?</div>
-            <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Select a group and what you're planning.</div>
-            <input aria-label="Plan name" className="inp" value={planName} onChange={e=>setPlanName(e.target.value)} placeholder="Plan name (e.g., Summer Beach Trip)" style={{marginBottom:14}}/>
+            <div style={{fontSize:13,color:C.t2,marginBottom:18}}>{withOthers.length?"Pick who it's for and what you're planning.":"Who it's for, and what you're planning."}</div>
+            <input aria-label="Plan name" className="inp" value={planName} onChange={e=>setPlanName(e.target.value)}
+              placeholder={planType==="restaurant"?"Plan name (e.g., Friday dinner)":planType==="concert"?"Plan name (e.g., Saturday's gig)":planType==="weekend"?"Plan name (e.g., Lake weekend)":"Plan name (e.g., Summer beach trip)"} style={{marginBottom:14}}/>
             <div className="sl" style={{marginBottom:10}}>Who is this for?</div>
             <div {...pressable} onClick={chooseSolo}
               style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,
@@ -8860,14 +8867,28 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 <div style={{fontSize:14,fontWeight:600,color:C.t1}}>
                   {makingSolo?"Setting up…":"Just me"}
                 </div>
-                <div style={{fontSize:12,color:C.t2}}>A solo trip — no voting, no splitting</div>
+                <div style={{fontSize:12,color:C.t2}}>{planType==="restaurant"||planType==="concert"?"Just you — no voting, no splitting":"A solo trip — no voting, no splitting"}</div>
               </div>
               {isSoloGroup&&gid&&<div style={{color:C.accentText}}><Ic.Check/></div>}
             </div>
-            {groups.filter(g=>(g.memberIds||[]).length>1).length>0&&(
+            {withOthers.length>0&&(
               <div className="sl" style={{margin:"14px 0 10px"}}>Or with a group</div>
             )}
-            {groups.filter(g=>(g.memberIds||[]).length>1).map(g=>(
+            {/* Nobody to pick yet: the way to plan with friends is to start a
+                group, and the screen used to offer only "Just me" — a dinner
+                with friends had no way in (new-user walk, 2026-11-06). */}
+            {withOthers.length===0&&(
+              <div {...pressable} onClick={()=>push("createGroup")}
+                style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,border:`2px solid ${C.border}`,background:C.s2,marginBottom:8,cursor:"pointer"}}>
+                <span style={{fontSize:22}}>👥</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:14,fontWeight:600,color:C.t1}}>With friends</div>
+                  <div style={{fontSize:12,color:C.t2}}>Start a group and invite them with a link</div>
+                </div>
+                <span style={{color:C.accentText,fontSize:13,fontWeight:600}}>→</span>
+              </div>
+            )}
+            {withOthers.map(g=>(
               <div key={g.id} {...pressable} onClick={()=>setGid(g.id)} style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,border:`2px solid ${gid===g.id?C.accentText:C.border}`,background:gid===g.id?C.accentDim:C.s2,marginBottom:8,cursor:"pointer"}}>
                 <span style={{fontSize:22}}>{g.emoji}</span>
                 <div style={{flex:1}}><div style={{fontSize:14,fontWeight:600,color:C.t1}}>{g.name}</div><div style={{fontSize:12,color:C.t2}}>{g.memberIds.length} members</div></div>
@@ -8876,7 +8897,8 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
             ))}
             <div className="sl" style={{margin:"14px 0 10px"}}>What are you planning?</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-              {[{id:"trip",e:"✈️",l:"Trip"},{id:"restaurant",e:"🍽️",l:"Dinner out"},{id:"concert",e:"🎵",l:"Concert"},{id:"weekend",e:"🏡",l:"Weekend Away"}].map(t=>(
+              {[{id:"trip",e:"✈️",l:"Trip"},{id:"restaurant",e:"🍽️",l:"Dinner out"},{id:"concert",e:"🎵",l:"Concert"},{id:"weekend",e:"🏡",l:"Weekend away"}]
+                .filter(t=>allKinds||t.id===planType||t.id==="restaurant"||t.id==="concert").map(t=>(
                 <button key={t.id} onClick={()=>{
                   // A Home idea's length belonged to its kind: "4 nights in
                   // Seattle" turned into a weekend is Friday to Sunday, not
@@ -8888,6 +8910,12 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 </button>
               ))}
             </div>
+            {!allKinds&&(
+              <button onClick={()=>setAllKinds(true)}
+                style={{marginTop:12,background:"none",border:"none",padding:"6px 0",color:C.accentText,fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                Planning something bigger? A trip or a weekend →
+              </button>
+            )}
           </div>
         )}
 
