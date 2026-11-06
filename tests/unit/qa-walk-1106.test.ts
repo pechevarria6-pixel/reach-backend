@@ -86,3 +86,9 @@ test('a shared link carries a picture and says what it is; an invite says whose 
   const mw = readFileSync('middleware.ts', 'utf8');
   assert.match(mw, /'\/opengraph-image\(\.\*\)'/, 'crawlers fetch the picture signed out');
 });
+
+test('a group with only called-off plans tells a new member to start one, and offers it at the top', () => {
+  assert.match(app, /const livePlans=\(group\?\.plans\|\|\[\]\)\.filter\(p=>isLive\(p,todayISO\)\);/);
+  assert.match(app, /\{livePlans\.length\?"Open a plan below to see where it stands\.":"Nothing's planned right now — start one below\."\}/);
+  assert.match(app, /\{livePlans\.length===0&&\(\s*\n\s*<div style=\{\{padding:"40px 20px",textAlign:"center"\}\}>/);
+});

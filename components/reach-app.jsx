@@ -3473,7 +3473,10 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
   // Each plan's chip, from the same answer its own screen gives
   // (lib/next-action.ts). Only for plans still on: one that has been and
   // gone sits under "Been and gone", which says so.
-  const nexts=useNextActions((group?.plans||[]).filter(p=>isLive(p,todayISO)).map(p=>({plan:p,group})),me);
+  // The plans still on, by the same rule as the chips (isLive): not called
+  // off, not been and gone.
+  const livePlans=(group?.plans||[]).filter(p=>isLive(p,todayISO));
+  const nexts=useNextActions(livePlans.map(p=>({plan:p,group})),me);
 
   // Removing somebody: gone from the list at once, Undo for five seconds,
   // then the one request (lib/undo.ts). The server refuses to strand a group
@@ -3531,7 +3534,9 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             background:C.accentDim,border:`1px solid ${C.accentBorder}`}}>
             <PinDrop size={22} label="Joined"/>
             <div style={{fontSize:13.5,color:C.t1,lineHeight:1.45}}>
-              You're in {group.name}. {group.plans.length?"Open a plan below to see where it stands.":"Nothing's planned yet — start one below."}
+              {/* Live plans only: a group whose plans were all called off sent a
+                  new member to "open a plan" that was over (2026-11-06). */}
+              You're in {group.name}. {livePlans.length?"Open a plan below to see where it stands.":"Nothing's planned right now — start one below."}
             </div>
           </div>
         )}
@@ -3563,10 +3568,13 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
       </div>
       {tab==="plans"&&(
         <div style={{padding:"14px 0"}}>
-          {group.plans.length===0&&(
+          {/* Shown whenever nothing is live, above any history: the empty
+              state used to need zero plans ever, so a group of called-off
+              plans offered no way to start the next one at the top. */}
+          {livePlans.length===0&&(
             <div style={{padding:"40px 20px",textAlign:"center"}}>
               <div style={{fontSize:40,marginBottom:12}}>🗺️</div>
-              <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>Nothing planned yet</div>
+              <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>{group.plans.length?"Nothing on right now":"Nothing planned yet"}</div>
               <div style={{fontSize:13,color:C.t2,marginBottom:20}}>Pick a night out or somewhere to go. We'll work out the plan, the costs and who owes what.</div>
               <button className="bp" onClick={()=>push("groupTrip",{groupId})}>Plan a trip together</button>
               <button style={{background:"none",border:"none",color:C.t2,fontSize:13,cursor:"pointer",marginTop:10,padding:"8px 0"}} onClick={()=>push("createPlan",{defaultGroupId:groupId})}>+ Add plan manually</button>
@@ -3579,7 +3587,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
               <span style={{fontSize:11.5,color:C.t3}}>{plural(section.plans.length,"plan")}</span>
             </div>
           {section.plans.map(plan=>(
-            <div key={plan.id} className="card" style={{margin:"0 20px 12px"}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId,...(nexts[plan.id]?.bookedForMe?{initialTab:"bookings"}:{})})}>
+            <div key={plan.id} className="card" style={{margin:"0 20px 12px",...(plan.status==="cancelled"?{opacity:.62}:{})}} {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId,...(nexts[plan.id]?.bookedForMe?{initialTab:"bookings"}:{})})}>
               <div style={{padding:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                   <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.t1}}>{plan.title}</div>
