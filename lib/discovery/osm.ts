@@ -44,7 +44,9 @@ export function matchesSelector(selector: string, tags: Record<string, string>):
   return selector.split('][').every(part => {
     const pattern = /^([^=~]+)~"(.*)",i$/.exec(part);
     if (pattern) {
-      try { return new RegExp(pattern[2], 'i').test(tags[pattern[1]] ?? ''); } catch { return false; }
+      // A key with a colon is quoted for Overpass (`"diet:vegan"~"^only$",i`).
+      const key = pattern[1].replace(/^"(.*)"$/, '$1');
+      try { return new RegExp(pattern[2], 'i').test(tags[key] ?? ''); } catch { return false; }
     }
     // A bare key — the `[name]` in `historic=memorial][name` — asks only that
     // the tag is there. Split on '=' it became `tags.name === undefined`,

@@ -31,7 +31,7 @@ function tagsSatisfying(selector: string): Record<string, string> {
   const tags: Record<string, string> = {};
   for (const part of selector.split('][')) {
     const pattern = /^([^=~]+)~"(.*)",i$/.exec(part);
-    if (pattern) { tags[pattern[1]] = `${pattern[2].split('|')[0]}`; continue; }
+    if (pattern) { tags[pattern[1].replace(/^"(.*)"$/, '$1')] = pattern[2].split('|')[0].replace(/^\^|\$$/g, ''); continue; }
     if (!part.includes('=')) { tags[part] = 'Something'; continue; }
     const [k, v] = part.split('=');
     tags[k] = v;
@@ -622,4 +622,17 @@ test('a row\'s own countries decide the border check, in the geocoder\'s names',
   assert.equal(acrossTheBorder('north-america/mexico', 'US', null), true);
   assert.equal(acrossTheBorder('north-america/mexico', 'US', []), true);
   assert.equal(acrossTheBorder(null, 'US', null), false);
+});
+
+test('a veggie restaurant is found by its diet tag, the way the map marks one — never by "yes"', () => {
+  // Two veggie restaurants in the whole table against 15,617 Italian: the
+  // map marks meat-free as diet:vegetarian=only far more than as a cuisine.
+  assert.ok(interestsFor({ amenity: 'restaurant', name: 'Fiction Kitchen', 'diet:vegan': 'only' }).includes('veggie restaurants'));
+  assert.ok(interestsFor({ amenity: 'restaurant', name: 'Garden', 'diet:vegetarian': 'only' }).includes('veggie restaurants'));
+  assert.ok(interestsFor({ amenity: 'restaurant', name: 'Old Way', cuisine: 'indian;vegetarian' }).includes('veggie restaurants'));
+  assert.ok(!interestsFor({ amenity: 'restaurant', name: 'Steakhouse', 'diet:vegetarian': 'yes' }).includes('veggie restaurants'),
+    'a salad on the menu is not a veggie restaurant');
+  // Overpass needs the colon key quoted; the matcher reads it the same.
+  assert.ok(kindFor('veggie restaurants').osm.some(s => s.includes('["diet:vegan"~"^only$",i')));
+  assert.ok(matchesSelector('amenity=restaurant]["diet:vegan"~"^only$",i', { amenity: 'restaurant', 'diet:vegan': 'only' }));
 });

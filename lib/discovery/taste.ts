@@ -144,6 +144,16 @@ const CUISINE_PATTERN: Record<string, string> = {
   veggie: 'vegetarian|vegan', vegetarian: 'vegetarian|vegan', vegan: 'vegan',
   barbecue: 'barbecue|bbq', bbq: 'barbecue|bbq', steak: 'steak',
 };
+/**
+ * Meat-free is mostly mapped as a diet, not a cuisine: the map's own advice
+ * is `diet:vegetarian=only` for a vegetarian restaurant, and `cuisine=
+ * vegetarian` is the older habit. Asking for the cuisine alone found two
+ * veggie restaurants in the whole table against 15,617 Italian (2026-11-06).
+ * "only" and never "yes": yes is a steakhouse with a salad on the menu.
+ */
+const DIET_KEYS: Record<string, string[]> = {
+  veggie: ['diet:vegetarian', 'diet:vegan'], vegetarian: ['diet:vegetarian', 'diet:vegan'], vegan: ['diet:vegan'],
+};
 const CUISINE_EMOJI: Record<string, string> = {
   italian: '🍝', japanese: '🍣', mexican: '🌮', indian: '🍛', thai: '🍜',
   seafood: '🦞', steak: '🥩', veggie: '🥗', barbecue: '🔥',
@@ -170,7 +180,9 @@ export function kindFor(interest: string): Kind {
       key, CUISINE_EMOJI[cuisine] ?? '🍽️',
       // OSM stores cuisines as lists — "sushi;japanese" — so an exact match
       // would miss half the city's Japanese restaurants.
-      pattern.length > 2 ? [`amenity=restaurant][cuisine~"${pattern}",i`] : [],
+      pattern.length > 2
+        ? [`amenity=restaurant][cuisine~"${pattern}",i`, ...(DIET_KEYS[cuisine] ?? []).map(k => `amenity=restaurant]["${k}"~"^only$",i`)]
+        : [],
       `${cuisine} restaurant`, false,
     );
   }
