@@ -82,7 +82,7 @@ test('a shared link carries a picture and says what it is; an invite says whose 
   const inv = readFileSync('app/invite/[token]/layout.tsx', 'utf8');
   assert.match(inv, /const title = `Join \$\{p\.groupName\} on Reach`;/);
   const pv = readFileSync('app/invite/[token]/invite-preview.ts', 'utf8');
-  assert.doesNotMatch(pv, /email/i.source === 'email' ? /select\('[^']*email/ : /x^/, 'the invited address never goes into a preview');
+  assert.doesNotMatch(pv, /\.select\('[^']*email/, 'the invited address never goes into a preview');
   const mw = readFileSync('middleware.ts', 'utf8');
   assert.match(mw, /'\/opengraph-image\(\.\*\)'/, 'crawlers fetch the picture signed out');
 });
