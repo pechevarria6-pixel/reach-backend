@@ -50,6 +50,11 @@ export default function OnboardingPage() {
     try { localStorage.setItem(ONBOARDING_SEEN, '1'); } catch {}
   }, []);
   const [step, setStep] = useState(0);
+  // The invite they signed up from, if any (afterSignUp in ThemedAuth.tsx).
+  const [invited, setInvited] = useState(false);
+  useEffect(() => {
+    try { setInvited(/^\/invite\/[A-Za-z0-9_-]{8,}$/.test(new URLSearchParams(window.location.search).get('next') ?? '')); } catch {}
+  }, []);
   const [busy, setBusy] = useState(false);
 
   // Clerk gives a first name for a Google sign-up and nothing at all for an
@@ -116,6 +121,12 @@ export default function OnboardingPage() {
       // last screen of a welcome flow is far worse than a missing flag.
       console.error('[welcome] could not mark complete', e);
     }
+    // An invite they signed up from comes first: it is why they are here,
+    // and joining the group is one tap on it (see afterSignUp in
+    // components/ThemedAuth.tsx). Only an invite path is followed.
+    let next: string | null = null;
+    try { next = new URLSearchParams(window.location.search).get('next'); } catch { next = null; }
+    if (next && /^\/invite\/[A-Za-z0-9_-]{8,}$/.test(next)) { router.push(next); return; }
     // The quiz lives in the app rather than here, so there is one of it
     // rather than two that drift apart.
     router.push(withQuiz ? '/home?start=taste' : '/home');
@@ -143,7 +154,10 @@ export default function OnboardingPage() {
       icon: '🔔', title: 'When the group needs you',
       why: 'A vote waiting on you, a share to pay, a booking confirmed. Only the things that actually need you.',
     },
-    ready: {
+    ready: invited ? {
+      icon: '👥', title: 'Your group is waiting',
+      why: `Join them now. ${QUIZ_COUNT} quick questions about what you are into are on Home whenever you want them, and everything Reach suggests reads your answers.`,
+    } : {
       icon: '✨', title: 'Now the good bit',
       why: `${QUIZ_COUNT} quick questions about what you are into — pottery, cooking, live music, whatever it is. Everything Reach suggests from here reads your answers.`,
     },
@@ -201,11 +215,13 @@ export default function OnboardingPage() {
           {current === 'ready' ? (
             <>
               <button onClick={() => finish(true)} disabled={busy} style={primary}>
-                {busy ? 'Setting up your account…' : 'Take the quiz →'}
+                {busy ? 'Setting up your account…' : invited ? 'Join the group →' : 'Take the quiz →'}
               </button>
-              <button onClick={() => finish(false)} disabled={busy} style={secondary}>
-                Skip for now
-              </button>
+              {!invited && (
+                <button onClick={() => finish(false)} disabled={busy} style={secondary}>
+                  Skip for now
+                </button>
+              )}
             </>
           ) : (
             <>

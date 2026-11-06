@@ -15,7 +15,7 @@ export async function GET(_req: NextRequest, { params }: { params: { token: stri
   const db = createServerClient();
   const { data: invite } = await db
     .from('group_invites')
-    .select('status, expires_at, groups(name, emoji), users:invited_by(name)')
+    .select('status, expires_at, group_id, groups(name, emoji), users:invited_by(name)')
     .eq('token', params.token)
     .maybeSingle();
 
@@ -25,9 +25,23 @@ export async function GET(_req: NextRequest, { params }: { params: { token: stri
   const group = Array.isArray(invite.groups) ? invite.groups[0] : invite.groups;
   const inviter = Array.isArray(invite.users) ? invite.users[0] : invite.users;
 
+  // Somebody signed in who is already in the group — most often because
+  // signing up with the invited address claimed it (lib/invites.ts) — is
+  // told they are in, not that "this invite has already been used"
+  // (2026-11-06). Signed out, this is skipped and nothing changes.
+  let member = false;
+  const me = await requireUser().catch(() => null);
+  if (me && !isFail(me)) {
+    const { data: row } = await db.from('group_members').select('id')
+      .eq('group_id', invite.group_id).eq('user_id', me.user.id).maybeSingle();
+    member = !!row;
+  }
+
   // Deliberately no email address in this response — the token is shareable
-  // and the page is viewable before sign-in.
+  // and the page is viewable before sign-in. The group's id only to a member.
   return NextResponse.json({
+    member,
+    groupId: member ? invite.group_id : null,
     status: expired ? 'expired' : invite.status,
     groupName: group?.name || null,
     groupEmoji: group?.emoji || null,

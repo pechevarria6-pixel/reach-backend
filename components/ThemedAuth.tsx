@@ -2,6 +2,7 @@
 import { SignIn, SignUp, ClerkLoaded, ClerkLoading } from '@clerk/nextjs';
 import { useEffect, useState } from 'react';
 import { clerkAppearance } from '@/lib/clerk-appearance';
+import { afterSignUp } from '@/lib/after-sign-up';
 
 // Everything on these two screens used to come from Clerk's script and
 // nothing else: the server sent `<main>` with a background colour and no
@@ -170,6 +171,8 @@ export function ThemedSignIn() {
 
 export function ThemedSignUp() {
   const theme = useShellTheme();
+  const [after, setAfter] = useState('/onboarding');
+  useEffect(() => { setAfter(afterSignUp(window.location.search)); }, []);
   return (
     <Frame what="sign-up">
       {/* forceRedirectUrl, not the NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL env
@@ -181,7 +184,7 @@ export function ThemedSignUp() {
         path="/sign-up"
         routing="path"
         signInUrl="/sign-in"
-        forceRedirectUrl="/onboarding"
+        forceRedirectUrl={after}
         appearance={clerkAppearance[theme]}
       />
     </Frame>

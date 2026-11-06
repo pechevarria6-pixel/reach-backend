@@ -33,6 +33,8 @@ type Invite = {
   groupName: string | null;
   groupEmoji: string | null;
   invitedBy: string | null;
+  member?: boolean;
+  groupId?: string | null;
 };
 
 function Frame({ children }: { children: React.ReactNode }) {
@@ -94,7 +96,7 @@ export default function InvitePage({ params }: { params: { token: string } }) {
       <Frame>
         <div className="iv-emoji" aria-hidden="true">🔗</div>
         <h1>That link didn&rsquo;t work</h1>
-        <p className="iv-lede">{error} Ask whoever sent it for a fresh one.</p>
+        <p className="iv-lede">{error}</p>
         <a href="/home" className="iv-go">Go to Reach</a>
       </Frame>
     );
@@ -104,6 +106,17 @@ export default function InvitePage({ params }: { params: { token: string } }) {
     return (
       <Frame>
         <p className="iv-lede" role="status">Opening your invite…</p>
+      </Frame>
+    );
+  }
+
+  if (invite.member) {
+    return (
+      <Frame>
+        <div className="iv-emoji" aria-hidden="true">{invite.groupEmoji || '✈️'}</div>
+        <h1>You&rsquo;re in {invite.groupName || 'the group'}</h1>
+        <p className="iv-lede">Everything the group is planning is waiting for you.</p>
+        <a href={invite.groupId ? `/home?group=${encodeURIComponent(invite.groupId)}&joined=1` : '/home'} className="iv-go">Open the group</a>
       </Frame>
     );
   }

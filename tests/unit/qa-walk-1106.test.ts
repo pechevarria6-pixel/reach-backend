@@ -40,3 +40,23 @@ test('with nobody to pick, the first plan screen still offers friends, by starti
   assert.match(app, />With friends</);
   assert.doesNotMatch(app, /Select a group and what you're planning\./);
 });
+
+// ── An invite survives sign-up ─────────────────────────────────────────
+import { afterSignUp } from '../../lib/after-sign-up.ts';
+test('signing up from an invite comes back to it through onboarding; nothing else is carried', () => {
+  assert.equal(afterSignUp('?redirect_url=%2Finvite%2FAbC_123-xyzDEF'), '/onboarding?next=%2Finvite%2FAbC_123-xyzDEF');
+  assert.equal(afterSignUp(''), '/onboarding');
+  assert.equal(afterSignUp('?redirect_url=https%3A%2F%2Fevil.example%2Finvite%2Fabcdefgh'), '/onboarding', 'never an open redirect');
+  assert.equal(afterSignUp('?redirect_url=%2Fhome'), '/onboarding');
+  const ob = readFileSync('app/(app)/onboarding/page.tsx', 'utf8');
+  assert.match(ob, /if \(next && \/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{8,\}\$\/\.test\(next\)\) \{ router\.push\(next\); return; \}/);
+});
+
+test('an invite opened by someone already in the group says they are in, not "already used"', () => {
+  const route = readFileSync('app/api/invites/[token]/route.ts', 'utf8');
+  assert.match(route, /groupId: member \? invite\.group_id : null/, 'the group id only to a member');
+  const page = readFileSync('app/invite/[token]/page.tsx', 'utf8');
+  assert.match(page, /if \(invite\.member\) \{/);
+  assert.ok(page.indexOf('if (invite.member)') < page.indexOf("if (invite.status !== 'pending')"));
+  assert.doesNotMatch(page, /\{error\} Ask whoever sent it/, 'the server already says who to ask');
+});
