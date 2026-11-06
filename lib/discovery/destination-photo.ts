@@ -27,6 +27,28 @@ export interface DestinationPhoto {
 import { locate } from './geocode.ts';
 import { milesBetween } from './cache.ts';
 import { usStateName } from './regions.ts';
+import { usableFile, wikidataImages } from './place-photo.ts';
+
+/**
+ * The Commons file a picture is, from its name or its URL. A thumbnail of a
+ * vector file ends ".svg.png", so the name is read from the path segment
+ * that names the original, not the thumbnail's own ending.
+ */
+export function commonsFileOf(urlOrName: string): string {
+  const m = /\/commons\/(?:thumb\/)?[0-9a-f]\/[0-9a-f]{2}\/([^/?#]+)/i.exec(urlOrName);
+  const raw = m ? m[1] : urlOrName;
+  try { return decodeURIComponent(raw); } catch { return raw; }
+}
+
+/**
+ * Whether a page image is a picture of the place. Hong Kong's article leads
+ * with its flag, and the trip card showed a flag where the harbour should be
+ * (2026-11-06). A flag, a map, a seal or a logo is what the place is called,
+ * not what it looks like; the gradient is the better answer.
+ */
+export function looksLikeThePlace(urlOrName: string): boolean {
+  return usableFile(commonsFileOf(urlOrName));
+}
 
 const API = 'https://en.wikipedia.org/w/api.php';
 
@@ -111,10 +133,10 @@ export async function destinationPhoto(
       ...(countryName && !title.includes(',') ? [`${town}, ${countryName}`] : []),
     ])];
 
-    type Page = { thumbnail?: { source: string; width: number; height: number }; pageimage?: string; coordinates?: { lat: number; lon: number }[] };
+    type Page = { thumbnail?: { source: string; width: number; height: number }; pageimage?: string; coordinates?: { lat: number; lon: number }[]; pageprops?: { wikibase_item?: string } };
     let page: Page | undefined;
     for (const t of titles) {
-      const q = `${API}?action=query&prop=pageimages|coordinates&piprop=thumbnail|name&colimit=1`
+      const q = `${API}?action=query&prop=pageimages|coordinates|pageprops&ppprop=wikibase_item&piprop=thumbnail|name&colimit=1`
         + `&pithumbsize=1200&titles=${encodeURIComponent(t)}`
         + '&format=json&formatversion=2&redirects=1';
       const res = await fetchImpl(q, { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(8000) });
@@ -129,6 +151,18 @@ export async function destinationPhoto(
     }
     const thumb = page?.thumbnail;
     if (!thumb?.source) return null;
+    // The article leads with a flag (Hong Kong, Macau, Singapore): the
+    // place's own Wikidata item names its photograph (P18) — Victoria Peak,
+    // not the bauhinia. Still the same page, so still the same place.
+    let file = page?.pageimage ?? null;
+    let swapped = false;
+    if (!looksLikeThePlace(file || thumb.source)) {
+      const qid = page?.pageprops?.wikibase_item;
+      const instead = qid ? (await wikidataImages([qid], fetchImpl)).get(qid) : undefined;
+      if (!instead) return null;
+      file = instead.replace(/ /g, '_');
+      swapped = true;
+    }
 
     // Commons only. An image served from elsewhere on Wikipedia may be there
     // under fair use, which is a claim about editorial context and not a
@@ -141,24 +175,30 @@ export async function destinationPhoto(
       height: thumb.height,
       artist: null,
       licence: null,
-      source: page?.pageimage
-        ? `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(page.pageimage)}`
+      source: file
+        ? `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(file)}`
         : null,
     };
 
     // Credit, in a second call. A photograph without its photographer is
     // somebody's work taken without saying whose, so a failure here returns
     // no photograph rather than an uncredited one.
-    if (!page?.pageimage) return null;
-    const infoQ = `${API}?action=query&titles=File:${encodeURIComponent(page.pageimage)}`
-      + '&prop=imageinfo&iiprop=extmetadata|url&format=json&formatversion=2';
+    if (!file) return null;
+    const infoQ = `${API}?action=query&titles=File:${encodeURIComponent(file)}`
+      + `&prop=imageinfo&iiprop=extmetadata|url${swapped ? '&iiurlwidth=1200' : ''}&format=json&formatversion=2`;
     const infoRes = await fetchImpl(infoQ, { headers: { 'User-Agent': AGENT }, signal: AbortSignal.timeout(8000) });
     if (!infoRes.ok) return failed();
 
     const infoJson = await infoRes.json() as {
-      query?: { pages?: { imageinfo?: { descriptionurl?: string; extmetadata?: Record<string, { value?: string }> }[] }[] };
+      query?: { pages?: { imageinfo?: { descriptionurl?: string; thumburl?: string; thumbwidth?: number; thumbheight?: number; extmetadata?: Record<string, { value?: string }> }[] }[] };
     };
     const info = infoJson.query?.pages?.[0]?.imageinfo?.[0];
+    if (swapped) {
+      if (!info?.thumburl || !/^https:\/\/(upload|thumb)\.wikimedia\.org\/wikipedia\/commons\//.test(info.thumburl)) return null;
+      photo.url = info.thumburl;
+      photo.width = info.thumbwidth ?? photo.width;
+      photo.height = info.thumbheight ?? photo.height;
+    }
     photo.artist = plainText(info?.extmetadata?.Artist?.value);
     photo.licence = plainText(info?.extmetadata?.LicenseShortName?.value);
     if (info?.descriptionurl) photo.source = info.descriptionurl;
@@ -228,7 +268,9 @@ export async function cachedDestinationPhoto(
       canKeep = !tableMissing(error);
       if (canKeep) console.error('[destination-photo] could not read the kept photo', { key, code: error.code });
     } else if (data) {
-      if (data.url && data.credit) return { url: data.url, credit: data.credit, source: data.source ?? null, width: data.width ?? null, height: data.height ?? null };
+      // A flag or a map kept before this check is asked about again, and the
+      // miss then kept in its place.
+      if (data.url && data.credit && looksLikeThePlace(data.url)) return { url: data.url, credit: data.credit, source: data.source ?? null, width: data.width ?? null, height: data.height ?? null };
       const age = now.getTime() - new Date(data.checked_at).getTime();
       if (!data.url && age < MISS_DAYS * 86400_000) return null;
     }

@@ -107,3 +107,53 @@ test('nothing near the place means no photo, not the nearest wrong one', async (
   }, { lat: '37.2', lon: '-93.29', sub: 'US-MO' });
   assert.equal(await destinationPhoto('Springfield, US', fetchImpl), null);
 });
+
+// ── A flag is what a place is called, not what it looks like (2026-11-06) ──
+import { looksLikeThePlace, cachedDestinationPhoto } from '../../lib/discovery/destination-photo.ts';
+
+const FLAG = 'https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5b/Flag_of_Hong_Kong.svg/1280px-Flag_of_Hong_Kong.svg.png';
+function hongKong(p18: string | null) {
+  const asked: string[] = [];
+  const f = (async (url: string) => {
+    const u = String(url); asked.push(u);
+    if (u.includes('nominatim')) return { ok: true, json: async () => ([{ lat: '22.32', lon: '114.17', display_name: 'Hong Kong', class: 'place', type: 'city', address: { country_code: 'hk' } }]) };
+    if (u.includes('prop=pageimages')) return { ok: true, json: async () => ({ query: { pages: [{ thumbnail: { source: FLAG, width: 1280, height: 853 }, pageimage: 'Flag_of_Hong_Kong.svg', coordinates: [{ lat: 22.3, lon: 114.2 }], pageprops: { wikibase_item: 'Q8646' } }] } }) };
+    if (u.includes('wikidata.org')) return { ok: true, json: async () => ({ entities: { Q8646: { claims: p18 ? { P18: [{ rank: 'normal', mainsnak: { datavalue: { value: p18 } } }] } : {} } } }) };
+    return { ok: true, json: async () => ({ query: { pages: [{ imageinfo: [{
+      descriptionurl: 'https://commons.wikimedia.org/wiki/File:Hong_Kong_from_Victoria_Peak1.jpg',
+      thumburl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/a1/Hong_Kong_from_Victoria_Peak1.jpg/1200px-Hong_Kong_from_Victoria_Peak1.jpg',
+      thumbwidth: 1200, thumbheight: 800,
+      extmetadata: { Artist: { value: 'Mustang Joe' }, LicenseShortName: { value: 'CC0' } },
+    }] }] } }) };
+  }) as unknown as typeof fetch;
+  return { f, asked };
+}
+
+test('a thumbnail of a flag is read by its original file, not its ".svg.png" ending', () => {
+  assert.equal(looksLikeThePlace(FLAG), false);
+  assert.equal(looksLikeThePlace('https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e7/Raleigh_Skyline.jpg/1280px-Raleigh_Skyline.jpg'), true);
+});
+
+test('an article that leads with its flag shows the place\'s own Wikidata photograph, credited', async () => {
+  const { f, asked } = hongKong('Hong Kong from Victoria Peak1.jpg');
+  const p = await destinationPhoto('Hong Kong, HK', f);
+  assert.match(p!.url, /Victoria_Peak1\.jpg/);
+  assert.equal(p!.artist, 'Mustang Joe');
+  assert.ok(asked.some(u => u.includes('File:Hong_Kong_from_Victoria_Peak1.jpg')), 'the credit is for the picture shown, not the flag');
+});
+
+test('a flag with no photograph behind it keeps the gradient', async () => {
+  assert.equal(await destinationPhoto('Hong Kong, HK', hongKong(null).f), null);
+});
+
+test('a flag kept before the check is asked about again', async () => {
+  let wrote: any = null;
+  const db = { from: () => ({
+    select() { return this; }, eq() { return this; },
+    maybeSingle: async () => ({ data: { url: FLAG, credit: 'x · y', source: null, width: 1, height: 1, checked_at: '2026-11-01T00:00:00Z' }, error: null }),
+    upsert: async (row: any) => { wrote = row; return { error: null }; },
+  }) };
+  const got = await cachedDestinationPhoto(db, 'Hong Kong, HK', { fetchImpl: hongKong('Hong Kong from Victoria Peak1.jpg').f });
+  assert.match(got!.url, /Victoria_Peak1/);
+  assert.match(wrote.url, /Victoria_Peak1/);
+});
