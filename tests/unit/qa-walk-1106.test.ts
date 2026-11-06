@@ -74,3 +74,15 @@ test("Clerk's generated default image is treated as no photo, so the app draws i
   assert.match(app, /avatar:ownPhoto\(u\.avatar_url\|\|u\.avatar\|\|null\)/);
   assert.match(readFileSync('app/api/me/route.ts', 'utf8'), /const avatar_url = ownPhoto\(clerkUser\.imageUrl\);/);
 });
+
+test('a shared link carries a picture and says what it is; an invite says whose group', () => {
+  const layout = readFileSync('app/layout.tsx', 'utf8');
+  assert.match(layout, /metadataBase: new URL\('https:\/\/www\.alcanzar\.io'\)/);
+  assert.match(layout, /twitter: \{ card: 'summary_large_image' \}/);
+  const inv = readFileSync('app/invite/[token]/layout.tsx', 'utf8');
+  assert.match(inv, /const title = `Join \$\{p\.groupName\} on Reach`;/);
+  const pv = readFileSync('app/invite/[token]/invite-preview.ts', 'utf8');
+  assert.doesNotMatch(pv, /email/i.source === 'email' ? /select\('[^']*email/ : /x^/, 'the invited address never goes into a preview');
+  const mw = readFileSync('middleware.ts', 'utf8');
+  assert.match(mw, /'\/opengraph-image\(\.\*\)'/, 'crawlers fetch the picture signed out');
+});

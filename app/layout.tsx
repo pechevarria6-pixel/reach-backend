@@ -24,8 +24,17 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  // Absolute URLs for the link preview (app/opengraph-image.tsx).
+  metadataBase: new URL('https://www.alcanzar.io'),
   title: 'Reach — Plan experiences together',
-  description: 'Turn conversations into commitments and commitments into real-world experiences.',
+  description: 'Reach plans trips and nights out for your group: everyone says what they are into, and the plan comes together in one place.',
+  openGraph: {
+    title: 'Reach — plans with your people, actually made',
+    description: 'Trips and nights out, planned together. Everyone says what they are into; Reach finds options that suit all of you.',
+    siteName: 'Reach',
+    type: 'website',
+  },
+  twitter: { card: 'summary_large_image' },
   manifest: '/manifest.json',
   // Built from the logo by scripts/make_icons.py. Declared here so the head
   // carries them: an installed app with no apple-touch-icon gets a screenshot

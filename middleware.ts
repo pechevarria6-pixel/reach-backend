@@ -14,6 +14,9 @@ const isPublicRoute = createRouteMatcher([
   '/quiz/(.*)',
   '/privacy',
   '/terms',
+  // Link previews are fetched by chat apps' crawlers, signed out.
+  '/opengraph-image(.*)',
+  '/twitter-image(.*)',
 ]);
 
 const withClerk = clerkMiddleware((auth, req) => {
