@@ -35,6 +35,20 @@ export function switchedOff(status: number, body: string): boolean {
 
 class SwitchedOff extends Error {}
 
+/**
+ * Once Yelp has said the key is off, this instance stops asking for a while.
+ * It was asked four times on every Discover load (events plus three interest
+ * searches), refused four times, and each refusal was a round trip spent on
+ * an answer already known (production logs, 2026-11-06). Six hours, then one
+ * load asks again, so a renewed key comes back on by itself.
+ */
+export const SWITCHED_OFF_FOR_MS = 6 * 60 * 60 * 1000;
+let offUntil = 0;
+export function markSwitchedOff(now = Date.now()) { offUntil = now + SWITCHED_OFF_FOR_MS; }
+export function knownSwitchedOff(now = Date.now()) { return now < offUntil; }
+export function resetSwitchedOff() { offUntil = 0; }
+const OFF_DETAIL = 'Yelp refused the key (trial expired or not accepted).';
+
 function auth() {
   const key = process.env.YELP_API_KEY;
   return key ? { Authorization: `Bearer ${key}` } : null;
@@ -53,6 +67,7 @@ const PROVIDER_TIMEOUT_MS = 6000;
 export async function yelpEvents(seeker: Seeker, opts: { timeoutMs?: number } = {}): Promise<SourceResult> {
   const headers = auth();
   if (!headers) return { source: 'yelp-events', status: 'no_key', findings: [] };
+  if (knownSwitchedOff()) return { source: 'yelp-events', status: 'no_key', findings: [], detail: OFF_DETAIL };
 
   // Their day, not the server's: asking from the UTC date meant that from
   // eight in the evening onwards Yelp was asked for tomorrow's events, and
@@ -78,7 +93,8 @@ export async function yelpEvents(seeker: Seeker, opts: { timeoutMs?: number } = 
       // To turn it on: Yelp's "Manage App" page has a join-beta button.
       if (switchedOff(res.status, detail)) {
         console.log('[discover/yelp-events] key switched off — treated as not configured', res.status, detail.slice(0, 120));
-        return { source: 'yelp-events', status: 'no_key', findings: [], detail: 'Yelp refused the key (trial expired or not accepted).' };
+        markSwitchedOff();
+        return { source: 'yelp-events', status: 'no_key', findings: [], detail: OFF_DETAIL };
       }
       if (res.status === 403 && /DEVELOPER_BETA/i.test(detail)) {
         return {
@@ -186,6 +202,7 @@ async function placesFor(interest: string, seeker: Seeker, headers: Record<strin
 export async function yelpPlaces(seeker: Seeker, opts: { timeoutMs?: number } = {}): Promise<SourceResult> {
   const headers = auth();
   if (!headers) return { source: 'yelp-places', status: 'no_key', findings: [] };
+  if (knownSwitchedOff()) return { source: 'yelp-places', status: 'no_key', findings: [], detail: OFF_DETAIL };
   // Three at once. Every interest would be a dozen round trips inside one
   // request, and the three they picked first are the three they care about.
   // Somebody with fewer than three answers, or none, gets everyday things in
@@ -200,7 +217,8 @@ export async function yelpPlaces(seeker: Seeker, opts: { timeoutMs?: number } = 
   if (failed === wanted.length) {
     if (settled.some(r => r.status === 'rejected' && r.reason instanceof SwitchedOff)) {
       console.log('[discover/yelp-places] key switched off — treated as not configured');
-      return { source: 'yelp-places', status: 'no_key', findings: [], detail: 'Yelp refused the key (trial expired or not accepted).' };
+      markSwitchedOff();
+      return { source: 'yelp-places', status: 'no_key', findings: [], detail: OFF_DETAIL };
     }
     return { source: 'yelp-places', status: 'error', findings: [], detail: `all ${failed} searches failed` };
   }

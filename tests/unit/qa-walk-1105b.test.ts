@@ -6,7 +6,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { titledByListing, titleIsVenue } from '../../lib/discovery/listing-title.ts';
-import { yelpEvents, yelpPlaces, switchedOff } from '../../lib/discovery/yelp.ts';
+import { yelpEvents, yelpPlaces, switchedOff, resetSwitchedOff, knownSwitchedOff, SWITCHED_OFF_FOR_MS } from '../../lib/discovery/yelp.ts';
 import { getNextAction, type NextActionInput } from '../../lib/next-action.ts';
 import { planSections } from '../../lib/calendar.ts';
 import { everyoneHasAnswered } from '../../lib/everyone-in.ts';
@@ -85,6 +85,7 @@ const realFetch = globalThis.fetch;
 const yelpKey = process.env.YELP_API_KEY;
 afterEach(() => {
   globalThis.fetch = realFetch;
+  resetSwitchedOff();
   if (yelpKey === undefined) delete process.env.YELP_API_KEY; else process.env.YELP_API_KEY = yelpKey;
 });
 test('6d: TRIAL_EXPIRED and an unaccepted key are a lane not configured', async () => {
@@ -98,6 +99,15 @@ test('6d: TRIAL_EXPIRED and an unaccepted key are a lane not configured', async 
   const [events, places] = await Promise.all([yelpEvents(seeker), yelpPlaces(seeker)]);
   assert.equal(events.status, 'no_key');
   assert.equal(places.status, 'no_key');
+  // Known now: the next load does not ask Yelp again for an answer it has.
+  let asked = 0;
+  globalThis.fetch = (async () => { asked++; return new Response('{}', { status: 200 }); }) as typeof fetch;
+  const [again, againPlaces] = await Promise.all([yelpEvents(seeker), yelpPlaces(seeker)]);
+  assert.equal(asked, 0);
+  assert.equal(again.status, 'no_key');
+  assert.equal(againPlaces.status, 'no_key');
+  assert.ok(knownSwitchedOff());
+  assert.ok(!knownSwitchedOff(Date.now() + SWITCHED_OFF_FOR_MS + 1), 'a renewed key is asked again after a while');
   // And the footer reads errors only.
   assert.match(APP, /sources\.some\(s=>s\.status==="error"\)&&visible\.length>0/);
 });
