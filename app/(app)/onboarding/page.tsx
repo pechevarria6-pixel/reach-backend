@@ -13,7 +13,23 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
-import { BRAND } from '@/lib/brand';
+import { QUIZ_SCREENS } from '@/lib/quiz-screens';
+
+// Read from the quiz itself: this said "Nine quick questions" over a quiz of
+// six screens (2026-11-06).
+const WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+const QUIZ_COUNT = WORDS[QUIZ_SCREENS.length] ?? String(QUIZ_SCREENS.length);
+// One palette per theme, the app's own (PALETTE in components/reach-app.jsx).
+// This screen was fixed maroon while sign-up before it and the app after it
+// are cream by default: a new account went light, dark, light in its first
+// minute (new-user walk, 2026-11-06).
+const THEME_CSS = `
+.ob{--bg:#EBEFEC;--s2:#E4EAE6;--bd:#D8DED4;--ac:#EC6032;--acd:#D24E24;--on:#2A1D06;--t1:#142119;--t2:#576E61;--t3:#5E766A;--tint:rgba(236,96,50,.12);--tintbd:rgba(236,96,50,.30);--err:#C0392B}
+:root[data-theme="dark"] .ob{--bg:#2C0E18;--s2:#3F1619;--bd:#5A2430;--ac:#C3A342;--acd:#A8892F;--on:#2A1D06;--t1:#FEF7D9;--t2:#CFC182;--t3:#B89A6A;--tint:rgba(195,163,66,.14);--tintbd:rgba(195,163,66,.32);--err:#E85D5D}
+.ob *{box-sizing:border-box}
+.ob input::placeholder{color:var(--t3);opacity:1;text-transform:none;letter-spacing:normal;font-weight:400}
+.ob input:focus-visible,.ob button:focus-visible{outline:3px solid var(--ac);outline-offset:2px}
+`;
 
 type Step = 'you' | 'location' | 'notifications' | 'ready';
 const STEPS: Step[] = ['you', 'location', 'notifications', 'ready'];
@@ -129,33 +145,34 @@ export default function OnboardingPage() {
     },
     ready: {
       icon: '✨', title: 'Now the good bit',
-      why: 'Nine quick questions about what you are into — pottery, cooking, live music, whatever it is. Everything Reach suggests from here reads your answers.',
+      why: `${QUIZ_COUNT} quick questions about what you are into — pottery, cooking, live music, whatever it is. Everything Reach suggests from here reads your answers.`,
     },
   }[current];
 
   const input: React.CSSProperties = {
     width: '100%', padding: '13px 14px', borderRadius: 14,
-    border: `1px solid ${BRAND.border}`, background: BRAND.s2, color: BRAND.t1,
+    border: '1px solid var(--bd)', background: 'var(--s2)', color: 'var(--t1)', minWidth: 0,
     fontSize: 15, fontFamily: 'inherit', marginBottom: 10,
   };
 
   return (
-    <main style={{ minHeight: '100dvh', background: BRAND.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: 'var(--font-body)' }}>
+    <main className="ob" style={{ minHeight: '100dvh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: 'var(--font-body)' }}>
+      <style dangerouslySetInnerHTML={{ __html: THEME_CSS }} />
       <div style={{ maxWidth: 400, width: '100%' }}>
         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 40 }}>
           {STEPS.map((_, i) => (
-            <div key={i} style={{ width: i === step ? 20 : 6, height: 6, borderRadius: 3, background: i === step ? BRAND.accent : BRAND.border, transition: 'all .3s' }} />
+            <div key={i} style={{ width: i === step ? 20 : 6, height: 6, borderRadius: 3, background: i === step ? 'var(--ac)' : 'var(--bd)', transition: 'all .3s' }} />
           ))}
         </div>
 
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{ width: 88, height: 88, borderRadius: 28, background: 'rgba(212,168,67,0.14)', border: '1px solid rgba(212,168,67,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, margin: '0 auto 24px' }}>
+          <div style={{ width: 88, height: 88, borderRadius: 28, background: 'var(--tint)', border: '1px solid var(--tintbd)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, margin: '0 auto 24px' }}>
             {card.icon}
           </div>
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: BRAND.t1, marginBottom: 12 }}>{card.title}</h1>
-          <p style={{ fontSize: 15, color: BRAND.t2, lineHeight: 1.7 }}>{card.why}</p>
+          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--t1)', marginBottom: 12 }}>{card.title}</h1>
+          <p style={{ fontSize: 15, color: 'var(--t2)', lineHeight: 1.7 }}>{card.why}</p>
           {current !== 'you' && current !== 'ready' && (
-            <p style={{ fontSize: 12, color: BRAND.t3, marginTop: 12 }}>You can change this at any time in Settings.</p>
+            <p style={{ fontSize: 12, color: 'var(--t3)', marginTop: 12 }}>You can change this at any time in Settings.</p>
           )}
         </div>
 
@@ -163,17 +180,17 @@ export default function OnboardingPage() {
           <div style={{ marginBottom: 18 }}>
             <div style={{ display: 'flex', gap: 10 }}>
               <input style={input} value={firstName} onChange={e => setFirstName(e.target.value)}
-                placeholder="First name" autoComplete="given-name" id="first-name" />
+                placeholder="First name" autoComplete="given-name" id="first-name" aria-label="First name" />
               <input style={input} value={lastName} onChange={e => setLastName(e.target.value)}
-                placeholder="Last name" autoComplete="family-name" id="last-name" />
+                placeholder="Last name" autoComplete="family-name" id="last-name" aria-label="Last name" />
             </div>
             <input style={input} value={homeCity} onChange={e => setHomeCity(e.target.value)}
-              placeholder="Where you live, like Edinburgh" autoComplete="address-level2" id="home-city" />
+              placeholder="Where you live, like Charleston" autoComplete="address-level2" id="home-city" aria-label="Where you live" />
             <input style={{ ...input, textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600 }}
               value={homeAirport} maxLength={3} onChange={e => setHomeAirport(e.target.value)}
-              placeholder="Nearest airport, like EDI" id="home-airport" />
+              placeholder="Nearest airport, like CHS" id="home-airport" aria-label="Nearest airport code" autoCapitalize="characters" />
             {!airportOk && (
-              <div style={{ fontSize: 12, color: '#D9534F', marginBottom: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--err)', marginBottom: 6 }}>
                 An airport code is three letters, like EDI or JFK.
               </div>
             )}
@@ -208,13 +225,13 @@ export default function OnboardingPage() {
 
 const primary: React.CSSProperties = {
   width: '100%', minHeight: 52, padding: '15px 20px',
-  background: `linear-gradient(135deg, ${BRAND.accentDeep}, ${BRAND.accent})`,
-  color: BRAND.onAccent, border: 'none', borderRadius: 16,
+  background: 'linear-gradient(135deg, var(--acd), var(--ac))',
+  color: 'var(--on)', border: 'none', borderRadius: 16,
   fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
 };
 
 const secondary: React.CSSProperties = {
   width: '100%', minHeight: 48, padding: '14px 20px',
-  background: BRAND.s2, color: BRAND.t2, border: `1px solid ${BRAND.border}`,
+  background: 'var(--s2)', color: 'var(--t2)', border: '1px solid var(--bd)',
   borderRadius: 16, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit',
 };

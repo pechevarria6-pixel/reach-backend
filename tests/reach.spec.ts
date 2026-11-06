@@ -50,6 +50,16 @@ test.describe('1. Authentication', () => {
     await expect(page.locator('input[name="emailAddress"]')).toBeVisible({ timeout: 15000 });
   });
 
+  test('The front door says what Reach is and offers both ways in', async ({ page }) => {
+    // It used to redirect straight to a "Welcome back!" sign-in box, for
+    // people who had never been here (2026-11-06).
+    await page.goto(`${BASE_URL}/`);
+    await expect(page.locator('h1')).toContainText(/plans with your people/i, { timeout: 15000 });
+    await expect(page.locator('a[href="/sign-up"]').first()).toBeVisible();
+    await expect(page.locator('a[href="/sign-in"]').first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+
   test('Redirects to sign-in when not authenticated', async ({ page }) => {
     await page.goto(`${BASE_URL}/home`);
     await expect(page).toHaveURL(/sign-in/, { timeout: 10000 });
