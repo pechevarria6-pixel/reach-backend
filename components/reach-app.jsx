@@ -1217,7 +1217,14 @@ function TripPicks({push,userLocation,toast,groups}){
                   <img src={p.photo.url} alt={p.photo.alt} loading="lazy"
                     style={{display:"block",width:"100%",height:120,objectFit:"cover"}}
                     onError={e=>{e.currentTarget.parentElement.style.display="none";}}/>
-                  {p.photo.credit&&<div style={{position:"absolute",right:8,bottom:6,fontSize:9.5,color:"rgba(255,255,255,.8)",textShadow:"0 1px 2px rgba(0,0,0,.7)"}}>📷 {p.photo.credit}</div>}
+                  {/* One line on a scrim: it wrapped over the sky in two lines of
+                      white nobody could read (new-user walk, 2026-11-06). The
+                      whole credit stays in the title and for screen readers. */}
+                  {p.photo.credit&&<div title={`Photo: ${p.photo.credit}`} aria-label={`Photo: ${p.photo.credit}`}
+                    style={{position:"absolute",left:0,right:0,bottom:0,padding:"14px 10px 5px",
+                      background:"linear-gradient(to top,rgba(0,0,0,.55),rgba(0,0,0,0))",
+                      fontSize:9.5,lineHeight:1.2,color:"rgba(255,255,255,.92)",
+                      whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textAlign:"right"}}>📷 {p.photo.credit}</div>}
                 </div>
               )}
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
@@ -3296,7 +3303,9 @@ function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
         <div><div className="pt">Your trips</div><div style={{fontSize:13,color:C.t2,marginTop:2}}>Solo and together</div></div>
-        <button className="bsm bsm-p" onClick={()=>push("createGroup")}>+ New</button>
+        {/* Not beside the empty state's own button, which does the same
+            thing: two ways to the one screen on an empty page (2026-11-06). */}
+        {(loading||groups.length>0)&&<button className="bsm bsm-p" onClick={()=>push("createGroup")}>+ New</button>}
       </div>
       {/* With no groups this screen rendered a heading and nothing else — a
           blank page on the tab a new person opens first. */}
@@ -3309,14 +3318,14 @@ function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
       {!loading&&groups.length===0&&(
         <div style={{margin:"0 20px",padding:"32px 24px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:20,textAlign:"center"}}>
           <div style={{fontSize:40,marginBottom:12}}>👋</div>
-          <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>No groups yet</div>
+          <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>Nothing planned yet</div>
           <div style={{fontSize:13,color:C.t2,lineHeight:1.6,marginBottom:20}}>
-            A group is whoever you travel with — family, the usual suspects, or just you.
+            Start with whoever is going — family, the usual suspects, or just you.
             Reach plans around what everybody actually wants, not the loudest voice.
           </div>
-          <button className="bp" onClick={()=>push("createGroup")}>Start a group</button>
+          <button className="bp" onClick={()=>push("createGroup")}>Start planning</button>
           <div style={{fontSize:12,color:C.t3,marginTop:14,lineHeight:1.5}}>
-            Going solo? Make one anyway. Nobody has to vote against you.
+            Going solo? That works too. Nobody has to vote against you.
           </div>
         </div>
       )}

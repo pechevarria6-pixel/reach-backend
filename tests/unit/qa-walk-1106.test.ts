@@ -15,3 +15,15 @@ test('Discover never waits on a hung request: twelve seconds, then one more ask'
   assert.match(body, /res=await ask\(20000\);/);
   assert.doesNotMatch(body, /const res=await fetch\(url\);/, 'a bare fetch waits as long as the server does');
 });
+
+test('an empty Groups tab has one way to start, not "+ New" beside "Start planning"', () => {
+  assert.match(app, /\{\(loading\|\|groups\.length>0\)&&<button className="bsm bsm-p" onClick=\{\(\)=>push\("createGroup"\)\}>\+ New<\/button>\}/);
+  assert.match(app, />Nothing planned yet</);
+  assert.doesNotMatch(app, />No groups yet</);
+});
+
+test('a trip card credits its photo on one line, over a scrim', () => {
+  const at = app.indexOf('title={`Photo: ${p.photo.credit}`}');
+  assert.ok(at > 0);
+  assert.match(app.slice(at, at + 500), /whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"/);
+});
