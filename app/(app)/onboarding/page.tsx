@@ -13,12 +13,9 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/nextjs';
-import { QUIZ_SCREENS } from '@/lib/quiz-screens';
-
 // Read from the quiz itself: this said "Nine quick questions" over a quiz of
 // six screens (2026-11-06).
-const WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
-const QUIZ_COUNT = WORDS[QUIZ_SCREENS.length] ?? String(QUIZ_SCREENS.length);
+import { QUIZ_COUNT_WORD as QUIZ_COUNT } from '@/lib/quiz-screens';
 // One palette per theme, the app's own (PALETTE in components/reach-app.jsx).
 // This screen was fixed maroon while sign-up before it and the app after it
 // are cream by default: a new account went light, dark, light in its first

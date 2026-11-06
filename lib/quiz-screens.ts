@@ -126,3 +126,8 @@ export function stepAfter(armedOn: number, current: number, total: number): numb
   if (current < 0 || current >= total) return null;
   return current < total - 1 ? current + 1 : 'finish';
 }
+
+/** "Six", from the screens themselves, for copy that says how long the quiz
+ *  is. Onboarding said "Nine" over six screens (2026-11-06). */
+const COUNT_WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
+export const QUIZ_COUNT_WORD: string = COUNT_WORDS[QUIZ_SCREENS.length] ?? String(QUIZ_SCREENS.length);

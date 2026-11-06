@@ -33,7 +33,7 @@ import { pushState, turnOnPush, forgetThisDevice } from "@/lib/push-client";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor, stepCounter } from "@/lib/quiz-steps";
 import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, waitRefusal, changeRefusal, planCalled } from "@/lib/plan-words";
-import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
+import { QUIZ_SCREENS, QUIZ_COUNT_WORD, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
 import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
@@ -1579,7 +1579,7 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
               What kind of traveller are you?
             </div>
             <div style={{fontSize:12.5,color:C.t2,lineHeight:1.55}}>
-              Six taps, about a minute. Then the places we've checked near you that fit,
+              {QUIZ_COUNT_WORD} taps, about a minute. Then the places we've checked near you that fit,
               wherever we've mapped so far — and what Discover shows you is aimed at you.
             </div>
             <div style={{fontSize:12,color:C.accentText,marginTop:6,fontWeight:600}}>Start →</div>
@@ -16274,7 +16274,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         sub={profileQuiz?.profile
           ?headline(profileQuiz.profile)
           :user?.quizComplete
-            ?"Six taps to see your result and what it means near you"
+            ?`${QUIZ_COUNT_WORD} taps to see your result and what it means near you`
             :"Not answered yet — this is what makes suggestions yours"}
         right={<Ic.ChevR/>} onClick={()=>push&&push("taste")}/>
       {/* The rest of what the old quiz asked, still editable in one place. */}
