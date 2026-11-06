@@ -9,7 +9,7 @@ import { lineWhen, labelWithClock, whenSaid } from "@/lib/line-when";
 import { planSections, daysAway, today, countdown, groupSchedule, byName, monthGrid, monthLabel, monthOf, addMonths, weekBars, nextAfter, tripTiming, isLive, dayWhere } from "@/lib/calendar";
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
-import { SURFACE } from "@/lib/brand";
+import { SURFACE, DEFAULT_THEME } from "@/lib/brand";
 import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL, PRICE_CHECK_WORDS } from "@/lib/checkout";
 import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
@@ -182,8 +182,7 @@ const T = {
   caption: { fontFamily: "var(--font-body)", fontSize: ".75rem", lineHeight: 1.3, fontWeight: 500 },
 };
 // REF6 is the app's face: maroon and gold. Light is the alternative, not the
-// starting point.
-const DEFAULT_THEME = "dark";
+// starting point. DEFAULT_THEME lives in lib/brand.ts so the shell agrees.
 // Must match the key the no-flash script in app/layout.tsx reads.
 const THEME_KEY = "reach-theme";
 

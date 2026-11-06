@@ -42,6 +42,15 @@ export const SURFACE = { light: '#EBEFEC', dark: '#2C0E18' } as const;
  *  no-flash script in the shell and the toggle in the app cannot drift. */
 export const THEME_KEY = 'reach-theme';
 
+/**
+ * The theme with nothing stored. Maroon and gold is the brand (REF6); light
+ * is the alternative. The app said so, but the shell around it stamped
+ * nothing, so the front door, sign-up, onboarding and invites all fell back
+ * to cream and a new account went cream, cream, maroon (2026-11-06). The
+ * pre-paint script in app/layout.tsx stamps this, so every page agrees.
+ */
+export const DEFAULT_THEME: 'dark' | 'light' = 'dark';
+
 /** Inline button style for HTML emails, where classes are unreliable. */
 export const emailButtonStyle =
   `background:${BRAND.accent};color:${BRAND.onAccent};padding:12px 24px;` +

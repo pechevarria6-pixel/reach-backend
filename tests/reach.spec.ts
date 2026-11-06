@@ -397,10 +397,19 @@ test.describe('11. Stripe config', () => {
 test.describe('12. Theme', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test('Defaults to light with no stored preference', async ({ page }) => {
+  test('Defaults to the brand (dark) with no stored preference, on every page', async ({ page }) => {
+    // Dark became the app's default on 2026-09-17 (23e8be6), but the shell
+    // stamped nothing, so the pages around the app fell back to cream.
+    for (const path of ['/', '/sign-in']) {
+      await page.goto(`${BASE_URL}${path}`);
+      expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark');
+    }
+  });
+
+  test('A stored light choice is applied before paint', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('reach-theme', 'light'));
     await page.goto(`${BASE_URL}/sign-in`);
-    const stamped = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-    expect(stamped).toBeNull();
+    expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('light');
   });
 
   test('A stored dark choice is applied before paint', async ({ page }) => {

@@ -1,7 +1,7 @@
 import { ClerkProvider } from '@clerk/nextjs';
 import type { Metadata, Viewport } from 'next';
 import { Fraunces, Inter } from 'next/font/google';
-import { SHELL, SURFACE, THEME_KEY } from '@/lib/brand';
+import { DEFAULT_THEME, SHELL, SURFACE, THEME_KEY } from '@/lib/brand';
 import '@/styles/theme.css';
 
 // Fraunces for display — the reference screens' headings are a high-contrast
@@ -76,9 +76,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <html> so the correct palette is already in place. Wrapped in
               try/catch because storage throws in private windows. */}
           <script dangerouslySetInnerHTML={{ __html:
-            `(function(){try{var t=localStorage.getItem('${THEME_KEY}');` +
-            `if(t==='dark'||t==='light')document.documentElement` +
-            `.setAttribute('data-theme',t);}catch(e){}})();` }} />
+            `(function(){var t='${DEFAULT_THEME}';try{var s=localStorage.getItem('${THEME_KEY}');` +
+            `if(s==='dark'||s==='light')t=s;}catch(e){}` +
+            `document.documentElement.setAttribute('data-theme',t);})();` }} />
         </head>
         <body style={{ margin: 0, background: 'var(--shell-page)' }}>
           {children}
