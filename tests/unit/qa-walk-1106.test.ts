@@ -60,3 +60,17 @@ test('an invite opened by someone already in the group says they are in, not "al
   assert.ok(page.indexOf('if (invite.member)') < page.indexOf("if (invite.status !== 'pending')"));
   assert.doesNotMatch(page, /\{error\} Ask whoever sent it/, 'the server already says who to ask');
 });
+
+// ── Clerk's stand-in is not anybody's photo ───────────────────────────
+import { isClerkDefault, ownPhoto } from '../../lib/avatar.ts';
+test("Clerk's generated default image is treated as no photo, so the app draws initials", () => {
+  const stand = 'https://img.clerk.com/' + Buffer.from('{"type":"default","iid":"ins_x","rid":"user_y","initials":"NT"}').toString('base64url');
+  const real = 'https://img.clerk.com/' + Buffer.from('{"type":"proxy","src":"https://images.clerk.dev/uploaded/img_abc"}').toString('base64url');
+  assert.equal(isClerkDefault(stand), true);
+  assert.equal(ownPhoto(stand), null);
+  assert.equal(ownPhoto(real), real);
+  assert.equal(ownPhoto('https://lh3.googleusercontent.com/a/abc'), 'https://lh3.googleusercontent.com/a/abc');
+  assert.equal(ownPhoto(null), null);
+  assert.match(app, /avatar:ownPhoto\(u\.avatar_url\|\|u\.avatar\|\|null\)/);
+  assert.match(readFileSync('app/api/me/route.ts', 'utf8'), /const avatar_url = ownPhoto\(clerkUser\.imageUrl\);/);
+});

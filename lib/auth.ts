@@ -11,6 +11,7 @@
 // resolved. The guard is a type predicate rather than a plain `!ctx.ok`
 // check because this project compiles with `strict: false`, and without
 // strictNullChecks TypeScript will not narrow on a literal discriminant.
+import { ownPhoto } from './avatar.ts';
 import { NextResponse } from 'next/server';
 import { auth, currentUser } from '@clerk/nextjs/server';
 import { createServerClient } from '@/lib/supabase';
@@ -67,7 +68,7 @@ export async function requireUser(): Promise<Fail | UserOk> {
       clerk_id: clerkId,
       email,
       name,
-      avatar_url: cu?.imageUrl || null,
+      avatar_url: ownPhoto(cu?.imageUrl),
       consent_recorded_at: new Date().toISOString(),
     })
     .select('id, clerk_id, email')

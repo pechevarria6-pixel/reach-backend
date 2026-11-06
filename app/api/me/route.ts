@@ -1,3 +1,4 @@
+import { ownPhoto } from '@/lib/avatar';
 import { auth, currentUser } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
@@ -20,7 +21,8 @@ export async function GET() {
   const lastName = clerkUser.lastName || external?.lastName || '';
   const realName = [firstName, lastName].filter(Boolean).join(' ');
   const name = realName || email.split('@')[0];
-  const avatar_url = clerkUser.imageUrl || null;
+  // Clerk's generated stand-in is not their photo (lib/avatar.ts).
+  const avatar_url = ownPhoto(clerkUser.imageUrl);
   const provider = clerkUser.externalAccounts[0]?.provider || 'email';
 
   // Check if user exists in Supabase

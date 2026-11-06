@@ -10,6 +10,7 @@ import { planSections, daysAway, today, countdown, groupSchedule, byName, monthG
 // The two page colours the browser chrome is tinted with, shared with the
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE, DEFAULT_THEME } from "@/lib/brand";
+import { ownPhoto } from "@/lib/avatar";
 import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL, PRICE_CHECK_WORDS } from "@/lib/checkout";
 import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
@@ -438,7 +439,7 @@ function toContact(u){
     // carry no address at all now.
     handle:u.email?"@"+u.email.split("@")[0]:"",
     email:u.email||"",
-    avatar:u.avatar_url||u.avatar||null,
+    avatar:ownPhoto(u.avatar_url||u.avatar||null),
     color:colorFor(u.id),
     initials:initialsFor(u.name,u.email),
   };
@@ -2389,9 +2390,12 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
     :null;
 
   const city=userLocation?.city||userLocation?.formatted;
+  // Short enough to sit on one line with "· change" at phone width: "Based on
+  // your location in Southern Pines" pushed it onto a line of its own
+  // (new-user walk, 2026-11-06).
   const placePrefix=userLocation?.source==="override"?"Showing"
-    :userLocation?.source==="home"?"Based on your home city,"
-    :"Based on your location in";
+    :userLocation?.source==="home"?"Near your home in"
+    :"Near you in";
   // Said once, only when there is genuinely little here. Not an error and
   // not an apology: the sweep runs nightly and this fills in.
   const learningNote=!busy&&thin&&visible.length>0
@@ -4233,7 +4237,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
               <div key={u.id} className="cb-row" {...pressable} onClick={()=>setMembers(m=>sel?m.filter(id=>id!==u.id):[...m,u.id])}>
                 <div className={"cb "+(sel?"ck":"")}>{sel&&<Ic.Check/>}</div>
                 <div style={{width:36,height:36,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",color:C.onAccent,fontWeight:700,fontSize:14,flexShrink:0,overflow:"hidden"}}>
-                  {u.avatar_url?<img src={u.avatar_url} style={{width:36,height:36,objectFit:"cover"}} alt=""/>:initials}
+                  {ownPhoto(u.avatar_url)?<img src={u.avatar_url} style={{width:36,height:36,objectFit:"cover"}} alt=""/>:initials}
                 </div>
                 <div><div style={{fontSize:14,fontWeight:500,color:C.t1}}>{u.name||"Member"}</div><div style={{fontSize:12,color:C.t2}}>Already on Reach</div></div>
               </div>
@@ -8855,7 +8859,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
             <div className="pt" style={{marginBottom:6}}>Who's joining?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>{withOthers.length?"Pick who it's for and what you're planning.":"Who it's for, and what you're planning."}</div>
             <input aria-label="Plan name" className="inp" value={planName} onChange={e=>setPlanName(e.target.value)}
-              placeholder={planType==="restaurant"?"Plan name (e.g., Friday dinner)":planType==="concert"?"Plan name (e.g., Saturday's gig)":planType==="weekend"?"Plan name (e.g., Lake weekend)":"Plan name (e.g., Summer beach trip)"} style={{marginBottom:14}}/>
+              placeholder={planType==="restaurant"||(evening&&!planType)?"Plan name (e.g., Friday dinner)":planType==="concert"?"Plan name (e.g., Saturday's gig)":planType==="weekend"?"Plan name (e.g., Lake weekend)":"Plan name (e.g., Summer beach trip)"} style={{marginBottom:14}}/>
             <div className="sl" style={{marginBottom:10}}>Who is this for?</div>
             <div {...pressable} onClick={chooseSolo}
               style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,
@@ -8867,7 +8871,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 <div style={{fontSize:14,fontWeight:600,color:C.t1}}>
                   {makingSolo?"Setting up…":"Just me"}
                 </div>
-                <div style={{fontSize:12,color:C.t2}}>{planType==="restaurant"||planType==="concert"?"Just you — no voting, no splitting":"A solo trip — no voting, no splitting"}</div>
+                <div style={{fontSize:12,color:C.t2}}>{planType==="restaurant"||planType==="concert"||(evening&&!planType)?"Just you — no voting, no splitting":"A solo trip — no voting, no splitting"}</div>
               </div>
               {isSoloGroup&&gid&&<div style={{color:C.accentText}}><Ic.Check/></div>}
             </div>
@@ -16232,7 +16236,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 18px",textAlign:"center"}}>
         <div style={{width:80,height:80,borderRadius:"50%",background:`linear-gradient(135deg,${C.accent},${C.accentDeep})`,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--font-display)",fontSize:32,color:C.onAccent,border:`3px solid ${C.border}`,overflow:"hidden"}}>
-          {user?.avatar?<img src={user.avatar} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover"}} alt=""/>:(user?.name||"?")[0]}
+          {ownPhoto(user?.avatar)?<img src={user.avatar} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover"}} alt=""/>:(user?.name||"?")[0]}
         </div>
         <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>

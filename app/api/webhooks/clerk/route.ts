@@ -1,3 +1,4 @@
+import { ownPhoto } from '@/lib/avatar';
 import { NextRequest, NextResponse } from 'next/server';
 import { Webhook } from 'svix';
 import { createServerClient } from '@/lib/supabase';
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
       clerk_id: data.id,
       email,
       name,
-      avatar_url: data.image_url || null,
+      avatar_url: ownPhoto(data.image_url),
       auth_provider: provider,
       consent_recorded_at: new Date().toISOString(),
     }).select().single();
@@ -99,7 +100,7 @@ export async function POST(req: NextRequest) {
     const changes: Record<string, string> = {};
     if (email) changes.email = email;
     if (name) changes.name = name;
-    if (data.image_url) changes.avatar_url = data.image_url;
+    if (data.image_url) changes.avatar_url = ownPhoto(data.image_url);
 
     if (Object.keys(changes).length) {
       const { error: updated } = await supabase.from('users').update(changes).eq('clerk_id', data.id);
