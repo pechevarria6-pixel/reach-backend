@@ -42,9 +42,12 @@ const LIGHT: AuthColours = {
 };
 
 // Maroon and gold, from the same BRAND constants the shell and the emails use.
+// The primary button is gold, as it is on every dark screen of the app (Done,
+// Get started, Start planning); it was orange here alone, which showed once
+// sign-up opened in the brand theme by default (2026-11-08).
 const DARK: AuthColours = {
   bg: BRAND.bg, s2: BRAND.s2, border: BRAND.border,
-  accent: '#EC6032', accentDeep: '#D24E24', accentText: BRAND.accent, onAccent: BRAND.onAccent,
+  accent: BRAND.accent, accentDeep: BRAND.accentDeep, accentText: BRAND.accent, onAccent: BRAND.onAccent,
   t1: BRAND.t1, t2: BRAND.t2,
   danger: '#E85D5D', success: '#7FB58A', warning: '#E8A33D',
   shadow: '0 24px 80px rgba(0,0,0,.6)',
