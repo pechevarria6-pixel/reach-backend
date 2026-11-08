@@ -4971,8 +4971,10 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
               const selected=(answers.interests||[]).includes(label);
               return(
                 <button key={label} onClick={()=>toggle("interests",label)}
-                  style={{...tile(selected),textAlign:"center",padding:"10px 4px"}}>
-                  <div style={{fontSize:21,marginBottom:3}}>{Q2_EMOJI[label]||"✨"}</div>
+                  style={{...tile(selected),textAlign:"center",padding:"7px 4px"}}>
+                  {/* Fifteen tiles since nightlife joined (2026-11-08): a little
+                      tighter, so Done still shows on an iPhone 14 without a scroll. */}
+                  <div style={{fontSize:19,marginBottom:2}}>{Q2_EMOJI[label]||"✨"}</div>
                   <div style={{fontSize:11,fontWeight:600,lineHeight:1.2}}>{label}</div>
                 </button>
               );
