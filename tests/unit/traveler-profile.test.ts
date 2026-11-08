@@ -74,13 +74,15 @@ test('every 11pm answer sets energy and its points', () => {
   }
 });
 
-test('every interest counts one point to its archetype; the twelve tiles cover all six', () => {
+test('every interest counts one point to its archetype; the tiles cover all six', () => {
   for (const [label, who] of Object.entries(INTEREST_ARCHETYPE)) {
     assert.equal(scoreQuiz({ interests: [label] }, NOW).scores[who], 1, label);
   }
   const covered = new Set(Q2_TILES.map(t => INTEREST_ARCHETYPE[t]));
   for (const a of ARCHETYPES) assert.ok(covered.has(a), `${a} reachable from the Q2 screen`);
-  assert.ok(Q2_TILES.length <= 12, 'capped at twelve tiles on one screen');
+  // Twelve until the owner added nightlife (2026-11-08): five full rows of
+  // three now, and no more without a second look at the phone screen.
+  assert.ok(Q2_TILES.length <= 15, 'at most five rows of three');
 });
 
 test('the crowd drip sets crowd 20/50/80/95', () => {

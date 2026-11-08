@@ -219,6 +219,16 @@ const NIGHT_OUT: Record<string, string> = {
 const DRINK: Record<string, string> = {
   'cocktails': 'cocktail bars', 'wine': 'wine tasting', 'beer': 'breweries', 'coffee, honestly': 'coffee',
 };
+/**
+ * A tile that means more than one kind of place. "Bars & cocktails" is the
+ * cocktail bar and the pub; "Clubs & dancing" is the club and the dance
+ * floor. Every kind still passes allowed() on its own, so "not drinking"
+ * takes the bars and "no clubs" takes the clubs (2026-11-08).
+ */
+const TILE_KINDS: Record<string, string[]> = {
+  'bars & cocktails': ['cocktail bars', 'pubs'],
+  'clubs & dancing': ['nightclubs', 'dancing'],
+};
 const MUSIC: Record<string, string> = {
   'jazz & soul': 'jazz', 'classical': 'classical music',
 };
@@ -282,7 +292,7 @@ export function tasteFrom(profile: Profile | null | undefined): { interests: str
 
   const genres = words(profile?.music_genres);
   const wanted = [
-    ...words(profile?.favorite_activities),
+    ...words(profile?.favorite_activities).flatMap(w => TILE_KINDS[low(w)] ?? [w]),
     NIGHT_OUT[low(profile?.nightlife_style)],
     DRINK[low(profile?.drink_style)],
     ...(genres.length ? ['live music'] : []),

@@ -150,16 +150,26 @@ export const INTEREST_ARCHETYPE: Record<string, ArchetypeKey> = {
   'Breweries': 'taster',
   'Trivia & board games': 'spark',
   'Gardens & parks': 'recharger',
+  // Nightlife (2026-11-08): half of Reach is a night out, and the screen had
+  // no way to say you like one. Both count towards the live wire.
+  'Bars & cocktails': 'spark',
+  'Clubs & dancing': 'spark',
 };
 
 /**
- * The twelve that fit on one phone screen (spec 3a: cap at 12). The other
- * six still count when a v2 answer holds them, and are still offered in
- * Profile's full list — saving this screen never drops them.
+ * The tiles on the quiz's "What are you into?" screen. Spec 3a capped it at
+ * twelve to fit one phone screen; the owner added nightlife on 2026-11-08 —
+ * Reach is as much a night out as a trip, and nothing here said you liked
+ * one — so it is fifteen, five rows of three. The rest still count when an
+ * answer holds them, and are offered in Profile's full list; saving this
+ * screen never drops them.
  */
 export const Q2_TILES = [
-  'Live music', 'Outdoors', 'Sport', 'Art & galleries', 'Museums & history', 'Film & theatre',
-  'Markets & food halls', 'Wine tasting', 'Wellness', 'Gardens & parks', 'Comedy', 'Photography',
+  'Live music', 'Bars & cocktails', 'Clubs & dancing',
+  'Outdoors', 'Sport', 'Art & galleries',
+  'Museums & history', 'Film & theatre', 'Comedy',
+  'Markets & food halls', 'Wine tasting', 'Breweries',
+  'Wellness', 'Gardens & parks', 'Photography',
 ] as const;
 
 // ─── No way, José ────────────────────────────────────────────────────────

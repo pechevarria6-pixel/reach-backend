@@ -4300,6 +4300,8 @@ const TASTE_QUESTIONS=[
       {id:"cooking",e:"🍳",l:"Cooking"},
       {id:"pottery",e:"🏺",l:"Pottery & crafts"},
       {id:"livemusic",e:"🎸",l:"Live music"},
+      {id:"bars",e:"🍸",l:"Bars & cocktails"},
+      {id:"clubs",e:"🪩",l:"Clubs & dancing"},
       {id:"art",e:"🎨",l:"Art & galleries"},
       {id:"outdoors",e:"🥾",l:"Outdoors"},
       {id:"sport",e:"⚽",l:"Sport"},
