@@ -2,7 +2,11 @@
 // Contract:
 //   200 { status, booking }
 //   400 { code: 'travellers_missing', who: string[] }      names, never details
-//   402 { code: 'not_funded', funding: { targetCents, collectedCents, shortfallCents, funded } }
+//   402 { code: 'not_funded', clearing, funding: { targetCents, collectedCents, shortfallCents, funded, clearingCents } }
+//        clearing: true when bank payments on their way would cover some of
+//        it — "still clearing" (wait) rather than "not paid in yet" (chase)
+//   503 { code: 'payments_paused' }                         the kill switch is off (PAYMENTS_ENABLED=false);
+//                                                           only for something Reach pays a provider for
 //   409 { code: 'already_in_progress', status }             somebody else has it, or it is done
 //   409 { code: 'changed' }                                 the row moved while this ran; reopen it
 //   409 { code: 'price_changed', oldCents, newCents }       accept with { acceptNewPrice: true, acceptedCents: newCents }
@@ -44,7 +48,9 @@
 //
 // Redirects (a table, a ticket, a flight handed to the airline's own site)
 // skip 1 and 2: nobody's passport goes anywhere and Reach charges nothing.
-import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
+import { NOT_CHARGED, chargedRows, reachBuys } from '@/lib/booking/charged';
+import { paymentsPaused, pausedAnswer } from '@/lib/rail/kill-switch';
+import { clearingCents, clearingCount, notFundedMessage } from '@/lib/rail/contribution-state';
 import { NextRequest, NextResponse } from 'next/server';
 import { PROVIDERS } from '@/lib/booking/registry';
 import { appUrl } from '@/lib/app-url';
@@ -178,6 +184,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (isFail(ctx)) return ctx.error;
   const db = ctx.db;
   const body = await req.json().catch(() => ({}));
+
+  // Whether this booking spends the group's money at a provider. A ticket or
+  // a table somebody books on the seller's own site moves no money through
+  // Reach: it neither waits for the pot (directive P4) nor stops for the
+  // kill switch, whose words would be untrue over it.
+  // A table never takes money, whatever its row says (see the table branch).
+  const movesMoney = booking.vertical !== 'restaurant' && reachBuys(booking);
+  if (movesMoney && paymentsPaused()) {
+    const paused = pausedAnswer();
+    return refuse(paused.status, paused.body);
+  }
 
   // Before M1 a row mid-booking still reads awaiting_approval; its stamp
   // says otherwise (midClaim).
@@ -400,7 +417,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const owed = chargedRows(charged.data);
   const held = withClaims((paid.data ?? []) as ContributionRow[], (refunding.error ? [] : refunding.data ?? []) as RefundClaim[]);
   const funding = purchase ? fundingAt(owed, held, booking.id, checkedCents) : fundingOf(owed, held);
-  if (funding.targetCents > 0 && !funding.funded) {
+  // Money on its way from a bank is not money held (directive P2): only
+  // succeeded shares count above. It is named, so the refusal can say wait
+  // rather than chase.
+  const onItsWay = { cents: clearingCents(paid.data), count: clearingCount(paid.data) };
+  if (movesMoney && funding.targetCents > 0 && !funding.funded) {
     const rise = purchase ? checkedCents - priceCents : 0;
     if (rise > 0) {
       // A rise too small to ask about is still money. Written onto the row so
@@ -411,13 +432,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         .eq('id', booking.id).eq('status', 'awaiting_approval'), version);
       if (error) console.error('[approve] could not record a small rise', { bookingId: booking.id, code: error.code });
       return refuse(402, {
-        code: 'not_funded', funding,
+        code: 'not_funded', clearing: false, funding: { ...funding, clearingCents: onItsWay.cents },
         error: `The price went up by $${(rise / 100).toFixed(2)} since it was priced, so there is $${(funding.shortfallCents / 100).toFixed(2)} more to pay in before it can be booked.`,
       });
     }
     // Worded for a trip of one as much as a group: whose money is missing is
     // the funding figures' to say, and checkout says it from them.
-    return refuse(402, { code: 'not_funded', funding, error: "The money paid in doesn't cover this yet, so nothing was booked." });
+    const said = notFundedMessage(funding.shortfallCents, onItsWay);
+    return refuse(402, { code: 'not_funded', clearing: said.clearing, funding: { ...funding, clearingCents: onItsWay.cents }, error: said.error });
   }
 
   // ── 4. The claim ──────────────────────────────────────────────────────

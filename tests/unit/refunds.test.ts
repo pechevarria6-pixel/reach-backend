@@ -602,8 +602,12 @@ test('charge.refunded writes what Stripe lists now, never the larger of it and a
   const src = readFileSync('app/api/webhooks/stripe/route.ts', 'utf8');
   const handler = src.slice(src.indexOf("case 'charge.refunded'"), src.indexOf('async function announceIfFunded'));
   assert.doesNotMatch(handler, /Math\.max\(/);
-  assert.match(handler, /stripe\.refunds\.list\(\{ payment_intent: intentId/);
-  assert.match(handler, /refundOutcome\(contribution\.amount_cents, live\)/);
+  // The count lives in recountFromRefunds, shared with a dispute won.
+  assert.match(handler, /recountFromRefunds\(supabase, contribution, intentId/);
+  const recount = src.slice(src.indexOf('async function recountFromRefunds'), src.indexOf('async function readIntent'));
+  assert.doesNotMatch(recount, /Math\.max\(/);
+  assert.match(recount, /stripe\.refunds\.list\(\{ payment_intent: intentId/);
+  assert.match(recount, /refundOutcome\(contribution\.amount_cents, live\)/);
 });
 
 test('the webhook falls back to the claim id only for the attempt the refund was made for', () => {

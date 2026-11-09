@@ -8,8 +8,11 @@ import { report } from '@/lib/report';
 import { sendPaymentReceipt, sendFullyFunded } from '@/lib/email';
 import Stripe from 'stripe';
 import { track } from '@/lib/track';
-import { markPlanFunded, recordContributionFailed } from '@/lib/contribution-events';
+import { markPlanFunded, recordContributionDisputed, recordContributionFailed, recordContributionMove } from '@/lib/contribution-events';
 import { methodOf, recordMethod } from '@/lib/contribution-method';
+import { contributionMove } from '@/lib/rail/contribution-state';
+import { balanceTransactionId, feeOf, feeOfCharge, recordFee } from '@/lib/rail/fees';
+import { chargeOfDispute, disputeGaveBack, disputeTookMoney, intentOfDispute } from '@/lib/rail/disputes';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -33,6 +36,12 @@ export async function POST(req: NextRequest) {
   const type = event.type as string;
   if (type === 'charge.refund.updated' || type === 'refund.updated' || type === 'refund.failed') {
     return refundChanged(supabase, event.data.object as Stripe.Refund);
+  }
+
+  // A bank return or a chargeback (directive P5): the money left Reach's
+  // balance when the dispute opened, and came back if it was won.
+  if (type.startsWith('charge.dispute.')) {
+    return disputeChanged(supabase, type, event.data.object as Stripe.Dispute);
   }
 
   switch (event.type) {
@@ -67,14 +76,13 @@ export async function POST(req: NextRequest) {
             intent: intent.id, plan: intent.metadata.plan_id, code: markPaid.code,
           });
         }
-        // How it was paid, from the charge that paid it (directive P1).
+        // How it was paid, from the charge that paid it (directive P1), and
+        // what Stripe kept of it (P6), from one read of the intent as it is.
+        const fresh = await readIntent(intent.id);
         let method = methodOf(intent as never);
-        if (!method || method === 'other') {
-          try {
-            method = methodOf(await stripe.paymentIntents.retrieve(intent.id, { expand: ['latest_charge'] }) as never) ?? method;
-          } catch { /* the label is not worth failing a webhook over */ }
-        }
+        if (!method || method === 'other') method = methodOf(fresh as never) ?? method;
         await recordMethod(supabase, intent.id, method);
+        await recordFee(supabase, intent.id, feeOfCharge(fresh?.latest_charge as never));
         // Emitted here rather than from the screen: a contribution succeeded
         // when Stripe says so, not when a browser believes it did.
         void track(supabase, 'contribution_succeeded', {
@@ -121,10 +129,36 @@ export async function POST(req: NextRequest) {
       const intent = event.data.object as Stripe.PaymentIntent;
 
       if (intent.metadata.kind === 'reach_contribution') {
-        // Only a payment still in flight: a decline's event arriving after
-        // the second card paid must not unpay it (lib/contribution-events.ts).
-        const { error: contribFailed } = await recordContributionFailed(supabase, intent.id);
-        if (contribFailed) console.error('[stripe webhook] could not record a failed contribution', { intent: intent.id, code: contribFailed.code });
+        // Decided against what Stripe says about the payment now, never the
+        // event's snapshot (lib/rail/contribution-state.ts): a decline's
+        // event arriving after a second card or a bank debit paid must not
+        // unpay it, and a bank debit returned after it cleared (an ACH
+        // return, directive P5) must. Without Stripe's answer nothing is
+        // written and Stripe is asked to send it again.
+        const fresh = await readIntent(intent.id);
+        if (!fresh) {
+          console.error('[stripe webhook] a failed payment could not be read back — answering 500 so Stripe sends it again', { intent: intent.id });
+          return NextResponse.json({ error: 'could not read the payment' }, { status: 500 });
+        }
+        const { data: before, error: readErr } = await supabase.from('contributions')
+          .select('id, status, plan_id, amount_cents').eq('stripe_payment_intent', intent.id);
+        if (readErr) {
+          console.error('[stripe webhook] could not read a contribution that failed', { intent: intent.id, code: readErr.code });
+          return NextResponse.json({ error: 'could not read the contribution' }, { status: 500 });
+        }
+        const { data: moved, error: contribFailed } = await recordContributionFailed(supabase, intent.id, fresh.status);
+        if (contribFailed) {
+          console.error('[stripe webhook] could not record a failed contribution', { intent: intent.id, code: contribFailed.code });
+          return NextResponse.json({ error: 'could not record the failed payment' }, { status: 500 });
+        }
+        const movedIds = new Set(moved.map(r => String(r.id)));
+        const returned = (before ?? []).filter(r => r.status === 'succeeded' && movedIds.has(String(r.id)));
+        if (returned.length) {
+          await moneyCameBack(supabase, String(returned[0].plan_id ?? intent.metadata.plan_id ?? ''), {
+            how: 'returned', intent: intent.id,
+            cents: returned.reduce((s, r) => s + (Number(r.amount_cents) || 0), 0),
+          });
+        }
         break;
       }
 
@@ -132,6 +166,44 @@ export async function POST(req: NextRequest) {
       // A payment left reading 'pending' after it failed is one nobody knows
       // to retry.
       if (failed) console.error('[stripe webhook] could not record a failed payment', { intent: intent.id, code: failed.code });
+      break;
+    }
+    case 'payment_intent.processing': {
+      // A bank debit on its way, for days (directive P2). Not money held,
+      // not money owed: the row says 'processing', so approval waits and
+      // says "still clearing", and funding never starts a second payment.
+      const intent = event.data.object as Stripe.PaymentIntent;
+      if (intent.metadata.kind !== 'reach_contribution') break;
+      const fresh = await readIntent(intent.id);
+      const move = contributionMove('processing', fresh?.status ?? null);
+      if (move) {
+        const { error: clearing } = await recordContributionMove(supabase, intent.id, move);
+        if (clearing) {
+          console.error('[stripe webhook] could not mark a bank payment as clearing', { intent: intent.id, code: clearing.code });
+          return NextResponse.json({ error: 'could not record the payment clearing' }, { status: 500 });
+        }
+      }
+      await recordMethod(supabase, intent.id, methodOf((fresh ?? intent) as never));
+      break;
+    }
+    case 'charge.succeeded': {
+      // What Stripe kept of a contribution (directive P6), from the charge's
+      // balance transaction. A charge that is not a contribution's matches
+      // no row and changes nothing.
+      const charge = event.data.object as Stripe.Charge;
+      const intentId = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id;
+      if (!intentId) break;
+      let fee = feeOfCharge(charge as never);
+      const txn = fee === null ? balanceTransactionId(charge as never) : null;
+      if (txn) {
+        try {
+          fee = feeOf(await stripe.balanceTransactions.retrieve(txn) as never);
+        } catch (e) {
+          // The fee is a measurement, not money; not worth a retry storm.
+          console.error('[stripe webhook] could not read the balance transaction for a fee', { intent: intentId, e: e instanceof Error ? e.message : String(e) });
+        }
+      }
+      await recordFee(supabase, intentId, fee);
       break;
     }
     case 'charge.refunded': {
@@ -174,45 +246,8 @@ export async function POST(req: NextRequest) {
         if (readError) {
           console.error('[webhooks/stripe] could not read the contribution for a refund', { intent: intentId, error: readError.message });
         } else if (contribution) {
-          let live: number;
-          try {
-            const list = await stripe.refunds.list({ payment_intent: intentId, limit: 100 });
-            live = liveRefundedCents(list.data as StripeRefund[]);
-          } catch (e) {
-            // Stripe sends it again; guessing from the event is what this replaced.
-            console.error('[webhooks/stripe] could not list refunds for a refunded charge', { intent: intentId, e: e instanceof Error ? e.message : String(e) });
-            return NextResponse.json({ error: 'could not list refunds' }, { status: 500 });
-          }
-          const outcome = refundOutcome(contribution.amount_cents, live);
-          const now = new Date().toISOString();
-          let { error: writeError } = await supabase.from('contributions')
-            .update({ status: outcome.status, refunded_cents: outcome.refundedCents, updated_at: now })
-            .eq('id', contribution.id);
-
-          // Before sql/wave1-refunds-2026-09-22.sql there is no column to
-          // hold an amount. A whole refund can still be said with the
-          // status, as it always was. Part of one cannot — and answering 200
-          // for it meant Stripe never sent it again, so the plan counted that
-          // money for good. It answers 500 instead: Stripe retries for up to
-          // three days, and the event lands once the migration has run.
-          if (writeError && isMissingColumn(writeError)) {
-            if (outcome.partial) {
-              console.error(`[webhooks/stripe] a part refund cannot be recorded until ${REFUNDS_MIGRATION} runs — answering 500 so Stripe sends it again`, {
-                contribution: contribution.id, plan: charge.metadata?.plan_id,
-                refundedCents: outcome.refundedCents, amountCents: contribution.amount_cents,
-              });
-              return NextResponse.json({ error: `part refund waits for ${REFUNDS_MIGRATION}` }, { status: 500 });
-            } else {
-              ({ error: writeError } = await supabase.from('contributions')
-                .update({ status: outcome.status, updated_at: now })
-                .eq('id', contribution.id));
-            }
-          }
-          if (writeError) {
-            // Stripe will retry this event, which is the point of saying so.
-            console.error('[webhooks/stripe] could not record a refund on the contribution', { contribution: contribution.id, error: writeError.message });
-            return NextResponse.json({ error: 'could not record the refund' }, { status: 500 });
-          }
+          const failed = await recountFromRefunds(supabase, contribution, intentId, charge.metadata?.plan_id);
+          if (failed) return failed;
         }
       }
       break;
@@ -379,4 +414,159 @@ async function refundChanged(supabase: ReturnType<typeof createServerClient>, re
     return NextResponse.json({ error: 'could not record the failed refund' }, { status: 500 });
   }
   return NextResponse.json({ received: true });
+}
+
+/**
+ * Write a contribution's status and refunded_cents from Stripe's own list of
+ * refunds on its payment, as it stands now. Returns a response to send when
+ * Stripe should send the event again, or null when it is recorded.
+ *
+ * Used by charge.refunded and by a dispute won: in both, what the payment
+ * still holds is the payment less what Stripe has live as refunded.
+ */
+async function recountFromRefunds(
+  supabase: ReturnType<typeof createServerClient>,
+  contribution: { id: string; amount_cents: number },
+  intentId: string,
+  planForLog?: string | null,
+): Promise<NextResponse | null> {
+  let live: number;
+  try {
+    const list = await stripe.refunds.list({ payment_intent: intentId, limit: 100 });
+    live = liveRefundedCents(list.data as StripeRefund[]);
+  } catch (e) {
+    // Stripe sends it again; guessing from the event is what this replaced.
+    console.error('[webhooks/stripe] could not list refunds for a refunded charge', { intent: intentId, e: e instanceof Error ? e.message : String(e) });
+    return NextResponse.json({ error: 'could not list refunds' }, { status: 500 });
+  }
+  const outcome = refundOutcome(contribution.amount_cents, live);
+  const now = new Date().toISOString();
+  let { error: writeError } = await supabase.from('contributions')
+    .update({ status: outcome.status, refunded_cents: outcome.refundedCents, updated_at: now })
+    .eq('id', contribution.id);
+
+  // Before sql/wave1-refunds-2026-09-22.sql there is no column to
+  // hold an amount. A whole refund can still be said with the
+  // status, as it always was. Part of one cannot — and answering 200
+  // for it meant Stripe never sent it again, so the plan counted that
+  // money for good. It answers 500 instead: Stripe retries for up to
+  // three days, and the event lands once the migration has run.
+  if (writeError && isMissingColumn(writeError)) {
+    if (outcome.partial) {
+      console.error(`[webhooks/stripe] a part refund cannot be recorded until ${REFUNDS_MIGRATION} runs — answering 500 so Stripe sends it again`, {
+        contribution: contribution.id, plan: planForLog ?? null,
+        refundedCents: outcome.refundedCents, amountCents: contribution.amount_cents,
+      });
+      return NextResponse.json({ error: `part refund waits for ${REFUNDS_MIGRATION}` }, { status: 500 });
+    }
+    ({ error: writeError } = await supabase.from('contributions')
+      .update({ status: outcome.status, updated_at: now })
+      .eq('id', contribution.id));
+  }
+  if (writeError) {
+    // Stripe will retry this event, which is the point of saying so.
+    console.error('[webhooks/stripe] could not record a refund on the contribution', { contribution: contribution.id, error: writeError.message });
+    return NextResponse.json({ error: 'could not record the refund' }, { status: 500 });
+  }
+  return null;
+}
+
+/** The PaymentIntent as Stripe has it now, with its charge's fee, or null. */
+async function readIntent(id: string): Promise<Stripe.PaymentIntent | null> {
+  try {
+    return await stripe.paymentIntents.retrieve(id, { expand: ['latest_charge.balance_transaction'] });
+  } catch (e) {
+    console.error('[webhooks/stripe] could not read the payment back from Stripe', { intent: id, e: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
+}
+
+/**
+ * A dispute opened, had money withdrawn, was reinstated or closed
+ * (lib/rail/disputes.ts). Money taken: the contribution is 'refunded' and
+ * stops counting. Money given back: counted again, less any real refunds.
+ * Answers 500 on a failed read or write, so Stripe sends it again.
+ */
+async function disputeChanged(supabase: ReturnType<typeof createServerClient>, type: string, dispute: Stripe.Dispute) {
+  const took = disputeTookMoney(type, dispute);
+  const gave = disputeGaveBack(type, dispute);
+  if (!took && !gave) return NextResponse.json({ received: true });
+
+  let intentId = intentOfDispute(dispute);
+  const chargeId = chargeOfDispute(dispute);
+  if (!intentId && chargeId) {
+    try {
+      const charge = await stripe.charges.retrieve(chargeId);
+      intentId = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id ?? null;
+    } catch (e) {
+      console.error('[webhooks/stripe] could not read the charge a dispute is about', { dispute: dispute.id, e: e instanceof Error ? e.message : String(e) });
+      return NextResponse.json({ error: 'could not read the disputed charge' }, { status: 500 });
+    }
+  }
+  if (!intentId) return NextResponse.json({ received: true });
+
+  const { data: contribution, error: readError } = await supabase
+    .from('contributions').select('*').eq('stripe_payment_intent', intentId).maybeSingle();
+  if (readError) {
+    console.error('[webhooks/stripe] could not read the contribution a dispute is about', { intent: intentId, code: readError.code });
+    return NextResponse.json({ error: 'could not read the contribution' }, { status: 500 });
+  }
+  // Not a contribution: the legacy payments path, or nothing of ours.
+  if (!contribution) return NextResponse.json({ received: true });
+
+  if (took) {
+    const { data: moved, error } = await recordContributionDisputed(supabase, intentId);
+    if (error) {
+      console.error('[webhooks/stripe] could not record money taken back by a dispute', { intent: intentId, code: error.code });
+      return NextResponse.json({ error: 'could not record the dispute' }, { status: 500 });
+    }
+    if (moved.length) {
+      await moneyCameBack(supabase, String(contribution.plan_id ?? ''), {
+        how: 'disputed', intent: intentId, cents: Number(dispute.amount) || Number(contribution.amount_cents) || 0,
+      });
+    }
+    return NextResponse.json({ received: true });
+  }
+
+  // Given back. Only a row a dispute took off — 'refunded' — is recounted;
+  // anything else already says what it holds.
+  if (contribution.status !== 'refunded') return NextResponse.json({ received: true });
+  const failed = await recountFromRefunds(supabase, contribution, intentId, contribution.plan_id);
+  return failed ?? NextResponse.json({ received: true });
+}
+
+/**
+ * Money that had counted towards a plan is gone again: a bank debit returned
+ * after it cleared, or a dispute. Every funding figure is computed from the
+ * contributions as they now stand, so the target, the shares and the approve
+ * gate already see the gap; what nobody sees is that it happened. The owner
+ * is told — with what the plan now holds against what it owes, and whether
+ * anything was already bought with that money, which is a loss to recover by
+ * hand, not something to book over.
+ */
+async function moneyCameBack(
+  supabase: ReturnType<typeof createServerClient>,
+  planId: string,
+  what: { how: 'returned' | 'disputed'; intent: string; cents: number },
+) {
+  if (!planId) return;
+  try {
+    const [{ data: bookings }, { data: contributions }, { data: plan }] = await Promise.all([
+      supabase.from('bookings').select('price_cents,status,mode,provider').eq('plan_id', planId).not('status', 'in', NOT_CHARGED),
+      supabase.from('contributions').select('*').eq('plan_id', planId),
+      supabase.from('plans').select('id,status').eq('id', planId).maybeSingle(),
+    ]);
+    const owed = chargedRows(bookings);
+    const targetCents = owed.reduce((s, b) => s + (b.price_cents || 0), 0);
+    const heldCents = sumCollected(contributions || []);
+    const bought = owed.filter(b => b.status === 'confirmed' || b.status === 'booking' || b.status === 'pending').length;
+    report(new Error(`a contribution's money was ${what.how === 'returned' ? 'returned by the bank' : 'taken back by a dispute'}; the plan now holds less than it did`), {
+      where: 'webhooks/stripe', extra: {
+        planId, intent: what.intent, cents: what.cents, planStatus: plan?.status ?? null,
+        targetCents, heldCents, shortCents: Math.max(0, targetCents - heldCents), alreadyBought: bought,
+      },
+    });
+  } catch (e) {
+    console.error('[webhooks/stripe] could not work out what a returned payment left the plan holding', { planId, e: e instanceof Error ? e.message : String(e) });
+  }
 }

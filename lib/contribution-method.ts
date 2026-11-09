@@ -8,16 +8,26 @@
 // The bank needs switching on in the Stripe Dashboard (an owner action). Until
 // it is, Stripe refuses a PaymentIntent that names it — and a payment that
 // cannot start is worse than a card fee, so that refusal falls back to the
-// automatic methods the account already has.
+// card alone.
+//
+// Never the account's automatic methods, and never buy-now-pay-later (owner
+// decision 2026-11-08: no Klarna, Affirm, Afterpay, Cash App Pay or Zip on any
+// contribution, ever). The fallback used to send
+// automatic_payment_methods[enabled]=true, and the test account's default
+// configuration put a Klarna tile in the Payment Element. Every form built
+// here names its methods explicitly, from CONTRIBUTION_METHODS only.
 
 /** The two the member chooses between, bank first. */
 export const CONTRIBUTION_METHODS = ['us_bank_account', 'card'] as const;
 export type ContributionMethod = typeof CONTRIBUTION_METHODS[number] | 'other';
 
-/** The form fields for a contribution's PaymentIntent, bank first or as the account decides. */
+/** Methods a contribution may never be offered: buy-now-pay-later, by owner decision. */
+export const NEVER_OFFERED = ['klarna', 'affirm', 'afterpay_clearpay', 'cashapp', 'zip'] as const;
+
+/** The form fields for a contribution's PaymentIntent: bank first, or the card alone. */
 export function contributionIntentFields(
   base: { amountCents: number; planId: string; userId: string },
-  how: 'bank_first' | 'automatic',
+  how: 'bank_first' | 'card_only',
 ): URLSearchParams {
   const form = new URLSearchParams({
     amount: String(base.amountCents),
@@ -33,7 +43,9 @@ export function contributionIntentFields(
     form.append('payment_method_options[us_bank_account][verification_method]', 'automatic');
     form.append('metadata[methods]', 'bank_first');
   } else {
-    form.append('automatic_payment_methods[enabled]', 'true');
+    // The bank is not switched on: the card, named, and nothing else.
+    form.append('payment_method_types[0]', 'card');
+    form.append('metadata[methods]', 'card_only');
   }
   return form;
 }

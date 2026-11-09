@@ -7,7 +7,7 @@
 // The share is computed here, not in the client. The client used to divide by
 // `plan.participants.length` — a field the API never returned — so it fell
 // back to 1 and asked every member to pay for the entire trip.
-import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
+import { NOT_CHARGED } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { report } from '@/lib/report';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
@@ -22,6 +22,9 @@ import { track } from '@/lib/track';
 import { cancelUnpaidIntent, UNPAID_STATES } from '@/lib/stripe-intents';
 import { refundsOpen } from '@/lib/refunds';
 import { contributionIntentFields, bankNotEnabled } from '@/lib/contribution-method';
+import { fundingTarget, guessBudgetCents, NOTHING_THROUGH_REACH } from '@/lib/rail/funding-target';
+import { clearingCents, isInFlight, IN_FLIGHT } from '@/lib/rail/contribution-state';
+import { paymentsPaused, pausedAnswer } from '@/lib/rail/kill-switch';
 
 async function fundingStatus(
   db: SupabaseClient, planId: string, groupId: string, userId: string, budgetCents: number
@@ -50,8 +53,12 @@ async function fundingStatus(
     Promise.all([readTimedSkips(db, planId), memberJoins(db, groupId)]).catch(() => null),
     refundsOpen(db, planId),
   ]);
-  const bookings = chargedRows(rows);
-  const targetCents = bookings.reduce((s, b) => s + (b.price_cents || 0), 0);
+  // Only what Reach buys (lib/rail/funding-target.ts, directive P3). A plan
+  // made only of things people pay for on the sellers' own sites has a $0
+  // target and no payment step at all (P4).
+  const target = fundingTarget(rows);
+  const bookings = target.charged;
+  const targetCents = target.targetCents;
 
   // select('*'), never naming refunded_cents: before
   // sql/wave1-refunds-2026-09-22.sql runs the column is not there, and naming
@@ -79,7 +86,10 @@ async function fundingStatus(
   // somebody accepted, or a booking added before anyone paid, left the plan
   // short for good, and approval refused it for ever. With the budget out of
   // it after the first payment, a share only rises when real bookings do.
-  const guessCents = collectedCents > 0 ? 0 : Math.max(0, budgetCents || 0);
+  //
+  // Nor for a plan whose every line is paid on the seller's own site: a
+  // share guessed from its budget read as money to chip in to Reach.
+  const guessCents = guessBudgetCents(target, collectedCents, budgetCents);
   const myShareCents = planShares(bookings, guessCents, memberIds, skips)[userId] ?? 0;
 
   const myPaidCents = netCollectedCents(contributions, userId);
@@ -118,6 +128,16 @@ async function fundingStatus(
     failed: (failedBookings || []).map(b => ({ vertical: b.vertical, priceCents: b.price_cents || 0 })),
     inDoubt: inDoubt.map(b => ({ id: b.id, vertical: b.vertical, detail: b.detail ?? null })),
     funded: targetCents > 0 && collectedCents >= targetCents,
+    // Bank debits on their way (directive P2): not held, so not in
+    // collectedCents and not towards funded, and not unpaid either — the
+    // screen says "still clearing", never "not paid".
+    clearingCents: clearingCents(contributions),
+    myClearingCents: clearingCents(contributions, userId),
+    // What people pay on the sellers' own sites, so a screen can show the
+    // whole trip split into what goes through Reach and what does not.
+    selfPaidCents: target.selfPaidCents,
+    fundingNeeded: target.fundingNeeded,
+    nothingThroughReach: target.nothingThroughReach,
     memberCount: memberIds.length,
     // Who is not on a flight or hotel already bought or paid for, because
     // they joined after it was (lib/joining.ts), with where to get their own.
@@ -151,6 +171,13 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
   if (isFail(ctx)) return ctx.error;
+
+  // The kill switch (lib/rail/kill-switch.ts): no new payment while it is
+  // off. Before anything else, so not even Stripe is asked.
+  if (paymentsPaused()) {
+    const paused = pausedAnswer();
+    return NextResponse.json(paused.body, { status: paused.status });
+  }
 
   // A trip that was called off or is over takes no new money. Calling off
   // leaves quotes awaiting approval where they are, so the target stays above
@@ -217,7 +244,8 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
 
   // ── Never a second payment for the same share ─────────────────────────
   // Only succeeded contributions count against what somebody owes, so a
-  // payment still settling left the full share outstanding — and every one of
+  // payment still settling — 'pending', or a bank debit 'processing' for
+  // days (lib/rail/contribution-state.ts) — left the full share outstanding — and every one of
   // checkout's error screens offered "Try again", which came back here and
   // made a second PaymentIntent for the whole amount. A card paid twice is the
   // worst thing this app can do, and pay-later methods take minutes to clear.
@@ -233,7 +261,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // going. Anything else — somebody joined, a quote is stale, a price moved —
   // is cancelled at Stripe before it can take the old amount, and written off.
   const inFlight = (status.contributions || []).find(
-    (c: { user_id?: string; status?: string }) => c.user_id === ctx.user.id && c.status === 'pending',
+    (c: { user_id?: string; status?: string }) => c.user_id === ctx.user.id && isInFlight(c.status),
   ) as { id: string; stripe_payment_intent?: string; amount_cents?: number } | undefined;
 
   if (inFlight?.stripe_payment_intent) {
@@ -277,7 +305,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     if (writeOff) {
       const { error: writeOffError } = await ctx.db.from('contributions')
         .update({ status: 'failed', updated_at: new Date().toISOString() })
-        .eq('id', inFlight.id).eq('status', 'pending');
+        .eq('id', inFlight.id).in('status', IN_FLIGHT);
       if (writeOffError) {
         console.error('[funding] could not write off a cancelled contribution', {
           planId: params.planId, contribution: inFlight.id, error: writeOffError.message,
@@ -331,6 +359,15 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   // for a receipt that does not exist. A screenshot from production had this
   // exact state behind a live "Looks good" button on a total of $0 — the
   // client guard is the courtesy, this is the protection.
+  if (status.targetCents <= 0 && status.nothingThroughReach) {
+    // Every price is in and none of it is Reach's to collect. "Still
+    // pricing" would send somebody waiting for a payment step that is never
+    // coming (directive P3).
+    return NextResponse.json(
+      { code: 'nothing_to_fund', error: NOTHING_THROUGH_REACH, funding: status },
+      { status: 422 },
+    );
+  }
   if (status.targetCents <= 0) {
     return NextResponse.json(
       { error: "We're still pricing this — check back soon.", funding: status },
@@ -367,7 +404,7 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const priorPayments = (status.contributions || [])
     .filter((c: { user_id?: string }) => c.user_id === ctx.user.id).length;
   const idempotencyKey = `reach_contrib_${params.planId}_${ctx.user.id}_${amountCents}_${priorPayments}`;
-  const createIntent = (how: 'bank_first' | 'automatic') => fetch('https://api.stripe.com/v1/payment_intents', {
+  const createIntent = (how: 'bank_first' | 'card_only') => fetch('https://api.stripe.com/v1/payment_intents', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
@@ -381,10 +418,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   let stripeRes = await createIntent('bank_first');
   let pi = await stripeRes.json();
   // The bank is not switched on for this account yet (an owner action in the
-  // Stripe Dashboard): pay the way the account already can, never not at all.
+  // Stripe Dashboard): pay by card, never not at all — and never by whatever
+  // the account's automatic methods include (no buy-now-pay-later, ever).
   if (!stripeRes.ok && bankNotEnabled(pi?.error)) {
-    console.warn('[funding] bank debit is not enabled on the Stripe account; offering the account\'s usual methods', { planId: params.planId });
-    stripeRes = await createIntent('automatic');
+    console.warn('[funding] bank debit is not enabled on the Stripe account; offering the card alone', { planId: params.planId });
+    stripeRes = await createIntent('card_only');
     pi = await stripeRes.json();
   }
   if (!stripeRes.ok) {

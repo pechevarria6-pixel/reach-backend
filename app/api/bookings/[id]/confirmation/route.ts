@@ -6,11 +6,16 @@
 // they say so — and where the confirmation number the seller gave them is
 // kept, so the trip wallet can show it next to the booking.
 //
-// body { confirmationNumber?: string | null }   (empty or absent: "I didn't get one")
+// body { confirmationNumber?: string | null,   (empty or absent: "I didn't get one")
+//        amountCents?: number }               what they paid, if they said
 //
-// → 200 { booking, kept }  kept: whether the number was stored. False only
-//   before sql/booking-confirmation-2026-09-25.sql runs: the booking is still
-//   marked done — "I've got it" must work — and the log names the file.
+// → 200 { booking, kept, expense }  kept: whether the number was stored. False
+//   only before sql/booking-confirmation-2026-09-25.sql runs: the booking is
+//   still marked done — "I've got it" must work — and the log names the file.
+//   expense: 'written' | 'already' | 'none' | 'not_recorded' — whether it went
+//   into settle-up (lib/rail/expense.ts, directive P3). 'none' is a trip of
+//   one, or nothing priced and no amount given; 'not_recorded' is our write
+//   failing, logged, and the booking is still done.
 //
 // Only for what somebody books elsewhere (reachBuys false). Reach's own
 // purchases are settled by approval and cancel, never by somebody saying so,
@@ -29,19 +34,21 @@ import { createServerClient } from '@/lib/supabase';
 import { settledByReach } from '@/lib/booking/charged';
 import { atVersion, midClaim } from '@/lib/booking/claim';
 import { confirmationInput, confirmationColumnMissing } from '@/lib/contracts/booking';
+import { statedCents } from '@/lib/rail/expense';
+import { settleUpLine } from '@/lib/rail/settle-up-line';
 
 const MIGRATION = 'sql/booking-confirmation-2026-09-25.sql';
 const RETURNED = 'id, plan_id, vertical, status, mode, provider, provider_ref, redirect_url, updated_at';
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const body = await req.json().catch(() => ({})) as { confirmationNumber?: unknown };
+  const body = await req.json().catch(() => ({})) as { confirmationNumber?: unknown; amountCents?: unknown };
   const input = confirmationInput(body?.confirmationNumber);
   if (input.ok === false) return NextResponse.json({ error: input.error }, { status: 400 });
   const number = input.value;
 
   const { data: booking, error: readErr } = await createServerClient()
     .from('bookings')
-    .select('id, plan_id, status, mode, provider, approved_at, updated_at')
+    .select('id, plan_id, group_id, vertical, detail, price_cents, status, mode, provider, approved_at, updated_at')
     .eq('id', params.id).maybeSingle();
   if (readErr) {
     console.error('[confirmation] could not read the booking', { id: params.id, code: readErr.code });
@@ -108,7 +115,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'This changed while you were looking — reopen it.' }, { status: 409 });
   }
 
-  return NextResponse.json({ booking: { ...res.data, confirmation_number: kept ? number : null }, kept });
+  // Only the press that moved it to done writes the expense: a second press
+  // on a row already confirmed, or the losing half of a double tap (no row
+  // above), has nothing new to add to settle-up.
+  const expense = booking.status === 'confirmed' ? 'already' : await settleUpLine(ctx, booking, statedCents(body?.amountCents));
+  return NextResponse.json({ booking: { ...res.data, confirmation_number: kept ? number : null }, kept, expense });
 }
 
 /** The same fields the write returns, from a whole-row read. */

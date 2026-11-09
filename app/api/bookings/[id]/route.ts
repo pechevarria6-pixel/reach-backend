@@ -21,6 +21,7 @@ import { requirePlanMember, isFail } from '@/lib/auth';
 import { createServerClient } from '@/lib/supabase';
 import { settledByReach } from '@/lib/booking/charged';
 import { atVersion, midClaim } from '@/lib/booking/claim';
+import { settleUpLine, takeOffSettleUp } from '@/lib/rail/settle-up-line';
 
 const supabase = createServerClient;
 
@@ -32,7 +33,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const { data: booking } = await supabase()
-    .from('bookings').select('plan_id, status, mode, provider, approved_at, updated_at').eq('id', params.id).maybeSingle();
+    .from('bookings').select('id, plan_id, group_id, vertical, detail, price_cents, status, mode, provider, approved_at, updated_at').eq('id', params.id).maybeSingle();
   if (!booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
 
   // Anyone signed in could previously mark any booking confirmed.
@@ -63,5 +64,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
   if (!data) return NextResponse.json({ error: 'This changed while you were looking — reopen it.' }, { status: 409 });
+
+  // Settle-up follows what the person said (directive P3): paid for on the
+  // seller's site is an expense the group shares; "not booked after all"
+  // takes it back off. Never fails the answer — the status is what they came
+  // to set, and it is set.
+  if (body.status === 'confirmed' && booking.status !== 'confirmed') {
+    await settleUpLine(ctx, booking as Record<string, unknown>, null);
+  } else if (body.status !== 'confirmed' && booking.status === 'confirmed') {
+    await takeOffSettleUp(ctx.db, params.id);
+  }
   return NextResponse.json({ booking: data });
 }

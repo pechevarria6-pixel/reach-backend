@@ -53,19 +53,20 @@ test('every route that sums a plan\'s bookings applies the same rule', () => {
     'app/api/plans/[planId]/savings/route.ts',
     'app/api/webhooks/stripe/route.ts',
   ];
-  let selects = 0;
   for (const r of routes) {
     const src = read(r);
+    let selects = 0;
     assert.match(src, /NOT_CHARGED/, `${r} no longer filters on status`);
-    assert.match(src, /chargedRows\(/, `${r} sums rows Reach does not buy`);
+    // fundingTarget (lib/rail/funding-target.ts) is chargedRows plus what is paid elsewhere.
+    assert.match(src, /chargedRows\(|fundingTarget\(/, `${r} sums rows Reach does not buy`);
     // Every select of bookings next to NOT_CHARGED names the columns reachBuys reads.
     for (const m of src.matchAll(/\.select\('([^']*)'\)(?:(?!\.select\()[\s\S]){0,200}?NOT_CHARGED/g)) {
       assert.match(m[1], /\bmode\b/, `${r} selects ${m[1]} without mode`);
       assert.match(m[1], /\bprovider\b/, `${r} selects ${m[1]} without provider`);
       selects++;
     }
+    assert.ok(selects >= 1, `${r}: a charged select was not found to check`);
   }
-  assert.equal(selects, routes.length, 'a charged select was not found to check');
 });
 
 // ─── 2. A handed-off flight is not priced again ─────────────────────────

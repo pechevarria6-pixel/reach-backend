@@ -15,10 +15,11 @@ test('a contribution offers the bank first and the card second, verified through
   assert.equal(f.get('amount'), '12345');
 });
 
-test('the fallback is the account\'s own methods, and only a "bank not switched on" refusal falls back', () => {
-  const f = contributionIntentFields({ amountCents: 500, planId: 'p', userId: 'u' }, 'automatic');
-  assert.equal(f.get('automatic_payment_methods[enabled]'), 'true');
-  assert.equal(f.get('payment_method_types[0]'), null);
+test('the fallback is the card alone, and only a "bank not switched on" refusal falls back', () => {
+  const f = contributionIntentFields({ amountCents: 500, planId: 'p', userId: 'u' }, 'card_only');
+  assert.equal(f.get('automatic_payment_methods[enabled]'), null, 'never the account default — it offered Klarna');
+  assert.deepEqual(f.getAll('payment_method_types[0]'), ['card']);
+  assert.equal(f.get('payment_method_types[1]'), null);
   assert.ok(bankNotEnabled({ param: 'payment_method_types', message: 'The payment method type "us_bank_account" is invalid. Please ensure the provided type is activated in your dashboard.' }));
   assert.ok(!bankNotEnabled({ message: 'Invalid API Key provided' }), 'a key problem is not a reason to try another method');
   assert.ok(!bankNotEnabled({ code: 'amount_too_small', message: 'Amount must be at least $0.50' }));

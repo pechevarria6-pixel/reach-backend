@@ -1,15 +1,18 @@
 // ─── What a Stripe event may do to a contribution and its plan ───────────
 // The webhook (app/api/webhooks/stripe/route.ts) cannot be imported by the
-// unit tests, so the two writes whose filters carry the money rules live
+// unit tests, so the writes whose filters carry the money rules live
 // here, where a fake table can hold them to it.
 //
 // Stripe retries an event for days and promises no order. Every write below
 // therefore says which states it may move a row *from*, never just to.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { contributionMove, statusNotAllowedYet, IN_FLIGHT, type Move } from './rail/contribution-state.ts';
 
 /**
- * A payment attempt failed. Only a contribution still in flight can become
- * 'failed'.
+ * A payment attempt failed. Which rows that may move depends on what Stripe
+ * says about the payment now (`stripeNow`, read back by the webhook): a row
+ * still in flight, or — when Stripe holds nothing for it any more — a bank
+ * debit that was returned after it cleared. Not known: only 'pending'.
  *
  * A declined card does not end a PaymentIntent: it goes back to
  * requires_payment_method and funding hands the same intent back to be paid
@@ -20,11 +23,48 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * taken, the share read unpaid, the plan read short — and funding, seeing
  * nothing in flight, made a fresh PaymentIntent and charged the card again.
  */
-export async function recordContributionFailed(db: SupabaseClient, intentId: string) {
-  return db.from('contributions')
-    .update({ status: 'failed', updated_at: new Date().toISOString() })
+export async function recordContributionFailed(db: SupabaseClient, intentId: string, stripeNow: string | null = null): Promise<Moved> {
+  const move = contributionMove('failed', stripeNow);
+  if (!move) return { data: [], error: null };
+  return recordContributionMove(db, intentId, move);
+}
+
+/** The rows a write moved, by id, or why it could not. */
+export type Moved = { data: { id: string }[]; error: { code?: string; message?: string } | null };
+
+/**
+ * Move a contribution the way contributionMove (lib/rail/contribution-state.ts)
+ * decided, only out of the states it names.
+ *
+ * Before the pilot-gate migration the check constraint refuses
+ * 'processing' (23514): the row stays 'pending', which every reader already
+ * treats as in flight. That is answered as no error, so a webhook does not
+ * make Stripe resend for days a fact the table cannot hold yet.
+ */
+export async function recordContributionMove(db: SupabaseClient, intentId: string, move: Move, userId?: string): Promise<Moved> {
+  let q = db.from('contributions')
+    .update({ status: move.to, updated_at: new Date().toISOString() })
+    .eq('stripe_payment_intent', intentId);
+  if (userId) q = q.eq('user_id', userId);
+  const { data, error } = await q.in('status', move.from).select('id');
+  if (error && move.to === 'processing' && statusNotAllowedYet(error)) return { data: [], error: null };
+  return { data: (data ?? []) as { id: string }[], error };
+}
+
+/**
+ * The money behind a contribution was taken back by a dispute — a bank
+ * return or a card chargeback (lib/rail/disputes.ts). The share stops
+ * counting: 'refunded', the status every money figure already reads as
+ * nothing held. From any state that had or was getting the money; a row
+ * already 'refunded' or 'failed' has nothing left to take.
+ */
+export async function recordContributionDisputed(db: SupabaseClient, intentId: string): Promise<Moved> {
+  const { data, error } = await db.from('contributions')
+    .update({ status: 'refunded', updated_at: new Date().toISOString() })
     .eq('stripe_payment_intent', intentId)
-    .eq('status', 'pending');
+    .in('status', ['succeeded', ...IN_FLIGHT])
+    .select('id');
+  return { data: (data ?? []) as { id: string }[], error };
 }
 
 /**

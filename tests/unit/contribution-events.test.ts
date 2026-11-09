@@ -27,6 +27,7 @@ function fakeDb(tables: Record<string, Row[]>) {
         update(p: Row) { patch = p; return q; },
         eq(c: string, v: unknown) { preds.push(r => r[c] === v); return q; },
         neq(c: string, v: unknown) { preds.push(r => r[c] !== v); return q; },
+        in(c: string, vs: unknown[]) { preds.push(r => vs.includes(r[c])); return q; },
         or(expr: string) {
           // Only the shape markPlanFunded sends: status.is.null,status.in.(a,b)
           const m = /^status\.is\.null,status\.in\.\(([^)]*)\)$/.exec(expr);
@@ -95,7 +96,8 @@ test('the last two shares landing together tell the group once', async () => {
 
 test('the webhook writes both through these, and announces only when it moved the plan', () => {
   const src = readFileSync('app/api/webhooks/stripe/route.ts', 'utf8');
-  assert.match(src, /recordContributionFailed\(supabase, intent\.id\)/);
+  // With what Stripe says about the payment now (lib/rail/contribution-state.ts).
+  assert.match(src, /recordContributionFailed\(supabase, intent\.id, fresh\.status\)/);
   assert.match(src, /const funded = await markPlanFunded\(supabase, planId\)/);
   assert.match(src, /if \(!funded\.moved\) \{[\s\S]{0,400}return;\n    \}/);
   // The read-then-write it replaced.
