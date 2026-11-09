@@ -51,9 +51,11 @@ test('a long string is prose, and prose is never a property', () => {
 test('only the listed names may be written', () => {
   assert.equal(isEventName('booking_confirmed'), true);
   assert.equal(isEventName('something_i_invented'), false);
-  // 17 before the onboarding quiz v3, whose section 8 adds eleven, and nine
-  // more for the checkout spec of 2026-09-25.
-  assert.equal(EVENT_NAMES.length, 37);
+  // 17 before the onboarding quiz v3, whose section 8 adds eleven, nine more
+  // for the checkout spec of 2026-09-25, and two for the pilot gate's debrief
+  // and reconnection question (2026-11-08).
+  assert.equal(EVENT_NAMES.length, 39);
+  for (const n of ['debrief_submitted', 'reconnection_answered']) assert.equal(isEventName(n), true, n);
   for (const n of ['quiz_started', 'quiz_screen_viewed', 'quiz_screen_skipped', 'quiz_result_viewed',
     'quiz_dial_adjusted', 'quiz_shared', 'quiz_share_opened', 'quiz_share_joined',
     'drip_shown', 'drip_answered', 'drip_dismissed', 'quiz_completed']) assert.equal(isEventName(n), true, n);

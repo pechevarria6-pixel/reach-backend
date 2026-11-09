@@ -68,6 +68,11 @@ export const EVENT_NAMES = [
   'settle_up_marked_paid',
   // Everything booked, shown once.
   'celebration_shown',
+  // Pilot gate (REACH-PILOT-GATE-2026-11-08.md A7), added by the coordinator so
+  // the Verify track writes them without editing this file: the organiser's
+  // post-trip debrief, and "When did you last see this group in person?".
+  'debrief_submitted',
+  'reconnection_answered',
 ] as const;
 
 export type EventName = typeof EVENT_NAMES[number];
