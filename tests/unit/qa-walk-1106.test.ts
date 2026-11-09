@@ -17,7 +17,8 @@ test('Discover never waits on a hung request: twelve seconds, then one more ask'
 });
 
 test('an empty Groups tab has one way to start, not "+ New" beside "Start planning"', () => {
-  assert.match(app, /\{\(loading\|\|groups\.length>0\)&&<button className="bsm bsm-p" onClick=\{\(\)=>push\("createGroup"\)\}>\+ New<\/button>\}/);
+  // F19-03 adds a third case: a failed load is not empty either, and gets no "+ New".
+  assert.match(app, /\{\(loading\|\|groups\.length>0\)&&!\(loadFailed&&groups\.length===0\)&&<button className="bsm bsm-p" onClick=\{\(\)=>push\("createGroup"\)\}>\+ New<\/button>\}/);
   assert.match(app, />Nothing planned yet</);
   assert.doesNotMatch(app, />No groups yet</);
 });

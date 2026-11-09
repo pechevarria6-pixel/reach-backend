@@ -1286,7 +1286,7 @@ function alreadyPlanningLine(p,g){
   return `You're already planning ${p.title||"one"} with ${g?.name||"this group"} — here it is`;
 }
 
-function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToProfileSection}){
+function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab,userLocation,goToProfileSection}){
   // The server has no idea what time it is where you are. Anything that reads
   // the clock waits for the browser rather than guessing and being corrected.
   const [mounted,setMounted]=useState(false);
@@ -1608,7 +1608,10 @@ function HomeScreen({groups,um,push,toast,loading,user,setTab,userLocation,goToP
           the first-visit screen, telling them they have nothing — for as
           long as the request took, and then it was replaced by their trips.
           Telling somebody they have no plans is not a loading state. */}
-      {groups.length===0&&!loading&&(<>
+      {/* Nor is a failed load (F19-03): "Three ways to start" over a 500
+          tells somebody with trips that they have none. */}
+      {groups.length===0&&!loading&&loadFailed&&<TripsLoadFailed onRetry={onRetry}/>}
+      {groups.length===0&&!loading&&!loadFailed&&(<>
       <div style={{padding:"0 20px 10px"}}>
         <span className="sl">Three ways to start</span>
       </div>
@@ -3290,7 +3293,26 @@ function SwipeToDelete({group,onDelete,children}){
   );
 }
 
-function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
+// ─── The trips list could not be loaded (UX F19-03) ──────────────────────
+// Shown in place of an empty state, never beside one. Deliberately no "Start
+// planning": the person may well have trips, and a new one made now would be
+// a duplicate of something we simply failed to fetch.
+function TripsLoadFailed({onRetry}){
+  const [trying,setTrying]=useState(false);
+  return(
+    <div role="alert" style={{margin:"0 20px 16px",padding:"24px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:20,textAlign:"center"}}>
+      <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>We couldn't load your trips</div>
+      <div style={{fontSize:13,color:C.t2,lineHeight:1.6,marginBottom:16}}>
+        Check your connection, then try again.
+      </div>
+      <button className="bp" disabled={trying} onClick={async()=>{setTrying(true);try{await onRetry?.();}finally{setTrying(false);}}}>
+        {trying?"Trying again…":"Try again"}
+      </button>
+    </div>
+  );
+}
+
+function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup}){
   // Two different questions, and they want two different orders. "What is
   // next" is a date, and it belongs at the top where it can be answered at a
   // glance. "Which group was that" is a name, and a list you search by name
@@ -3316,7 +3338,7 @@ function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
         <div><div className="pt">Your trips</div><div style={{fontSize:13,color:C.t2,marginTop:2}}>Solo and together</div></div>
         {/* Not beside the empty state's own button, which does the same
             thing: two ways to the one screen on an empty page (2026-11-06). */}
-        {(loading||groups.length>0)&&<button className="bsm bsm-p" onClick={()=>push("createGroup")}>+ New</button>}
+        {(loading||groups.length>0)&&!(loadFailed&&groups.length===0)&&<button className="bsm bsm-p" onClick={()=>push("createGroup")}>+ New</button>}
       </div>
       {/* With no groups this screen rendered a heading and nothing else — a
           blank page on the tab a new person opens first. */}
@@ -3326,7 +3348,8 @@ function GroupsScreen({groups,um,push,loading,onDeleteGroup}){
           Loading your groups…
         </div>
       )}
-      {!loading&&groups.length===0&&(
+      {!loading&&groups.length===0&&loadFailed&&<TripsLoadFailed onRetry={onRetry}/>}
+      {!loading&&groups.length===0&&!loadFailed&&(
         <div style={{margin:"0 20px",padding:"32px 24px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:20,textAlign:"center"}}>
           <div style={{fontSize:40,marginBottom:12}}>👋</div>
           <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>Nothing planned yet</div>
@@ -16505,6 +16528,10 @@ export default function ReachApp({realUser,onSignOut}={}){
   },[theme]);
   const [groups,setGroups]=useState([]);
   const [groupsLoading,setGroupsLoading]=useState(true);
+  // The load failed, which is not the same as "you have none" (UX F19-03).
+  // A 500 used to fall through to the empty state, so somebody with three
+  // trips was told "Nothing planned yet" and invited to make a fourth.
+  const [groupsError,setGroupsError]=useState(false);
   // /api/me has answered, so the onboarding gate below is deciding on facts
   // rather than on an empty user object.
   const [identityLoaded,setIdentityLoaded]=useState(false);
@@ -16730,12 +16757,14 @@ export default function ReachApp({realUser,onSignOut}={}){
   // shown, and somebody who skips every step must not be sent round again.
   useEffect(()=>{
     if(!identityLoaded||groupsLoading)return;
+    // A failed load says nothing about whether they have groups.
+    if(groupsError)return;
     if(typeof window==="undefined")return;
     const untouched=user&&!user.quizComplete&&!user.firstName&&groups.length===0;
     if(!untouched)return;
     try{ if(localStorage.getItem("reach_onboarding_seen"))return; }catch(e){ return; }
     window.location.href="/onboarding";
-  },[identityLoaded,groupsLoading,user,groups.length]);
+  },[identityLoaded,groupsLoading,groupsError,user,groups.length]);
 
   // The quiz is not optional on a first run. Every recommendation, every
   // moment and every trip the app generates reads these answers, so an
@@ -16961,8 +16990,9 @@ export default function ReachApp({realUser,onSignOut}={}){
     try{
       setGroupsLoading(true);
       const res=await fetch("/api/groups");
-      if(!res.ok){setGroupsLoading(false);return;}
+      if(!res.ok){setGroupsError(true);setGroupsLoading(false);return;}
       const {groups:data}=await res.json();
+      setGroupsError(false);
       if(!data||data.length===0){setGroupsLoading(false);return;}
 
       // Every member row carries its user, so the avatar map can be filled in
@@ -16990,7 +17020,7 @@ export default function ReachApp({realUser,onSignOut}={}){
       // Only safe to prune once the real list is in hand — a failed load must
       // never look like "you have no groups" and wipe a valid draft.
       purgeStaleDraft(data.map(g=>g.id));
-    }catch(e){console.log("API unavailable, using local state",e);}
+    }catch(e){console.log("API unavailable, using local state",e);setGroupsError(true);}
     finally{setGroupsLoading(false);}
   };
 
@@ -17543,9 +17573,9 @@ export default function ReachApp({realUser,onSignOut}={}){
                 <div className="sc" style={{paddingBottom:20}}>{renderSub()}</div>
               ):(
                 <div className="sc">
-                  {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} user={user} setTab={setTab} userLocation={userLocation} goToProfileSection={goToProfileSection}/>}
+                  {tab==="home"&&<HomeScreen groups={groups} um={um} push={push} toast={showToast} loading={groupsLoading} loadFailed={groupsError} onRetry={loadGroups} user={user} setTab={setTab} userLocation={userLocation} goToProfileSection={goToProfileSection}/>}
                   {tab==="discover"&&<DiscoverScreen push={push} groups={groups} toast={showToast} user={user} userLocation={userLocation} departure={departure} setPlaceOverride={setPlaceOverride} onQuizChange={syncUser}/>}
-                  {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading} onDeleteGroup={deleteGroupFromList}/>}
+                  {tab==="groups"&&<GroupsScreen groups={groups} um={um} push={push} loading={groupsLoading} loadFailed={groupsError} onRetry={loadGroups} onDeleteGroup={deleteGroupFromList}/>}
                   {tab==="profile"&&<ProfileScreen toast={showToast} user={user} onIdentityChange={syncUser} onSignOut={handleSignOut} theme={theme} chooseTheme={chooseTheme} push={push} openSection={profileSection} groups={groups}/>}
                 </div>
               )}
