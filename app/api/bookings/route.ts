@@ -6,6 +6,7 @@
 // asked for, so a caller names a failure by what it was and not by where it
 // sat in the list.
 // GET /api/bookings?planId=… — list bookings for a plan.
+import { stampFor, schemaPending } from '@/lib/integrity/stamp';
 import { NextRequest, NextResponse } from 'next/server';
 import { PROVIDERS } from '@/lib/booking/registry';
 import { report } from '@/lib/report';
@@ -342,7 +343,19 @@ export async function POST(req: NextRequest) {
         // unavailable, and the options panel is the way on.
         row.request_payload = pinQuoted(row.request_payload as Record<string, unknown>, result.vertical, result.raw);
 
+        // Lane, commission and the public price beside ours (directive L3/L4),
+        // stamped on every row however it was created — not only the ones
+        // /bookable later passes over (lib/integrity/stamp.ts).
+        const stamp = stampFor(row as Parameters<typeof stampFor>[0], new Date());
+        if (stamp) Object.assign(row, stamp);
+
         let { error: wrote } = await ctx.db.from('bookings').insert(row);
+        // Before sql/pilot-gate-2026-11-08.sql those columns are unknown to
+        // PostgREST and fail the whole insert; the booking matters more.
+        if (wrote && stamp && schemaPending(wrote)) {
+          for (const k of Object.keys(stamp)) delete row[k];
+          ({ error: wrote } = await ctx.db.from('bookings').insert(row));
+        }
 
         // The column arrives in a migration the owner runs. Until then
         // PostgREST fails the whole insert on a column it does not know, and

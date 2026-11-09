@@ -665,6 +665,18 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       if (details) return details;
       // The same figure the Book tab and checkout show (shareDueCents).
       const owe = cents(shareDueCents(funding));
+      // A bank payment on its way covers what they owe: never "Chip in"
+      // again — the funding route refuses a second payment (409) — and never
+      // "paid" either, because it has not cleared (pilot gate P2).
+      const clearing = cents(funding?.myClearingCents);
+      if (clearing > 0 && clearing >= owe) {
+        return say({
+          state: 'waiting_on_payments',
+          title: 'Your bank payment is on its way',
+          body: "Bank payments take a few business days to clear. There's nothing more to do, and please don't pay again.",
+          cta: toCheckout('See where it stands →'), chip: 'Paying',
+        });
+      }
       const paid = cents(funding?.myPaidCents);
       return say({
         state: 'pay_share',

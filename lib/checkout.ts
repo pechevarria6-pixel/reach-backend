@@ -248,6 +248,8 @@ export interface FundingView {
   myShareCents?: number | null;
   myPaidCents?: number | null;
   myRemainingCents?: number | null;
+  /** This person's bank payment still clearing (Rail, pilot gate P2). */
+  myClearingCents?: number | null;
 }
 
 /**

@@ -15,6 +15,7 @@
 // itself back out and is refused. Taking it out matters — a refused press
 // left on the record would push the minute along, and somebody pressing
 // every few seconds could keep the button shut for ever.
+import { clearingCents } from './rail/contribution-state.ts';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { planShares, type PlanBooking, type Skip } from './money.ts';
 import { netCollectedCents } from './booking/approval.ts';
@@ -322,6 +323,9 @@ export function fundingStanding(
     const paid = netCollectedCents(contributions, id);
     const owe = priced ? Math.max(0, (shares[id] ?? 0) - paid) : 0;
     out.remaining[id] = owe;
+    // A bank payment still clearing that covers the share is not "still to
+    // pay": nobody is nudged about money already on its way (pilot gate P2).
+    if (owe > 0 && clearingCents(contributions as never, id) >= owe) { out.done.add(id); continue; }
     if (owe > 0) continue;
     (paid > 0 ? out.done : out.notNeeded).add(id);
   }

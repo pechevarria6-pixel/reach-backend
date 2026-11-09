@@ -44,6 +44,7 @@
 // POST /api/bookings/[id]/cancel (cancelStep). There is no other way to book
 // a table. placeCall itself also refuses a row the instant path has claimed
 // or never heard back about, so nothing reaching it can ring over one.
+import { BOOKED_IT } from '../integrity/redirect-words.ts';
 import { midClaim } from '../booking/claim.ts';
 import { PLATFORM_LABEL, type TableGuest, type TableHold, type TableProvider } from '../booking/tables/types.ts';
 import {
@@ -228,7 +229,7 @@ function handoffOptions(f: TableFacts, skipLink = false): ReserveOption[] {
       label: `Call ${f.restaurant}`, what: `Ring them on ${prettyPhone(toE164(f.phone) ?? f.phone)} and ask for the table yourself.`,
     });
   }
-  out.push({ kind: 'confirm', label: "I've got it", what: 'Already booked it? Say so, with their confirmation number if they gave one.' });
+  out.push({ kind: 'confirm', label: BOOKED_IT, what: 'Already booked it? Say so, with their confirmation number if they gave one.' });
   return out;
 }
 
