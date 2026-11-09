@@ -217,7 +217,9 @@ honest itinerary names none — fix it by sweeping, not by loosening the rule.
   build themselves with scripts are recorded `needs_render` rather than
   guessed at.
 - Four cron entries on a plan that documents two.
-- `TEST_EMAIL` points at the owner's real account, so e2e acts on real data.
+- ~~`TEST_EMAIL` points at the owner's real account~~ — fixed: e2e signs in the `+qa` and
+  `+qa2` test accounts (`.env.test.local`, `TEST_EMAIL` / `TEST_EMAIL_2`); writes stay in
+  the QA groups. Still production, so a test that writes must call off what it made.
 
 `QA-LEDGER.md` has the full record of what was walked and what was found.
 `NAV-GRAPH.md` has the screens.
