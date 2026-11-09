@@ -222,8 +222,10 @@ from public.plans p
 left join ev         on ev.plan_id = p.id
 left join debrief d  on d.plan_id  = p.id
 left join ledger_end le on le.plan_id = p.id
-left join bk         on bk.plan_id = p.id
-left join ct         on ct.plan_id = p.id
+-- bookings.plan_id and contributions.plan_id are text in production (engine-v3),
+-- plans.id is uuid: compared as text, or the view fails with 42883.
+left join bk         on bk.plan_id = p.id::text
+left join ct         on ct.plan_id = p.id::text
 left join oo         on oo.plan_id = p.id;
 
 -- ── Member → organizer ────────────────────────────────────────────────
