@@ -14185,8 +14185,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   };
   useEffect(()=>{ load(); },[]);
 
-  // Back from Klarna, Affirm or Cash App Pay, which take the payer to their own
-  // site and send them back here with what happened. Stripe's word in the
+  // Back from a payment that left the page — a bank sign-in that redirects
+  // (contributions are bank or card only; no pay-later, owner 2026-11-08) —
+  // and sent the payer back here with what happened. Stripe's word in the
   // address is not trusted: the server asks Stripe before recording anything,
   // exactly as it does for a card.
   const handledReturn=useRef(false);
@@ -14300,10 +14301,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     // about a card that was charged is how they pay twice.
     let taken=false;
     try{
-      // Cards finish here without leaving the page. Klarna, Affirm and Cash App
-      // Pay are switched on in Stripe and cannot: they send the payer to their
-      // own site and back, and without a return_url Stripe refuses to start
-      // them, so choosing one failed on the pay button.
+      // Cards finish here without leaving the page. A bank sign-in can redirect
+      // the payer to their bank and back, and without a return_url Stripe
+      // refuses to start one — so the return_url stays. (No pay-later methods
+      // are offered: contributions are bank or card only, owner 2026-11-08.)
       const back=`${window.location.origin}/home?paid=${encodeURIComponent(planId)}&group=${encodeURIComponent(groupId||"")}`;
       const {error,paymentIntent}=await stripeRef.current.confirmPayment({elements:elementsRef.current,redirect:"if_required",confirmParams:{return_url:back}});
       if(error)throw new Error(error.message||"Payment didn't go through.");

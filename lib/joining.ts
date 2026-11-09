@@ -43,6 +43,7 @@ import { midClaim } from './booking/claim.ts';
 import { reachBuys } from './booking/charged.ts';
 import { flightSearchUrl } from './booking/duffel-map.ts';
 import { cancelUnpaidIntent, type CancelOutcome } from './stripe-intents.ts';
+import { IN_FLIGHT, isInFlight } from './rail/contribution-state.ts';
 
 /** PostgREST's code for a table that does not exist: the migration has not run. */
 const NO_TABLE = 'PGRST205';
@@ -394,7 +395,7 @@ export async function beforeJoining(
   // is kept off it, which is what would have been right had it landed first.
   const { data: paid, error: paidErr } = await db
     .from('contributions').select('id, plan_id, status, stripe_payment_intent')
-    .in('plan_id', planIds).in('status', ['succeeded', 'pending']);
+    .in('plan_id', planIds).in('status', ['succeeded', ...IN_FLIGHT]);
   if (paidErr) {
     console.error('[joining] could not read what has been paid', { groupId, code: paidErr.code });
     return { ok: false, error: "We couldn't check what's already been paid — try again in a moment." };
@@ -403,7 +404,9 @@ export async function beforeJoining(
   const payments = (paid ?? []) as Payment[];
   const paidPlans = new Set(payments.filter(c => c.status === 'succeeded').map(c => String(c.plan_id)));
   for (const c of payments) {
-    if (c.status !== 'pending' || typeof c.stripe_payment_intent !== 'string' || !c.stripe_payment_intent) continue;
+    // In flight includes a bank debit still clearing: Stripe answers 'moving'
+    // for it, so its plan is treated as paid (pilot gate, 2026-11-08).
+    if (!isInFlight(c.status) || typeof c.stripe_payment_intent !== 'string' || !c.stripe_payment_intent) continue;
     const outcome = await cancelIntent(c.stripe_payment_intent);
     if (outcome !== 'canceled') {
       console.error('[joining] an unfinished payment could not be cancelled — treating its plan as paid', { groupId, outcome });
@@ -412,7 +415,7 @@ export async function beforeJoining(
     }
     const { error } = await db.from('contributions')
       .update({ status: 'failed', updated_at: new Date().toISOString() })
-      .eq('id', String(c.id)).eq('status', 'pending');
+      .eq('id', String(c.id)).in('status', [...IN_FLIGHT]);
     // Cancelled at Stripe either way, so it can never take money; the row
     // reading pending only means the next payment attempt asks Stripe again.
     if (error) console.error('[joining] could not write off a cancelled payment', { groupId, code: error.code });

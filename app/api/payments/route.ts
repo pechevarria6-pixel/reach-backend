@@ -7,6 +7,7 @@ import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
 import { shareFor } from '@/lib/money';
 import { stripe } from '@/lib/stripe';
 import { z } from 'zod';
+import { paymentsPaused, pausedAnswer } from '@/lib/rail/kill-switch';
 
 const Schema = z.object({
   plan_id: z.string().uuid(),
@@ -15,6 +16,8 @@ const Schema = z.object({
 
 // POST /api/payments — create Stripe PaymentIntent
 export async function POST(req: NextRequest) {
+  // The payments kill switch covers every route that can start a charge.
+  if (paymentsPaused()) { const p = pausedAnswer(); return NextResponse.json(p.body, { status: p.status }); }
   // safeParse, not parse: a throw here surfaces as an opaque 500 and the
   // client cannot tell bad input from a server fault.
   const parsed = Schema.safeParse(await req.json().catch(() => null));
@@ -80,6 +83,10 @@ export async function POST(req: NextRequest) {
   const intent = await stripe.paymentIntents.create({
     amount: amountCents,
     currency: 'usd',
+    // Card only, named: with neither this nor automatic_payment_methods,
+    // Stripe defaults to the account's automatic methods, which can include
+    // Klarna — and the owner decided no buy-now-pay-later (2026-11-08).
+    payment_method_types: ['card'],
     customer: customerId,
     payment_method_options: { card: { request_three_d_secure: requiresMFA ? 'any' : 'automatic' } },
     setup_future_usage: 'on_session',

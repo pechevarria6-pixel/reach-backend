@@ -12,6 +12,7 @@
 // call-off: it may be money in, and that is the payer's to have back first.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { cancelUnpaidIntent, type CancelOutcome } from './stripe-intents.ts';
+import { IN_FLIGHT } from './rail/contribution-state.ts';
 
 /** `reason` is set when `ok` is false. */
 export type InFlightOutcome = { ok: boolean; reason?: 'moving' | 'unknown' | 'read_failed' };
@@ -21,7 +22,7 @@ export async function stopPaymentsInFlight(
   cancelIntent: (intentId: string) => Promise<CancelOutcome> = id => cancelUnpaidIntent(id),
 ): Promise<InFlightOutcome> {
   const { data, error } = await db.from('contributions')
-    .select('id, status, stripe_payment_intent').eq('plan_id', planId).in('status', ['pending', 'failed']);
+    .select('id, status, stripe_payment_intent').eq('plan_id', planId).in('status', [...IN_FLIGHT, 'failed']);
   if (error) {
     console.error('[call-off] could not read payments in flight', { planId, code: error.code });
     return { ok: false, reason: 'read_failed' };
@@ -46,8 +47,11 @@ export async function stopPaymentsInFlight(
     }
     const { error: offErr } = await db.from('contributions')
       .update({ status: 'failed', updated_at: new Date().toISOString() })
-      .eq('id', String(c.id)).eq('status', 'pending');
+      .eq('id', String(c.id)).in('status', [...IN_FLIGHT]);
     // Cancelled at Stripe either way, so it can never take money.
+    // A bank debit still clearing ('processing') is read too: Stripe answers
+    // 'moving' for it, so the call-off is refused rather than leaving money to
+    // land on a cancelled plan (pilot gate, 2026-11-08).
     if (offErr) console.error('[call-off] could not write off a cancelled payment', { planId, code: offErr.code });
   }
   return worst ? { ok: false, reason: worst } : { ok: true };

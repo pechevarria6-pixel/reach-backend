@@ -449,9 +449,20 @@ test('a payment started before somebody joined is never handed back at the old s
 
 test('every way into a group cancels unfinished payments first', () => {
   const joining = readFileSync('lib/joining.ts', 'utf8');
-  assert.match(joining, /in\('status', \['succeeded', 'pending'\]\)/);
+  // In flight includes a bank debit still clearing (pilot gate, 2026-11-08):
+  // a plan with one is treated as paid, never re-shared under it.
+  assert.match(joining, /in\('status', \['succeeded', \.\.\.IN_FLIGHT\]\)/);
+  assert.match(joining, /if \(!isInFlight\(c\.status\)/);
+  const callOff = readFileSync('lib/call-off-money.ts', 'utf8');
+  assert.match(callOff, /in\('status', \[\.\.\.IN_FLIGHT, 'failed'\]\)/, 'calling off reads a clearing bank payment too');
   assert.match(joining, /await cancelIntent\(c\.stripe_payment_intent\)/);
   for (const f of ['app/api/groups/[id]/members/route.ts', 'app/api/invites/[token]/route.ts', 'lib/invites.ts']) {
     assert.match(readFileSync(f, 'utf8'), /beforeJoining\(/, f);
   }
+});
+
+test('a bank payment still clearing is in flight', async () => {
+  const { IN_FLIGHT, isInFlight } = await import('../../lib/rail/contribution-state.ts');
+  assert.ok(IN_FLIGHT.includes('processing') && IN_FLIGHT.includes('pending'));
+  assert.ok(isInFlight('processing') && !isInFlight('succeeded') && !isInFlight('failed'));
 });
