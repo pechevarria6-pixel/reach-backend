@@ -33,6 +33,11 @@ Maintained by the coordinator. Updated 2026-11-08.
   (sandbox `acct_1UYUj14MaTB8EmsW`: ACH Direct Debit enabled 2026-11-08, no webhook endpoint, live mode
   needs business verification) and "New business" (`acct_1UYUbt5lpbXMYs3C`). Going live means keys and the
   webhook endpoint from the Alcanzar Group account.
+- **Owner decision 2026-11-08: no buy-now-pay-later.** Klarna and Affirm disabled in the Alcanzar Group
+  sandbox (Afterpay/Clearpay, Scalapay already off). In code, the Rail track makes every contribution
+  name its methods (bank, card) — no `automatic_payment_methods`, so the account default can never
+  surface BNPL; on Reach's current key account (`acct_1U4lDQ5GB2FVY7o…`, not in the owner's dashboard)
+  only the code guard applies.
 - Backups: daily physical backups on (latest 2026-11-08 09:13 UTC, 7 retained). **PITR off** (paid add-on).
 - Supabase Security Advisor 2026-11-08: was 2 errors, both `public.group_invites` (RLS disabled; sensitive
   columns exposed — the anon key read every invite's email and join token). Fixed by
