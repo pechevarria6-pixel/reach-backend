@@ -4,7 +4,7 @@
 -- after sql/pilot-gate-2026-11-08.sql. Safe to run twice.
 --
 -- Why a table and not only the event. POST /api/plans/[planId]/debrief writes
--- a `debrief_submitted` event with the numbers (hours, msgs, nps,
+-- a `debrief_submitted` event with the numbers (hours, messages, nps,
 -- would_run_again, solo). The free-text answer to "What almost made you
 -- quit?" cannot go there: lib/track.ts scrubProps drops prose from props by
 -- design, because `events` is read by people building charts and must never

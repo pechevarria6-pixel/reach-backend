@@ -113,9 +113,9 @@ export function parseDebrief(body: unknown): Parsed<Debrief> {
  * What goes into the `debrief_submitted` event: numbers and booleans only.
  *
  * Two things this has to know about lib/track.ts scrubProps:
- *   · it drops any key matching /message/ — so the count travels as `msgs`.
- *     A prop called `messages` would be silently thrown away, and the
- *     messages readout would read "no data" for every trip.
+ *   · it drops any key matching /message/ unless it is a counting key
+ *     (COUNT_KEYS, the Observe track's fix): `messages` is kept as a number,
+ *     and that is the name pilot_metrics reads (sql/pilot-metrics-*.sql).
  *   · it drops prose, which is correct, and is why the note never comes
  *     here: it lives in pilot_debriefs (sql/pilot-debrief-2026-11-08.sql).
  */
@@ -126,7 +126,7 @@ export function debriefEventProps(d: Debrief, ctx: { solo: boolean }): Record<st
     would_run_again: d.would_run_again,
     solo: ctx.solo,
   };
-  if (d.messages !== null) out.msgs = d.messages;
+  if (d.messages !== null) out.messages = d.messages;
   return out;
 }
 

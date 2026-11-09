@@ -11,6 +11,10 @@ import { planSections, daysAway, today, countdown, groupSchedule, byName, monthG
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE, DEFAULT_THEME } from "@/lib/brand";
 import { ownPhoto } from "@/lib/avatar";
+// Pilot instrumentation (REACH-PILOT-GATE-2026-11-08 A7): the organiser's
+// post-trip debrief and "When did you last see this group in person?".
+import DebriefForm from "@/components/pilot/DebriefForm";
+import ReconnectionQuestion from "@/components/pilot/ReconnectionQuestion";
 import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL, PRICE_CHECK_WORDS, bookEverythingLabel } from "@/lib/checkout";
 import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
@@ -3519,6 +3523,8 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
   if(!group)return <NotLoaded what="This group" onBack={onBack}/>;
   return(
     <div className="sc">
+      {/* Asked once, on joining from an invite; skippable; never for a trip of one. */}
+      {justJoined&&!isAlone&&<ReconnectionQuestion groupId={groupId} groupName={group.name} solo={isAlone}/>}
       <div style={{padding:"12px 20px 0"}}>
         <ScreenHeader onBack={onBack} label="Groups"/>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
@@ -4127,7 +4133,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
     // to find what they had just made and press another button. Nine screens
     // stood between opening the app and seeing a single suggestion, and most
     // of them were navigation.
-    const goPlan=(id)=>replace&&replace("groupTrip",{groupId:id});
+    const goPlan=(id)=>replace&&replace("groupTrip",{groupId:id,askReconnection:mode!=="solo"});
     if(typeof saveGroupToServer==="function"){
       Promise.resolve(saveGroupToServer(newGroup))
         .then(realId=>goPlan(realId||tempId))
@@ -7372,7 +7378,7 @@ function CallOffPlan({plan,group,me,um,updatePlanOnServer,updateGroup,toast,onDo
 // same questions, and "Find our trips" opens once they all have. `planId`
 // is that trip, when this screen is opened to wait on it or to find its
 // options. A solo trip has nobody to wait for and works as it always has.
-function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,um,updatePlanOnServer,refreshGroup,regenerate=false,find=false}){
+function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,um,updatePlanOnServer,refreshGroup,regenerate=false,find=false,askReconnection=false}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
   // it is what the person filled in a moment ago on the way here.
@@ -8028,6 +8034,8 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
   return(
     <div className="sc">
+      {/* The organiser, once, as the group is made (pilot gate A7 M3). */}
+      {askReconnection&&<ReconnectionQuestion groupId={groupId} groupName={group?.name} solo={isSoloGroup(group)}/>}
       {/* Header */}
       <div style={{padding:"12px 20px 16px",display:"flex",alignItems:"center",gap:12}}>
         <ScreenHeader onBack={onBack}/>
@@ -12767,6 +12775,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             {/* After the trip: the server says whether to ask (over by its
                 own clock, something on it held, and this person there). */}
             {timing==="over"&&<CloseCard planId={planId} groupId={groupId} push={push} toast={toast}/>}
+            {/* The form asks only the organiser, once, after a trip that happened
+                (debriefGate in components/pilot/rules.ts); otherwise it renders nothing. */}
+            {timing==="over"&&<DebriefForm planId={planId} toast={toast}/>}
             {/* A weather no-go was saved, and nothing can check it. Said once,
                 quietly — never as though it was applied. */}
             {!CLIMATE_CHECKS_ENABLED&&savedWeatherNoGo({dealbreakers:plan.dealbreakers,noWayJose:myNoGos})&&(

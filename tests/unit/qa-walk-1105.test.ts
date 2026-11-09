@@ -137,7 +137,7 @@ test('7: "Find them →" starts finding, rather than opening a second Find butto
   assert.equal(a.cta?.label, 'Find them →');
   assert.equal(a.cta?.kind === 'navigate' ? a.cta.route.params.find : null, '1');
   const trip = fn('GroupTripScreen');
-  assert.match(trip, /regenerate=false,find=false\}\)/);
+  assert.match(trip, /regenerate=false,find=false(,askReconnection=false)?\}\)/);
   assert.match(trip, /if\(!find\|\|findAsked\.current/);
   assert.match(trip, /findAsked\.current=true;\s*findOurTrips\(wp\);/);
 });

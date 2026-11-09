@@ -209,16 +209,16 @@ trip that happened. Answers are ranges, stored as one representative value each
 | 10–20 | 15 | | More than 100 | 130 |
 | More than 20 | 25 | | | |
 
-The message count is optional and travels in the event as **`msgs`**, not `messages`:
-`lib/track.ts` scrubProps drops any key matching `/message/`, so a key of that name would
-arrive empty. One debrief per trip: the first one submitted.
+The message count is optional and travels in the event as **`messages`** (a number —
+`lib/track.ts` keeps it as a counting key; `pilot_metrics` reads the same name). One debrief
+per trip: the first one submitted.
 
 ```sql
 -- (params + pilot_groups block here)
 , debriefs as (
   select distinct on (e.plan_id) e.plan_id, p.type,
          (e.props->>'hours')::numeric           as hours,
-         (e.props->>'msgs')::numeric            as msgs,
+         (e.props->>'messages')::numeric        as msgs,
          (e.props->>'nps')::int                 as nps,
          (e.props->>'would_run_again')::boolean as would_run_again
     from public.events e
@@ -334,7 +334,7 @@ and the two must agree on the same cohort before the view is trusted:
 |---|---|---|
 | R1 | `per_plan.funded` over `proposed` + `deleted` | plans created vs plans with funding complete, per plan, filterable to the pilot groups |
 | R2 | `converted.organised` over `members` | joined-via-invite users and their first later plan (today's `v_organizer_conversion` is the event-based version; it only sees people with an `invite_signup` event) |
-| R3 | `debriefs` from `debrief_submitted` (`hours`, `msgs`) | organiser hours and message count per plan |
+| R3 | `debriefs` from `debrief_submitted` (`hours`, `messages`) | organiser hours and message count per plan |
 | R4 | `debriefs.nps` | NPS per plan, promoters/detractors |
 
 If the view and this file disagree, this file is the pre-registered definition; the view

@@ -58,11 +58,11 @@ test('the event carries numbers and booleans only, and survives scrubProps whole
   const props = debriefEventProps(p.value, { solo: false });
   for (const v of Object.values(props)) assert.ok(typeof v === 'number' || typeof v === 'boolean');
   assert.equal(JSON.stringify(props).includes('Chasing'), false, 'the note never reaches events');
-  // Every key it sends is one the tracker keeps. `messages` would not be:
-  // scrubProps drops anything matching /message/, which is why it is `msgs`.
+  // Every key it sends is one the tracker keeps: `messages` survives
+  // scrubProps as a number (COUNT_KEYS), and pilot_metrics reads that name.
   assert.deepEqual(scrubProps(props), props);
-  assert.equal(props.msgs, 130);
-  assert.deepEqual(scrubProps({ messages: 130 }), {}, 'the reason the key is msgs');
+  assert.equal(props.messages, 130);
+  assert.deepEqual(scrubProps({ messages: 'a sentence' }), {}, 'only as a number, never prose');
 });
 
 test('asked of the organiser, once, after a trip that happened', () => {
@@ -118,7 +118,7 @@ test('the migration holds exactly the values the choices store', () => {
 
 test('READOUTS.md pre-registers the four baselines and reads the stored values', () => {
   for (const b of ['24%', '30%', '19', '83', '50']) assert.ok(READOUTS.includes(b), `baseline ${b}`);
-  assert.match(READOUTS, /props->>'msgs'/, 'the messages readout reads the key that survives scrubProps');
-  assert.equal(/props->>'messages'/.test(READOUTS), false);
+  assert.match(READOUTS, /props->>'messages'/, 'the messages readout reads the key pilot_metrics reads');
+  assert.equal(/props->>'msgs'/.test(READOUTS), false, 'the old key is gone');
   assert.match(READOUTS, /two consecutive (pilot )?trips/i, 'the stop rule');
 });
