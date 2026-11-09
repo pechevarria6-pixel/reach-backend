@@ -24,6 +24,14 @@ export interface LaneReport {
 export interface Failure { provider: string; status: string; detail: string | null }
 
 const BROKEN = new Set(['refused', 'unreachable']);
+/**
+ * Lanes whose outage is worth waking somebody: money, bookings, AI, the
+ * database and email. Discovery and weather sources are public and flaky —
+ * Overpass alone is "at capacity" several times a day — and a member still
+ * plans and pays without them, so they are reported as warnings and never
+ * fail the run (the first dry run, 2026-11-08, failed on exactly those).
+ */
+export const NON_CRITICAL_LANES = new Set(['discovery', 'weather']);
 
 /** The Stripe row says its mode in `detail`: "test mode — …" or "LIVE mode — …". */
 export function stripeMode(lanes: LaneReport[]): 'test' | 'live' | null {
@@ -43,7 +51,7 @@ export function stripeMode(lanes: LaneReport[]): 'test' | 'live' | null {
  */
 export function failuresOf(lanes: LaneReport[], expectedStripe: 'test' | 'live' = 'test'): Failure[] {
   const out: Failure[] = lanes
-    .filter(l => BROKEN.has(l.status))
+    .filter(l => BROKEN.has(l.status) && !NON_CRITICAL_LANES.has(l.lane))
     .map(l => ({ provider: l.provider, status: l.status, detail: l.detail }));
   const mode = stripeMode(lanes);
   if (mode && mode !== expectedStripe) {

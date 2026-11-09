@@ -388,21 +388,26 @@ export async function GET(req: NextRequest) {
     probe('weather.gov', 'weather', null, `https://api.weather.gov/points/${LAT},${LNG}`, { headers: UA }),
     probe('NOAA CO-OPS tides', 'weather', null,
       'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=tidepredictions'),
-    probe('Open Brewery DB', 'discovery', null, 'https://api.openbrewerydb.org/v1/breweries?per_page=1'),
+    // Open Brewery DB was probed here and used nowhere in the app; it refused
+    // Vercel's addresses and failed every check (2026-11-08). Removed.
     // Overpass answers 406 to a request with no User-Agent, which looks like
     // a broken lane and is not one.
     probe('OpenStreetMap (Overpass)', 'discovery', null, 'https://overpass-api.de/api/status', { headers: UA }),
     probe('Ticketmaster', 'discovery', 'TICKETMASTER_API_KEY',
       `https://app.ticketmaster.com/discovery/v2/events.json?size=1&apikey=${process.env.TICKETMASTER_API_KEY ?? ''}`),
+    // Yelp answers an expired trial with 400 TRIAL_EXPIRED: a lane switched
+    // off, the same as no key (lib/discovery/yelp.ts switchedOff), not broken.
     probe('Yelp (places)', 'discovery', 'YELP_API_KEY',
       'https://api.yelp.com/v3/businesses/search?latitude=35.17&longitude=-79.39&limit=1',
-      { headers: { Authorization: `Bearer ${process.env.YELP_API_KEY ?? ''}` } }),
+      { headers: { Authorization: `Bearer ${process.env.YELP_API_KEY ?? ''}` } },
+      { 400: { status: 'dormant', detail: 'Yelp refused the key (trial expired) — renew it to switch Yelp back on' } }),
     // Its own row: the same key opens one of these and not the other, and a
     // single "Yelp: ok" hid a lane that has never once returned anything.
     probe('Yelp (events)', 'discovery', 'YELP_API_KEY',
       `https://api.yelp.com/v3/events?latitude=35.17&longitude=-79.39&radius=40000&limit=1&start_date=${Math.floor(Date.now() / 1000)}`,
       { headers: { Authorization: `Bearer ${process.env.YELP_API_KEY ?? ''}` } },
-      { 403: { status: 'dormant', detail: 'needs Yelp\'s developer beta — join it on the Manage App page' } }),
+      { 403: { status: 'dormant', detail: 'needs Yelp\'s developer beta — join it on the Manage App page' },
+        400: { status: 'dormant', detail: 'Yelp refused the key (trial expired) — renew it to switch Yelp back on' } }),
 
     // ── Booking ────────────────────────────────────────────────────────
     probe('LiteAPI (hotels)', 'booking', 'LITEAPI_KEY',

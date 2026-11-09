@@ -6,17 +6,18 @@ import { readFileSync } from 'node:fs';
 import { failuresOf, stripeMode, alertLines, sendHealthAlert, type LaneReport } from '../../lib/observe/health-alert.ts';
 
 const lane = (provider: string, status: string, detail: string | null = null): LaneReport =>
-  ({ provider, lane: 'discovery', key: 'set', status, ms: 10, detail });
+  // A lane that pages (booking); discovery and weather never do — see below.
+  ({ provider, lane: 'booking', key: 'set', status, ms: 10, detail });
 
 test('refused and unreachable are failures; ok, dormant and unknown are not', () => {
   const f = failuresOf([
     lane('weather.gov', 'ok'),
     lane('Yelp (events)', 'dormant', "needs Yelp's developer beta"),
     lane('Viator (activities)', 'unknown'),
-    lane('Ticketmaster', 'refused', 'HTTP 401 — key rejected'),
+    lane('LiteAPI (hotels)', 'refused', 'HTTP 401 — key rejected'),
     lane('Resend (email)', 'unreachable', 'no answer in 6000ms'),
   ]);
-  assert.deepEqual(f.map(x => x.provider), ['Ticketmaster', 'Resend (email)']);
+  assert.deepEqual(f.map(x => x.provider), ['LiteAPI (hotels)', 'Resend (email)']);
 });
 
 test('Stripe in live mode during a test-mode pilot is a failure', () => {
@@ -67,4 +68,16 @@ test('the alert route is behind the cron secret', () => {
   const route = readFileSync(new URL('../../app/api/health/alert/route.ts', import.meta.url), 'utf8');
   assert.match(route, /if \(!authorised\(req\)\) return NextResponse\.json\(\{ error: 'Not authorised' \}, \{ status: 401 \}\)/);
   assert.match(route, /`Bearer \$\{secret\}`/);
+});
+
+test('a flaky public source is a warning, never a page; a booking or payment lane still fails', async () => {
+  const { failuresOf } = await import('../../lib/observe/health-alert.ts');
+  const lane = (provider: string, lane: string, status: string) => ({ provider, lane, key: 'set', status, ms: 1, detail: null });
+  const f = failuresOf([
+    lane('OpenStreetMap (Overpass)', 'discovery', 'unreachable'),
+    lane('weather.gov', 'weather', 'refused'),
+    lane('LiteAPI (hotels)', 'booking', 'unreachable'),
+    lane('Resend (email)', 'infrastructure', 'refused'),
+  ] as never);
+  assert.deepEqual(f.map(x => x.provider), ['LiteAPI (hotels)', 'Resend (email)']);
 });

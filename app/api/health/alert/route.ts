@@ -14,7 +14,7 @@
 // Protected by CRON_SECRET, like the check it wraps. Nothing here books,
 // charges or writes.
 import { NextRequest, NextResponse } from 'next/server';
-import { failuresOf, sendHealthAlert, type LaneReport } from '@/lib/observe/health-alert';
+import { NON_CRITICAL_LANES, failuresOf, sendHealthAlert, type LaneReport } from '@/lib/observe/health-alert';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -65,6 +65,9 @@ export async function GET(req: NextRequest) {
     checked: lanes.length,
     failing: failures.length,
     failures: failures.map(f => ({ provider: f.provider, status: f.status })),
+    // Discovery and weather sources that are down: reported, never paged.
+    warnings: lanes.filter(l => NON_CRITICAL_LANES.has(l.lane) && ['refused', 'unreachable'].includes(l.status))
+      .map(l => ({ provider: l.provider, status: l.status })),
     emailed: mail?.sent ?? false,
     ...(mail && !mail.sent ? { email_problem: mail.reason } : {}),
     dry,
