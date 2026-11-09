@@ -168,7 +168,9 @@ test('the Budget tab leaves out what you are not in for', () => {
   assert.match(app, /const youreOff=linesYoureOff\(planBookings,share\?\.items\)/);
   // And what is left is your share off the booking rows (lib/budget.ts
   // lineCosts, tests/unit/polish.test.ts), not the line's per-person fare.
-  assert.match(app, /booking_mode==="reach"&&i\.cost_cents>0&&!youreOff\.has\(String\(i\.id\)\)&&!costs\.get\(String\(i\.id\)\)\?\.off\)/);
+  // Since UX F08-01 the split lives in lib/budget.ts budgetSplit.
+  assert.match(app, /budgetSplit\(items,costs,youreOff,heads\)/);
+  assert.match(readFileSync(new URL('../../lib/budget.ts', import.meta.url), 'utf8'), /if \(youreOff\.has\(id\) \|\| k\?\.off\) \{ out\.notYours\.push\(line\); continue; \}/);
 });
 
 test('a flyer is shown the quote\'s own per-seat fare for the seats flying now, marked', () => {

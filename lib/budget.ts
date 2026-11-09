@@ -160,3 +160,82 @@ export function lineCosts(
   }
   return out;
 }
+
+// ─── One split, so the Budget tab and checkout agree (UX F08-01, S1) ─────
+// A flight or hotel line carries no cost_cents of its own until a provider
+// quotes it, and the quote lives on the booking row. The Budget tab read only
+// the line, so it filed a quoted $914 hotel under "priced when you book",
+// left it out of the total, and said "$783 under" while checkout, reading the
+// rows, said "$69 over". One person, one trip, two answers at the moment of
+// decision. A line is priced if its own estimate is, or if its booking rows
+// carry a price; lineCosts already reads the rows, so this asks it.
+
+export interface BudgetLine extends LineLike {
+  booking_mode?: unknown;
+}
+
+export interface BudgetSplit<T extends BudgetLine> {
+  /** Reach-booked and priced, and you are in for it. `c` is your share. */
+  fixed: { line: T; c: number; g: number | null }[];
+  /** Reach-booked and priced, and you are off it. */
+  notYours: T[];
+  /** Reach-booked with no price on the line or any booking row yet. */
+  unpriced: T[];
+  /** Paid by you on the day, at the line's estimate. */
+  variable: { line: T; c: number }[];
+  fixedTotal: number;
+  varTotal: number;
+  /** Everybody's: Reach lines at what they cost the people on them, plus day-to-day for every head. */
+  altogether: number;
+}
+
+export function budgetSplit<T extends BudgetLine>(
+  lines: T[] | null | undefined,
+  costs: Map<string, LineCost>,
+  youreOff: Set<string>,
+  heads: number,
+): BudgetSplit<T> {
+  const people = Math.max(1, Math.round(heads) || 1);
+  const out: BudgetSplit<T> = { fixed: [], notYours: [], unpriced: [], variable: [], fixedTotal: 0, varTotal: 0, altogether: 0 };
+  let groupFixed = 0;
+  for (const line of lines ?? []) {
+    const id = String(line.id);
+    const own = cents(line.cost_cents) ?? 0;
+    const k = costs.get(id);
+    if (line.booking_mode !== 'reach') {
+      if (own > 0) { out.variable.push({ line, c: own }); out.varTotal += own; }
+      continue;
+    }
+    const fromRows = k?.from === 'bookings' && k.group > 0;
+    if (!(own > 0) && !fromRows) { out.unpriced.push(line); continue; }
+    groupFixed += k ? k.group : own * people;
+    if (youreOff.has(id) || k?.off) { out.notYours.push(line); continue; }
+    const c = k ? k.mine : own;
+    out.fixed.push({ line, c, g: k ? k.group : null });
+    out.fixedTotal += c;
+  }
+  out.altogether = groupFixed + out.varTotal * people;
+  return out;
+}
+
+/**
+ * The one sentence under the totals: what goes through Reach, what is spent
+ * on the day, and where that leaves the budget. "Through Reach", not
+ * "Booked": until it is paid for, nothing is booked. The on-the-day figure is
+ * an estimate and is marked as one.
+ */
+export function budgetLine(s: { fixedTotal: number; varTotal: number }, budgetDollars: number, money: (c: number) => string): string | null {
+  if (!(budgetDollars > 0)) return null;
+  const total = s.fixedTotal + s.varTotal;
+  const cap = Math.round(budgetDollars * 100);
+  const parts: string[] = [];
+  if (s.fixedTotal > 0) parts.push(`Through Reach ${money(s.fixedTotal)}`);
+  if (s.varTotal > 0) parts.push(`On the day ~${money(s.varTotal)}`);
+  const gap = total - cap;
+  const where = gap > 0
+    ? `${money(gap)} over your $${budgetDollars.toLocaleString('en-US')}`
+    : `${money(-gap)} under your $${budgetDollars.toLocaleString('en-US')}`;
+  parts.push(s.varTotal > 0 ? `about ${where}` : where);
+  const line = parts.join(' · ');
+  return line.charAt(0).toUpperCase() + line.slice(1) + '.';
+}
