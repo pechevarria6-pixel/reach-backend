@@ -12,18 +12,18 @@ Legend: ✅ done · 🟡 partial · ❌ missing · 🔒 owner-blocked
 
 Maintained by the coordinator. Updated 2026-11-08.
 
-### Definition of ready (all eight must be true)
+### Definition of ready (all eight must be true) — readiness report 2026-11-08
 
 | # | Item | Status | Evidence / blocker |
 |---|---|---|---|
-| 1 | Owner blockers cleared | **false** | B1 keys not yet set; Sentry DSN absent; Stripe live account unverified |
-| 2 | Custody question answered by counsel | **false** | B2 counsel session pending |
-| 3 | Payment rail fixed (ACH default, native-only funding) | **false** | P1 done (cbbf98a, verified live in test mode); P2–P6 in Rail track |
-| 4 | Zero S1 UX items | **false** | Wave 0 audit in progress (UX track) |
-| 5 | Monitoring and payments kill switch live | **false** | Sentry blocked on DSN; `PAYMENTS_ENABLED` in Rail track |
+| 1 | Owner blockers cleared | **false** | Sentry DSN; Reach's Stripe key account (`acct_1U4lDQ5GB2FVY7o…`) not reachable in the owner's dashboard login — its webhook events and BNPL settings unverified; Stripe live needs business verification |
+| 2 | Custody question answered by counsel | **false** | B2 counsel session pending (also gates P4 single-payer) |
+| 3 | Payment rail fixed (ACH default, native-only funding) | **false** | Code merged and live: bank-first (P1, verified live), processing state, native-only target, refunds/disputes, fee capture, kill switch, no BNPL. Not true until the Stripe webhook on Reach's key account subscribes to `payment_intent.processing`, `charge.succeeded`, `charge.dispute.*` |
+| 4 | Zero S1 UX items | **false** | Wave 0 ledger: 3 S1 · 39 S2 · 55 S3 (`UX-LEDGER.md`); stopped for owner review |
+| 5 | Monitoring and payments kill switch live | **false** | Kill switch live (`PAYMENTS_ENABLED`); health-alert workflow pushed; Sentry blocked on DSN |
 | 6 | Ten groups recruited | **false** | Owner (B4) |
-| 7 | Debrief script written | **false** | Verify track (A7) |
-| 8 | Four readouts pre-registered | **false** | Verify track (`docs/pilot/READOUTS.md`), then owner approval |
+| 7 | Debrief script written | **true** | `docs/pilot/DEBRIEF-SCRIPT.md` (owner approval pending); debrief form live |
+| 8 | Four readouts pre-registered | **false** | `docs/pilot/READOUTS.md` drafted; owner approval + pilot group ids needed |
 
 ### Environment
 - Stripe: **test** (`/api/health/modes`, 2026-11-08: stripe/stripePublishable/duffel/liteapi all `test`,
@@ -54,6 +54,9 @@ Maintained by the coordinator. Updated 2026-11-08.
 | `sql/pilot-1-contribution-method-2026-11-08.sql` | superseded by pilot-gate (column now exists) |
 | `sql/pilot-gate-2026-11-08.sql` | **applied 2026-11-08** by the coordinator via the SQL Editor after a rollback dry run; verified through PostgREST (new columns readable, `plan_deletions` present) |
 | `sql/group-invites-rls-2026-11-08.sql` | **applied 2026-11-08** (owner-authorized): anon read now 401/42501, service read 200, `/api/invites/<token>` 200; Security Advisor 0 errors |
+| `sql/rail-expense-booking-2026-11-08.sql` | **applied 2026-11-08** (dry run clean); `expenses.booking_id` readable |
+| `sql/pilot-metrics-2026-11-08.sql` | **applied 2026-11-08** after the dry run caught a text=uuid join (fixed in 04e8665); `pilot_metrics` returns 19 rows |
+| `sql/pilot-debrief-2026-11-08.sql` | **applied 2026-11-08** (dry run clean); `pilot_debriefs` RLS on, no policies |
 
 ### Out of scope until the pilot has run
 Reservation agent (design doc stays parked at `docs/RESERVATION-AGENT-DESIGN.md`), savings
