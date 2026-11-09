@@ -94,6 +94,11 @@ export const EVENT_NAMES = [
   // still open and for how much. No open lines is the "zero post-trip IOUs"
   // metric (lib/observe/ledger-at-end.ts).
   'ledger_at_trip_end',
+  // Bank payments on their way, back, or reversed (Rail P2/P5): the pilot's
+  // read on how often a debit clears, fails or is taken back.
+  'contribution_processing',
+  'contribution_failed',
+  'contribution_reversed',
 ] as const;
 
 export type EventName = typeof EVENT_NAMES[number];

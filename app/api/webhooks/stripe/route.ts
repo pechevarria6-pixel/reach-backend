@@ -155,6 +155,12 @@ export async function POST(req: NextRequest) {
         }
         const movedIds = new Set(moved.map(r => String(r.id)));
         const returned = (before ?? []).filter(r => r.status === 'succeeded' && movedIds.has(String(r.id)));
+        if (moved.length) {
+          void track(supabase, 'contribution_failed', {
+            planId: intent.metadata.plan_id ?? null,
+            props: { amount_cents: Number(intent.amount || 0), after_cleared: returned.length > 0 },
+          });
+        }
         if (returned.length) {
           await moneyCameBack(supabase, String(returned[0].plan_id ?? intent.metadata.plan_id ?? ''), {
             how: 'returned', intent: intent.id,
@@ -184,6 +190,7 @@ export async function POST(req: NextRequest) {
           console.error('[stripe webhook] could not mark a bank payment as clearing', { intent: intent.id, code: clearing.code });
           return NextResponse.json({ error: 'could not record the payment clearing' }, { status: 500 });
         }
+        void track(supabase, 'contribution_processing', { planId: intent.metadata.plan_id ?? null, props: { amount_cents: Number(intent.amount || 0) } });
       }
       await recordMethod(supabase, intent.id, methodOf((fresh ?? intent) as never));
       break;
@@ -523,6 +530,10 @@ async function disputeChanged(supabase: ReturnType<typeof createServerClient>, t
       return NextResponse.json({ error: 'could not record the dispute' }, { status: 500 });
     }
     if (moved.length) {
+      void track(supabase, 'contribution_reversed', {
+        planId: contribution.plan_id ? String(contribution.plan_id) : null,
+        props: { amount_cents: Number(dispute.amount) || Number(contribution.amount_cents) || 0, how: 'dispute' },
+      });
       await moneyCameBack(supabase, String(contribution.plan_id ?? ''), {
         how: 'disputed', intent: intentId, cents: Number(dispute.amount) || Number(contribution.amount_cents) || 0,
       });

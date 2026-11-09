@@ -55,7 +55,8 @@ test('only the listed names may be written', () => {
   // for the checkout spec of 2026-09-25, and two for the pilot gate's debrief
   // and reconnection question (2026-11-08), and six for the pilot metrics
   // (Observe, 2026-11-08).
-  assert.equal(EVENT_NAMES.length, 45);
+  assert.equal(EVENT_NAMES.length, 48);
+  for (const n of ['contribution_processing', 'contribution_failed', 'contribution_reversed']) assert.equal(isEventName(n), true, n);
   for (const n of ['debrief_submitted', 'reconnection_answered']) assert.equal(isEventName(n), true, n);
   for (const n of ['ai_generation', 'generation_rate_limited', 'chip_in_requested',
     'item_opted_out', 'item_opted_in', 'ledger_at_trip_end']) assert.equal(isEventName(n), true, n);
