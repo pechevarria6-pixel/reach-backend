@@ -23,6 +23,7 @@
 // the same secret, which is how you check what it is producing:
 //
 //   curl -H "Authorization: Bearer $CRON_SECRET" .../api/cron/knowledge?format=text
+import { aiMeter } from '@/lib/observe/ai-cost';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { parseModelJSON, textOf } from '@/lib/trip-schema';
@@ -226,6 +227,8 @@ export async function GET(req: NextRequest) {
           schema: PLAYBOOK_JSON_SCHEMA as unknown as Record<string, unknown>,
           label: 'cron knowledge',
           effort: EFFORT,
+          // The cron's own model calls count toward AI cost too (C3).
+          meter: aiMeter(db, {}),
         });
 
         const raw = textOf(res);

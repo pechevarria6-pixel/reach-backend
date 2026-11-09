@@ -20,6 +20,7 @@
 // seconds and eleven searches for one venue. That is not a harvester, so a
 // page we cannot read is recorded as unreadable and the venue still shows
 // with its link — exactly what it showed before.
+import type { Meter } from '../observe/ai-cost.ts';
 import Anthropic from '@anthropic-ai/sdk';
 import { stillToCome } from './when.ts';
 import { today } from '../calendar.ts';
@@ -270,7 +271,7 @@ Page text:
 ${text}`;
 }
 
-export async function harvestVenue(venue: { name: string; website: string }): Promise<Harvest> {
+export async function harvestVenue(venue: { name: string; website: string }, meter?: Meter): Promise<Harvest> {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return { status: 'unreachable', events: [], detail: 'no ANTHROPIC_API_KEY' };
 
@@ -318,6 +319,8 @@ export async function harvestVenue(venue: { name: string; website: string }): Pr
       output_config: { format: { type: 'json_schema', schema: EVENTS_SCHEMA } },
       messages: [{ role: 'user', content: extractionPrompt(venue.name, readUrl, text.slice(0, 14000)) }],
     });
+    // One page read, one billed call (directive C3).
+    meter?.(res as never, 'claude-haiku-4-5', 'harvest', 'first', 8000);
     const raw = res.content
       .filter(b => b.type === 'text')
       .map(b => (b as { text: string }).text)

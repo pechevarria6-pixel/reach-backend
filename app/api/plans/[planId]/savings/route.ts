@@ -9,6 +9,7 @@
 // PATCH { amountCents, note? }   → log a savings check-in
 // GET   → my goal + pace, every member's pace, group readiness, and the
 //         affordability guardrail vs my stated budget_range.
+import { fundingTarget, guessBudgetCents } from '@/lib/rail/funding-target';
 import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
@@ -36,7 +37,9 @@ async function planShareCents(
     groupMemberIds(db, groupId),
     planSkips(db, planId),
   ]);
-  return planShares(chargedRows(bookings), budgetCents || 0, memberIds, skips)[userId] ?? 0;
+  // Nothing paid through Reach: nothing to save towards here (directive P3).
+  const budgetGuess = guessBudgetCents(fundingTarget(bookings), 0, budgetCents || 0);
+  return planShares(chargedRows(bookings), budgetGuess, memberIds, skips)[userId] ?? 0;
 }
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {

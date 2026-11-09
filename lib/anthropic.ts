@@ -14,6 +14,7 @@
 // frozen while other work is in flight on it; when it is next open, its
 // local `withSchemaFallback` and `anthropicOrNull` can be deleted in favour
 // of these two with no change in behaviour.
+import type { Meter } from './observe/ai-cost.ts';
 import Anthropic from '@anthropic-ai/sdk';
 
 /** A missing key disables a lane with a clean message rather than a crash. */
@@ -32,6 +33,8 @@ export interface JSONRequest {
   /** What the logs call this, so a failure can be found. Never a key. */
   label: string;
   effort?: 'low' | 'medium' | 'high';
+  /** Records each attempt's cost (lib/observe/ai-cost.ts, directive C3). */
+  meter?: Meter;
 }
 
 /**
@@ -42,10 +45,11 @@ export interface JSONRequest {
  * it now or leave it for the next run.
  */
 export async function askForJSON(req: JSONRequest) {
-  const { client, model, maxTokens, prompt, schema, label, effort } = req;
+  const { client, model, maxTokens, prompt, schema, label, effort, meter } = req;
 
-  const call = (tokens: number, extra: string, constrained: boolean) =>
-    client.messages.create({
+  // Every attempt is metered, the retries included: each one is billed.
+  const call = async (tokens: number, extra: string, constrained: boolean) => {
+    const res = await client.messages.create({
       model,
       max_tokens: tokens,
       messages: [{ role: 'user' as const, content: prompt + extra }],
@@ -53,6 +57,9 @@ export async function askForJSON(req: JSONRequest) {
         ? { output_config: { ...(effort ? { effort } : {}), format: { type: 'json_schema' as const, schema } } }
         : effort ? { output_config: { effort } } : {}),
     });
+    meter?.(res as never, model, label, extra ? 'briefer' : constrained ? 'first' : 'unconstrained', tokens);
+    return res;
+  };
 
   let res;
   try {

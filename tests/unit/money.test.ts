@@ -271,6 +271,8 @@ test('an idempotency key is scoped to the plan and the person, and junk is refus
 test('the savings goal is the share funding charges, never the budget split as a total', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync('app/api/plans/[planId]/savings/route.ts', 'utf8');
-  assert.match(src, /planShares\(chargedRows\(bookings\), budgetCents \|\| 0, memberIds, skips\)\[userId\]/);
+  // Still planShares over the charged rows; the budget passes through
+  // guessBudgetCents so a plan with nothing paid through Reach owes no share.
+  assert.match(src, /planShares\(chargedRows\(bookings\), budgetGuess, memberIds, skips\)\[userId\]/);
   assert.doesNotMatch(src, /evenSplit\(basis, heads\)/);
 });

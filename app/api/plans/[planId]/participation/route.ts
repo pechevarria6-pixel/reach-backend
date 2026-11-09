@@ -23,6 +23,7 @@
 // Shares lock the moment anybody on the plan pays. Moving them after money has
 // moved leaves one person overpaid and another short, and Reach does not hold
 // money to even that out.
+import { fundingTarget, guessBudgetCents } from '@/lib/rail/funding-target';
 import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
 import { track } from '@/lib/track';
@@ -114,7 +115,10 @@ export async function GET(_req: NextRequest, { params }: { params: { planId: str
     const now = new Map(live.map(b => [String(b.id), flightNow(b, partyFor(party, memberIds, skips, String(b.id)))]));
     // Exactly the rows funding charges, at what they cost the people on them now.
     const charged = chargedNow.map(b => ({ ...b, price_cents: now.get(String(b.id))!.priceCents }));
-    const shares = planShares(charged, Number(ctx.plan.budget_cents) || 0, memberIds, skips);
+    // A plan where nothing goes through Reach owes nobody a share: the budget
+    // is not a guess at one (lib/rail/funding-target.ts, directive P3).
+    const budgetGuess = guessBudgetCents(fundingTarget(bookingsRes.data), 0, Number(ctx.plan.budget_cents) || 0);
+    const shares = planShares(charged, budgetGuess, memberIds, skips);
 
     const items = live
       .filter(b => canOptOut(b.vertical) && (b.price_cents || 0) > 0)

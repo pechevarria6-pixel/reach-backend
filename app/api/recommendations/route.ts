@@ -6,6 +6,7 @@
 // previous-generation model, asking for JSON in the prompt and parsing the
 // answer unguarded. The trip path learned each of those lessons by failing in
 // production. Applying them here rather than waiting for the same failures.
+import { aiMeter } from '@/lib/observe/ai-cost';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
@@ -97,6 +98,8 @@ return fewer than six rather than pad.`;
       messages: [{ role: 'user', content: prompt }],
       output_config: { format: { type: 'json_schema', schema: RECOMMENDATIONS_JSON_SCHEMA } },
     });
+    // What this call cost, for the pilot's AI cost metric (directive C3).
+    aiMeter(ctx.db, { userId: ctx.user.id })(res as never, MODEL, 'recommendations', 'first', 8000);
 
     const parsed = parseModelJSON(textOf(res), RecommendationsSchema, 'recommendations');
     const all = parsed?.recommendations ?? [];

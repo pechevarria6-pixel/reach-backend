@@ -9,6 +9,7 @@
 // last one still shows as a venue with a link, which is all it ever was.
 //
 // Runs on a schedule (see vercel.json), after the sweep.
+import { aiMeter } from '@/lib/observe/ai-cost';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { harvestVenue } from '@/lib/discovery/harvest';
@@ -99,7 +100,7 @@ export async function GET(req: NextRequest) {
   let unstored = 0;
 
   for (const venue of ready) {
-    const result = await harvestVenue({ name: venue.name, website: venue.website });
+    const result = await harvestVenue({ name: venue.name, website: venue.website }, aiMeter(db, {}));
     tally[result.status] = (tally[result.status] ?? 0) + 1;
 
     // Whether this venue's classes are safely on disk. A write that failed
