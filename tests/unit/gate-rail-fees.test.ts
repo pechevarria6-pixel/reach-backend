@@ -49,7 +49,8 @@ test('the fee is written onto the contribution, and a missing column never fails
 test('the webhook and confirm both record it', () => {
   const hook = readFileSync('app/api/webhooks/stripe/route.ts', 'utf8');
   assert.match(hook, /case 'charge\.succeeded':[\s\S]{0,1200}recordFee\(supabase, intentId, fee\)/);
-  assert.match(hook, /recordFee\(supabase, intent\.id, feeOfCharge\(fresh\?\.latest_charge as never\)\)/);
+  // The fee is read once and both recorded and put on the success event.
+  assert.match(hook, /const feeCents = feeOfCharge\(fresh\?\.latest_charge as never\);\s*\n\s*await recordFee\(supabase, intent\.id, feeCents\);/);
   assert.match(hook, /expand: \['latest_charge\.balance_transaction'\]/);
   const confirm = readFileSync('app/api/plans/[planId]/funding/confirm/route.ts', 'utf8');
   assert.match(confirm, /expand\[\]=latest_charge\.balance_transaction/);

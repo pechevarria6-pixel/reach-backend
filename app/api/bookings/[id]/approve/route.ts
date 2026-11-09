@@ -423,6 +423,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const onItsWay = { cents: clearingCents(paid.data), count: clearingCount(paid.data) };
   if (movesMoney && funding.targetCents > 0 && !funding.funded) {
     const rise = purchase ? checkedCents - priceCents : 0;
+    // The "chip in" moment the pilot measures (directive §3: 402 resolution
+    // rate). Never awaited: instrumentation is never why a booking fails.
+    void track(db, 'chip_in_requested', {
+      userId: ctx.user.id, planId: String(booking.plan_id), groupId: booking.group_id ? String(booking.group_id) : null,
+      props: { shortfall_cents: funding.shortfallCents, target_cents: funding.targetCents, collected_cents: funding.collectedCents, rise: rise > 0 },
+    });
     if (rise > 0) {
       // A rise too small to ask about is still money. Written onto the row so
       // funding's shares include it and somebody can pay it in — otherwise

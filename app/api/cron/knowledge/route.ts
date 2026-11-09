@@ -32,6 +32,7 @@ import {
   namedThings, normaliseAllocation, expiresAt, startOfLocalDay, positiveInt,
 } from '@/lib/playbooks';
 import { distillAll } from '@/lib/taste-profile';
+import { recordLedgersAtTripEnd } from '@/lib/observe/ledger-at-end';
 
 export const dynamic = 'force-dynamic';
 // A handful of model calls back to back. Generous, but bounded: a stuck run
@@ -93,12 +94,16 @@ export async function GET(req: NextRequest) {
   // throws: a bad distill is a line in this report, not a missing playbook.
   const taste = await distillAll(db, { budgetMs: TASTE_BUDGET_MS });
   console.log('[cron/knowledge] taste', JSON.stringify(taste));
+  // The settle-up balance as each trip ends — the pilot's "zero IOUs"
+  // number (directive §3). Database only, once a day; never throws.
+  const ledgers = await recordLedgersAtTripEnd(db).catch(e => ({ error: e instanceof Error ? e.message : String(e) }));
+  console.log('[cron/knowledge] ledgers at trip end', JSON.stringify(ledgers));
 
   const answer = (
     reply: Record<string, unknown>,
     status = 200,
   ) => {
-    const body = { ...reply, taste };
+    const body = { ...reply, taste, ledgers };
     if (!asText) return NextResponse.json(body, { status });
     const rows = report.map(r => `${r.kind.padEnd(22)} ${r.status.padEnd(10)} ${r.detail ?? ''}`.trimEnd());
     return new NextResponse([...rows, rows.length ? '' : null, JSON.stringify(body)].filter(v => v !== null).join('\n'), {

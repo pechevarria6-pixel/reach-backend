@@ -25,6 +25,7 @@
 // money to even that out.
 import { NOT_CHARGED, chargedRows } from '@/lib/booking/charged';
 import { NextRequest, NextResponse } from 'next/server';
+import { track } from '@/lib/track';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { requirePlanMember, groupMemberIds, isFail } from '@/lib/auth';
@@ -287,6 +288,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     console.error('[participation] could not save', { planId: params.planId, itemRef, error: e instanceof Error ? e.message : e });
     return NextResponse.json({ error: "That didn't save — try again." }, { status: 500 });
   }
+
+  // Per-item opt-out usage (directive §3). After the save, never awaited.
+  void track(ctx.db, optOut ? 'item_opted_out' : 'item_opted_in', {
+    userId: me, planId: params.planId, props: { vertical: booking.vertical },
+  });
 
   if (dropped) {
     return NextResponse.json({

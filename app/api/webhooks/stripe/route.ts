@@ -82,12 +82,14 @@ export async function POST(req: NextRequest) {
         let method = methodOf(intent as never);
         if (!method || method === 'other') method = methodOf(fresh as never) ?? method;
         await recordMethod(supabase, intent.id, method);
-        await recordFee(supabase, intent.id, feeOfCharge(fresh?.latest_charge as never));
+        const feeCents = feeOfCharge(fresh?.latest_charge as never);
+        await recordFee(supabase, intent.id, feeCents);
         // Emitted here rather than from the screen: a contribution succeeded
-        // when Stripe says so, not when a browser believes it did.
+        // when Stripe says so, not when a browser believes it did. Method and
+        // fee feed the pilot's card-vs-bank mix and fee per trip (§3).
         void track(supabase, 'contribution_succeeded', {
           planId: intent.metadata.plan_id ?? null,
-          props: { amount_cents: Number(intent.amount_received || intent.amount || 0), payment_method: method ?? 'unknown' },
+          props: { amount_cents: Number(intent.amount_received || intent.amount || 0), payment_method: method ?? 'unknown', fee_cents: typeof feeCents === 'number' ? feeCents : null },
         });
         await announceIfFunded(supabase, intent.metadata.plan_id);
         break;
