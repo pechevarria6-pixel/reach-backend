@@ -14258,7 +14258,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
       try{
         const stripe=window.Stripe(pk);
         const elements=stripe.elements({clientSecret,appearance:{theme:"night",variables:{colorPrimary:C.accent,borderRadius:"12px"}}});
-        const pe=elements.create("payment");
+        // Bank first, card one tap away (lib/contribution-method.ts, P1): the
+        // member pays the same either way, and the trip keeps the difference
+        // in fees. Methods the payment does not offer are simply not shown.
+        const pe=elements.create("payment",{paymentMethodOrder:["us_bank_account","card"]});
         pe.on("ready",()=>setPayReady(true));
         pe.mount(payRef.current);
         stripeRef.current=stripe; elementsRef.current=elements;
@@ -14318,7 +14321,17 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         fail(`Your payment went through, but we couldn't record it against this trip. Do not pay again. Email ${SUPPORT_EMAIL} with reference ${paymentIntent.id} — that is how the payment is found.`,{payment:paymentIntent.id});
         return;
       }
+      const cj=await cr.json().catch(()=>({}));
       setBusy(false);
+      // A bank payment is on its way, not finished: it clears in a few
+      // business days, and booking waits for it. Said as that, never as a
+      // payment that went wrong — and nothing is approved on money that has
+      // not arrived.
+      if(cj.clearing||paymentIntent?.status==="processing"){
+        await refresh();
+        setPhase("clearing");
+        return;
+      }
       await approveAll(false);
     }catch(e){
       setBusy(false);
@@ -14704,6 +14717,15 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
 
   // Only reached with the payments just read again (refresh), so the bar is
   // what has been collected, not what this visit guessed it would be.
+  if(phase==="clearing")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
+    <div style={{marginBottom:12}}><PinDrop size={36} label="On its way"/></div>
+    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Your bank payment is on its way</div>
+    <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>
+      Bank payments take a few business days to clear. There's nothing more to do, and please don't pay again. Once every share has cleared we'll email everyone, and anyone on the trip can press Book it.
+    </div>
+    <div {...pressable} onClick={onBack} style={{marginTop:14,color:C.t2,fontSize:13,cursor:"pointer"}}>Back to trip</div>
+  </div></div>);
+
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{marginBottom:12}}><PinDrop size={36} label="Paid"/></div>
     <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Your part is paid</div>

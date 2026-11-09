@@ -21,6 +21,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { track } from '@/lib/track';
 import { cancelUnpaidIntent, UNPAID_STATES } from '@/lib/stripe-intents';
 import { refundsOpen } from '@/lib/refunds';
+import { contributionIntentFields, bankNotEnabled } from '@/lib/contribution-method';
 
 async function fundingStatus(
   db: SupabaseClient, planId: string, groupId: string, userId: string, budgetCents: number
@@ -344,15 +345,9 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     );
   }
 
-  // Create the PaymentIntent via Stripe's REST API (no SDK dependency)
-  const form = new URLSearchParams({
-    amount: String(amountCents),
-    currency: 'usd',
-    'metadata[plan_id]': params.planId,
-    'metadata[user_id]': ctx.user.id,
-    'metadata[kind]': 'reach_contribution',
-    'automatic_payment_methods[enabled]': 'true',
-  });
+  // Create the PaymentIntent via Stripe's REST API (no SDK dependency).
+  // Bank first, card one tap away (lib/contribution-method.ts, directive P1).
+  const intentBase = { amountCents, planId: params.planId, userId: ctx.user.id };
   // Stripe's own idempotency, because the guard above is a read and this is
   // a write, and a fast double-tap sends two requests that both read "no
   // payment in flight" before either of them writes one. Without this they
@@ -372,16 +367,26 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const priorPayments = (status.contributions || [])
     .filter((c: { user_id?: string }) => c.user_id === ctx.user.id).length;
   const idempotencyKey = `reach_contrib_${params.planId}_${ctx.user.id}_${amountCents}_${priorPayments}`;
-  const stripeRes = await fetch('https://api.stripe.com/v1/payment_intents', {
+  const createIntent = (how: 'bank_first' | 'automatic') => fetch('https://api.stripe.com/v1/payment_intents', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
       'Content-Type': 'application/x-www-form-urlencoded',
-      'Idempotency-Key': idempotencyKey,
+      // A different key for the fallback: Stripe answers a reused key with
+      // the first request's refusal, not a new attempt.
+      'Idempotency-Key': how === 'bank_first' ? `${idempotencyKey}_bank` : idempotencyKey,
     },
-    body: form,
+    body: contributionIntentFields(intentBase, how),
   });
-  const pi = await stripeRes.json();
+  let stripeRes = await createIntent('bank_first');
+  let pi = await stripeRes.json();
+  // The bank is not switched on for this account yet (an owner action in the
+  // Stripe Dashboard): pay the way the account already can, never not at all.
+  if (!stripeRes.ok && bankNotEnabled(pi?.error)) {
+    console.warn('[funding] bank debit is not enabled on the Stripe account; offering the account\'s usual methods', { planId: params.planId });
+    stripeRes = await createIntent('automatic');
+    pi = await stripeRes.json();
+  }
   if (!stripeRes.ok) {
     // Stripe refusing to create the payment intent is the moment checkout
     // dies, and it needs the reason recorded, not just relayed.

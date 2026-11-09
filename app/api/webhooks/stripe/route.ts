@@ -9,6 +9,7 @@ import { sendPaymentReceipt, sendFullyFunded } from '@/lib/email';
 import Stripe from 'stripe';
 import { track } from '@/lib/track';
 import { markPlanFunded, recordContributionFailed } from '@/lib/contribution-events';
+import { methodOf, recordMethod } from '@/lib/contribution-method';
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
@@ -66,11 +67,19 @@ export async function POST(req: NextRequest) {
             intent: intent.id, plan: intent.metadata.plan_id, code: markPaid.code,
           });
         }
+        // How it was paid, from the charge that paid it (directive P1).
+        let method = methodOf(intent as never);
+        if (!method || method === 'other') {
+          try {
+            method = methodOf(await stripe.paymentIntents.retrieve(intent.id, { expand: ['latest_charge'] }) as never) ?? method;
+          } catch { /* the label is not worth failing a webhook over */ }
+        }
+        await recordMethod(supabase, intent.id, method);
         // Emitted here rather than from the screen: a contribution succeeded
         // when Stripe says so, not when a browser believes it did.
         void track(supabase, 'contribution_succeeded', {
           planId: intent.metadata.plan_id ?? null,
-          props: { amount_cents: Number(intent.amount_received || intent.amount || 0) },
+          props: { amount_cents: Number(intent.amount_received || intent.amount || 0), payment_method: method ?? 'unknown' },
         });
         await announceIfFunded(supabase, intent.metadata.plan_id);
         break;

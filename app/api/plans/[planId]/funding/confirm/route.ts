@@ -5,6 +5,7 @@
 // succeeded. No client trust involved.
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePlanMember, isFail } from '@/lib/auth';
+import { methodOf, recordMethod } from '@/lib/contribution-method';
 
 export async function POST(req: NextRequest, { params }: { params: { planId: string } }) {
   const ctx = await requirePlanMember(params.planId);
@@ -14,11 +15,25 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   if (!paymentIntentId || typeof paymentIntentId !== 'string' || !paymentIntentId.startsWith('pi_')) {
     return NextResponse.json({ error: 'paymentIntentId required' }, { status: 400 });
   }
-  const r = await fetch('https://api.stripe.com/v1/payment_intents/' + paymentIntentId, {
+  // Expanded so the method that paid can be recorded (directive P1).
+  const r = await fetch('https://api.stripe.com/v1/payment_intents/' + paymentIntentId + '?expand[]=latest_charge&expand[]=payment_method', {
     headers: { Authorization: 'Bearer ' + process.env.STRIPE_SECRET_KEY },
   });
   const pi = await r.json();
-  if (pi.status !== 'succeeded' || pi.metadata?.kind !== 'reach_contribution' || pi.metadata?.plan_id !== params.planId) {
+  if (pi.metadata?.kind !== 'reach_contribution' || pi.metadata?.plan_id !== params.planId) {
+    return NextResponse.json({ error: 'Payment not confirmed' }, { status: 409 });
+  }
+  // A bank debit confirms as `processing` and clears in a few business days.
+  // That is a payment on its way, not one that failed: the row stays
+  // `pending` — so the in-flight guard in funding refuses a second payment
+  // and approval waits for the money — and the webhook marks it when it
+  // clears. Answered as clearing, so the screen says so instead of telling
+  // somebody their payment was not recorded.
+  if (pi.status === 'processing') {
+    await recordMethod(ctx.db, paymentIntentId, methodOf(pi));
+    return NextResponse.json({ ok: true, clearing: true });
+  }
+  if (pi.status !== 'succeeded') {
     return NextResponse.json({ error: 'Payment not confirmed' }, { status: 409 });
   }
   // Stripe says the money moved. If this write does not land, the plan goes
@@ -37,5 +52,6 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     console.error('[funding] paid at Stripe but not recorded', { plan: params.planId, code: recorded.code });
     return NextResponse.json({ error: "Your payment went through, but we couldn't record it against this trip. Don't pay again. Email hello@alcanzar.io with your payment reference so it can be attached or refunded." }, { status: 500 });
   }
+  await recordMethod(ctx.db, paymentIntentId, methodOf(pi));
   return NextResponse.json({ ok: true });
 }
