@@ -16,7 +16,7 @@ Maintained by the coordinator. Updated 2026-11-08.
 
 | # | Item | Status | Evidence / blocker |
 |---|---|---|---|
-| 1 | Owner blockers cleared | **false** | B1 keys not yet pasted; `SUPABASE_DB_URL` absent; Sentry DSN absent |
+| 1 | Owner blockers cleared | **false** | B1 keys not yet set; Sentry DSN absent; Stripe live account unverified; group_invites RLS migration to paste |
 | 2 | Custody question answered by counsel | **false** | B2 counsel session pending |
 | 3 | Payment rail fixed (ACH default, native-only funding) | **false** | P1 done (cbbf98a, verified live in test mode); P2–P6 in Rail track |
 | 4 | Zero S1 UX items | **false** | Wave 0 audit in progress (UX track) |
@@ -27,18 +27,28 @@ Maintained by the coordinator. Updated 2026-11-08.
 
 ### Environment
 - Stripe: **test** (`/api/health/modes`, 2026-11-08: stripe/stripePublishable/duffel/liteapi all `test`,
-  webhook configured). `/api/health/stripe` is CRON_SECRET-gated; the coordinator does not hold it.
+  webhook secret set). `/api/health/stripe` is CRON_SECRET-gated; the coordinator does not hold it.
+- **Stripe account mismatch:** Reach's test keys belong to account `acct_1U4lDQ5GB2FVY7o…` (pk prefix),
+  which is NOT in the dashboard the owner is signed into. That dashboard holds "Alcanzar Group, Inc."
+  (sandbox `acct_1UYUj14MaTB8EmsW`: ACH Direct Debit enabled 2026-11-08, no webhook endpoint, live mode
+  needs business verification) and "New business" (`acct_1UYUbt5lpbXMYs3C`). Going live means keys and the
+  webhook endpoint from the Alcanzar Group account.
+- Backups: daily physical backups on (latest 2026-11-08 09:13 UTC, 7 retained). **PITR off** (paid add-on).
+- Supabase Security Advisor 2026-11-08: 2 errors, both `public.group_invites` (RLS disabled; sensitive
+  columns exposed — anon key read it, verified 200). Fix written: `sql/group-invites-rls-2026-11-08.sql`.
+  49 info suggestions, 0 warnings.
 
 ### Migrations (A2), in order
 | File | Live state (2026-11-08) |
 |---|---|
-| `sql/discovery-sources-2026-09-17.sql` | **not applied** (`discovery_sources` missing) |
+| `sql/discovery-sources-2026-09-17.sql` | already applied (its column, constraint, both indexes present; the gate's `discovery_sources` table check names a table this file never creates). Not re-run: it also deletes duplicate venues |
 | `sql/2026-09-18-feedback.sql` | **file not in repo**; `plans.solo_mode` present, `plan_preferences.suggestion_text` missing and unused by code |
 | `sql/preferences-v1.sql` | applied (`availability_windows`, `item_optouts` present) |
 | `sql/reservation-platform-2026-09-20.sql` | applied (`discovery_venues.reservation_platform` present) |
 | `sql/knowledge-layer-2026-09-20.sql` | **file not in repo**; equivalent `sql/knowledge-playbooks-2026-09-21.sql` applied |
-| `sql/pilot-1-contribution-method-2026-11-08.sql` | not applied (folded into pilot-gate; harmless either way) |
-| `sql/pilot-gate-2026-11-08.sql` | **not applied** — waits on `SUPABASE_DB_URL` (or the owner's SQL editor) |
+| `sql/pilot-1-contribution-method-2026-11-08.sql` | superseded by pilot-gate (column now exists) |
+| `sql/pilot-gate-2026-11-08.sql` | **applied 2026-11-08** by the coordinator via the SQL Editor after a rollback dry run; verified through PostgREST (new columns readable, `plan_deletions` present) |
+| `sql/group-invites-rls-2026-11-08.sql` | **owner to paste** — security fix; dry run clean (RLS true, rolled back); the real run was blocked by the session's safety check |
 
 ### Out of scope until the pilot has run
 Reservation agent (design doc stays parked at `docs/RESERVATION-AGENT-DESIGN.md`), savings
