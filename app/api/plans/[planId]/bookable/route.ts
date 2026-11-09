@@ -32,6 +32,7 @@ import { heldVenueByRef } from '@/lib/discovery/held-venue';
 import { byDepartureAirport, departureWhy } from '@/lib/airports';
 import { flightSearchUrl } from '@/lib/booking/duffel-map';
 import { track } from '@/lib/track';
+import { stampLedger } from '@/lib/integrity/stamp';
 
 export const maxDuration = 60;
 
@@ -459,6 +460,8 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   }
 
   if (!requests.length) {
+    // Rows made before the ledger columns existed get them on the next open.
+    if (alreadyBooked.size) await stampLedger(ctx.db as unknown as Parameters<typeof stampLedger>[0], params.planId);
     return NextResponse.json({
       created: 0,
       alreadyBooked: alreadyBooked.size,
@@ -491,19 +494,29 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
   const results: { status?: string; error?: string; itineraryItemId?: string; repriced?: boolean }[] = body.results ?? [];
   const failed = results.filter(r => r.status === 'failed');
 
-  const { data: fresh } = await ctx.db
+  // A row not linked to its line is one the next open cannot see, so it
+  // would be priced again: the link failing is said, per line, not only logged.
+  const { data: fresh, error: freshError } = await ctx.db
     .from('bookings')
     .select('id, itinerary_item_id, request_payload, status')
     .eq('plan_id', params.planId)
     .is('itinerary_item_id', null)
     // Only one row may hold a line, and a cancelled one has given its up.
     .neq('status', 'cancelled');
+  if (freshError) console.error('[bookable] could not read the new bookings to link them', { planId: params.planId, code: freshError.code });
+  const unlinked: string[] = [];
   for (const row of fresh ?? []) {
     const id = (row.request_payload as { itineraryItemId?: string } | null)?.itineraryItemId;
     if (!id) continue;
     const { error } = await ctx.db.from('bookings').update({ itinerary_item_id: id }).eq('id', row.id);
-    if (error) console.error('[bookable] could not link a booking to its itinerary line', { booking: row.id, error: error.message });
+    if (error) {
+      console.error('[bookable] could not link a booking to its itinerary line', { booking: row.id, error: error.message });
+      unlinked.push(id);
+    }
   }
+  // Which way each row goes, what Reach earns on it, and the public price
+  // beside ours (L3 / L4). Tolerates the columns not being there yet.
+  const ledger = await stampLedger(ctx.db as unknown as Parameters<typeof stampLedger>[0], params.planId);
 
   // A booking priced again in place for a new headcount is not a new one.
   const repriced = results.filter(r => r.status !== 'failed' && (r as { repriced?: boolean }).repriced).length;
@@ -527,6 +540,11 @@ export async function POST(req: NextRequest, { params }: { params: { planId: str
     failures,
     alreadyBooked: alreadyBooked.size,
     skipped,
+    // Lines whose new booking could not be tied back to them; checkout lists
+    // them, because the next open would price them a second time. Null when
+    // the read that finds them failed, which is not the same as none.
+    unlinked: freshError ? null : unlinked.map(id => (items as Item[]).find(i => i.id === id)?.title ?? 'A booking').filter(Boolean),
+    ledger: ledger.pending ? 'pending' : ledger.failed ? 'partial' : 'ok',
     // Where the flight was priced from, and whether that airport was chosen
     // or worked out — "Flying from PIT (from your home city — change it in
     // Profile)". Null when no flight was priced.

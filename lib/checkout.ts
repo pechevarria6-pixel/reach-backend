@@ -251,6 +251,56 @@ export interface FundingView {
 }
 
 /**
+ * The one figure every button that leads to paying shows: what this person
+ * still owes towards what Reach books, from the server's own split.
+ *
+ * Three screens each picked their own. The rail said "Pay $X" from
+ * myRemainingCents, the Book tab's "Book everything" said "$Y your share"
+ * from myShareCents rounded to the dollar, and checkout opened on
+ * myRemainingCents to the cent — so somebody who had paid part of it saw two
+ * buttons to the same place with two different numbers on them. Null when
+ * there is nothing priced to owe against (no target), which is not $0.
+ */
+export function shareDueCents(funding: FundingView | null | undefined): number | null {
+  if (!funding) return null;
+  const target = Number(funding.targetCents);
+  if (!Number.isFinite(target) || target <= 0) return null;
+  const left = Number(funding.myRemainingCents);
+  if (Number.isFinite(left) && funding.myRemainingCents != null) return Math.max(0, Math.round(left));
+  const share = Number(funding.myShareCents);
+  const paid = Number(funding.myPaidCents) || 0;
+  return Number.isFinite(share) && funding.myShareCents != null ? Math.max(0, Math.round(share - paid)) : null;
+}
+
+/** $1,474 or $12.50 — the pennies only where there are some (as lib/next-action.ts says money). */
+function dollars(c: number): string {
+  const n = Math.max(0, Math.round(c));
+  return `$${(n / 100).toLocaleString('en-US', n % 100 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : { maximumFractionDigits: 0 })}`;
+}
+
+/**
+ * The Book tab's "Book everything" button, with the same figure the rail's
+ * "Pay"/"Chip in" and checkout's "Your share" show. Before anything is
+ * priced, the itinerary's own estimate, labelled as one.
+ */
+export function bookEverythingLabel(input: {
+  funding: FundingView | null | undefined;
+  /** The itinerary's estimate in cents, used only before there is a target. */
+  estimateCents: number;
+  solo: boolean;
+}): string {
+  const due = shareDueCents(input.funding);
+  if (due !== null) {
+    if (due === 0) return 'Book everything →';
+    const paid = Number(input.funding?.myPaidCents) || 0;
+    const tail = input.solo ? (paid > 0 ? ' left' : '') : (paid > 0 ? ' left of your share' : ' your share');
+    return `Book everything · ${dollars(due)}${tail} →`;
+  }
+  const est = Math.round(Math.max(0, input.estimateCents) / 100) * 100;
+  return est > 0 ? `Book everything · ${dollars(est)} est.${input.solo ? '' : ' each'} →` : 'Book everything →';
+}
+
+/**
  * The one thing the bottom of the checkout screen offers.
  *
  * A funded plan had no Book button. Approval only ran straight after a

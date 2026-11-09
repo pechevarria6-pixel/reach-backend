@@ -11,7 +11,7 @@ import { planSections, daysAway, today, countdown, groupSchedule, byName, monthG
 // shell so the toggle and the no-flash script cannot disagree.
 import { SURFACE, DEFAULT_THEME } from "@/lib/brand";
 import { ownPhoto } from "@/lib/avatar";
-import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL, PRICE_CHECK_WORDS } from "@/lib/checkout";
+import { checkoutState, itemTitle, bookedClaim, bookedWording, supportMailto, refundWords, termsFor, namesMe, SUPPORT_EMAIL, PRICE_CHECK_WORDS, bookEverythingLabel } from "@/lib/checkout";
 import { approveOutcome, nextStepFor, stillProblems } from "@/lib/booking/approve-outcome";
 import { bookingFactsFrom } from "@/lib/contracts/booking";
 import { afterRebuild, afterAwayRebuild } from "@/lib/itinerary-rebuild";
@@ -43,6 +43,9 @@ import { departureFrom, airportMismatch, airportForCity } from "@/lib/airports";
 import { isJourney } from "@/lib/travel-slot";
 import { bookingTracker } from "@/lib/plan-steps";
 import { getNextAction } from "@/lib/next-action";
+import { lockInReport } from "@/lib/integrity/lock-in";
+import { parityOf, directLink, CHEAPER_DIRECTLY } from "@/lib/integrity/price-parity";
+import { confirmQuestion, BOOKED_IT } from "@/lib/integrity/redirect-words";
 import { readTableAnswer, feeSaid, holdLeft, leftSaid, callShown, callWords, timeLabel, tableControls, answerShown, bookItCovers } from "@/lib/reservations/table-screen";
 import { buildIcs } from "@/lib/ics";
 import { inTimeOrder, bookingFor, referenceLine, whereOf, calendarEvents, calendarFileName, moneyLines, celebrationTitle, claimWasFirst, celebratedKey, bookedDetail, bookedContacts, bookedForMe, celebrationDue, mapEmptyLine } from "@/lib/booked-trip";
@@ -12524,10 +12527,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
   // to price against. Once there are, the server's figure wins: it is the one
   // a card is actually charged for, and two screens disagreeing about the
   // price of the same trip is worse than one screen saying "estimated".
-  const estimateTotal=Math.round(reachItems.reduce((a,i)=>a+(i.cost_cents||0),0)/100);
-  const quotedPerHead=funding&&funding.targetCents>0?Math.round(funding.myShareCents/100):null;
-  const reachTotal=quotedPerHead??estimateTotal;
-  const reachTotalIsEstimate=quotedPerHead===null;
+  // The figure itself is lib/checkout.ts bookEverythingLabel: the same one the
+  // rail's "Pay"/"Chip in" and checkout's "Your share" show. This read
+  // myShareCents rounded to the dollar while the rail read what is left, so a
+  // part-paid member saw two buttons to checkout with two different numbers.
+  const estimateCents=reachItems.reduce((a,i)=>a+(i.cost_cents||0),0);
 
   // Where this trip is relative to today. Worked out once, from the dates on
   // the plan, and read by the booking button and the line above it.
@@ -12674,7 +12678,20 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           // Only the organiser is ever told "Lock it in"; everyone else is
           // told who they are waiting on, and their button shows the plan.
           if(na?.state==="lock_in"){
-            return await updateStatus("approved",()=>toast(soloTrip?"Locked in":"Locked in for everyone"));
+            if(!await updateStatus("approved"))return false;
+            // Locking in is when the itinerary becomes bookings (the bridge,
+            // POST /bookable — safe to repeat; checkout asks it again on the
+            // way in). Each line it could not price is named, never a count.
+            let answer=null;
+            try{
+              const r=await fetchWithin(`/api/plans/${planId}/bookable`,{method:"POST"},60000,"pricing your trip");
+              answer=r.ok?await r.json().catch(()=>null):null;
+              if(!r.ok)console.error("[planDetail] the bridge did not answer on lock-in",{planId,status:r.status});
+            }catch(e){console.error("[planDetail] the bridge did not answer on lock-in",{planId},e);}
+            if(answer)BOOKABLE_SKIPS.set(planId,(answer.skipped||[]).map(x=>x?.title).filter(Boolean));
+            forgetNext(planId);
+            toast(lockInReport(answer,{solo:soloTrip}).message);
+            return true;
           }
           const t=c.route.params?.initialTab;
           if(t==="itinerary"&&!(plan.itinerary||[]).length){setAtab("bookings");await buildItinerary();return true;}
@@ -13157,7 +13174,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                         per-head price: somebody who joined after the flight
                         was bought pays nothing towards it, so "each" was
                         false the moment shares differed. */}
-                    {timing==="on_now"?"Open the booking list →":`Book everything${reachTotal>0?` · $${reachTotal.toLocaleString()}${reachTotalIsEstimate?(soloTrip?" est.":" est. each"):(soloTrip?"":" your share")}`:""} →`}
+                    {timing==="on_now"?"Open the booking list →":bookEverythingLabel({funding,estimateCents,solo:soloTrip})}
                   </button>
                   {/* The biggest commitment in the app used to be a button
                       with no number on it. People do not press those. Say
@@ -14657,7 +14674,12 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // book, whatever table it happens to be stored in.
   // A table Reach can say anything about has its own section, below; it is
   // neither one of Reach's paid rows nor a hand-off with nothing behind it.
-  const isYours=(l)=>!l.table&&(l.mode==="redirect"||l.st==="redirected"||l.st==="pending");
+  // A restaurant row is never one of Reach's paid rows either: Reach takes no
+  // payment for a table. One the tables read has not placed, and that Reach
+  // does not book itself (a request, a hand-off), sat in the paid list as "A
+  // table" with no price — three of them read as three things Reach was
+  // charging nothing for. A native one stays: approval books it.
+  const isYours=(l)=>!l.table&&(l.mode==="redirect"||l.st==="redirected"||l.st==="pending"||(l.vertical==="restaurant"&&l.mode!=="native"));
   // The facts come from the contract; the icons and the wording stay here,
   // because they are presentation and they belong to the screen. The two
   // comments below are both post-mortems of a hand-written field list: a
@@ -14669,7 +14691,10 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     // deserves that sentence, not "we'll handle this one for you" — the
     // person it concerns is reading this screen.
     d:b.note||BOOKING_MODE[b.mode]||BOOKING_MODE[b.provider]||"",
-    a:b.priceCents, st:b.status,
+    a:b.priceCents, st:b.status, vertical:b.vertical,
+    // The row as stored, for what the contract does not carry: the public
+    // price beside ours (lib/integrity/price-parity.ts).
+    raw:checkout.rows.find(r=>r.id===b.id)||null,
     info:typeof b.detail==="string"?b.detail:null,
     // A redirected booking finishes somewhere else, and until now the screen
     // said so with nothing to tap: "Finish on their site" and no site. The
@@ -15024,6 +15049,14 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                 Finish on {PROVIDER_NAME[it.provider]||"their site"} →
               </a>
             ):null}
+            {/* Finished there: said here, on the same row. A link with no way
+                to say it worked left the trip waiting on it for good. */}
+            {it.href&&it.id&&it.st!=="confirmed"?(
+              <button disabled={capturing===it.id} onClick={()=>captureBooking(it.id,"confirmed")}
+                style={{fontSize:12,fontWeight:700,color:C.green,background:"none",border:"none",padding:"4px 0",cursor:"pointer",whiteSpace:"nowrap"}}>
+                {capturing===it.id?"…":BOOKED_IT}
+              </button>
+            ):null}
           </div>))}
         </div>
         {/* What is left, and how to do it — on the screen that just took the
@@ -15122,6 +15155,21 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                 read only "We book this for you" over one total. */}
             {it.info&&it.info!==it.l?<div style={{fontSize:12,color:C.t2,lineHeight:1.4}}>{it.info}</div>:null}
             {it.a>0?<div style={{fontSize:12,color:C.t1,fontWeight:600}}>{`$${(it.a/100).toFixed(2)}`}</div>:null}
+            {/* The public price, where a supplier gave one, and ours is
+                dearer by more than the tolerance: said, with the way to book
+                it directly (L3; lib/integrity/price-parity.ts). Never said
+                when nothing was checked. */}
+            {(()=>{
+              const p=it.raw&&it.st!=="confirmed"?parityOf(it.raw):null;
+              if(!p?.tellMember)return null;
+              const href=directLink(it.raw);
+              return(
+                <div style={{fontSize:12,color:C.t2,lineHeight:1.45,marginTop:2}}>
+                  {`Listed publicly for ${fmt(p.publicCents)}, taxes in — ${fmt(p.cheaperPubliclyByCents)} less than here.`}
+                  {href?<> <a href={href} target="_blank" rel="noopener noreferrer" style={{color:C.accentText,fontWeight:700,textDecoration:"none"}}>{CHEAPER_DIRECTLY}</a></>:null}
+                </div>
+              );
+            })()}
             {it.d?<div style={{fontSize:12,color:C.t2}}>{it.d}</div>:null}
             <HoldToggle bookingId={it.id} status={it.st} toast={toast} onChanged={load}/></div>
           {/* Same fall-through as the success screen had: anything that was
@@ -15151,7 +15199,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
       {/* Only the person who booked it knows whether there was a table, so
           the app asks them rather than guessing from a click. Shown once
           they have been handed over, and for anything already waiting. */}
-      {lines.filter(it=>!it.table&&(it.href||it.phone)&&(handedOver[it.id]||it.st==="redirected")&&it.st!=="confirmed").map(it=>(
+      {lines.filter(it=>!it.table&&(handedOver[it.id]||((it.href||it.phone)&&it.st==="redirected"))&&it.st!=="confirmed").map(it=>(
         <div key={`cap-${it.id}`} style={{margin:"0 4px 12px",padding:"12px 14px",background:C.s2,
           border:`1px solid ${C.border}`,borderRadius:14}}>
           <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:2}}>{it.l}</div>
@@ -15161,7 +15209,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             </div>
           )}
           <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:10}}>
-            {it.when?`For ${it.when}. `:""}Did you get the table?
+            {it.when?`For ${it.when}. `:""}{confirmQuestion(it.vertical)}
           </div>
           <input className="inp" aria-label={`Confirmation number for ${it.l}`} placeholder="Confirmation number (optional)"
             value={capturedRef[it.id]||""} onChange={e=>{const v=e.target.value;setCapturedRef(m=>({...m,[it.id]:v}));}}
@@ -15169,7 +15217,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
           <div style={{display:"flex",gap:8}}>
             <button className="bs" style={{flex:1,color:C.green,borderColor:C.green}}
               disabled={capturing===it.id} onClick={()=>captureBooking(it.id,"confirmed")}>
-              {capturing===it.id?"…":"Booked it ✓"}
+              {capturing===it.id?"…":BOOKED_IT}
             </button>
             <button className="bs" style={{flex:1}}
               disabled={capturing===it.id} onClick={()=>captureBooking(it.id,"failed")}>
@@ -15252,6 +15300,16 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                       borderRadius:999,textDecoration:"none"}}>
                     📞 Call to reserve →
                   </a>
+                ):null}
+                {/* Back after finishing it elsewhere: "Booked it ✓" is here
+                    too, not only straight after tapping the link this visit —
+                    it opens the same question below, with the number. */}
+                {it.id&&!isTempId(it.id)&&!handedOver[it.id]&&it.st!=="confirmed"&&it.st!=="redirected"?(
+                  <button onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
+                    style={{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,background:"none",
+                      color:C.green,fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+                    {BOOKED_IT}
+                  </button>
                 ):null}
               </div>
             </div>

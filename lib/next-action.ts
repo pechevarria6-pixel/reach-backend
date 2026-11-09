@@ -62,7 +62,7 @@
 // `waiting_on_payments` are unreachable when memberCount is 1, and the copy
 // for one person is singular. tests/unit/next-action.test.ts holds both.
 import {
-  checkoutState, bookedClaim, bookedWording, dedupe, inDoubtRow, itemTitle, supportMailto,
+  checkoutState, bookedClaim, bookedWording, dedupe, inDoubtRow, itemTitle, supportMailto, shareDueCents,
   type BookedClaim, type CheckoutRow, type CheckoutStep, type FundingView,
 } from './checkout.ts';
 import { reachBuys } from './booking/charged.ts';
@@ -71,6 +71,7 @@ import { bookingTracker, type TrackLine } from './plan-steps.ts';
 import { dateSaid, clockSaid } from './line-when.ts';
 import { reserveMarkOf, shortClock, type ReservePath } from './reservations/reserve-state.ts';
 import { planStageLabel, planCalled, planCalledAtStart } from './plan-words.ts';
+import { BOOKED_IT } from './integrity/redirect-words.ts';
 
 export const NEXT_STATES = [
   'needs_trip_input',
@@ -662,7 +663,8 @@ export function getNextAction(input: NextActionInput): NextAction | null {
     if (cs.step === 'pay' || cs.step === 'top_up') {
       const details = needsMyDetails();
       if (details) return details;
-      const owe = cents(funding?.myRemainingCents);
+      // The same figure the Book tab and checkout show (shareDueCents).
+      const owe = cents(shareDueCents(funding));
       const paid = cents(funding?.myPaidCents);
       return say({
         state: 'pay_share',
@@ -739,7 +741,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       const tel = phoneOf(r);
       return tel ? { label: 'Call them', kind: 'link', href: tel } : null;
     };
-    const gotIt = (r: NextBooking): Cta | null => (r.id ? { label: "I've got it ✓", kind: 'confirm', bookingId: r.id } : null);
+    const gotIt = (r: NextBooking): Cta | null => (r.id ? { label: BOOKED_IT, kind: 'confirm', bookingId: r.id } : null);
     const planned = (r: NextBooking) => (input.reservations ?? []).find(x => !!x.bookingId && x.bookingId === r.id) ?? null;
     const errorOf = (r: NextBooking) => String((r as { error?: unknown }).error ?? '').trim();
     const marked = tables.map(r => ({ r, m: reserveMarkOf(r) }));
@@ -837,7 +839,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       state: 'finish_elsewhere', title: where ? `Finish on ${where}` : `Finish ${name}`,
       body: `${name} is booked on ${where ? `${where}'s` : 'the seller\'s'} own site, not through Reach.${night} Say once you've got it.`,
       cta: r.redirect_url ? { label: where ? `Finish on ${where} →` : 'Finish it →', kind: 'link', href: r.redirect_url } : toCheckout('Open checkout →'),
-      secondary: r.id ? { label: "I've got it ✓", kind: 'confirm', bookingId: r.id } : null,
+      secondary: r.id ? { label: BOOKED_IT, kind: 'confirm', bookingId: r.id } : null,
       chip: 'Almost there',
     });
   }
@@ -867,7 +869,7 @@ export function getNextAction(input: NextActionInput): NextAction | null {
       // their own site" sat beside the Book tab's "books by phone" for the
       // same café on the QA Charleston trip (2026-11-05), and neither was held.
       body: `Reach can't book this one. ${line.venue_website ? 'Try their own site' : line.venue_phone ? 'Ring them to ask' : 'It needs booking ahead'} — say once it's done.${tableNight(line)}`,
-      cta, secondary: line.id ? { label: "I've got it ✓", kind: 'confirm', itemId: line.id } : null,
+      cta, secondary: line.id ? { label: BOOKED_IT, kind: 'confirm', itemId: line.id } : null,
       chip: 'Almost there',
     });
   }

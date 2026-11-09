@@ -310,7 +310,7 @@ test('a redirect in the shape production writes reaches finish_elsewhere, with t
   assert.equal(a.state, 'finish_elsewhere');
   assert.equal(a.title, 'Finish on Ticketmaster');
   assert.deepEqual(a.cta, { label: 'Finish on Ticketmaster →', kind: 'link', href: 'https://ticketmaster.com/x' });
-  assert.deepEqual(a.secondary, { label: "I've got it ✓", kind: 'confirm', bookingId: 'b-gig' });
+  assert.deepEqual(a.secondary, { label: 'Booked it ✓', kind: 'confirm', bookingId: 'b-gig' });
   // The Resy table in the same shape, on a line Reach does not track.
   const t = run(fx('the table is on Resy'));
   assert.equal(t.state, 'finish_elsewhere');
@@ -399,7 +399,7 @@ test('finish elsewhere names the seller from the row, links to it, and offers "I
   const a = run(FIXTURES.find(f => f.name.includes('Resy'))!.input);
   assert.equal(a.title, 'Finish on Resy');
   assert.deepEqual(a.cta, { label: 'Finish on Resy →', kind: 'link', href: 'https://resy.com/cities/moab/desert-bistro' });
-  assert.deepEqual(a.secondary, { label: "I've got it ✓", kind: 'confirm', bookingId: 'b-table' });
+  assert.deepEqual(a.secondary, { label: 'Booked it ✓', kind: 'confirm', bookingId: 'b-table' });
   assert.equal(providerName({ provider: 'somewhere', redirect_url: 'https://www.tickets.example.com/x' }), 'tickets.example.com');
   assert.equal(providerName({ provider: null, redirect_url: null }), null);
 });

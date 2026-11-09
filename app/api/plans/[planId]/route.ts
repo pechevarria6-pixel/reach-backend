@@ -21,6 +21,8 @@ import { readActive, closeStale, refusalBody, refusalFor, ACTIVE_STATUSES } from
 import { stopPaymentsInFlight } from '@/lib/call-off-money';
 import { voteOpenedNotes } from '@/lib/vote-complete';
 import { planReadiness } from '@/lib/plan-readiness';
+import { recordPlanDeletion } from '@/lib/integrity/plan-deletion';
+import { reopenRefusal } from '@/lib/integrity/one-active-copy';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -415,7 +417,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     if (found.live) {
       const solo = (await membersOf(supabase, String(plan.group_id)))?.length === 1;
       const refused = refusalFor(found, { type: String(plan.type ?? 'trip'), undecided: false, solo, understands: acceptsOneActive === true });
-      if (refused) return NextResponse.json(refused, { status: 409 });
+      if (refused) return NextResponse.json(reopenRefusal(refused, { title: found.live.title, solo }), { status: 409 });
     }
     if (found.stale.length) await closeStale(supabase, String(plan.group_id), found.stale);
   }
@@ -530,7 +532,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { planId: st
     const found = await inTheWay();
     if (found.live) {
       const solo = (await membersOf(supabase, String(plan.group_id)))?.length === 1;
-      return NextResponse.json(refusalBody(found.live, { type: String(plan.type ?? 'trip'), undecided: false, solo }), { status: 409 });
+      return NextResponse.json(reopenRefusal(refusalBody(found.live, { type: String(plan.type ?? 'trip'), undecided: false, solo }),
+        { title: found.live.title, solo }), { status: 409 });
     }
   }
   if (writeError || !updated) {
@@ -574,12 +577,23 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
   const supabase = ctx.db;
   const user = ctx.user;
 
-  const { data: plan } = await supabase.from('plans').select('group_id, created_by').eq('id', params.planId).single();
+  // The whole row: it is what the deletion record keeps (lib/integrity/plan-deletion.ts).
+  // A failed read is not "not found" — saying the trip does not exist when
+  // the database did not answer sends somebody looking for a trip that is there.
+  const { data: plan, error: planErr } = await supabase.from('plans').select('*').eq('id', params.planId).maybeSingle();
+  if (planErr) {
+    console.error('[plans] could not read the plan before deleting', { plan: params.planId, code: planErr.code });
+    return NextResponse.json({ error: "We couldn't check this trip just now — nothing was deleted" }, { status: 500 });
+  }
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 });
 
   // Only creator or group admin can delete
-  const { data: membership } = await supabase
-    .from('group_members').select('role').eq('group_id', plan.group_id).eq('user_id', user.id).single();
+  const { data: membership, error: memberErr } = await supabase
+    .from('group_members').select('role').eq('group_id', plan.group_id).eq('user_id', user.id).maybeSingle();
+  if (memberErr) {
+    console.error('[plans] could not read who may delete this plan', { plan: params.planId, code: memberErr.code });
+    return NextResponse.json({ error: "We couldn't check this trip just now — nothing was deleted" }, { status: 500 });
+  }
   if (!membership || (membership.role !== 'admin' && plan.created_by !== user.id)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
@@ -660,6 +674,19 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     }
   }
 
+  // What the plan held, read before it goes: the days go with it (on delete
+  // cascade), and the deletion record is the only place they survive.
+  // Counted, not refused on: a failed read costs the record a number, never
+  // the delete somebody asked for.
+  const [allBookings, allContributions, days] = await Promise.all([
+    supabase.from('bookings').select('id').eq('plan_id', params.planId),
+    supabase.from('contributions').select('id').eq('plan_id', params.planId),
+    supabase.from('itinerary_items').select('type, title, booking_mode').eq('plan_id', params.planId).order('sort_order'),
+  ]);
+  for (const [what, r] of [['bookings', allBookings], ['contributions', allContributions], ['itinerary', days]] as const) {
+    if (r.error) console.error('[plans] could not read what the deleted plan held', { plan: params.planId, what, code: r.error.code });
+  }
+
   const { error: removed } = await supabase.from('plans').delete().eq('id', params.planId);
   if (removed) {
     console.error('[plans] could not delete the plan', { plan: params.planId, code: removed.code });
@@ -690,6 +717,15 @@ export async function DELETE(_: NextRequest, { params }: { params: { planId: str
     metadata: { group_id: plan.group_id, cancelled_quotes: loose.length },
   });
   if (audit) console.error('[audit] could not record plan_deleted', { plan: params.planId, code: audit.code });
+
+  // Who deleted it and what it held. Tolerates the table not being there yet
+  // (sql/pilot-gate-2026-11-08.sql), and never fails a delete that happened.
+  await recordPlanDeletion(supabase, {
+    planId: params.planId, deletedBy: user.id, plan: plan as Record<string, unknown>,
+    bookings: allBookings.data?.length ?? 0,
+    contributions: allContributions.data?.length ?? 0,
+    itinerary: days.data ?? null,
+  });
 
   return NextResponse.json({ success: true, cancelledQuotes: loose.length });
 }

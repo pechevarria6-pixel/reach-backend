@@ -193,7 +193,7 @@ function finishing(scheduled_time: string, bookings: NextActionInput['bookings']
 test('the card that asks "I\'ve got it" says which night the table is for', () => {
   const timed = finishing('Day 3 · Evening · 7:30 PM');
   assert.equal(timed.state, 'finish_elsewhere');
-  assert.equal(timed.secondary?.label, "I've got it ✓");
+  assert.equal(timed.secondary?.label, 'Booked it ✓');
   assert.match(timed.body!, /It's for Sat, Sep 19 at 7:30 PM\./);
   const untimed = finishing('Day 3 · Evening');
   assert.match(untimed.body!, /It's for Sat, Sep 19, and no time is set yet/);
@@ -205,13 +205,15 @@ test('the card that asks "I\'ve got it" says which night the table is for', () =
     itinerary_item_id: 'l-dinner', redirect_url: 'https://resy.com/cities/moab/desert-bistro?date=2026-09-19&seats=2', detail: 'Desert Bistro',
   }]);
   assert.equal(handed.title, 'Finish on Resy');
-  assert.equal(handed.secondary?.label, "I've got it ✓");
+  assert.equal(handed.secondary?.label, 'Booked it ✓');
   assert.match(handed.body!, /It's for Sat, Sep 19 at 7:30 PM\./);
 });
 
 test('checkout asks "Did you get the table?" for the line\'s own night', () => {
   const app = readFileSync('components/reach-app.jsx', 'utf8');
-  assert.ok(app.includes('{it.when?`For ${it.when}. `:""}Did you get the table?'));
+  // The question is by vertical now (lib/integrity/redirect-words.ts): a
+  // table is still asked about the table, a ticket about the tickets.
+  assert.ok(app.includes('{it.when?`For ${it.when}. `:""}{confirmQuestion(it.vertical)}'));
   assert.ok(app.includes('when:tableWhen(b),'), 'each table row carries its night');
   // The checkout list is built from the booking contract, whose id is
   // itineraryItemId; looking up itinerary_item_id alone found no line.
