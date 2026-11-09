@@ -53,9 +53,12 @@ test('only the listed names may be written', () => {
   assert.equal(isEventName('something_i_invented'), false);
   // 17 before the onboarding quiz v3, whose section 8 adds eleven, nine more
   // for the checkout spec of 2026-09-25, and two for the pilot gate's debrief
-  // and reconnection question (2026-11-08).
-  assert.equal(EVENT_NAMES.length, 39);
+  // and reconnection question (2026-11-08), and six for the pilot metrics
+  // (Observe, 2026-11-08).
+  assert.equal(EVENT_NAMES.length, 45);
   for (const n of ['debrief_submitted', 'reconnection_answered']) assert.equal(isEventName(n), true, n);
+  for (const n of ['ai_generation', 'generation_rate_limited', 'chip_in_requested',
+    'item_opted_out', 'item_opted_in', 'ledger_at_trip_end']) assert.equal(isEventName(n), true, n);
   for (const n of ['quiz_started', 'quiz_screen_viewed', 'quiz_screen_skipped', 'quiz_result_viewed',
     'quiz_dial_adjusted', 'quiz_shared', 'quiz_share_opened', 'quiz_share_joined',
     'drip_shown', 'drip_answered', 'drip_dismissed', 'quiz_completed']) assert.equal(isEventName(n), true, n);
@@ -141,4 +144,16 @@ test('the route reads its allowlist from the same list', async () => {
 test('a settle-up event keeps its app and amount and loses anything personal', () => {
   const out = scrubProps({ app: 'venmo', amount_cents: 4200, handle_note: 'Cabo trip', recipient_name: 'Sam' });
   assert.deepEqual(out, { app: 'venmo', amount_cents: 4200 });
+});
+
+// The debrief's message count. `messages` matches /message/, which is there to
+// keep chat text out, and dropped the count with it: the organiser-effort
+// readout (baseline 83 messages) would have been empty and nothing would say so.
+test('the debrief keeps its message count, and only as a number', () => {
+  const kept = scrubProps({ hours: 6.5, messages: 41, nps: 9, would_run_again: true });
+  assert.deepEqual(kept, { hours: 6.5, messages: 41, nps: 9, would_run_again: true });
+  // A string under the same key is somebody's words, not a count.
+  assert.deepEqual(scrubProps({ messages: 'see you at 8' }), {});
+  // The exemption is that one key, not the word.
+  assert.deepEqual(scrubProps({ message_body: 3 }), {});
 });

@@ -73,6 +73,27 @@ export const EVENT_NAMES = [
   // post-trip debrief, and "When did you last see this group in person?".
   'debrief_submitted',
   'reconnection_answered',
+  // Pilot gate A5 (Observe). Each exists because a business-model §3 metric
+  // had nowhere to come from; docs/pilot/METRICS.md says which.
+  //
+  // One model call: model, stage, tokens, and what it cost at published
+  // prices (lib/observe/ai-cost.ts). The AI side of contribution margin.
+  'ai_generation',
+  // /api/trips/generate refused for asking too often. Props: scope ('user'
+  // or 'group') and action. If this ever counts a real group in normal use,
+  // the limit is wrong, not the group.
+  'generation_rate_limited',
+  // Approval refused with 402 because the money paid in does not cover the
+  // item yet. The denominator of the "chip in" resolution rate.
+  'chip_in_requested',
+  // "I'll skip this one" and its undo. item_optouts holds who is out now;
+  // these hold that somebody ever was, which a deleted row cannot.
+  'item_opted_out',
+  'item_opted_in',
+  // The settle-up ledger read once after a trip ends: how many lines are
+  // still open and for how much. No open lines is the "zero post-trip IOUs"
+  // metric (lib/observe/ledger-at-end.ts).
+  'ledger_at_trip_end',
 ] as const;
 
 export type EventName = typeof EVENT_NAMES[number];
@@ -146,10 +167,22 @@ export interface TrackContext {
  */
 const FORBIDDEN = /name|email|phone|address|dob|birth|passport|title|note|message|query|text|summary|blurb/i;
 
+/**
+ * Keys FORBIDDEN would catch that are counts, never prose — kept only as a
+ * number. The debrief's "how many messages did it take" is `messages`, which
+ * /message/ dropped without a word: the organiser-effort readout would have
+ * arrived with half of it silently missing.
+ */
+const COUNT_KEYS = new Set(['messages']);
+
 /** Only numbers, booleans, and short enum-ish strings survive. */
 export function scrubProps(props: Record<string, unknown> | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(props ?? {})) {
+    if (COUNT_KEYS.has(key)) {
+      if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+      continue;
+    }
     if (FORBIDDEN.test(key)) continue;
     if (typeof value === 'number' && Number.isFinite(value)) { out[key] = value; continue; }
     if (typeof value === 'boolean') { out[key] = value; continue; }

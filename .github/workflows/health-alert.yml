@@ -1,0 +1,77 @@
+# Provider health, with somebody told (app/api/health/alert, which wraps
+# /api/health/providers and emails failures through Resend).
+#
+# Not a vercel.json cron: this account is on Hobby, which runs a cron once a
+# day, and a sub-daily schedule there silently rejects the deployment.
+#
+# GitHub's own schedule is not punctual either — pings.yml's hourly job has
+# run about three times a day — so treat this as "a few times a day", not
+# "every six hours". Vercel Pro is the fix for both.
+#
+# Needs the same two repository secrets as pings.yml:
+#   CRON_SECRET   the deployment's CRON_SECRET
+#   APP_URL       https://www.alcanzar.io (the www address; the bare domain answers 308)
+#
+# Two ways a failure reaches somebody: the endpoint emails ALERT_EMAIL
+# (default hello@alcanzar.io) via Resend, and this run fails, so GitHub sends
+# its own failure notice. The second exists for the day Resend is what broke.
+#
+# The repository is public: secrets reach the step only through `env:`,
+# nothing prints them, and the endpoint answers with provider names and
+# counts only.
+name: Health alert
+
+on:
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      dry:
+        description: 'Check and report, send no email'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: health-alert
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check providers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Call the health alert endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ secrets.APP_URL }}
+          DRY: ${{ github.event.inputs.dry }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_URL" ]; then
+            if [ "$EVENT" = "schedule" ]; then
+              echo "::notice::Health alerts are off: add CRON_SECRET and APP_URL as repository secrets"
+              exit 0
+            fi
+            echo "::error::CRON_SECRET and APP_URL must both be set as repository secrets"
+            exit 1
+          fi
+          query=""
+          if [ "$DRY" = "true" ]; then query="?dry=1"; fi
+          status=$(curl -sS -o body.json -w '%{http_code}' --max-time 90 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "${APP_URL%/}/api/health/alert${query}")
+          cat body.json; echo
+          if [ "$status" != "200" ]; then
+            echo "::error::health alert answered $status — the check itself did not run"
+            exit 1
+          fi
+          failing=$(python3 -c 'import json; print(json.load(open("body.json")).get("failing", 0))')
+          if [ "$failing" != "0" ]; then
+            echo "::error::$failing provider check(s) failing — see the body above"
+            exit 1
+          fi

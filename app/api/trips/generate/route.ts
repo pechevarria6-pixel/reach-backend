@@ -42,6 +42,8 @@ import { pushSender } from '@/lib/push';
 import { placesFor, placeMenu, scenesFrom, cleanRef, placeOf, type RealPlace } from '@/lib/discovery/real-places';
 import { placeRef } from '@/lib/itinerary-alternatives';
 import { track, isEventName } from '@/lib/track';
+import { aiMeter, type Meter } from '@/lib/observe/ai-cost';
+import { groupAllowance, groupTooOften } from '@/lib/observe/group-rate';
 import { away, farEnough } from '@/lib/away';
 import { isNear, awayPromptBlock, awayGaps, awayCorrection, awayEstimate, awayLines, rowOf, type AwayEstimate } from '@/lib/away-lines';
 import { arrivalFor } from '@/lib/booking/arrival';
@@ -88,9 +90,14 @@ async function withSchemaFallback(
   schema: Record<string, unknown>,
   label: string,
   effort?: 'low' | 'medium' | 'high',
+  // Records each response's tokens and cost (lib/observe/ai-cost.ts). Every
+  // attempt is metered, the fallback and the briefer retry included: each
+  // one is billed, and a margin that counts only the first is a margin that
+  // looks better than the trip was.
+  meter?: Meter,
 ) {
-  const call = (tokens: number, extra: string, constrained: boolean) =>
-    client.messages.create({
+  const call = async (tokens: number, extra: string, constrained: boolean, attempt: string) => {
+    const res = await client.messages.create({
       model,
       max_tokens: tokens,
       messages: [{ role: 'user' as const, content: prompt + extra }],
@@ -98,16 +105,19 @@ async function withSchemaFallback(
         ? { output_config: { ...(effort ? { effort } : {}), format: { type: 'json_schema' as const, schema } } }
         : effort ? { output_config: { effort } } : {}),
     });
+    meter?.(res, model, label, attempt, tokens);
+    return res;
+  };
 
   let res;
   try {
-    res = await call(maxTokens, '', true);
+    res = await call(maxTokens, '', true, 'first');
   } catch (e: any) {
     // Only a rejected request falls back. A 429 or a 5xx is transient and
     // belongs to the caller's handler, which knows how to word it.
     if (e?.status !== 400) throw e;
     console.error(`[${label}] schema rejected, retrying unconstrained:`, e?.message);
-    res = await call(maxTokens, '', false);
+    res = await call(maxTokens, '', false, 'unconstrained');
   }
 
   // A truncated response is valid right up to where the tokens ran out, so it
@@ -120,7 +130,7 @@ async function withSchemaFallback(
       'Every prose field must be one short sentence or less. The complete ' +
       'response must fit well within the limit.';
     try {
-      const retry = await call(Math.round(maxTokens * 1.5), briefer, true);
+      const retry = await call(Math.round(maxTokens * 1.5), briefer, true, 'briefer');
       if (retry.stop_reason !== 'max_tokens') return retry;
       console.error(`[${label}] truncated again at ${Math.round(maxTokens * 1.5)} tokens`);
       return retry;
@@ -510,11 +520,38 @@ export async function POST(req: NextRequest) {
   );
   if (!rate.allowed) {
     console.error('[generate] rate limited', { user: ctx.user.id, action, used: rate.used });
+    void track(supabase, 'generation_rate_limited', {
+      userId: ctx.user.id, groupId: String(groupId), planId: groupPlan?.id ?? null,
+      props: { scope: 'user', action, used: rate.used, limit: rate.limit },
+    });
     return NextResponse.json(
       { error: rebuilding ? rebuiltTooOften(rate) : tooOften(rate) },
       { status: 429 },
     );
   }
+
+  // And the group as a whole (lib/observe/group-rate.ts): each person inside
+  // their own allowance can still add up to a loop nobody notices until the
+  // bill. Checked before the attempt is written, like the per-person limit,
+  // so a refusal does not count against anybody.
+  const groupRate = await groupAllowance(supabase, String(groupId));
+  if (!groupRate.allowed) {
+    console.error('[generate] group rate limited', { groupId, action, used: groupRate.used });
+    void track(supabase, 'generation_rate_limited', {
+      userId: ctx.user.id, groupId: String(groupId), planId: groupPlan?.id ?? null,
+      props: { scope: 'group', action, used: groupRate.used, limit: groupRate.limit },
+    });
+    return NextResponse.json({ error: groupTooOften(groupRate) }, { status: 429 });
+  }
+
+  // Every model call below is metered against this plan (C3). planId is the
+  // plans foreign key, so only a saved plan's id goes there; options for a
+  // plan not saved yet are recorded against the group alone.
+  const meter = aiMeter(supabase, {
+    userId: ctx.user.id,
+    groupId: String(groupId),
+    planId: groupPlan?.id ?? (detailIsPlan ? String(detailTripId) : null),
+  });
 
   // Written before the work, not after: a generation that times out or
   // crashes still cost the money it cost, and a limit that only counts the
@@ -1175,7 +1212,7 @@ ${NO_VENUE_FACTS}
 Return one slot.`;
 
       try {
-        const res = await withSchemaFallback(client, QUALITY_MODEL, 4000, slotPrompt, ONE_SLOT_JSON_SCHEMA, 'trips slot', QUALITY_EFFORT);
+        const res = await withSchemaFallback(client, QUALITY_MODEL, 4000, slotPrompt, ONE_SLOT_JSON_SCHEMA, 'trips slot', QUALITY_EFFORT, meter);
         const parsed = parseModelJSON(textOf(res), OneSlotSchema, 'trips slot');
         if (!parsed) {
           console.error('[trips slot] no slot in the response', { plan: detailTripId, stop_reason: res.stop_reason });
@@ -1385,7 +1422,7 @@ you have made up; a day that is simply a good day is allowed to be one.`;
         // 16000 because 8000 truncated a long itinerary mid-object, which is
         // what most of the old parse failures actually were.
         client, QUALITY_MODEL, 16000, prompt, ITINERARY_JSON_SCHEMA, 'trips itinerary',
-        QUALITY_EFFORT,
+        QUALITY_EFFORT, meter,
       );
 
       const parsed = parseModelJSON(textOf(res), ItinerarySchema, 'trips itinerary');
@@ -1720,6 +1757,7 @@ Return JSON only, shaped exactly like this:
       // lines, ran past 8000 and came back truncated mid-object — the schema
       // was satisfied right up to the point the tokens ran out.
       client, FAST_MODEL, 16000, prompt, TRIPS_JSON_SCHEMA, 'trips generate',
+      undefined, meter,
     );
 
 
@@ -1759,7 +1797,7 @@ Return JSON only, shaped exactly like this:
         const retry = await withSchemaFallback(
           client, FAST_MODEL, 16000,
           `${prompt}\n\n${correctionNote(report, rule)}`,
-          TRIPS_JSON_SCHEMA, 'trips generate retry',
+          TRIPS_JSON_SCHEMA, 'trips generate retry', undefined, meter,
         );
         const retried = parseTrips(textOf(retry), 'trips generate retry');
         const secondTrips = retried ? normalizeTrips(retried, samePlaceIsFine) : undefined;
@@ -1804,7 +1842,7 @@ Return JSON only, shaped exactly like this:
         const again = await withSchemaFallback(
           client, FAST_MODEL, 16000,
           `${prompt}\n\n${awayCorrection(gaps, nights)}`,
-          TRIPS_JSON_SCHEMA, 'trips generate away retry',
+          TRIPS_JSON_SCHEMA, 'trips generate away retry', undefined, meter,
         ).catch((e: any) => { console.error('[trips generate] the away retry failed', { message: e?.message }); return null; });
         const reparsed = again ? parseTrips(textOf(again), 'trips generate away retry') : null;
         const second = reparsed ? applyRules(normalizeTrips(reparsed, samePlaceIsFine), rule) : null;
