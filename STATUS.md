@@ -16,7 +16,7 @@ Maintained by the coordinator. Updated 2026-11-08.
 
 | # | Item | Status | Evidence / blocker |
 |---|---|---|---|
-| 1 | Owner blockers cleared | **false** | B1 keys not yet set; Sentry DSN absent; Stripe live account unverified; group_invites RLS migration to paste |
+| 1 | Owner blockers cleared | **false** | B1 keys not yet set; Sentry DSN absent; Stripe live account unverified |
 | 2 | Custody question answered by counsel | **false** | B2 counsel session pending |
 | 3 | Payment rail fixed (ACH default, native-only funding) | **false** | P1 done (cbbf98a, verified live in test mode); P2–P6 in Rail track |
 | 4 | Zero S1 UX items | **false** | Wave 0 audit in progress (UX track) |
@@ -34,9 +34,9 @@ Maintained by the coordinator. Updated 2026-11-08.
   needs business verification) and "New business" (`acct_1UYUbt5lpbXMYs3C`). Going live means keys and the
   webhook endpoint from the Alcanzar Group account.
 - Backups: daily physical backups on (latest 2026-11-08 09:13 UTC, 7 retained). **PITR off** (paid add-on).
-- Supabase Security Advisor 2026-11-08: 2 errors, both `public.group_invites` (RLS disabled; sensitive
-  columns exposed — anon key read it, verified 200). Fix written: `sql/group-invites-rls-2026-11-08.sql`.
-  49 info suggestions, 0 warnings.
+- Supabase Security Advisor 2026-11-08: was 2 errors, both `public.group_invites` (RLS disabled; sensitive
+  columns exposed — the anon key read every invite's email and join token). Fixed by
+  `sql/group-invites-rls-2026-11-08.sql`; re-run shows **0 errors, 0 warnings**, 50 info suggestions.
 
 ### Migrations (A2), in order
 | File | Live state (2026-11-08) |
@@ -48,7 +48,7 @@ Maintained by the coordinator. Updated 2026-11-08.
 | `sql/knowledge-layer-2026-09-20.sql` | **file not in repo**; equivalent `sql/knowledge-playbooks-2026-09-21.sql` applied |
 | `sql/pilot-1-contribution-method-2026-11-08.sql` | superseded by pilot-gate (column now exists) |
 | `sql/pilot-gate-2026-11-08.sql` | **applied 2026-11-08** by the coordinator via the SQL Editor after a rollback dry run; verified through PostgREST (new columns readable, `plan_deletions` present) |
-| `sql/group-invites-rls-2026-11-08.sql` | **owner to paste** — security fix; dry run clean (RLS true, rolled back); the real run was blocked by the session's safety check |
+| `sql/group-invites-rls-2026-11-08.sql` | **applied 2026-11-08** (owner-authorized): anon read now 401/42501, service read 200, `/api/invites/<token>` 200; Security Advisor 0 errors |
 
 ### Out of scope until the pilot has run
 Reservation agent (design doc stays parked at `docs/RESERVATION-AGENT-DESIGN.md`), savings
