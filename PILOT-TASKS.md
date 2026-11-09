@@ -6,11 +6,16 @@ Each task ships on its own branch, merged only on a green `npm run build` (verif
 
 ## Pre-pilot
 
-- [ ] **P1 Bank debit first for contributions** — PaymentIntent offers `us_bank_account`
+- [x] **P1 Bank debit first for contributions** (cbbf98a) — PaymentIntent offers `us_bank_account`
   then `card`; the Payment Element shows the bank first and the card one tap away;
   `contributions.payment_method` records what paid; a "bank not switched on" refusal
   falls back to the account's methods rather than failing. A clearing bank payment
   is "on its way", never "not recorded". Migration: `sql/pilot-1-contribution-method-2026-11-08.sql`.
+  *Verified 2026-11-08 on production (test mode, /api/health/modes all `test`): a throwaway
+  QA plan's contribution PaymentIntent read back `payment_method_types ["us_bank_account","card"]`;
+  the Payment Element mounted as the app mounts it shows "US bank account" first and selected,
+  Card beside it. Bank debit is already enabled on the test account. Unit tests:
+  tests/unit/contribution-method.test.ts. `payment_method` is written once the migration runs.*
 - [ ] **P2 Funding gate tolerates bank settlement** — `processing` state; approval needs
   every share succeeded; 402 separates "not yet paid" from "still clearing".
 - [ ] **P3 Only Reach-booked items are funded** — redirect-only plan: $0 target, no pay
