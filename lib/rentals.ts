@@ -1,3 +1,4 @@
+import { withExpediaAffiliate } from './booking/affiliate.ts';
 // ─── Whole-house rentals: deep links, nothing else ───────────────────────
 // Reach does not book these and does not pretend to. Airbnb and Vrbo have no
 // partner API we can use, and scraping either — directly or through one of the
@@ -83,7 +84,8 @@ export function vrboSearchUrl(search: RentalSearch): string | null {
   }
   const people = party(search.adults);
   if (people) url.searchParams.set('adults', String(people));
-  return url.toString();
+  // Carries the Expedia Group affiliate tag once the owner has joined (L1).
+  return withExpediaAffiliate(url.toString());
 }
 
 /** Both links for one plan, for the lodging card. */
