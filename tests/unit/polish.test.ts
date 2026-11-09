@@ -83,7 +83,10 @@ test('before any booking, the group figure is the line party_cents when it has o
 test('the Budget tab reads lineCosts for yours and for altogether', () => {
   const tab = between('const youreOff=linesYoureOff(planBookings,share?.items);', 'altogether</span>');
   assert.match(tab, /lineCosts\(items,planBookings,share\?\.items/);
-  assert.match(tab, /c:k\?k\.mine:i\.cost_cents/);
+  // Yours is k.mine where a row prices it, else the line's own figure —
+  // now in lib/budget.ts budgetSplit (UX F08-01), which the tab calls.
+  assert.match(tab, /budgetSplit\(items,costs,youreOff,heads\)/);
+  assert.match(readFileSync('lib/budget.ts', 'utf8'), /const c = k \? k\.mine : own;/);
   assert.match(tab, /\{money\(altogether\)\} $/);
   assert.doesNotMatch(tab, /\(fixedTotal\+varTotal\)\*heads/);
 });

@@ -23,7 +23,7 @@ import { awayLines, awayCardRows, oldIdeaLines, previewFlying, rowOf } from "@/l
 import { ticketSources } from "@/lib/tickets";
 import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
-import { byDay, dearestDay, linesYoureOff, lineCosts } from "@/lib/budget";
+import { byDay, dearestDay, linesYoureOff, lineCosts, budgetSplit, budgetLine } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
 import { groupPills, categoryGroup } from "@/lib/discovery/category";
 import { upcomingSections, dayRoll, capSections, rowsIn, milesOf } from "@/lib/discovery/upcoming";
@@ -13744,29 +13744,22 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               // and "altogether" is the party price — never the per-person
               // fare times every head.
               const costs=lineCosts(items,planBookings,share?.items,plan.participants.length||1);
-              const notYours=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0&&(youreOff.has(String(i.id))||costs.get(String(i.id))?.off));
-              const fixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0&&!youreOff.has(String(i.id))&&!costs.get(String(i.id))?.off)
-                .map(i=>{const k=costs.get(String(i.id));return {l:i.title,d:i.time,c:k?k.mine:i.cost_cents,g:k?k.group:null,it:i};});
-              // Everything you pay for yourself, as it happens.
-              const variable=items.filter(i=>i.booking_mode!=="reach"&&i.cost_cents>0)
-                .map(i=>({l:i.title,d:i.time,c:i.cost_cents,pay:i.payment_note,it:i}));
-              // Bookable and not yet priced. A hotel line carries no number
-              // until a provider quotes one — inventing a price for where
-              // somebody sleeps is exactly the thing this app does not do —
-              // and a row with no number was simply dropped here, so the
-              // screen showed a budget of $1,474 above a list adding to $581
-              // and said nothing about the difference.
-              const unpriced=items.filter(i=>i.booking_mode==="reach"&&!(i.cost_cents>0))
-                .map(i=>({l:i.title,d:i.time,it:i}));
-              const sum=a=>a.reduce((t,x)=>t+(x.c||0),0);
-              const fixedTotal=sum(fixed), varTotal=sum(variable);
+              // Priced from the line or from its booking rows — one split,
+              // so this tab and checkout cannot disagree (UX F08-01). A
+              // quoted hotel used to sit under "priced when you book" here
+              // while checkout charged for it.
               const heads=plan.participants.length||1;
-              // Everybody's: each Reach line at what it costs the people on
-              // it, including the lines you came off, plus the day-to-day
-              // estimates for every head.
-              const groupFixed=items.filter(i=>i.booking_mode==="reach"&&i.cost_cents>0)
-                .reduce((t,i)=>{const k=costs.get(String(i.id));return t+(k?k.group:i.cost_cents*heads);},0);
-              const altogether=groupFixed+varTotal*heads;
+              const split=budgetSplit(items,costs,youreOff,heads);
+              const notYours=split.notYours;
+              const fixed=split.fixed.map(f=>({l:f.line.title,d:f.line.time,c:f.c,g:f.g,it:f.line}));
+              // Everything you pay for yourself, as it happens.
+              const variable=split.variable.map(v=>({l:v.line.title,d:v.line.time,c:v.c,pay:v.line.payment_note,it:v.line}));
+              // Bookable and not yet priced, on the line or on any booking
+              // row. Inventing a price for where somebody sleeps is exactly
+              // the thing this app does not do, so these are named with no
+              // number.
+              const unpriced=split.unpriced.map(i=>({l:i.title,d:i.time,it:i}));
+              const {fixedTotal,varTotal,altogether}=split;
 
               if(!fixed.length&&!variable.length&&!unpriced.length&&!notYours.length)return(
                 <div style={{fontSize:13,color:C.t2,lineHeight:1.6,padding:"4px 0 8px"}}>
@@ -13904,9 +13897,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       border:`1px solid ${(fixedTotal+varTotal)/100>plan.budget?C.amber:C.green}`,
                       fontSize:12.5,lineHeight:1.5,
                       color:C.t1}}>
-                      {(fixedTotal+varTotal)/100>plan.budget
-                        ? `About ${money((fixedTotal+varTotal)-plan.budget*100)} over the $${plan.budget.toLocaleString()} you set.`
-                        : `About ${money(plan.budget*100-(fixedTotal+varTotal))} under the $${plan.budget.toLocaleString()} you set.`}
+                      {budgetLine(split,plan.budget,money)}
                     </div>
                   )}
                 </>
