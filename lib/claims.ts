@@ -55,7 +55,7 @@ export function pitchHits(trip: Record<string, unknown>, reasons: string[]): { f
  */
 export function stripClaims(text: string, phrases: string[]): string {
   const low = phrases.map(p => p.toLowerCase());
-  const sentences = String(text ?? '').match(/[^.!?]+[.!?]*\s*/g) ?? [];
+  const sentences: string[] = String(text ?? '').match(/[^.!?]+[.!?]*\s*/g) ?? [];
   return sentences.filter(s => !low.some(p => s.toLowerCase().includes(p))).join('').trim();
 }
 
