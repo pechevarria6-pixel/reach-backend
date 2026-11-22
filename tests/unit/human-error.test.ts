@@ -50,8 +50,24 @@ test('every 4xx string the API sends either reads as a sentence or is caught', (
 
 test('the app never shows a server error without passing it through humanError', () => {
   const APP = readFileSync('components/reach-app.jsx', 'utf8');
-  assert.match(APP, /import \{ humanError \} from "@\/lib\/human-error"/);
+  assert.match(APP, /import \{ humanError, errorWords \} from "@\/lib\/human-error"/);
   const raw = [...APP.matchAll(/[^A-Za-z_.?](?:d|e|err|out|body|seed)\??\.error\|\|/g)].map(m => m[0]);
   assert.deepEqual(raw, [], 'a raw d.error|| reached the screen');
   assert.ok((APP.match(/humanError\(/g) ?? []).length >= 50);
+});
+
+test("a browser's own network message becomes a sentence, and a thrown one finds the fallback", async () => {
+  const { errorWords } = await import('../../lib/human-error.ts');
+  for (const m of ['Failed to fetch', 'Load failed', 'NetworkError when attempting to fetch resource.']) {
+    assert.match(errorWords(new TypeError(m), 'fallback'), /check your connection/);
+  }
+  assert.equal(errorWords(new Error('404'), 'Couldn\'t save that'), 'Couldn\'t save that');
+  assert.equal(errorWords(new Error('Those dates didn\'t save — try again'), 'x'), 'Those dates didn\'t save — try again');
+  assert.equal(errorWords(null, 'fallback'), 'fallback');
+});
+
+test('no toast shows a thrown message without errorWords', () => {
+  const APP = readFileSync('components/reach-app.jsx', 'utf8');
+  assert.deepEqual([...APP.matchAll(/toast\((?:e|err)\.message\)/g)].map(m => m[0]), []);
+  assert.ok((APP.match(/errorWords\(/g) ?? []).length >= 30);
 });

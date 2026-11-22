@@ -29,7 +29,16 @@ export const HUMAN: Record<string, string> = {
   'payment not confirmed': "The payment hasn't gone through yet. Nothing has been charged — try again.",
   'failed to create group': "That group didn't save. Try again in a moment.",
   'no profile distilled for this person yet': 'Your answers are still being read. Try again in a minute.',
+  // What a browser says when the request never left the phone.
+  'failed to fetch': "That didn't reach us — check your connection and try again.",
+  'load failed': "That didn't reach us — check your connection and try again.",
+  'networkerror when attempting to fetch resource.': "That didn't reach us — check your connection and try again.",
+  'network request failed': "That didn't reach us — check your connection and try again.",
 };
+
+/** For a thrown error's message: the human version, or the screen's fallback. */
+export const errorWords = (e: unknown, fallback: string): string =>
+  humanError(e instanceof Error ? e.message : e) || fallback;
 
 /** Developer-shaped: names a field, a key, a status word, or starts lower-case. */
 const DEVELOPERISH = [

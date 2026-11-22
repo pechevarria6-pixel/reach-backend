@@ -25,7 +25,7 @@ import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
 import { byDay, dearestDay, linesYoureOff, lineCosts, budgetSplit, budgetLine } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
-import { humanError } from "@/lib/human-error";
+import { humanError, errorWords } from "@/lib/human-error";
 import { groupPills, categoryGroup } from "@/lib/discovery/category";
 import { upcomingSections, dayRoll, capSections, rowsIn, milesOf } from "@/lib/discovery/upcoming";
 import { kindWord, withKindWord } from "@/lib/discovery/kind-word";
@@ -3813,7 +3813,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         if(refreshGroup)refreshGroup(groupId);
       }
       setQ("");setResults([]);
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(false);}
   };
 
@@ -3895,7 +3895,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   const doDelete=async()=>{
     if(working||!nameMatches)return;setWorking(true);
     try{ await deleteGroup(groupId); toast(`${group.name} deleted`); }
-    catch(e){ toast(e.message); setWorking(false); }
+    catch(e){ toast(errorWords(e,"That didn't go through — try again.")); setWorking(false); }
   };
 
   return(
@@ -4625,7 +4625,7 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refre
       else onBack();
     }catch(e){
       console.error("[plan preferences] save failed",e);
-      setSaveErr(e.message);
+      setSaveErr(errorWords(e,"That didn't save — try again."));
     }
     setSaving(false);
   };
@@ -7337,7 +7337,7 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(humanError(d.error)||"That veto didn't save — try again");
       forgetNext(planId);
-    }catch(e){console.error("[tripIdeas] veto failed",e);toast(e.message);}
+    }catch(e){console.error("[tripIdeas] veto failed",e);toast(errorWords(e,"That didn't go through — try again."));}
     await load();
     setBusy(null);
   };
@@ -8734,7 +8734,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       const realId=saveGroupToServer?await saveGroupToServer(draft):null;
       if(!realId)throw new Error("Couldn't set up a solo trip — please try again");
       setGid(realId);
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setMakingSolo(false);}
   };
 
@@ -9654,7 +9654,7 @@ async function runNextCta(cta,{na,screen,planId,groupId,push,toast,goToProfileSe
       toast(number&&!d.kept?"Marked as got — keep that number somewhere handy":number?`Marked as got · you entered ${number}`:"Marked as got");
       forgetNext(planId);
       return true;
-    }catch(e){console.error("[next] could not record it as got",{bookingId:cta.bookingId},e);toast(e.message);return false;}
+    }catch(e){console.error("[next] could not record it as got",{bookingId:cta.bookingId},e);toast(errorWords(e,"That didn't go through — try again."));return false;}
   }
   return false;
 }
@@ -10031,7 +10031,7 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
       await saySorted(bid,n);
       toast(n?(solo?`Saved · you entered ${n}`:`Saved · ${n} is on the plan`):"Saved as booked");
       setNumber(null);forgetTables(planId);forgetNext(planId);await onChanged?.();
-    }catch(e){console.error("[tables] could not record it as booked",{bookingId:bid},e);toast(e.message);}
+    }catch(e){console.error("[tables] could not record it as booked",{bookingId:bid},e);toast(errorWords(e,"That didn't go through — try again."));}
     setBusy(false);
   };
   const askCancel=async(confirm)=>{
@@ -10669,7 +10669,7 @@ function HoldToggle({bookingId,status,toast,onChanged}){
       await onChanged?.();
     }catch(e){
       console.error("[hold] could not change",{bookingId},e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setBusy(false);
   };
@@ -10707,7 +10707,7 @@ function RealTrip({trip,startDate,endDate,seats}){
       setState({loading:false,data:d,error:null});
     }catch(e){
       console.error("[realTrip] preview failed",{city:trip.city},e);
-      setState({loading:false,data:null,error:e.message});
+      setState({loading:false,data:null,error:errorWords(e,"Couldn't load that just now — try again.")});
     }
   };
   const d=state.data;
@@ -10828,7 +10828,7 @@ function ChoicePanel({booking,vertical,toast,onChanged,autoLoad=false,confirmFir
       setState({loading:false,options:d.changeable===false?[]:(d.options||[]),why:d.why||null});
     }catch(e){
       console.error("[choices] could not load options",{booking:booking.id},e);
-      setState({loading:false,options:[],why:e.message});
+      setState({loading:false,options:[],why:errorWords(e,"Couldn't load that just now — try again.")});
     }
   };
   useEffect(()=>{if(autoLoad&&changeable)load();},[booking.id]);
@@ -10845,7 +10845,7 @@ function ChoicePanel({booking,vertical,toast,onChanged,autoLoad=false,confirmFir
       await onChanged?.();
     }catch(e){
       console.error("[choices] could not switch",{booking:booking.id,key},e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setChoosing(null);
   };
@@ -11009,7 +11009,7 @@ function LineSuggestions({planId,item,list,canApply,toast,onList,onSwapped}){
       }
     }catch(e){
       console.error("[suggestions] could not save",{item:item.id,action},e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setBusy(null);
   };
@@ -11066,7 +11066,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
         if(live)setAlt({loading:false,data:d,error:null});
       }catch(e){
         console.error("[change] could not read the alternatives",{item:item.id},e);
-        if(live)setAlt({loading:false,data:null,error:e.message});
+        if(live)setAlt({loading:false,data:null,error:errorWords(e,"Couldn't load that just now — try again.")});
       }
     })();
     return()=>{live=false;};
@@ -11122,7 +11122,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
       onClose();
     }catch(e){
       console.error("[change] could not suggest",{item:item.id,to},e);
-      setSaid(e.message);
+      setSaid(errorWords(e,"That didn't save — try again."));
     }
     setBusy(null);
   };
@@ -11144,7 +11144,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
       setOther({loading:false,data:out,error:null});
     }catch(e){
       console.error("[change] something else failed",{item:item.id},e);
-      setOther({loading:false,data:null,error:e.message});
+      setOther({loading:false,data:null,error:errorWords(e,"Couldn't load that just now — try again.")});
     }
   };
 
@@ -11582,7 +11582,7 @@ function CloseCard({planId,groupId,push,toast}){
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       setC(x=>({...x,answer:d.answer??score}));
-    }catch(e){console.error("[close] answer not saved",{planId},e);toast(e.message);}
+    }catch(e){console.error("[close] answer not saved",{planId},e);toast(errorWords(e,"That didn't go through — try again."));}
     setSaving(null);
   };
   const owed=closeSettleLine(c.settle);
@@ -11657,7 +11657,7 @@ function MuteReminders({planId,toast,solo=false,night=false}){
       if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       setM(x=>({...x,muted:d.muted===true}));
       toast(d.muted?"Reminders for this trip are off":"Reminders for this trip are back on");
-    }catch(e){console.error("[mute] not saved",{planId},e);toast(e.message);}
+    }catch(e){console.error("[mute] not saved",{planId},e);toast(errorWords(e,"That didn't go through — try again."));}
     setBusy(false);
   };
   return(
@@ -11818,7 +11818,7 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
       dismissAsk();
       toast("Saved — friends who owe you can pay you there now");
       await load();
-    }catch(e){console.error("[settle] handles not saved",e);toast(e.message);}
+    }catch(e){console.error("[settle] handles not saved",e);toast(errorWords(e,"That didn't go through — try again."));}
     setSavingHandles(false);
   };
 
@@ -12088,7 +12088,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       }
     }catch(e){
       console.error("[planDetail] could not change who's in",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setSkipping(null);
   };
@@ -12111,7 +12111,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       if(note)toast(note);
     }catch(e){
       console.error("[planDetail] saving dates failed",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setSavingDates(false);
   };
@@ -12144,7 +12144,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       toast("Cleared — tell us again when you know");
     }catch(e){
       console.error("[planDetail] clearing dates failed",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setSavingDates(false);
   };
@@ -12171,7 +12171,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       toast("Got it — we'll find the dates that suit most of you");
     }catch(e){
       console.error("[planDetail] could not save dates",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setSavingDates(false);
   };
@@ -12807,7 +12807,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       if(!r.ok)throw new Error(humanError(d.error)||"That veto didn't save — try again");
       forgetNext(planId);
       toast(on?`Vetoed ${opt}`:`Took back your veto of ${opt}`);
-    }catch(e){console.error("[vote] veto failed",{planId},e);toast(e.message);}
+    }catch(e){console.error("[vote] veto failed",{planId},e);toast(errorWords(e,"That didn't go through — try again."));}
     await loadVote();
     setVoteBusy(null);
   };
@@ -13687,7 +13687,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       toast(d.sent>1?`Sent to all ${d.sent} of you 📬`:"Sent to your inbox 📬");
                     }catch(e){
                       console.error("[planDetail] itinerary email failed",e);
-                      toast(e.message);
+                      toast(errorWords(e,"That didn't go through — try again."));
                     }
                     setEmailing(false);
                   }}>{emailing?"Sending…":(group.memberIds||[]).length>1?"📬 Email this to everyone":"📬 Email this to me"}</button>
@@ -14320,7 +14320,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
       toast("Noted — we'll leave it open");
     }catch(e){
       console.error("[checkout] could not record the reservation",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setCapturing(null);
   };
@@ -14455,7 +14455,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
       }
       if(!r.ok||!d.clientSecret)throw new Error(humanError(d.error)||"Couldn't start the payment \u2014 try again.");
       setClientSecret(d.clientSecret); setPhase("pay");
-    }catch(e){ toast(e.message); }
+    }catch(e){ toast(errorWords(e,"That didn't go through — try again.")); }
     setBusy(false);
   };
 
@@ -15991,7 +15991,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       setDocDraft(x=>({...x,[field]:undefined}));
       toast(value?"Saved":"Removed");
       await load();
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(null);}
   };
 
@@ -16010,7 +16010,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       if(!r.ok)throw new Error(humanError(d.error)||"Couldn't add that programme");
       setLoyName("");setLoyTier("");setLoyNum("");
       toast("Added — we'll use it when we price things");await load();
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(null);}
   };
   const removeLoyalty=async id=>{
@@ -16021,7 +16021,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       });
       if(!r.ok)throw new Error("Couldn't remove that programme");
       toast("Gone");await load();
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(null);}
   };
 
@@ -16053,7 +16053,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       const d=await r.json().catch(()=>({}));
       if(!r.ok)throw new Error(humanError(d.error)||"Couldn't schedule that");
       toast("Deletion scheduled");setDeleteConfirm("");setSection(null);await load();
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(null);}
   };
 
@@ -16099,7 +16099,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         // The greeting reads the app's copy of the user, not this screen's,
         // so without this a new name only appeared after a reload.
         if(body.firstName!==undefined)onIdentityChange?.();
-      }catch(e){toast(e.message);}
+      }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
       finally{setBusy(null);}
     };
 
@@ -16213,7 +16213,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         setDocDraft(x=>({...x,__fFirst:undefined,__last:undefined,__dob:undefined,__gender:undefined,__phone:undefined}));
         toast("Saved");await load();
         if(body.firstName!==undefined)onIdentityChange?.();
-      }catch(err){toast(err.message);}
+      }catch(err){toast(errorWords(err,"That didn't go through — try again."));}
       finally{setBusy(null);}
     };
 
