@@ -16,11 +16,11 @@ Maintained by the coordinator. Updated 2026-11-08.
 
 | # | Item | Status | Evidence / blocker |
 |---|---|---|---|
-| 1 | Owner blockers cleared | **false** | Sentry DSN; Reach's Stripe key account (`acct_1U4lDQ5GB2FVY7o…`) not reachable in the owner's dashboard login — its webhook events and BNPL settings unverified; Stripe live needs business verification |
+| 1 | Owner blockers cleared | **false** | 2026-11-22: Stripe access to Reach's key account resolved (it is "Alcanzar Group sandbox", `acct_1U4lDQ5GB2FVY7o6`). Left: set `SENTRY_DSN` (project `reach` created in Sentry org `alcanzar-group`); Stripe live business verification |
 | 2 | Custody question answered by counsel | **false** | B2 counsel session pending (also gates P4 single-payer) |
-| 3 | Payment rail fixed (ACH default, native-only funding) | **false** | Code merged and live: bank-first (P1, verified live), processing state, native-only target, refunds/disputes, fee capture, kill switch, no BNPL. Not true until the Stripe webhook on Reach's key account subscribes to `payment_intent.processing`, `charge.succeeded`, `charge.dispute.*` |
+| 3 | Payment rail fixed (ACH default, native-only funding) | **true** (pending the first delivered event) | 2026-11-22 on Reach's Stripe account: webhook `we_1U71Zj…` now subscribes to all 13 events the handler reads (was 3); ACH Direct Debit enabled (was **disabled**, so bank-first could not have worked); Klarna and Affirm disabled (were **enabled**); every pay-later method off. No delivery seen yet: the endpoint shows none in the last week, so the first test contribution proves it |
 | 4 | Zero S1 UX items | **true** (pending a production check of F19-02) | All 3 S1 fixed in Wave 1: F19-03 f6be78d, F08-01 b11809a, F19-02 6a438e6. 39 S2 · 55 S3 remain (`UX-LEDGER.md`) |
-| 5 | Monitoring and payments kill switch live | **false** | Kill switch live (`PAYMENTS_ENABLED`); health-alert workflow pushed; Sentry blocked on DSN |
+| 5 | Monitoring and payments kill switch live | **false** | Kill switch live (`PAYMENTS_ENABLED`); health alert live (manual dry run passed 2026-11-22, scheduled runs green); Sentry project `reach` created 2026-11-22 — `SENTRY_DSN` not yet set in Vercel (owner) |
 | 6 | Ten groups recruited | **false** | Owner (B4) |
 | 7 | Debrief script written | **true** | `docs/pilot/DEBRIEF-SCRIPT.md` (owner approval pending); debrief form live |
 | 8 | Four readouts pre-registered | **false** | `docs/pilot/READOUTS.md` drafted; owner approval + pilot group ids needed |
