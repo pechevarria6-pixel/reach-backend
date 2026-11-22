@@ -93,7 +93,9 @@ triplicates: data deletion, owner's call) and grow the catalogue first.
 - 🟡 Time-saving: `options_shown` ms recorded (f4d7a23); options still arrive as one set, not one at a time
 - ✅ Your Reach card (6e98f84)
 - 🟡 Branding: `check:raw-hex` ratchet at 141 in verify (ffc0ada); converting them is still to do
-- ❌ still to do: one-primary walk, trip-creation e2e under 60 s, invite → input e2e, human 4xx copy, a render test for "Why this" (needs the switch on)
+- ✅ Human 4xx copy: `lib/human-error.ts` (dee0d2e, b448b1b): known developer strings ("Forbidden", "Booking not found") become a sentence with a next step; unknown ones give way to the screen's fallback; a dropped connection says so instead of "Failed to fetch". 63 server-error sites and 32 thrown-message toasts go through it; a unit test fails on a raw one (planted, fired)
+- ✅ "Why this" carried: generator → saved ideas → read back → card, on first showing and on the Vote tab (262280f). Seeing it on screen in production still needs `DESTINATION_SELECT=on`
+- ❌ still to do: one-primary walk, trip-creation e2e under 60 s, invite → input e2e, options one at a time, converting the 141 colours
 - Note for the owner: group members see each other's **email address** (groups API returns it). "Who sees what" says so; whether they should is your call.
 
 ### What this means for Part A (read before Task 3 merges)
