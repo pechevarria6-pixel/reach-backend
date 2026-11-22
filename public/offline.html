@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2C0E18">
+<title>Reach · Offline</title>
+<!--
+  Shown by public/sw.js only when a page cannot be reached at all (UX F19-02).
+  It holds nothing personal itself: it reads the trip wallets the worker kept
+  (cache reach-wallet-v1, one per upcoming trip, fetched by the app while it
+  had signal — lib/offline-trips.ts) and lists each "as of" when it was
+  fetched, so an old copy is never passed off as the current one. Every value
+  is written with textContent, never as HTML.
+-->
+<style>
+  :root { --bg:#2C0E18; --s1:#36121B; --border:#5A2430; --t1:#FEF7D9; --t2:#E2CFB8; --t3:#BFA58F; --accent:#C3A342; --on:#2A1D06; }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) { --bg:#EBEFEC; --s1:#F4F7F5; --border:#D8DED4; --t1:#142119; --t2:#576E61; --t3:#5E766A; --accent:#2B583B; --on:#FFFFFF; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--t1); font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:28px 16px 48px; }
+  .mark { width:36px; height:36px; border-radius:9px; display:block; margin-bottom:18px; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  .lead { color:var(--t2); margin:0 0 20px; }
+  button { font:inherit; font-weight:600; background:var(--accent); color:var(--on); border:0; border-radius:12px; padding:12px 18px; min-height:44px; cursor:pointer; }
+  .trip { background:var(--s1); border:1px solid var(--border); border-radius:16px; padding:16px; margin:0 0 14px; }
+  .trip h2 { font-size:16px; margin:0 0 2px; }
+  .asof { font-size:12px; color:var(--t3); margin:0 0 10px; }
+  .entry { border-top:1px solid var(--border); padding:10px 0 2px; }
+  .entry:first-of-type { border-top:0; padding-top:0; }
+  .what { font-weight:600; }
+  .line { font-size:13.5px; color:var(--t2); }
+  .ref { font-variant-numeric:tabular-nums; letter-spacing:.02em; color:var(--t1); font-weight:600; }
+  .note { font-size:12px; color:var(--t3); }
+  .empty { color:var(--t2); }
+</style>
+</head>
+<body>
+<main>
+  <img class="mark" src="/logo-mark.png" alt="" width="36" height="36">
+  <h1>You're offline</h1>
+  <p class="lead" id="lead">Checking what this phone has saved…</p>
+  <div id="trips"></div>
+  <button type="button" id="retry">Try again</button>
+</main>
+<script>
+(function () {
+  var lead = document.getElementById('lead');
+  var list = document.getElementById('trips');
+  document.getElementById('retry').addEventListener('click', function () { location.reload(); });
+  // Back online: go back to where they were trying to get to.
+  window.addEventListener('online', function () { location.reload(); });
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  // "2026-11-14" as a date somebody reads, on the calendar day it names.
+  function day(s) {
+    if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(s)) return null;
+    var p = s.slice(0, 10).split('-').map(Number);
+    var d = new Date(p[0], p[1] - 1, p[2]);
+    return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+  // The provider's wall-clock time at the airport, as it said it: "08:15".
+  function clock(s) {
+    var m = typeof s === 'string' && s.match(/T(\d{2}:\d{2})/);
+    return m ? m[1] : null;
+  }
+  function when(s) {
+    if (typeof s !== 'string') return null;
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  }
+  function leg(label, l) {
+    if (!l) return null;
+    var bits = [label];
+    var route = [l.from, l.to].filter(Boolean).join(' → ');
+    if (route) bits.push(route);
+    var d = day(l.date); if (d) bits.push(d);
+    var t = clock(l.departs); if (t) bits.push('departs ' + t + ' local');
+    if (l.flights) bits.push(l.flights);
+    return bits.length > 1 ? bits.join(' · ') : null;
+  }
+
+  function render(wallets) {
+    var shown = wallets.filter(function (w) { return w && Array.isArray(w.entries) && w.entries.length; });
+    if (!shown.length) {
+      lead.textContent = "Nothing is saved on this phone yet.";
+      list.appendChild(el('p', 'empty', "Booked trips are kept here for when there's no signal, once you've opened Reach with signal in the weeks before you go."));
+      return;
+    }
+    lead.textContent = "Here's what you have saved.";
+    shown.forEach(function (w) {
+      var card = el('section', 'trip');
+      card.appendChild(el('h2', null, w.title || 'Your trip'));
+      var a = when(w.asOf);
+      card.appendChild(el('p', 'asof', a ? 'Saved ' + a + ' — may have changed since.' : 'Saved earlier — may have changed since.'));
+      w.entries.forEach(function (e) {
+        var row = el('div', 'entry');
+        row.appendChild(el('div', 'what', e.title || e.vertical || 'Booking'));
+        if (e.provider) row.appendChild(el('div', 'line', e.provider));
+        if (e.flight) {
+          var o = leg('Out', e.flight.out); if (o) row.appendChild(el('div', 'line', o));
+          var b = leg('Back', e.flight.back); if (b) row.appendChild(el('div', 'line', b));
+        }
+        if (e.hotel) {
+          if (e.hotel.name && e.hotel.name !== e.title) row.appendChild(el('div', 'line', e.hotel.name));
+          if (e.hotel.address) row.appendChild(el('div', 'line', e.hotel.address));
+          var stay = [day(e.hotel.checkin) && 'Check in ' + day(e.hotel.checkin) + (e.hotel.checkinTime ? ' from ' + e.hotel.checkinTime : ''),
+                      day(e.hotel.checkout) && 'Check out ' + day(e.hotel.checkout)].filter(Boolean).join(' · ');
+          if (stay) row.appendChild(el('div', 'line', stay));
+        }
+        (e.confirmations || []).forEach(function (c) {
+          var line = el('div', 'line');
+          line.appendChild(document.createTextNode((c.label || 'Reference') + ': '));
+          line.appendChild(el('span', 'ref', c.value));
+          row.appendChild(line);
+          if (c.source === 'entered') row.appendChild(el('div', 'note', 'Typed in by someone on the trip, not checked by Reach.'));
+        });
+        card.appendChild(row);
+      });
+      list.appendChild(card);
+    });
+  }
+
+  if (!('caches' in window)) { render([]); return; }
+  caches.open('reach-wallet-v1').then(function (cache) {
+    return cache.keys().then(function (keys) {
+      return Promise.all(keys.map(function (k) {
+        return cache.match(k).then(function (r) { return r ? r.json().catch(function () { return null; }) : null; });
+      }));
+    });
+  }).then(function (ws) {
+    ws.sort(function (a, b) { return String((a && a.title) || '').localeCompare(String((b && b.title) || '')); });
+    render(ws);
+  }).catch(function () { render([]); });
+})();
+</script>
+</body>
+</html>
