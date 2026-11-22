@@ -7404,6 +7404,25 @@ function CallOffPlan({plan,group,me,um,updatePlanOnServer,updateGroup,toast,onDo
 // same questions, and "Find our trips" opens once they all have. `planId`
 // is that trip, when this screen is opened to wait on it or to find its
 // options. A solo trip has nobody to wait for and works as it always has.
+// ─── Fewer than three places fit (destination selection) ────────────────
+// The server's own sentence, and one button that asks again a little wider.
+// Never "try different dates or budget": the gap is in the places we hold,
+// not in what they asked for.
+function WidenOffer({offer,onWiden,busy}){
+  if(!offer)return null;
+  return(
+    <div style={{margin:"0 20px 12px",padding:"11px 13px",background:C.s1,border:`1px solid ${C.border}`,
+      borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
+      {offer.say}
+      {offer.next&&(
+        <div style={{marginTop:8}}>
+          <button className="bsm" disabled={busy} onClick={onWiden}>Widen the search</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,um,updatePlanOnServer,refreshGroup,regenerate=false,find=false,askReconnection=false}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
@@ -7447,6 +7466,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   const [endDate,setEndDate]=useState("");
   const [budget,setBudget]=useState("");
   const [trips,setTrips]=useState(null);
+  // Fewer than three places fit what they said (destinations chosen in
+  // code): the sentence the server sent, and the next widening, if any.
+  const [widenOffer,setWidenOffer]=useState(null);
   // Bumped when the saved ideas have changed under the vote — new ones
   // found, or their days written — so the vote reloads now, not on its poll.
   const [ideasRev,setIdeasRev]=useState(0);
@@ -7630,12 +7652,20 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           nightPrefs:extra.nightPrefs||{},
           planId:extra.planId||null, // a group trip: waits for, and is built from, everybody's answers
           regenerate:extra.regenerate===true, // the organiser swapping the saved ideas for three new ones
-          withAnswered:extra.withAnswered===true, // organiser going ahead with who has answered; the server checks
+          withAnswered:extra.withAnswered===true, widen:extra.widen||0, // organiser going ahead with who has answered (server checks); "Widen the search" step
         }),
       });
       answered=true;
       if(res.ok){
         const data=await res.json();
+        setWidenOffer(data.fewer?{say:data.fewer,next:data.canWiden?(extra.widen||0)+1:null,args:[sd,ed,bud,prefs,extra]}:null);
+        if(data.fewer&&!(data.trips||[]).length){
+          // Nothing fits among the places we know well yet. Said as that,
+          // not as "no trips returned", with the widening beside it.
+          setError(null);
+          setStep(back);
+          return;
+        }
         if(extra.planId&&data.shared&&data.trips?.length){
           // Saved on the trip, and the vote is open: everybody sees these
           // same ideas on their own phone. `saved` means they were already
@@ -8129,6 +8159,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
           <div style={{height:1,background:C.border,margin:"0 20px 16px"}}/>
 
+          {!trips&&<WidenOffer offer={widenOffer} busy={generating} onWiden={()=>{const [a,b,c,d,e]=widenOffer.args;generate(a,b,c,d,{...e,widen:widenOffer.next});}}/>}
           <TripQuiz
             departure={departure}
             group={group}
@@ -8194,6 +8225,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   {error}
                 </div>
               )}
+              <WidenOffer offer={widenOffer} busy={generating} onWiden={()=>{const [a,b,c,d,e]=widenOffer.args;generate(a,b,c,d,{...e,widen:widenOffer.next});}}/>
               <TripIdeas planId={wp.id} groupId={groupId} group={group} plan={wp} toast={toast} um={um}
                 updateGroup={updateGroup} refreshGroup={refreshGroup} saveItineraryToServer={saveItineraryToServer}
                 departure={departure} rev={ideasRev} enriching={enriching} enrichFailed={enrichFailed}
@@ -8392,6 +8424,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   :`These ideas aren't saved for the group yet, so only you can see them — and only whoever set up this ${nightOut?"night out":"trip"} can pick one. They can't see these: they'll need to press Find themselves, and will get their own three.`)
                 :`${trips.length===3?"Three":trips.length} ${nightOut?"nights out":"trips"} built around what you said. Pick the one you want.`}
             </div>
+            <div style={{marginTop:10}}><WidenOffer offer={widenOffer} busy={generating} onWiden={()=>{const [a,b,c,d,e]=widenOffer.args;generate(a,b,c,d,{...e,widen:widenOffer.next});}}/></div>
             {/* The days are being written while people read. Say so, rather
                 than letting the cards quietly grow a section. */}
             {enrichFailed&&enriching===0&&(

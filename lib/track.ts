@@ -99,6 +99,10 @@ export const EVENT_NAMES = [
   'contribution_processing',
   'contribution_failed',
   'contribution_reversed',
+  // A place the options offered, one event each (destination diversity,
+  // 2026-11-22). Server-only. Read by the weekly concentration readout:
+  // the share of all offers taken by the five most-offered places.
+  'destination_served',
 ] as const;
 
 export type EventName = typeof EVENT_NAMES[number];

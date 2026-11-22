@@ -1,7 +1,10 @@
 import { leaveDay, trimLeaveDay, type LeaveDay } from '@/lib/leave-day';
 import { NextRequest, NextResponse } from 'next/server';
 import { archetypeFor, playbookGuidance, PlaybookSchema } from '@/lib/playbooks';
-import { datedDays } from '@/lib/calendar';
+import { datedDays, today } from '@/lib/calendar';
+import { pickThree, widened, SELECT_CONFIG, type Pick } from '@/lib/destination-select';
+import { groupContextFrom, fixedPlacesBlock, readBackPlaces, tierPriced, fewerWords } from '@/lib/destination-context';
+import { loadCandidates, visitedIds, recordServed } from '@/lib/destination-candidates';
 import { report } from '@/lib/report';
 import { requireGroupMember, groupMemberIds, isFail } from '@/lib/auth';
 import Anthropic from '@anthropic-ai/sdk';
@@ -189,6 +192,9 @@ export async function POST(req: NextRequest) {
     // they live.
     nightPlace = null,
     detailTripId = null, // if set, generate full itinerary for one trip
+    // "Want us to widen the search?" (destination selection): 1 relaxes
+    // travel time, 2 also halves the spread. Never the tag match.
+    widen = 0,
     // Plan the morning they leave too (lib/leave-day.ts). On unless switched off.
     homeDay = true,
     // A night out is not a short trip. No flights, no hotel, one evening, and
@@ -567,10 +573,10 @@ export async function POST(req: NextRequest) {
   // what trip generation is built on — so a migration that had not been run
   // yet would take the whole feature down rather than one line of a prompt.
   const WITH_SUMMARY = `users(id,name,budget_range,climate_preference,dietary_needs,
-      cuisines,music_genres,dining_vibe,drink_style,nightlife_style,
+      favorite_activities,cuisines,music_genres,dining_vibe,drink_style,nightlife_style,
       concert_types,activity_vibe,no_way_jose,trip_summary)`;
   const WITHOUT_SUMMARY = `users(id,name,budget_range,climate_preference,dietary_needs,
-      cuisines,music_genres,dining_vibe,drink_style,nightlife_style,
+      favorite_activities,cuisines,music_genres,dining_vibe,drink_style,nightlife_style,
       concert_types,activity_vibe,no_way_jose)`;
 
   const full = await supabase.from('group_members').select(WITH_SUMMARY).eq('group_id', groupId);
@@ -1582,6 +1588,44 @@ you have made up; a day that is simply a good day is allowed to be one.`;
       return block ? `\n${block}\n` : '';
     })(), 4000, 'the forecast for the options').catch(() => '')
     : '';
+  // ── Where, chosen in code (REACH-DESTINATION-DIVERSITY-2026-11-22) ──
+  // Behind DESTINATION_SELECT=on until the catalogue is seeded: today it is
+  // 17 places, so an open-ended request it cannot meet gets fewer options.
+  // Only for an open-ended trip: a place they named is theirs (fixedPlace),
+  // and an evening happens where they are.
+  let picks: Pick[] | null = null;
+  const widenStep = widen === 1 || widen === 2 ? (widen as 1 | 2) : 0;
+  if (process.env.DESTINATION_SELECT === 'on' && !isNightPlan && !fixedPlace) {
+    const todayISO = today();
+    const month = Number(String(startDate || todayISO).slice(5, 7)) || Number(todayISO.slice(5, 7));
+    const loaded = await loadCandidates(supabase, { month, todayISO });
+    // `in`, not `!loaded.ok`: strict is off here, so a literal discriminant does not narrow.
+    if ('why' in loaded) {
+      console.error('[generate] destination selection unavailable; the model chooses', { why: loaded.why });
+    } else {
+      if (loaded.notes.length) console.log('[generate] destination selection', { notes: loaded.notes });
+      const been = groupId ? await visitedIds(supabase, String(groupId), todayISO, loaded.candidates) : [];
+      let g = groupContextFrom({
+        members: prefs, goal, tripTypes: together?.tripTypes.length ? together.tripTypes : (tripPrefs.tripType || []),
+        budgetPerPersonDollars: effectiveBudget, excludedIds: been,
+      });
+      let cfg = SELECT_CONFIG;
+      if (widenStep) ({ g, cfg } = widened(g, cfg, widenStep));
+      picks = pickThree(loaded.candidates, g, cfg);
+      console.log('[generate] places chosen in code', {
+        groupId, widen: widenStep, picks: picks.map(p => ({ city: p.candidate.name, tier: p.tier, reasons: p.reasons })),
+        tags: Object.keys(g.tagWeights).length,
+      });
+      if (!picks.length) {
+        return NextResponse.json({
+          success: true, trips: [], fewer: fewerWords(0), canWiden: widenStep < 2,
+          meta: { groupSize, nights, budget: effectiveBudget, departure, departureAirport: departureCode },
+        });
+      }
+    }
+  }
+  const optionCount = picks ? picks.length : 3;
+
   const nightWhere = [nightPrefs.time, nightPrefs.where].filter(Boolean).join(', ');
   const prompt = isNightPlan ? `You are Reach. Generate exactly 3 options for ONE NIGHT OUT in ${nightCity || 'the user\'s city'}. BE FAST — overviews and honest costs, no itinerary yet.
 ${nightCity ? `ALL THREE MUST BE IN ${nightCity.toUpperCase()}. Every "destination" and "city" is there — not anywhere they live or anywhere nearby.` : ''}
@@ -1626,7 +1670,7 @@ spend words or claims on them. tagline is at most
 ten words. emoji is one emoji. accommodation.example is the neighbourhood the
 night happens in. setting is what the evening is built around: "outdoors"
 (a rooftop, a beer garden, a patio crawl, a park or the waterfront),
-"indoors", or "mixed". Never say anything about the weather.` : `You are Reach's AI travel planner. Generate exactly 3 destination options. BE FAST — no itinerary needed yet, just destination overviews and cost estimates.
+"indoors", or "mixed". Never say anything about the weather.` : `You are Reach's AI travel planner. Generate exactly ${optionCount} destination option${optionCount === 1 ? '' : 's'}. BE FAST — no itinerary needed yet, just destination overviews and cost estimates.
 
 ${solo
   ? `TRAVELLING: alone, ${nights} nights, $${effectiveBudget} budget`
@@ -1673,7 +1717,7 @@ budget came back clustered at 70%, 89% and 95%, which is not a choice:
 Each total must land within 10% of the figure above for its tier.
 ${nights >= 1 ? awayPromptBlock({ nights, from: `${departure} (${departureCode})` }) : ''}
 
-${fixedPlace ? `ALL THREE OPTIONS MUST BE AT ${fixedPlace.toUpperCase()}. This is not a
+${picks ? fixedPlacesBlock(picks) : fixedPlace ? `ALL THREE OPTIONS MUST BE AT ${fixedPlace.toUpperCase()}. This is not a
 suggestion and not one of three ideas — they have chosen where they are going.
 Vary the plan, the standard of the stay and the budget. Never the destination.
 Every "destination" and "city" must be ${fixedPlace} or somewhere inside it.` : `UNLESS the goal above names a place — in which case all three are THAT place
@@ -1818,6 +1862,31 @@ Return JSON only, shaped exactly like this:
         }
       }
     }
+    // ── The places, read back against what code chose ─────────────────
+    // A place nothing vouched for is dropped, not shown: the model may write
+    // about the chosen places and no others. Then the budget guardrail, on
+    // the model's own price: over 1.2× the budget is never offered, and the
+    // tier is the price against the budget, not the model's label.
+    if (picks && trips?.length) {
+      const back = readBackPlaces(trips, picks);
+      if (back.strays.length) console.error('[trips generate] dropped places code did not choose', { groupId, strays: back.strays });
+      const priced = back.kept.flatMap(({ trip, pick }) => {
+        const tier = tierPriced((trip as any).total_per_person, effectiveBudget);
+        if (tier === null) {
+          console.error('[trips generate] dropped a place over the budget guardrail', { groupId, city: pick.candidate.name, total: (trip as any).total_per_person, budget: effectiveBudget });
+          return [];
+        }
+        return [{ ...trip, ...(tier ? { tier } : {}), destination_id: pick.candidate.id, why_reasons: pick.reasons }];
+      });
+      if (!priced.length) {
+        return NextResponse.json({
+          success: true, trips: [], fewer: fewerWords(0), canWiden: widenStep < 2,
+          meta: { groupSize, nights, budget: effectiveBudget, departure, departureAirport: departureCode },
+        });
+      }
+      trips = priced as typeof trips;
+    }
+
     // ── Getting there and a bed, on every away option ─────────────────
     // A trip with a night in it is away (lib/away.ts), and an away option
     // that prices no flight or no stay is a plan with a hole in it that
@@ -2049,6 +2118,17 @@ Return JSON only, shaped exactly like this:
 
     const meta = { groupSize, nights, budget: effectiveBudget, departure, departureAirport: departureCode };
 
+    // What was offered, counted: the exposure that dampens a place shown to
+    // everybody, and one event per place for the concentration readout.
+    const servedIds = picks ? trips.map(t => (t as any).destination_id).filter((x: unknown): x is string => typeof x === 'string') : [];
+    if (servedIds.length) {
+      await recordServed(supabase, servedIds);
+      for (const id of servedIds) {
+        void track(supabase, 'destination_served', { userId: ctx.user.id, groupId: groupId ? String(groupId) : null, planId: groupPlan?.id ?? null, props: { destination_id: id, widen: widenStep } });
+      }
+    }
+    const fewer = picks ? { fewer: fewerWords(trips.length), canWiden: trips.length < 3 && widenStep < 2 } : {};
+
     // ── Saved on the trip, for the whole group ───────────────────────
     // A group's ideas go on the plan and the vote opens: every member sees
     // these three, votes on their own phone, and the organiser picks. Until
@@ -2086,7 +2166,7 @@ Return JSON only, shaped exactly like this:
       if (saved.outcome === 'saved') {
         if (replacing) await clearVotes(supabase, groupPlan.id);
         if (isGroup) await tellTheGroup(supabase, groupPlan.id, String(groupId), groupPlan.created_by, ctx.user.id, isNightPlan, !!replacing, ideas.options.length);
-        return NextResponse.json({ success: true, trips: withForecast(await ideasWithClimateNow(supabase, ideas.options, { start: startDate, end: endDate })), ideas: publicIdeas(ideas), saved: false, shared: true, meta });
+        return NextResponse.json({ success: true, trips: withForecast(await ideasWithClimateNow(supabase, ideas.options, { start: startDate, end: endDate })), ideas: publicIdeas(ideas), saved: false, shared: true, meta, ...fewer });
       }
       if (saved.outcome === 'taken') {
         // Somebody else's Find landed first. Theirs are the group's ideas;
@@ -2117,6 +2197,7 @@ Return JSON only, shaped exactly like this:
       // A group's ideas that could not be saved are on this phone only.
       shared: !(groupPlan && isGroup) ? null : false,
       meta,
+      ...fewer,
     });
   } catch (e: any) {
     console.error('[trips generate] generation failed', {
