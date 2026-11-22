@@ -87,6 +87,15 @@ triplicates: data deletion, owner's call) and grow the catalogue first.
 | Privacy: Who sees what | 🟡 | /privacy and /terms exist; the in-app Privacy screen never links to them; no test that member B cannot read A's details |
 | Your Reach card | ❌ | Profile has the trips map only; "last together" is a chosen bucket, not data |
 
+**Part B progress (2026-11-22, on the PR branch):**
+- ✅ Support: Help in Profile + `POST /api/support` (f4d7a23)
+- ✅ Privacy: "Who sees what", policy link, member-B field test in the two-person e2e (f4d7a23)
+- 🟡 Time-saving: `options_shown` ms recorded (f4d7a23); options still arrive as one set, not one at a time
+- ✅ Your Reach card (6e98f84)
+- 🟡 Branding: `check:raw-hex` ratchet at 141 in verify (ffc0ada); converting them is still to do
+- ❌ still to do: one-primary walk, trip-creation e2e under 60 s, invite → input e2e, human 4xx copy, a render test for "Why this" (needs the switch on)
+- Note for the owner: group members see each other's **email address** (groups API returns it). "Who sees what" says so; whether they should is your call.
+
 ### What this means for Part A (read before Task 3 merges)
 - **The catalogue is 17 cities, 7 of them in NC.** With code choosing the place, an
   open-ended request the catalogue cannot meet (skiing, a beach abroad) returns fewer
