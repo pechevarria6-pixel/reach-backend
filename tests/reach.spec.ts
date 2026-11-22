@@ -135,8 +135,10 @@ test.describe('3. Discover tab', () => {
     // nothing, skipped its own assertion, and reported green for months. A
     // test that cannot fail is worse than no test, because the suite says it
     // is covered.
+    // The cards arrive with the finds, as the pills do: the same 32 s the app
+    // allows on a cold start (flaked at 25 s, both devices, 2026-11-22).
     const cards = page.locator('.exp-card');
-    await expect(cards.first()).toBeVisible({ timeout: 25000 });
+    await expect(cards.first()).toBeVisible({ timeout: 35000 });
 
     await cards.first().click();
     // The detail view offers the two things you can do with a find: go to it,

@@ -204,7 +204,8 @@ test.describe('Two people, one group', () => {
 
   test('each member never sees the other\'s private details', async () => {
     // What "Who sees what" (Profile → Privacy) promises, read as member B.
-    const PRIVATE = /passport|ktn|global_entry|date_of_birth|tsa_precheck|quiz_answers|traveler_profile|no_way_jose|dietary|stripe_customer|phone|loyalty/i;
+    const PRIVATE = /passport|ktn|global_entry|date_of_birth|tsa_precheck|quiz_answers|traveler_profile|no_way_jose|dietary|stripe_customer|(?<!venue_|place_|business_)phone|loyalty/i;
+    // A venue's own phone number is the venue's, printed on its door; only a person's is private.
     const reads = [await api(B.page, `/api/groups/${QA_GROUP}`), await api(B.page, '/api/groups')];
     if (planId) reads.push(await api(B.page, `/api/plans/${planId}/readiness`));
     for (const r of reads) {
