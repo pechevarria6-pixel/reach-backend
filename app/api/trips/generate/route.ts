@@ -576,7 +576,7 @@ export async function POST(req: NextRequest) {
   // yet would take the whole feature down rather than one line of a prompt.
   const WITH_SUMMARY = `users(id,name,budget_range,climate_preference,dietary_needs,
       favorite_activities,cuisines,music_genres,dining_vibe,drink_style,nightlife_style,
-      concert_types,activity_vibe,no_way_jose,trip_summary)`;
+      concert_types,activity_vibe,no_way_jose,trip_summary,crowd_tolerance)`;
   const WITHOUT_SUMMARY = `users(id,name,budget_range,climate_preference,dietary_needs,
       favorite_activities,cuisines,music_genres,dining_vibe,drink_style,nightlife_style,
       concert_types,activity_vibe,no_way_jose)`;

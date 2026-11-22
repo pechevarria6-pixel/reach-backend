@@ -214,6 +214,8 @@ export interface QuizAnswers {
   drinks?: string[] | null;
   seating?: string[] | null;
   night_out?: OneOrMore<NightOutChoice>;
+  /** "Busy places?" — picks that blend into users.crowd_tolerance (lib/crowd-tolerance.ts). */
+  crowd?: OneOrMore<'love' | 'fine' | 'avoid'>;
   camera_roll?: ArchetypeKey | null;
   free_afternoon?: FreeAfternoonChoice | null;
   /** PRIVATE. Their own words. */

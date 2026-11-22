@@ -39,6 +39,7 @@ import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor, stepCounter } from "@/lib/quiz-steps";
 import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, waitRefusal, changeRefusal, planCalled } from "@/lib/plan-words";
 import { QUIZ_SCREENS, QUIZ_COUNT_WORD, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
+import { CROWD_OPTIONS } from "@/lib/crowd-tolerance";
 import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
@@ -5425,6 +5426,49 @@ function DripCard({id,userId,onChange,onAnswered,toast}){
             </button>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+// ─── "Busy places?", any time, in Profile ─────────────────────────────────
+// The quiz asks it once (lib/quiz-screens.ts); this is where it is changed.
+// Pick all that fit, then Save, the same as the quiz screen. Shows what is
+// saved now, and says nothing was saved when nothing was.
+function CrowdSetting({saved,onChange,toast}){
+  const start=Array.isArray(saved)?saved:saved?[saved]:[];
+  const [sel,setSel]=useState(start);
+  const [busy,setBusy]=useState(false);
+  const changed=sel.slice().sort().join()!==start.slice().sort().join();
+  const save=async()=>{
+    if(busy||!sel.length)return;
+    setBusy(true);
+    const r=await postQuiz({answers:{crowd:sel}});
+    setBusy(false);
+    if(!r.ok){toast(r.error);return;}
+    toast("Saved — trip ideas weigh it from here on.");
+    if(onChange)onChange();
+  };
+  return(
+    <div style={{margin:"0 20px 14px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,padding:"12px 14px"}}>
+      <div style={{fontSize:14,fontWeight:600,color:C.t1}}>Busy places?</div>
+      <div style={{fontSize:12,color:C.t2,marginTop:2}}>{start.length?"Pick all that fit.":"Not answered yet. Pick all that fit."}</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:10}}>
+        {CROWD_OPTIONS.map(o=>{
+          const on=sel.includes(o.v);
+          return(
+            <button key={o.v} disabled={busy} aria-pressed={on}
+              onClick={()=>setSel(cur=>on?cur.filter(x=>x!==o.v):[...cur,o.v])}
+              style={{padding:"7px 11px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",minHeight:44,
+                border:"1.5px solid "+(on?C.accent:C.border),background:on?C.accentDim:C.s2,
+                color:on?C.accentText:C.t1,fontFamily:"var(--font-body)"}}>
+              <span aria-hidden="true">{o.e}</span> {o.l}
+            </button>
+          );
+        })}
+      </div>
+      {changed&&sel.length>0&&(
+        <button className="bsm bsm-p" style={{marginTop:10}} disabled={busy} onClick={save}>{busy?"Saving…":"Save"}</button>
       )}
     </div>
   );
@@ -16432,6 +16476,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           just a one-off at sign-up — what you are into in March is not what
           you were into in November. */}
       {profileDrip&&<DripCard id={profileDrip} userId={user?.id} toast={toast} onChange={onIdentityChange}/>}
+      {profileQuiz&&<CrowdSetting saved={profileQuiz.answers?.crowd} onChange={onIdentityChange} toast={toast}/>}
       <Row icon={profileQuiz?.profile?.primary?RESULT_COPY[profileQuiz.profile.primary].emoji:"✨"} title="What kind of traveller you are"
         sub={profileQuiz?.profile
           ?headline(profileQuiz.profile)

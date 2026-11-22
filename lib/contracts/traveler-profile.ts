@@ -16,6 +16,7 @@ import {
   ARCHETYPES, DIALS, FIRST_MOVE, PLAN, RESTAURANT, LATE, NIGHT_OUT, FREE_AFTERNOON,
   type QuizAnswers as QuizAnswersType, type TravelerProfile as TravelerProfileType,
 } from '../traveler-profile.ts';
+import { CROWD } from '../crowd-tolerance.ts';
 
 const keysOf = <T extends object>(o: T) => Object.keys(o) as [string, ...string[]];
 const Archetype = z.enum(ARCHETYPES as unknown as [string, ...string[]]);
@@ -46,6 +47,7 @@ export const QuizAnswers = z.object({
   drinks: shortList.nullish(),
   seating: shortList.nullish(),
   night_out: oneOrMore(NIGHT_OUT),
+  crowd: oneOrMore(CROWD),
   camera_roll: Archetype.nullish(),
   free_afternoon: z.enum(keysOf(FREE_AFTERNOON)).nullish(),
   free_interests: z.string().max(300).nullish(),

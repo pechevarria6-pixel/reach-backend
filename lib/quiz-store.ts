@@ -10,6 +10,7 @@ import {
   type QuizAnswers, type TravelerProfile, type V2Columns, type PublicProfile,
 } from './traveler-profile.ts';
 import { QuizAnswers as QuizAnswersSchema, TravelerProfile as TravelerProfileSchema } from './contracts/traveler-profile.ts';
+import { crowdFromPicks } from './crowd-tolerance.ts';
 
 type PgError = { code?: string; message?: string } | null | undefined;
 
@@ -17,7 +18,7 @@ type PgError = { code?: string; message?: string } | null | undefined;
 export function quizColumnsMissing(e: PgError): boolean {
   if (!e) return false;
   return e.code === '42703' || e.code === 'PGRST204' || e.code === '42P01'
-    || /quiz_version|quiz_answers|traveler_profile|quiz_skipped_at/.test(e.message || '');
+    || /quiz_version|quiz_answers|traveler_profile|quiz_skipped_at|crowd_tolerance/.test(e.message || '');
 }
 
 const V2_SELECT = 'favorite_activities, activity_vibe, no_way_jose, dietary_needs, drink_style, dining_vibe, trip_summary';
@@ -157,6 +158,9 @@ export async function saveQuiz(db: SupabaseClient, userId: string, req: SaveRequ
   const v3: Record<string, unknown> = { quiz_answers: merged, traveler_profile: profile };
   if (req.finish) v3.quiz_version = 3;
   if (req.skip) v3.quiz_skipped_at = now.toISOString();
+  // "Busy places?" answered: the blend, stored where the destination
+  // selector reads it. Only when this request spoke to it.
+  if (req.answers && 'crowd' in req.answers) v3.crowd_tolerance = crowdFromPicks(req.answers.crowd);
 
   if (current.stored) {
     const { error } = await db.from('users').update({ ...v2, ...v3 }).eq('id', userId);
