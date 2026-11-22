@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { archetypeFor, playbookGuidance, PlaybookSchema } from '@/lib/playbooks';
 import { datedDays, today } from '@/lib/calendar';
 import { pickThree, widened, SELECT_CONFIG, type Pick } from '@/lib/destination-select';
-import { groupContextFrom, fixedPlacesBlock, readBackPlaces, tierPriced, fewerWords } from '@/lib/destination-context';
+import { groupContextFrom, fixedPlacesBlock, readBackPlaces, tierPriced, fewerWords, tagPickersFrom, askedTags } from '@/lib/destination-context';
+import { pitchHits, stripClaims, whyThisLine, forbiddenClaimsLine } from '@/lib/claims';
+import { askForJSON } from '@/lib/anthropic';
 import { loadCandidates, visitedIds, recordServed } from '@/lib/destination-candidates';
 import { report } from '@/lib/report';
 import { requireGroupMember, groupMemberIds, isFail } from '@/lib/auth';
@@ -1594,6 +1596,8 @@ you have made up; a day that is simply a good day is allowed to be one.`;
   // Only for an open-ended trip: a place they named is theirs (fixedPlace),
   // and an evening happens where they are.
   let picks: Pick[] | null = null;
+  // For the "Why this" line, built in code once the options are back.
+  let why: { pickers: Record<string, number>; asked: string[]; month: number | null } | null = null;
   const widenStep = widen === 1 || widen === 2 ? (widen as 1 | 2) : 0;
   if (process.env.DESTINATION_SELECT === 'on' && !isNightPlan && !fixedPlace) {
     const todayISO = today();
@@ -1605,10 +1609,12 @@ you have made up; a day that is simply a good day is allowed to be one.`;
     } else {
       if (loaded.notes.length) console.log('[generate] destination selection', { notes: loaded.notes });
       const been = groupId ? await visitedIds(supabase, String(groupId), todayISO, loaded.candidates) : [];
+      const types = together?.tripTypes.length ? together.tripTypes : (tripPrefs.tripType || []);
       let g = groupContextFrom({
-        members: prefs, goal, tripTypes: together?.tripTypes.length ? together.tripTypes : (tripPrefs.tripType || []),
+        members: prefs, goal, tripTypes: types,
         budgetPerPersonDollars: effectiveBudget, excludedIds: been,
       });
+      why = { pickers: tagPickersFrom(prefs), asked: askedTags(goal, types), month };
       let cfg = SELECT_CONFIG;
       if (widenStep) ({ g, cfg } = widened(g, cfg, widenStep));
       picks = pickThree(loaded.candidates, g, cfg);
@@ -1878,6 +1884,39 @@ Return JSON only, shaped exactly like this:
         }
         return [{ ...trip, ...(tier ? { tier } : {}), destination_id: pick.candidate.id, why_reasons: pick.reasons }];
       });
+      // ── Claims need their evidence (lib/claims.ts) ──
+      // "Less crowded" only with a quiet-this-month figure, "eco-friendly"
+      // only with a sustainability source, "hidden gem" never. A pitch that
+      // says one anyway is rewritten once with the phrase forbidden; a
+      // second miss loses the sentence. Then the "Why this" line, from the
+      // reasons, in code.
+      const hit = priced.map(t => pitchHits(t as Record<string, unknown>, t.why_reasons));
+      if (hit.some(h => h.length)) {
+        console.error('[trips generate] pitch made a claim nothing stands behind', { groupId, hits: hit.map((h, i) => h.length ? { city: (priced[i] as any).city, h } : null).filter(Boolean) });
+        try {
+          const fixPrompt = `Rewrite these travel-option fields so they keep their meaning but make none of these claims. ${forbiddenClaimsLine()}
+Return JSON {"fixes":[{"index":0,"tagline":"","vibe":"","why_this_group":""}]} with one entry per option below, same index, same length limits (tagline at most ten words, why_this_group one sentence).
+${JSON.stringify(priced.map((t: any, index) => ({ index, tagline: t.tagline, vibe: t.vibe, why_this_group: t.why_this_group })))}`;
+          const fixed = await askForJSON({
+            client, model: FAST_MODEL, maxTokens: 2000, prompt: fixPrompt, label: 'trips generate claims', meter,
+            schema: { type: 'object', additionalProperties: false, required: ['fixes'], properties: { fixes: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['index', 'tagline', 'vibe', 'why_this_group'], properties: { index: { type: 'integer' }, tagline: { type: 'string' }, vibe: { type: 'string' }, why_this_group: { type: 'string' } } } } } },
+          });
+          const fixes = JSON.parse(textOf(fixed)) as { fixes?: { index: number; tagline: string; vibe: string; why_this_group: string }[] } | null;
+          for (const f of fixes?.fixes ?? []) {
+            const t = priced[f.index] as any;
+            if (!t || !hit[f.index]?.length) continue;
+            Object.assign(t, { tagline: f.tagline || t.tagline, vibe: f.vibe || t.vibe, why_this_group: f.why_this_group || t.why_this_group });
+          }
+        } catch (e: any) {
+          console.error('[trips generate] could not rewrite the claims; cutting the sentences instead', { groupId, status: e?.status });
+        }
+        for (const t of priced as any[]) {
+          for (const h of pitchHits(t, t.why_reasons)) t[h.field] = stripClaims(String(t[h.field] ?? ''), h.phrases);
+        }
+      }
+      for (const t of priced as any[]) {
+        t.why_this = why ? whyThisLine(t.why_reasons, { ...why, solo, travelMinutes: null }) : null;
+      }
       if (!priced.length) {
         return NextResponse.json({
           success: true, trips: [], fewer: fewerWords(0), canWiden: widenStep < 2,

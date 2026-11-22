@@ -118,6 +118,21 @@ const FAKE_SCIENCE = [
 const MONEY_WORDS = ['transfer', 'payout'];
 const TRAVEL_TRANSFER = /\b(?:airport|hotel|station|port|ferry|shuttle|ground|private|shared)[ -]transfers?\b|\btransfers? (?:to|from|between) (?:the |your )?(?:airport|hotel|station|port|terminal)s?\b/g;
 
+/**
+ * Claims about a place that need evidence Reach does not hold
+ * (REACH-DESTINATION-DIVERSITY-2026-11-22, Task 4). Banned in every string
+ * except lib/claims.ts, which defines them, checks pitches against the
+ * evidence, and builds the prompt sentence that forbids them — so no other
+ * file ever needs to spell one out. Kept equal to lib/claims.ts
+ * (BANNED_ALWAYS + the keys of CLAIM_EVIDENCE) by
+ * tests/unit/destination-claims.test.ts.
+ */
+const UNSUPPORTED_CLAIMS = [
+  'hidden gem', 'best-kept secret', 'undiscovered',
+  'less crowded', 'uncrowded', 'off the beaten path', 'eco-friendly', 'sustainable',
+];
+const CLAIMS_HOME = path.join('lib', 'claims.ts');
+
 /** Values that are never copy, wherever they turn up in a rendered string. */
 const NEVER_RENDERED = ['undefined', 'NaN', '[object Object]'];
 
@@ -209,7 +224,7 @@ for (const f of files) {
       const text = match[2];
       if (!/\s/.test(text)) continue;
       if (DATA_SHAPED.test(text)) continue;
-      for (const word of [...BANNED, ...BROKEN_PROMISES, ...FAKE_SCIENCE]) {
+      for (const word of [...BANNED, ...BROKEN_PROMISES, ...FAKE_SCIENCE, ...(f === CLAIMS_HOME ? [] : UNSUPPORTED_CLAIMS)]) {
         if (text.toLowerCase().includes(word)) {
           console.log(`  ${f}:${i + 1}  "${word}" in: ${text.slice(0, 68)}`);
           found++;

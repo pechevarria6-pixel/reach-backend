@@ -6805,6 +6805,14 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
                   ✨ {trip.why_this_group}
                 </div>
               )}
+              {/* "Why this", built in code from what members said and the
+                  figures we hold (lib/claims.ts whyThisLine) — never by the
+                  model. No reasons, no line. */}
+              {typeof trip.why_this==="string"&&trip.why_this&&(
+                <div style={{fontSize:11.5,color:C.t2,marginTop:4}}>
+                  Why this: {trip.why_this}
+                </div>
+              )}
             </div>
             <div style={{textAlign:"right",marginLeft:12}}>
               <div style={{fontFamily:"var(--font-display)",fontSize:28,color:voted?C.accentText:C.t1}}>

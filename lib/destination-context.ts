@@ -16,6 +16,7 @@
 
 import type { Candidate, CrowdTolerance, GroupContext, Pick, Tier } from './destination-select.ts';
 import { strictestCrowd, SELECT_CONFIG } from './destination-select.ts';
+import { forbiddenClaimsLine } from './claims.ts';
 
 /** Interests every town has; they say nothing about which town to pick. */
 export const GENERIC_TAGS = new Set(['places to eat', 'places to stay', 'food', 'drink', 'culture']);
@@ -102,6 +103,24 @@ export function tagWeightsFrom(input: { members: Member[]; goal?: string | null;
   return w;
 }
 
+/** How many members chose each tag — for the "Why this" line, never for scoring. */
+export function tagPickersFrom(members: Member[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const m of members) {
+    const mine = new Set([
+      ...list(m.favorite_activities).map(x => x.toLowerCase()),
+      ...list(m.cuisines).map(x => `${x.toLowerCase()} restaurants`),
+    ]);
+    for (const t of mine) if (!GENERIC_TAGS.has(t)) out[t] = (out[t] ?? 0) + 1;
+  }
+  return out;
+}
+
+/** The tags the trip's own words asked for: its blurb and its trip types. */
+export function askedTags(goal: string | null | undefined, tripTypes: string[] = []): string[] {
+  return [...new Set([...tagsInWords(goal), ...tripTypes.flatMap(t => TRIP_TYPE_TAGS[String(t).toLowerCase()] ?? [])])];
+}
+
 export function groupContextFrom(input: {
   members: Member[];
   goal?: string | null;
@@ -132,8 +151,7 @@ places where we hold verified venues. Write exactly ${picks.length} option${pick
 place below, in this order. Do not add a place, swap one, or rename one: "city"
 must be exactly the name given.
 ${lines.join('\n')}
-Never describe a place as less crowded, uncrowded, off the beaten path,
-eco-friendly or sustainable, and never call anything a hidden gem.`;
+${forbiddenClaimsLine()}`;
 }
 
 const norm = (s: unknown) => String(s ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
