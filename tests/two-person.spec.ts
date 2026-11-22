@@ -202,6 +202,18 @@ test.describe('Two people, one group', () => {
     expect(post.status).toBe(409);
   });
 
+  test('each member never sees the other\'s private details', async () => {
+    // What "Who sees what" (Profile → Privacy) promises, read as member B.
+    const PRIVATE = /passport|ktn|global_entry|date_of_birth|tsa_precheck|quiz_answers|traveler_profile|no_way_jose|dietary|stripe_customer|phone|loyalty/i;
+    const reads = [await api(B.page, `/api/groups/${QA_GROUP}`), await api(B.page, '/api/groups')];
+    if (planId) reads.push(await api(B.page, `/api/plans/${planId}/readiness`));
+    for (const r of reads) {
+      expect(r.status).toBe(200);
+      const keys = JSON.stringify(r.json).match(/"([a-z_]+)":/g) ?? [];
+      expect(keys.filter(k => PRIVATE.test(k)), 'a private field reached another member').toEqual([]);
+    }
+  });
+
   test('only the organiser can call it off — even when both try at once — and then both see it off', async () => {
     test.skip(!planId, 'no plan to call off');
     const [refused, off] = await Promise.all([

@@ -5431,6 +5431,80 @@ function DripCard({id,userId,onChange,onAnswered,toast}){
   );
 }
 
+// ─── Help: three answers and "Message us" ───────────────────────────────
+// The answers say only what the product does (no fee claims, no promises of
+// a reply time). The form says "Sent" only when /api/support says the email
+// provider took it; otherwise it shows the server's words and the address to
+// write to, so a failed send never reads as a sent one.
+const HELP_FAQ=[
+  {q:"How does paying work?",a:"Everyone pays their own share. Paying by bank is the default and takes a few days to clear; a card is one tap away. Nothing Reach books is booked until the money for it has cleared."},
+  {q:"What does Reach book, and what do I book?",a:"Reach books what it can book on your behalf. Some things, like many restaurants and tickets, are booked on the seller's own site — when you have, tap \"Booked it ✓\" so the group's settle-up knows."},
+  {q:"Who sees my answers and details?",a:"Your group sees your name, email and picture, your votes, and whether you're ready, never your answers or your documents. Profile, then Privacy, has the full list."},
+];
+const HELP_TOPICS=[{v:"booking",l:"A booking"},{v:"payment",l:"A payment"},{v:"account",l:"My account"},{v:"idea",l:"An idea"},{v:"other",l:"Something else"}];
+function HelpPanel({toast,planId=null,bookingRef=null}){
+  const [open,setOpen]=useState(null);
+  const [topic,setTopic]=useState(bookingRef?"booking":"other");
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [sent,setSent]=useState(false);
+  const [err,setErr]=useState(null);
+  const send=async()=>{
+    if(busy||!msg.trim())return;
+    setBusy(true);setErr(null);
+    try{
+      const r=await fetch("/api/support",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({topic,message:msg,planId,bookingRef})});
+      const d=await r.json().catch(()=>({}));
+      if(r.ok&&d.sent===true){setSent(true);setMsg("");}
+      else setErr(d.error||`We couldn't send that just now. Write to ${SUPPORT_EMAIL} and it reaches the same inbox.`);
+    }catch(e){
+      console.error("[help] send failed",e);
+      setErr(`Couldn't reach Reach — check your connection, or write to ${SUPPORT_EMAIL}.`);
+    }finally{setBusy(false);}
+  };
+  return(
+    <>
+      <div style={{padding:"0 20px 6px"}}><span className="sl">Quick answers</span></div>
+      {HELP_FAQ.map((f,i)=>(
+        <div key={i} style={{margin:"0 20px 8px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14}}>
+          <button onClick={()=>setOpen(cur=>cur===i?null:i)} aria-expanded={open===i}
+            style={{width:"100%",textAlign:"left",background:"none",border:"none",padding:"12px 14px",minHeight:44,cursor:"pointer",
+              fontSize:14,fontWeight:600,color:C.t1,fontFamily:"var(--font-body)"}}>{f.q}</button>
+          {open===i&&<div style={{padding:"0 14px 12px",fontSize:13,color:C.t2,lineHeight:1.6}}>{f.a}</div>}
+        </div>
+      ))}
+      <div style={{padding:"16px 20px 6px"}}><span className="sl">Message us</span></div>
+      <div style={{margin:"0 20px 20px"}}>
+        {sent?(
+          <div style={{background:C.greenDim,border:`1px solid ${C.green}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t1,lineHeight:1.5}}>
+            Sent. It's in our inbox, and the reply comes to your email.
+            <div style={{marginTop:8}}><button className="bsm" onClick={()=>setSent(false)}>Write another</button></div>
+          </div>
+        ):(
+          <>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+              {HELP_TOPICS.map(t=>(
+                <button key={t.v} aria-pressed={topic===t.v} onClick={()=>setTopic(t.v)}
+                  style={{padding:"7px 11px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",minHeight:44,
+                    border:"1.5px solid "+(topic===t.v?C.accent:C.border),background:topic===t.v?C.accentDim:C.s2,
+                    color:topic===t.v?C.accentText:C.t1,fontFamily:"var(--font-body)"}}>{t.l}</button>
+              ))}
+            </div>
+            {bookingRef&&<div style={{fontSize:12,color:C.t2,marginBottom:6}}>About booking {bookingRef}</div>}
+            <textarea value={msg} onChange={e=>setMsg(e.target.value.slice(0,2000))} rows={5} aria-label="Your message"
+              placeholder="What's going on?"
+              style={{width:"100%",boxSizing:"border-box",background:C.s2,border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",
+                fontSize:14,color:C.t1,fontFamily:"var(--font-body)",resize:"vertical"}}/>
+            {err&&<div role="alert" style={{fontSize:12.5,color:C.red,marginTop:8,lineHeight:1.5}}>{err}</div>}
+            <button className="bp" style={{marginTop:10}} disabled={busy||!msg.trim()} onClick={send}>{busy?"Sending…":"Send"}</button>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ─── "Busy places?", any time, in Profile ─────────────────────────────────
 // The quiz asks it once (lib/quiz-screens.ts); this is where it is changed.
 // Pick all that fit, then Save, the same as the quiz screen. Shows what is
@@ -7683,6 +7757,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     // quiz otherwise. Either way with the reason on the screen.
     const back=extra.planId?"wait":0;
     let answered=false; // as in TripPicks: after an answer, a throw is ours
+    // Time to options, tap to screen (Part B): read as p50/p95 from events.
+    const t0=Date.now();
+    const shown=(n,shared)=>trackEvent("options_shown",{ms:Date.now()-t0,count:n,mode:extra.mode||"trip",shared:!!shared,widen:extra.widen||0},{planId:extra.planId||null,groupId});
     try{
       const res=await fetch("/api/trips/generate",{
         method:"POST",
@@ -7728,6 +7805,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           setTrips(null);
           setStep("wait");
           setIdeasRev(r=>r+1);
+          shown(data.trips.length,true);
           if(data.saved)toast(`These are the ${extra.mode==="night"?"ideas for the night":"trip ideas"} the group is voting on`);
           else enrichWithItineraries(data.trips,sd||startDate,ed||endDate,extra);
           return;
@@ -7735,6 +7813,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         if(data.trips&&data.trips.length>0){
           setTrips(data.trips);
           setStep(2);
+          shown(data.trips.length,false);
           // People are voting on where to spend a week and a lot of money.
           // Showing three destination names and asking them to choose is not
           // enough information to choose with, so every option arrives with
@@ -16348,6 +16427,15 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
   }
 
   // ═══ Privacy ═══
+  if(section==="help"){
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Help"/>
+        <HelpPanel toast={toast}/>
+      </div>
+    );
+  }
+
   if(section==="privacy"){
     const c=data?.consent||{};
     const toggles=[
@@ -16370,6 +16458,19 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
             </div>
           </div>
         ))}
+        {/* Who sees what. Each line is what the API actually hands another
+            member (groups: name, email, picture; readiness: yes/no and the
+            names of missing fields, never the values) — tests/two-person.spec.ts
+            reads it as member B and checks the rest is absent. */}
+        <div style={{padding:"16px 20px 6px"}}><span className="sl">Who sees what</span></div>
+        <div style={{margin:"0 20px 6px",fontSize:13,color:C.t1,lineHeight:1.6}}>
+          <div style={{fontWeight:600,marginBottom:2}}>People in your groups see</div>
+          <div style={{color:C.t2}}>Your name, email address and picture · your votes · whether you've answered a trip's questions, not your answers · whether your travel details are ready, and which are missing, never the details · the airport you fly from on a trip with a flight · whether your share is paid.</div>
+          <div style={{fontWeight:600,margin:"10px 0 2px"}}>Nobody else sees</div>
+          <div style={{color:C.t2}}>Your answers to a trip's questions and your no-ways · your passport, trusted-traveller and loyalty numbers · your card · the summary of places you like, which nobody sees, you included.</div>
+        </div>
+        <Row icon="📄" title="Privacy Policy" sub="Everything Reach stores, and who else receives it"
+          right={<Ic.ChevR/>} onClick={()=>{window.location.href="/privacy";}}/>
         <div style={{padding:"16px 20px 6px"}}><span className="sl">Your data rights</span></div>
         <Row icon="⬇️" title="Download everything Reach holds"
           sub="A JSON export, as required by GDPR Article 20"
@@ -16548,6 +16649,8 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       <Row icon="🛡️" title="Privacy and your data"
         sub={data?.deletion?"Deletion scheduled":"Consent, export, deletion"}
         right={<Ic.ChevR/>} onClick={()=>setSection("privacy")}/>
+      <Row icon="💬" title="Help" sub="Quick answers, or message us"
+        right={<Ic.ChevR/>} onClick={()=>setSection("help")}/>
 
       <div style={{padding:"18px 20px 34px"}}>
         <button className="bs" style={{borderColor:C.red,color:C.red}} onClick={onSignOut}>Sign out</button>

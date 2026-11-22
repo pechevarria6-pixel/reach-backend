@@ -103,6 +103,9 @@ export const EVENT_NAMES = [
   // 2026-11-22). Server-only. Read by the weekly concentration readout:
   // the share of all offers taken by the five most-offered places.
   'destination_served',
+  // From pressing "Find our trips" to the options on screen, in ms, from the
+  // browser (Part B, time-saving): p50 and p95 are read from props.ms.
+  'options_shown',
 ] as const;
 
 export type EventName = typeof EVENT_NAMES[number];
@@ -153,6 +156,7 @@ export const BROWSER_EVENT_NAMES: readonly EventName[] = [
   'settle_up_link_opened',
   'settle_up_marked_paid',
   'celebration_shown',
+  'options_shown',
 ];
 
 const KNOWN = new Set<string>(EVENT_NAMES);

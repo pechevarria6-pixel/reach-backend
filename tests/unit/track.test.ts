@@ -54,8 +54,9 @@ test('only the listed names may be written', () => {
   // 17 before the onboarding quiz v3, whose section 8 adds eleven, nine more
   // for the checkout spec of 2026-09-25, and two for the pilot gate's debrief
   // and reconnection question (2026-11-08), and six for the pilot metrics
-  // (Observe, 2026-11-08), and one for destinations offered (2026-11-22).
-  assert.equal(EVENT_NAMES.length, 49);
+  // (Observe, 2026-11-08), one for destinations offered and one for time to
+  // options (2026-11-22).
+  assert.equal(EVENT_NAMES.length, 50);
   assert.equal(isEventName('destination_served'), true);
   for (const n of ['contribution_processing', 'contribution_failed', 'contribution_reversed']) assert.equal(isEventName(n), true, n);
   for (const n of ['debrief_submitted', 'reconnection_answered']) assert.equal(isEventName(n), true, n);
