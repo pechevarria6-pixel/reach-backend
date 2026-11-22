@@ -64,3 +64,10 @@ test('the app registers the worker and fetches the wallets it keeps', () => {
   assert.match(APP, /fetch\(`\/api\/plans\/\$\{encodeURIComponent\(id\)\}\/wallet`\)/);
   assert.match(APP, /if\(groupsLoading\|\|groupsError\|\|typeof window==="undefined"\)return;/);
 });
+
+test('a first visit waits for the worker to take the page before fetching, or nothing is kept', () => {
+  const at = APP.indexOf('await navigator.serviceWorker.ready;');
+  const body = APP.slice(at, APP.indexOf('/wallet`', at));
+  assert.match(body, /if\(!navigator\.serviceWorker\.controller\)\{/);
+  assert.match(body, /"controllerchange"/);
+});

@@ -16541,6 +16541,17 @@ export default function ReachApp({realUser,onSignOut}={}){
     (async()=>{
       if(!(await registerServiceWorker()))return;
       try{await navigator.serviceWorker.ready;}catch(e){console.warn("[offline] worker never became ready",e);return;}
+      // Ready is not the same as in charge of this page. On a first visit
+      // the worker activates after the page loaded, and a wallet fetched
+      // before it takes over goes past it and is never kept — seen on
+      // production: 200, and nothing saved. Wait for it to claim the page.
+      if(!navigator.serviceWorker.controller){
+        await new Promise(res=>{
+          const t=setTimeout(res,5000);
+          navigator.serviceWorker.addEventListener("controllerchange",()=>{clearTimeout(t);res();},{once:true});
+        });
+        if(!navigator.serviceWorker.controller){console.warn("[offline] the worker has not taken this page; wallets are kept from the next visit");return;}
+      }
       for(const id of ids){
         // Offline now, or the read failed: the copy already kept stands.
         try{await fetch(`/api/plans/${encodeURIComponent(id)}/wallet`);}catch(e){console.warn("[offline] could not refresh a kept wallet",id,e);}
