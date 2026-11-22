@@ -1,0 +1,12 @@
+{
+  "app/(app)/onboarding/page.tsx": 20,
+  "app/(legal)/layout.tsx": 12,
+  "app/invite/[token]/opengraph-image.tsx": 1,
+  "app/invite/[token]/page.tsx": 22,
+  "app/not-found.tsx": 12,
+  "app/opengraph-image.tsx": 1,
+  "app/page.tsx": 24,
+  "components/ReachApp.tsx": 1,
+  "components/ThemedAuth.tsx": 9,
+  "components/reach-app.jsx": 39
+}
