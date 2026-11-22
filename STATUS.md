@@ -19,7 +19,7 @@ Maintained by the coordinator. Updated 2026-11-08.
 | 1 | Owner blockers cleared | **false** | Sentry DSN; Reach's Stripe key account (`acct_1U4lDQ5GB2FVY7o…`) not reachable in the owner's dashboard login — its webhook events and BNPL settings unverified; Stripe live needs business verification |
 | 2 | Custody question answered by counsel | **false** | B2 counsel session pending (also gates P4 single-payer) |
 | 3 | Payment rail fixed (ACH default, native-only funding) | **false** | Code merged and live: bank-first (P1, verified live), processing state, native-only target, refunds/disputes, fee capture, kill switch, no BNPL. Not true until the Stripe webhook on Reach's key account subscribes to `payment_intent.processing`, `charge.succeeded`, `charge.dispute.*` |
-| 4 | Zero S1 UX items | **false** | Wave 0 ledger: 3 S1 · 39 S2 · 55 S3 (`UX-LEDGER.md`); stopped for owner review |
+| 4 | Zero S1 UX items | **true** (pending a production check of F19-02) | All 3 S1 fixed in Wave 1: F19-03 f6be78d, F08-01 b11809a, F19-02 6a438e6. 39 S2 · 55 S3 remain (`UX-LEDGER.md`) |
 | 5 | Monitoring and payments kill switch live | **false** | Kill switch live (`PAYMENTS_ENABLED`); health-alert workflow pushed; Sentry blocked on DSN |
 | 6 | Ten groups recruited | **false** | Owner (B4) |
 | 7 | Debrief script written | **true** | `docs/pilot/DEBRIEF-SCRIPT.md` (owner approval pending); debrief form live |
