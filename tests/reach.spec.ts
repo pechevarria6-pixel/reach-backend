@@ -111,10 +111,13 @@ test.describe('3. Discover tab', () => {
 
   test('Category filter pills exist', async ({ page }) => {
     // The pills come with the finds, never before them: the redesign
-    // (2026-11-05) shows no lone "All" over a skeleton. So this waits as long
-    // as the card test beside it, for the same answer.
+    // (2026-11-05) shows no lone "All" over a skeleton. The app itself waits
+    // up to 32 s for the finds (loadLocalRecs: a 12 s ask, then a 20 s
+    // retry), and a cold start on a parallel run used the retry: this failed
+    // at 25 s on 2026-11-22 while the screen still said "Finding things near
+    // you…". The test may not give up before the product does.
     const filters = page.locator('button:has-text("All")');
-    await expect(filters.first()).toBeVisible({ timeout: 25000 });
+    await expect(filters.first()).toBeVisible({ timeout: 35000 });
   });
 
   test('Experience cards are displayed', async ({ page }) => {
