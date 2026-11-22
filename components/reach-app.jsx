@@ -33,7 +33,8 @@ import { createPlanSteps } from "@/lib/create-plan-steps";
 import { picksFrom, seedFromPick } from "@/lib/contracts/trip-pick";
 import { howIsIt, climateLine, bestMonthsLine, climateCredit, fahrenheitFirst, climateIsFor, CLIMATE_CREDIT, CLIMATE_SOURCE_URL } from "@/lib/climate";
 import { ideaClimateFrom } from "@/lib/contracts/idea-climate";
-import { pushState, turnOnPush, forgetThisDevice } from "@/lib/push-client";
+import { pushState, turnOnPush, forgetThisDevice, registerServiceWorker } from "@/lib/push-client";
+import { walletsToKeep } from "@/lib/offline-trips";
 import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor, stepCounter } from "@/lib/quiz-steps";
 import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, waitRefusal, changeRefusal, planCalled } from "@/lib/plan-words";
@@ -16523,6 +16524,27 @@ export default function ReachApp({realUser,onSignOut}={}){
   // A 500 used to fall through to the empty state, so somebody with three
   // trips was told "Nothing planned yet" and invited to make a fourth.
   const [groupsError,setGroupsError]=useState(false);
+  // Offline (UX F19-02): the worker keeps each trip wallet it sees, and
+  // public/offline.html lists them on a cold open with no signal. Nothing
+  // asked for a wallet before, so nothing was ever kept. Once the trips are
+  // in, register the worker and fetch the wallets of the trips about to
+  // happen, quietly — the answer is for the worker, not the screen.
+  const walletsAsked=useRef("");
+  useEffect(()=>{
+    if(groupsLoading||groupsError||typeof window==="undefined")return;
+    const ids=walletsToKeep(groups,today());
+    const key=ids.join(",");
+    if(walletsAsked.current===key)return;
+    walletsAsked.current=key;
+    (async()=>{
+      if(!(await registerServiceWorker()))return;
+      try{await navigator.serviceWorker.ready;}catch(e){console.warn("[offline] worker never became ready",e);return;}
+      for(const id of ids){
+        // Offline now, or the read failed: the copy already kept stands.
+        try{await fetch(`/api/plans/${encodeURIComponent(id)}/wallet`);}catch(e){console.warn("[offline] could not refresh a kept wallet",id,e);}
+      }
+    })();
+  },[groups,groupsLoading,groupsError]);
   // /api/me has answered, so the onboarding gate below is deciding on facts
   // rather than on an empty user object.
   const [identityLoaded,setIdentityLoaded]=useState(false);

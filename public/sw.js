@@ -3,8 +3,13 @@
 // signal: the trip wallet (GET /api/plans/<id>/wallet) — the confirmation
 // numbers somebody needs at a desk in an airport with no Wi-Fi.
 //
-// Nothing else is cached. A stale copy of a trip is worse than a slow one,
-// and every other request passes straight through to the network.
+// And one page: /offline.html, kept at install, shown only when a page
+// cannot be reached at all (UX F19-02 — a cold open with no signal was a
+// blank white page, so the wallet kept for the airport desk could not be
+// reached). It holds nothing personal itself; it reads the wallet copies
+// below and lists them "as of" when each was fetched. The app's own pages
+// are never cached: a signed-in page is somebody's, and a stale copy of a
+// trip is worse than a slow one. Every other request passes straight through.
 //
 // The wallet is network first: the cached copy is used only when the
 // network cannot be reached, and it goes back marked `offline: true` with
@@ -13,14 +18,25 @@
 // A sign-out clears it (lib/push-client.ts clearOfflineWallet).
 const WALLET_CACHE = 'reach-wallet-v1';
 const WALLET_PATH = /^\/api\/plans\/[^/]+\/wallet$/;
+const SHELL_CACHE = 'reach-shell-v1';
+const OFFLINE_PAGE = '/offline.html';
+const SHELL = [OFFLINE_PAGE, '/logo-mark.png'];
 
-self.addEventListener('install', () => { self.skipWaiting(); });
+self.addEventListener('install', (event) => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(SHELL_CACHE);
+    // A failed precache must not stop the worker installing: the wallet and
+    // notifications still work without the offline page.
+    await cache.addAll(SHELL.map(u => new Request(u, { cache: 'reload' }))).catch(() => {});
+    await self.skipWaiting();
+  })());
+});
 
 self.addEventListener('activate', (event) => {
-  // Drop any cache that is not the wallet's — including older wallet versions.
+  // Drop any cache that is not ours — including older versions of either.
   event.waitUntil((async () => {
     const names = await caches.keys();
-    await Promise.all(names.filter(n => n !== WALLET_CACHE).map(n => caches.delete(n)));
+    await Promise.all(names.filter(n => n !== WALLET_CACHE && n !== SHELL_CACHE).map(n => caches.delete(n)));
     await self.clients.claim();
   })());
 });
@@ -53,11 +69,28 @@ async function wallet(request) {
   }
 }
 
+function isPage(request) {
+  if (request.mode !== 'navigate' || request.method !== 'GET') return false;
+  try { return new URL(request.url).origin === self.location.origin; } catch (e) { return false; }
+}
+
+// The network, always. Only when it cannot be reached at all — not a 500,
+// not a sign-in redirect, which are real answers — is the offline page shown.
+async function page(request) {
+  try {
+    return await fetch(request);
+  } catch (e) {
+    const kept = await caches.match(OFFLINE_PAGE, { cacheName: SHELL_CACHE });
+    if (kept) return kept;
+    throw e;
+  }
+}
+
 self.addEventListener('fetch', (event) => {
-  // Not the wallet: not touched. No respondWith, so the browser does exactly
+  if (isWallet(event.request)) { event.respondWith(wallet(event.request)); return; }
+  if (isPage(event.request)) { event.respondWith(page(event.request)); return; }
+  // Anything else: not touched. No respondWith, so the browser does exactly
   // what it would with no service worker at all.
-  if (!isWallet(event.request)) return;
-  event.respondWith(wallet(event.request));
 });
 
 self.addEventListener('message', (event) => {
