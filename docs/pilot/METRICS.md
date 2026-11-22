@@ -42,6 +42,8 @@ other in a readout.
 | Fee cost per trip | `payment_fee_cents_per_trip` | `contributions.stripe_fee_cents` | webhook (Rail, P6) | waiting on P6 |
 | Reconnection | `reconnection_answers`; distribution in `pilot_reconnection` | `reconnection_answered` prop `answer` | Verify/UX onboarding question | waiting on the question |
 | (cost) AI per trip | `ai_cost_usd_per_trip`, `ai_cost_usd_unattributed` | `ai_generation` | `app/api/trips/generate/route.ts`, every model call | live |
+| Destination concentration, offered (≤ 0.40) | `pilot_destination_concentration` where `kind = 'served'`: weekly `top5_share` | `destination_served` prop `destination_id` | generate route, once per place shown, only with `DESTINATION_SELECT=on` | view live 2026-11-22; empty until the switch is on |
+| Destination concentration, booked | `pilot_destination_concentration` where `kind = 'booked'` | `plans.destination_city` with a confirmed booking | bookings rows | view live 2026-11-22 |
 
 Two more events help keep an eye on the numbers above. Neither is a metric:
 

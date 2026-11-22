@@ -58,7 +58,7 @@ test('2: a failed "Plan my days for me" stays on screen under the button, and th
 });
 test('2: "Find our trips" shows the server\'s message as it is, with nothing added', () => {
   const trip = fn('GroupTripScreen');
-  assert.match(trip, /const msg=err\.error\|\|"Generation failed";/);
+  assert.match(trip, /const msg=humanError\(err\.error\)\|\|"Generation failed";/);
   assert.match(trip, /setError\(msg\);setErrorWaits\(waitRefusal\(res\.status,err\)\);/);
   assert.match(trip, /\{shownError\}/);
   assert.doesNotMatch(trip, /setError\(`\$\{msg\}.*try again/i);

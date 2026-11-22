@@ -8,8 +8,9 @@ import { readFileSync } from 'node:fs';
 import { QUIZ_SCREENS, needsDone, onOptionPress, stepAfter } from '../../lib/quiz-screens.ts';
 import { scoreQuiz } from '../../lib/traveler-profile.ts';
 
-test('six screens, and every one ends with Done', () => {
-  assert.equal(QUIZ_SCREENS.length, 6);
+test('seven screens, and every one ends with Done', () => {
+  // Six, then "Busy places?" (destination diversity, 2026-11-22).
+  assert.equal(QUIZ_SCREENS.length, 7);
   assert.deepEqual(QUIZ_SCREENS.filter(s => !needsDone(s)).map(s => s.id), []);
 });
 

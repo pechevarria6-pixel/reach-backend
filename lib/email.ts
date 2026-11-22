@@ -42,7 +42,7 @@ const shell = (title: string, body: string) => `
     </p>
   </div>`;
 
-async function send(to: string, subject: string, html: string, label: string): Promise<SendResult> {
+async function send(to: string, subject: string, html: string, label: string, replyTo?: string): Promise<SendResult> {
   const key = process.env.RESEND_API_KEY;
   if (!key) {
     // Loud but harmless: the request that triggered this carries on.
@@ -50,7 +50,7 @@ async function send(to: string, subject: string, html: string, label: string): P
     return { sent: false, reason: 'no_key' };
   }
   try {
-    const { data, error } = await new Resend(key).emails.send({ from: FROM, to, subject, html });
+    const { data, error } = await new Resend(key).emails.send({ from: FROM, to, subject, html, ...(replyTo ? { reply_to: replyTo } : {}) });
     if (error) {
       console.error(`[email] ${label} rejected`, error);
       return { sent: false, reason: 'rejected', detail: error.message };
@@ -318,4 +318,26 @@ export function sendPaidFailureAlert(opts: { subject: string; lines: string[] })
     .map(l => `<p style="font-size:14px;line-height:1.6;margin:0 0 8px;">${escape(l)}</p>`)
     .join('');
   return send(SUPPORT, opts.subject, shell('A paid booking failed', body), 'paid-failure alert');
+}
+
+// ── Support ──────────────────────────────────────────────────────────────
+
+/**
+ * A member's "Message us", to the founder's inbox, with Reply going straight
+ * back to them. The caller says "sent" only when this returns sent: true.
+ */
+export function sendSupportMessage(opts: { fromEmail: string; fromName: string | null; topic: string; message: string; plan: string | null; bookingRef: string | null; userId: string }) {
+  const rows = [
+    ['From', `${escape(opts.fromName || '')} &lt;${escape(opts.fromEmail)}&gt;`],
+    ['About', escape(opts.topic)],
+    ...(opts.plan ? [['Trip', escape(opts.plan)]] : []),
+    ...(opts.bookingRef ? [['Booking ref', escape(opts.bookingRef)]] : []),
+    ['User id', escape(opts.userId)],
+  ];
+  return send(SUPPORT, `Reach help: ${opts.topic}`, shell('A message from a member', `
+    <table style="width:100%;font-size:14px;border-collapse:collapse;margin-bottom:16px;">
+      ${rows.map(([k, v]) => `<tr><td style="padding:6px 0;color:#635539;">${k}</td><td style="padding:6px 0;text-align:right;">${v}</td></tr>`).join('')}
+    </table>
+    <p style="font-size:15px;line-height:1.6;margin:0;white-space:pre-wrap;">${escape(opts.message)}</p>
+  `), 'support message', opts.fromEmail);
 }

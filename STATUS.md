@@ -8,6 +8,107 @@ Legend: ✅ done · 🟡 partial · ❌ missing · 🔒 owner-blocked
 
 ---
 
+## Destination diversity — REACH-DESTINATION-DIVERSITY-2026-11-22.md · Task 0 ground truth
+
+Checked 2026-11-22 against the code (main `f7535a8`) and the live schema (PostgREST's
+own description, plus read-only aggregate queries in the Supabase SQL editor; no user
+rows read). Every name the directive guessed is corrected here; Part A uses these.
+
+### Where destinations are chosen today
+- `app/api/trips/generate/route.ts`, **stage 1** ("Fast — just destinations + cost
+  estimates", ~line 1547). The destination is picked by the model **from free recall**
+  (`FAST_MODEL`, `claude-haiku-4-5`), steered only by prompt text ("vary the region
+  and the type of destination"). `destination_profiles` is **not read** anywhere in
+  generation; the only file touching it is `scripts/ingest/build-seeds.mjs`.
+- The read-back the directive relies on ("the existing read-back validator rejects
+  output naming any other") **does not exist for destinations**. `applyRules`
+  (`lib/generation-rules.ts`) only enforces a *fixed* place (`fixedPlace` /
+  `nightCity`); `normalizeTrips` (`lib/trip-schema.ts`) drops repeats. The venue
+  read-back is `lib/itinerary-readback.ts` (stage 2). Task 3 has to add a destination
+  read-back, not reuse one.
+
+### Tables and columns (live)
+| Directive says | Real | Notes |
+|---|---|---|
+| `destination_profiles` | ✅ exists: `id uuid, city, region, country, lat, lng, profile jsonb, profile_version, status, error, refreshed_at, expires_at, created_at, updated_at` | **26 rows, all `status='queued'`, 0 `ready`, 0 with lat/lng, `profile` empty.** 17 distinct cities: Aberdeen, Asheville, Austin, Cancun×3, Charleston, Charlotte, Denver, Fayetteville, Las Vegas, Miami, Nashville, Nassau×3, New Orleans, New York, Raleigh, San Diego, San Juan×3, Southern Pines, Washington, Wilmington |
+| `destination_profiles.region` (add) | **already exists**, but it is a **US state code** (NC 7, SC/TN/TX/… 1 each, null 9) | Not a travel region. "No two options in the same region" on this column means at most one NC place. Selector uses distance (150 km) as the spread rule and treats `region` as a fallback only when coordinates are missing — see Task 2 |
+| `lat`, `lng` (add) | **already exist**, all null | Must be filled (geocode or `discovery_areas`) before distance spread can bite |
+| unique key | `UNIQUE (city, region, country)` | NULL region defeats it: Cancun, Nassau, San Juan are each **3 rows**. Dedupe before seeding (owner, data only) |
+| `status` check | `queued · enriching · ready · failed` | Nothing moves rows out of `queued`; the AI enrichment decision (C1) is still the owner's. **The selector needs none of `profile`.** |
+| `popularity_score`, `popularity_source`, `crowd_by_month`, `evidence` | ❌ absent | No popularity source in the repo. Null everywhere until a real figure is loaded; null = unknown |
+| `destination_exposure` | ❌ absent | Directive DDL is right as written (FK to `destination_profiles(id) uuid`) |
+| `groups.taste_profile` | exists (`jsonb`, plus `taste_refreshed_at`) | **Nothing reads or writes it.** Per-person taste is `user_taste_profile` (distilled daily by `lib/taste-profile.ts`). GroupContext reads that, not this column |
+| `plan_preferences` ("each member's trip input") | ✅ `id, plan_id, user_id, answers jsonb, summary_text, submitted_at, created_at, updated_at` | Read via `readGroupAnswers` in `lib/group-answers.ts` |
+| events table | ✅ `events (id, created_at, user_id, group_id, plan_id, name, props jsonb)` | **No event records which destinations were offered.** Last 60 days: `ai_generation` 193, `booking_created` 7, `trip_input_submitted` 2. `topKShare` for *served* needs a new allow-listed event (`destination_served`) in `lib/track.ts`; *booked* can come from `plans.destination_city` on booked plans |
+| `users.crowd_tolerance` (add) | ❌ absent; table is `public.users` | See onboarding below |
+| Candidate `tags` | ❌ no column anywhere | Proposed source, verified rather than written: the interests of a city's `discovery_venues` (`interest`, `kind`) with counts |
+| Candidate `verifiedVenueCount` | `discovery_venues` where `gone_at is null`, by `city` | Every profiled city clears 5: Cancun 27 · Nassau 48 · Southern Pines 64 · … New York 2,940 |
+
+### Unit-test runner
+`node:test` with `--experimental-strip-types` (`npm run test:unit`): **203 files, 2,613
+tests** (not 270). Task 6 tests use it.
+
+### Onboarding: crowd tolerance and accessibility
+- **Crowd:** no destination-level answer. Two existing signals, both about *rooms*, not
+  places: the quiz `crowd` dial (`lib/traveler-profile.ts`: small table → packed
+  stadium) and "Big crowds" in "No way, José" (`dislikes`). Quiz keys in use:
+  `first_move, interests, plan, restaurant, late, dietary, dislikes, drinks, seating,
+  eat_everything, free_interests, camera_roll, dial_overrides`.
+- **Accessibility:** ❌ not captured anywhere (no column, no quiz key). Not added
+  without Peter's go-ahead (quiz length is capped).
+
+### Part A — done 2026-11-22 (branch `feat/destination-diversity`, not merged)
+| Task | Commit | State |
+|---|---|---|
+| 0 Ground truth | bd687f5 | this section |
+| 1 Migration | ce56d8e | **applied** 2026-11-22 (owner's go-ahead), dry run first; verified: 4 new profile columns, `destination_exposure` with RLS, `bump_destination_exposure`, `users.crowd_tolerance` |
+| 2 Selector | 3435a34 | `lib/destination-select.ts` |
+| 3 Generation | f6f3930 | behind `DESTINATION_SELECT=on` (**off**); `destination_venue_tags` view **applied** (587 rows) |
+| 4 Claims + "Why this" | f0ccd9d | guard in `check:vocabulary`; note it skips all-lowercase strings (an existing limit of the guard) |
+| 5 Crowd tolerance | d08ebf6 | 7th quiz screen, pick-all-that-fit (owner's rule over the directive's "one tap"); Profile setting |
+| 6 Tripwire | b99944e | fixture top-5 share **0.375** (0.458 with the rules off); `pilot_destination_concentration` **applied** |
+
+**Before switching it on:** the production catalogue is 17 places, all coordinates null,
+three cities in triplicate. The tripwire needed ~36 well-spread places to hold 0.40 —
+a 24-place fixture could not, whatever the weights. Seed coordinates (and dedupe the
+triplicates: data deletion, owner's call) and grow the catalogue first.
+
+### Part B audit (2026-11-22, against main; read-only audit, key claims spot-checked)
+| Expectation | State | What is there / the gap |
+|---|---|---|
+| Useful: one primary action | 🟡 | `getNextAction` drives Home, group, plan and checkout. Discover has no primary; Home can show 4 "Waiting on you" actions; plan detail carries up to 7 primary-styled buttons depending on state. Needs a screen-by-screen walk |
+| Easy: one-screen creation < 60 s | ❌ | A trip is 7 steps (`lib/create-plan-steps.ts`); only Where is prefilled; no e2e creates a trip |
+| Time-saving: time to first option | ❌ | One JSON response, no streaming; no timing event (`ai_generation` logs cost, not latency) |
+| Productivity: invite → input in one run | ❌ | Events exist; no e2e covers the invite page through to trip input |
+| Clear: human 4xx copy | 🟡 | Vocabulary guard green; ~243 4xx sites, ~90 with developer strings ("groupId required", "Forbidden"); no client-side map |
+| Engaging: Why this + celebration | 🟡 | Celebration live and tracked; the evidence-backed "Why this" is on this branch (Task 4); no render test yet |
+| Branding: tokens only | 🟡 | Fonts are tokens; ~46 raw hex in the app outside the palette and ~100 more across other pages; no guard bans them |
+| Support: Help + Message us | ❌ | No route, no Profile entry; `lib/email.ts send()` already reports a provider refusal |
+| Privacy: Who sees what | 🟡 | /privacy and /terms exist; the in-app Privacy screen never links to them; no test that member B cannot read A's details |
+| Your Reach card | ❌ | Profile has the trips map only; "last together" is a chosen bucket, not data |
+
+**Part B progress (2026-11-22, on the PR branch):**
+- ✅ Support: Help in Profile + `POST /api/support` (f4d7a23)
+- ✅ Privacy: "Who sees what", policy link, member-B field test in the two-person e2e (f4d7a23)
+- 🟡 Time-saving: `options_shown` ms recorded (f4d7a23); options still arrive as one set, not one at a time
+- ✅ Your Reach card (6e98f84)
+- 🟡 Branding: `check:raw-hex` ratchet at 141 in verify (ffc0ada); converting them is still to do
+- ✅ Human 4xx copy: `lib/human-error.ts` (dee0d2e, b448b1b): known developer strings ("Forbidden", "Booking not found") become a sentence with a next step; unknown ones give way to the screen's fallback; a dropped connection says so instead of "Failed to fetch". 63 server-error sites and 32 thrown-message toasts go through it; a unit test fails on a raw one (planted, fired)
+- ✅ "Why this" carried: generator → saved ideas → read back → card, on first showing and on the Vote tab (262280f). Seeing it on screen in production still needs `DESTINATION_SELECT=on`
+- ❌ still to do: one-primary walk, trip-creation e2e under 60 s, invite → input e2e, options one at a time, converting the 141 colours
+- Note for the owner: group members see each other's **email address** (groups API returns it). "Who sees what" says so; whether they should is your call.
+
+### What this means for Part A (read before Task 3 merges)
+- **The catalogue is 17 cities, 7 of them in NC.** With code choosing the place, an
+  open-ended request the catalogue cannot meet (skiing, a beach abroad) returns fewer
+  options or none — honest, per the directive, but a real change for anyone outside
+  the pilot area. Task 3 therefore lands **behind a switch** (`DESTINATION_SELECT=on`,
+  off by default) so it can merge before the catalogue is seeded.
+- Spread by state code would forbid two NC options; spread by 150 km needs lat/lng,
+  which are all null today. Both are data gaps, not code gaps.
+
+---
+
 ## Pilot gate — REACH-PILOT-GATE-2026-11-08.md
 
 Maintained by the coordinator. Updated 2026-11-08.

@@ -25,6 +25,7 @@ import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
 import { byDay, dearestDay, linesYoureOff, lineCosts, budgetSplit, budgetLine } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
+import { humanError, errorWords } from "@/lib/human-error";
 import { groupPills, categoryGroup } from "@/lib/discovery/category";
 import { upcomingSections, dayRoll, capSections, rowsIn, milesOf } from "@/lib/discovery/upcoming";
 import { kindWord, withKindWord } from "@/lib/discovery/kind-word";
@@ -39,6 +40,8 @@ import { answersFromGoal, summarise, modeFromGoal } from "@/lib/goal";
 import { stepsFor, stepCounter } from "@/lib/quiz-steps";
 import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, waitRefusal, changeRefusal, planCalled } from "@/lib/plan-words";
 import { QUIZ_SCREENS, QUIZ_COUNT_WORD, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
+import { CROWD_OPTIONS } from "@/lib/crowd-tolerance";
+import { yourReach, sinceWords } from "@/lib/your-reach";
 import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
@@ -589,7 +592,7 @@ async function sendOnce(url,{method="POST",body,key}){
   const r=await fetch(url,{method,keepalive:true,
     headers:{"Content-Type":"application/json","Idempotency-Key":key},
     ...(body!==undefined?{body:JSON.stringify(body)}:{})});
-  if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"");}
+  if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(humanError(d.error)||"");}
   return r.json().catch(()=>({}));
 }
 
@@ -1154,7 +1157,7 @@ function TripPicks({push,userLocation,toast,groups}){
     try{
       const r=await fetch("/api/recommendations/feedback",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({itemRef:p.ref,verdict:"not_interested",vertical:"trip",title:p.title})});
-      if(!r.ok){const e=await r.json().catch(()=>({}));toast(e.error||"Couldn't hide that just now");return;}
+      if(!r.ok){const e=await r.json().catch(()=>({}));toast(humanError(e.error)||"Couldn't hide that just now");return;}
       setHidden(h=>new Set([...h,p.ref]));
     }catch(e){console.error("[home] could not hide a trip idea",e);toast("Couldn't hide that — check your connection");}
     finally{setBusy(null);}
@@ -2251,7 +2254,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
         setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
         setVisited(v=>{const n=new Set(v);n.delete(ref);return n;});
         setUndo(null);
-        toast(d.error||"Couldn't save that");
+        toast(humanError(d.error)||"Couldn't save that");
       }
     }catch(e){
       console.error("[discover] could not save that",e);
@@ -3800,7 +3803,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         body:JSON.stringify(payload),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't add them");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't add them");
       if(d.invited){
         toast(d.emailed?`Invite sent to ${d.email}`:`Invite ready for ${d.email}`);
         if(!d.emailed&&d.acceptUrl){try{await navigator.clipboard?.writeText(d.acceptUrl);toast("Link copied — go on, paste it somewhere");}catch(e){}}
@@ -3810,7 +3813,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         if(refreshGroup)refreshGroup(groupId);
       }
       setQ("");setResults([]);
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(false);}
   };
 
@@ -3850,7 +3853,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       if(!r.ok){
         const err=await r.json().catch(()=>({}));
         console.error("[invites] withdraw refused",r.status,err);
-        toast(err.error||"Couldn't withdraw that invite");
+        toast(humanError(err.error)||"Couldn't withdraw that invite");
         return;
       }
       toast("Invite pulled back");loadInvites();
@@ -3892,7 +3895,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
   const doDelete=async()=>{
     if(working||!nameMatches)return;setWorking(true);
     try{ await deleteGroup(groupId); toast(`${group.name} deleted`); }
-    catch(e){ toast(e.message); setWorking(false); }
+    catch(e){ toast(errorWords(e,"That didn't go through — try again.")); setWorking(false); }
   };
 
   return(
@@ -4610,7 +4613,7 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refre
       });
       if(!r.ok){
         const d=await r.json().catch(()=>({}));
-        throw new Error(d.error||"Couldn't save that");
+        throw new Error(humanError(d.error)||"Couldn't save that");
       }
       toast("Thanks — that's you in");
       // What's next for it has changed: Home and the group must not answer from the cached reads.
@@ -4622,7 +4625,7 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refre
       else onBack();
     }catch(e){
       console.error("[plan preferences] save failed",e);
-      setSaveErr(e.message);
+      setSaveErr(errorWords(e,"That didn't save — try again."));
     }
     setSaving(false);
   };
@@ -4707,7 +4710,7 @@ async function postQuiz(body){
   try{
     const r=await fetch("/api/me/quiz",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok)return {ok:false,error:d.error||"Couldn't save that — try again"};
+    if(!r.ok)return {ok:false,error:humanError(d.error)||"Couldn't save that — try again"};
     return {ok:true,profile:d.profile||null,stored:d.stored===true};
   }catch(e){
     console.error("[quiz] save failed",e);
@@ -5430,6 +5433,123 @@ function DripCard({id,userId,onChange,onAnswered,toast}){
   );
 }
 
+// ─── Help: three answers and "Message us" ───────────────────────────────
+// The answers say only what the product does (no fee claims, no promises of
+// a reply time). The form says "Sent" only when /api/support says the email
+// provider took it; otherwise it shows the server's words and the address to
+// write to, so a failed send never reads as a sent one.
+const HELP_FAQ=[
+  {q:"How does paying work?",a:"Everyone pays their own share. Paying by bank is the default and takes a few days to clear; a card is one tap away. Nothing Reach books is booked until the money for it has cleared."},
+  {q:"What does Reach book, and what do I book?",a:"Reach books what it can book on your behalf. Some things, like many restaurants and tickets, are booked on the seller's own site — when you have, tap \"Booked it ✓\" so the group's settle-up knows."},
+  {q:"Who sees my answers and details?",a:"Your group sees your name, email and picture, your votes, and whether you're ready, never your answers or your documents. Profile, then Privacy, has the full list."},
+];
+const HELP_TOPICS=[{v:"booking",l:"A booking"},{v:"payment",l:"A payment"},{v:"account",l:"My account"},{v:"idea",l:"An idea"},{v:"other",l:"Something else"}];
+function HelpPanel({toast,planId=null,bookingRef=null}){
+  const [open,setOpen]=useState(null);
+  const [topic,setTopic]=useState(bookingRef?"booking":"other");
+  const [msg,setMsg]=useState("");
+  const [busy,setBusy]=useState(false);
+  const [sent,setSent]=useState(false);
+  const [err,setErr]=useState(null);
+  const send=async()=>{
+    if(busy||!msg.trim())return;
+    setBusy(true);setErr(null);
+    try{
+      const r=await fetch("/api/support",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({topic,message:msg,planId,bookingRef})});
+      const d=await r.json().catch(()=>({}));
+      if(r.ok&&d.sent===true){setSent(true);setMsg("");}
+      else setErr(humanError(d.error)||`We couldn't send that just now. Write to ${SUPPORT_EMAIL} and it reaches the same inbox.`);
+    }catch(e){
+      console.error("[help] send failed",e);
+      setErr(`Couldn't reach Reach — check your connection, or write to ${SUPPORT_EMAIL}.`);
+    }finally{setBusy(false);}
+  };
+  return(
+    <>
+      <div style={{padding:"0 20px 6px"}}><span className="sl">Quick answers</span></div>
+      {HELP_FAQ.map((f,i)=>(
+        <div key={i} style={{margin:"0 20px 8px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14}}>
+          <button onClick={()=>setOpen(cur=>cur===i?null:i)} aria-expanded={open===i}
+            style={{width:"100%",textAlign:"left",background:"none",border:"none",padding:"12px 14px",minHeight:44,cursor:"pointer",
+              fontSize:14,fontWeight:600,color:C.t1,fontFamily:"var(--font-body)"}}>{f.q}</button>
+          {open===i&&<div style={{padding:"0 14px 12px",fontSize:13,color:C.t2,lineHeight:1.6}}>{f.a}</div>}
+        </div>
+      ))}
+      <div style={{padding:"16px 20px 6px"}}><span className="sl">Message us</span></div>
+      <div style={{margin:"0 20px 20px"}}>
+        {sent?(
+          <div style={{background:C.greenDim,border:`1px solid ${C.green}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t1,lineHeight:1.5}}>
+            Sent. It's in our inbox, and the reply comes to your email.
+            <div style={{marginTop:8}}><button className="bsm" onClick={()=>setSent(false)}>Write another</button></div>
+          </div>
+        ):(
+          <>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+              {HELP_TOPICS.map(t=>(
+                <button key={t.v} aria-pressed={topic===t.v} onClick={()=>setTopic(t.v)}
+                  style={{padding:"7px 11px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",minHeight:44,
+                    border:"1.5px solid "+(topic===t.v?C.accent:C.border),background:topic===t.v?C.accentDim:C.s2,
+                    color:topic===t.v?C.accentText:C.t1,fontFamily:"var(--font-body)"}}>{t.l}</button>
+              ))}
+            </div>
+            {bookingRef&&<div style={{fontSize:12,color:C.t2,marginBottom:6}}>About booking {bookingRef}</div>}
+            <textarea value={msg} onChange={e=>setMsg(e.target.value.slice(0,2000))} rows={5} aria-label="Your message"
+              placeholder="What's going on?"
+              style={{width:"100%",boxSizing:"border-box",background:C.s2,border:`1px solid ${C.border}`,borderRadius:12,padding:"10px 12px",
+                fontSize:14,color:C.t1,fontFamily:"var(--font-body)",resize:"vertical"}}/>
+            {err&&<div role="alert" style={{fontSize:12.5,color:C.red,marginTop:8,lineHeight:1.5}}>{err}</div>}
+            <button className="bp" style={{marginTop:10}} disabled={busy||!msg.trim()} onClick={send}>{busy?"Sending…":"Send"}</button>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── "Busy places?", any time, in Profile ─────────────────────────────────
+// The quiz asks it once (lib/quiz-screens.ts); this is where it is changed.
+// Pick all that fit, then Save, the same as the quiz screen. Shows what is
+// saved now, and says nothing was saved when nothing was.
+function CrowdSetting({saved,onChange,toast}){
+  const start=Array.isArray(saved)?saved:saved?[saved]:[];
+  const [sel,setSel]=useState(start);
+  const [busy,setBusy]=useState(false);
+  const changed=sel.slice().sort().join()!==start.slice().sort().join();
+  const save=async()=>{
+    if(busy||!sel.length)return;
+    setBusy(true);
+    const r=await postQuiz({answers:{crowd:sel}});
+    setBusy(false);
+    if(!r.ok){toast(r.error);return;}
+    toast("Saved — trip ideas weigh it from here on.");
+    if(onChange)onChange();
+  };
+  return(
+    <div style={{margin:"0 20px 14px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,padding:"12px 14px"}}>
+      <div style={{fontSize:14,fontWeight:600,color:C.t1}}>Busy places?</div>
+      <div style={{fontSize:12,color:C.t2,marginTop:2}}>{start.length?"Pick all that fit.":"Not answered yet. Pick all that fit."}</div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:10}}>
+        {CROWD_OPTIONS.map(o=>{
+          const on=sel.includes(o.v);
+          return(
+            <button key={o.v} disabled={busy} aria-pressed={on}
+              onClick={()=>setSel(cur=>on?cur.filter(x=>x!==o.v):[...cur,o.v])}
+              style={{padding:"7px 11px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",minHeight:44,
+                border:"1.5px solid "+(on?C.accent:C.border),background:on?C.accentDim:C.s2,
+                color:on?C.accentText:C.t1,fontFamily:"var(--font-body)"}}>
+              <span aria-hidden="true">{o.e}</span> {o.l}
+            </button>
+          );
+        })}
+      </div>
+      {changed&&sel.length>0&&(
+        <button className="bsm bsm-p" style={{marginTop:10}} disabled={busy} onClick={save}>{busy?"Saving…":"Save"}</button>
+      )}
+    </div>
+  );
+}
+
 // ─── For a v2 account: two taps, not a new quiz ──────────────────────────
 // Section 7: nobody redoes the quiz. A v2 account already told us what it is
 // into and what it will not do; this asks only the two things v2 never did
@@ -5577,7 +5697,7 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
       if(!r.ok){
         const err=await r.json().catch(()=>({}));
         console.error("[taste] save rejected",r.status,err);
-        toast(err.error||"Couldn't save that — try again");
+        toast(humanError(err.error)||"Couldn't save that — try again");
         setSaving(false);
         return;
       }
@@ -6805,6 +6925,14 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
                   ✨ {trip.why_this_group}
                 </div>
               )}
+              {/* "Why this", built in code from what members said and the
+                  figures we hold (lib/claims.ts whyThisLine) — never by the
+                  model. No reasons, no line. */}
+              {typeof trip.why_this==="string"&&trip.why_this&&(
+                <div style={{fontSize:11.5,color:C.t2,marginTop:4}}>
+                  Why this: {trip.why_this}
+                </div>
+              )}
             </div>
             <div style={{textAlign:"right",marginLeft:12}}>
               <div style={{fontFamily:"var(--font-display)",fontSize:28,color:voted?C.accentText:C.t1}}>
@@ -7020,7 +7148,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
   }
   if(!res.ok){
     console.error("[pick] refused",res.status,body);
-    toast(body.error||"Couldn't save that pick — try again");
+    toast(humanError(body.error)||"Couldn't save that pick — try again");
     // Somebody else picked first, or the ideas moved on. Show what stands.
     if(body.alreadyDecided||res.status===409){if(refreshGroup)await refreshGroup(groupId);}
     return body.alreadyDecided?"decided":false;
@@ -7069,7 +7197,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows}:p)}));
       }else{
         console.error("[pick] itinerary for the pick failed",r.status,d);
-        toast(d.error||"Couldn't build the day-by-day plan — you can add days yourself");
+        toast(humanError(d.error)||"Couldn't build the day-by-day plan — you can add days yourself");
       }
     }
     if(rows.length&&saveItineraryToServer)await saveItineraryToServer(planId,rows);
@@ -7102,7 +7230,7 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
     try{
       const r=await fetch(`/api/plans/${planId}/vote`);
       const d=await r.json().catch(()=>null);
-      if(!r.ok||!d)throw new Error(d?.error||String(r.status));
+      if(!r.ok||!d)throw new Error(humanError(d?.error)||String(r.status));
       setV(d);setLoadErr(false);
     }catch(e){
       console.error("[tripIdeas] could not load the vote",e);
@@ -7190,7 +7318,7 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
     try{
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({option:o.title})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"");
+      if(!r.ok)throw new Error(humanError(d.error)||"");
       forgetNext(planId);
       toast(before?`Changed your vote to ${show(o.title)}`:`Voted for ${show(o.title)}`);
     }catch(e){
@@ -7207,9 +7335,9 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
     try{
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({veto:o.title,on})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"That veto didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"That veto didn't save — try again");
       forgetNext(planId);
-    }catch(e){console.error("[tripIdeas] veto failed",e);toast(e.message);}
+    }catch(e){console.error("[tripIdeas] veto failed",e);toast(errorWords(e,"That didn't go through — try again."));}
     await load();
     setBusy(null);
   };
@@ -7404,6 +7532,25 @@ function CallOffPlan({plan,group,me,um,updatePlanOnServer,updateGroup,toast,onDo
 // same questions, and "Find our trips" opens once they all have. `planId`
 // is that trip, when this screen is opened to wait on it or to find its
 // options. A solo trip has nobody to wait for and works as it always has.
+// ─── Fewer than three places fit (destination selection) ────────────────
+// The server's own sentence, and one button that asks again a little wider.
+// Never "try different dates or budget": the gap is in the places we hold,
+// not in what they asked for.
+function WidenOffer({offer,onWiden,busy}){
+  if(!offer)return null;
+  return(
+    <div style={{margin:"0 20px 12px",padding:"11px 13px",background:C.s1,border:`1px solid ${C.border}`,
+      borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
+      {offer.say}
+      {offer.next&&(
+        <div style={{marginTop:8}}>
+          <button className="bsm" disabled={busy} onClick={onWiden}>Widen the search</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocation,departure,setPlaceOverride,saveDeparture,savePlanToServer,saveItineraryToServer,planId=null,me,um,updatePlanOnServer,refreshGroup,regenerate=false,find=false,askReconnection=false}){
   const group=groups.find(g=>g.id===groupId);
   // The newest plan on this group is the one whose answers are still live —
@@ -7447,6 +7594,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
   const [endDate,setEndDate]=useState("");
   const [budget,setBudget]=useState("");
   const [trips,setTrips]=useState(null);
+  // Fewer than three places fit what they said (destinations chosen in
+  // code): the sentence the server sent, and the next widening, if any.
+  const [widenOffer,setWidenOffer]=useState(null);
   // Bumped when the saved ideas have changed under the vote — new ones
   // found, or their days written — so the vote reloads now, not on its poll.
   const [ideasRev,setIdeasRev]=useState(0);
@@ -7609,6 +7759,9 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
     // quiz otherwise. Either way with the reason on the screen.
     const back=extra.planId?"wait":0;
     let answered=false; // as in TripPicks: after an answer, a throw is ours
+    // Time to options, tap to screen (Part B): read as p50/p95 from events.
+    const t0=Date.now();
+    const shown=(n,shared)=>trackEvent("options_shown",{ms:Date.now()-t0,count:n,mode:extra.mode||"trip",shared:!!shared,widen:extra.widen||0},{planId:extra.planId||null,groupId});
     try{
       const res=await fetch("/api/trips/generate",{
         method:"POST",
@@ -7630,12 +7783,20 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           nightPrefs:extra.nightPrefs||{},
           planId:extra.planId||null, // a group trip: waits for, and is built from, everybody's answers
           regenerate:extra.regenerate===true, // the organiser swapping the saved ideas for three new ones
-          withAnswered:extra.withAnswered===true, // organiser going ahead with who has answered; the server checks
+          withAnswered:extra.withAnswered===true, widen:extra.widen||0, // organiser going ahead with who has answered (server checks); "Widen the search" step
         }),
       });
       answered=true;
       if(res.ok){
         const data=await res.json();
+        setWidenOffer(data.fewer?{say:data.fewer,next:data.canWiden?(extra.widen||0)+1:null,args:[sd,ed,bud,prefs,extra]}:null);
+        if(data.fewer&&!(data.trips||[]).length){
+          // Nothing fits among the places we know well yet. Said as that,
+          // not as "no trips returned", with the widening beside it.
+          setError(null);
+          setStep(back);
+          return;
+        }
         if(extra.planId&&data.shared&&data.trips?.length){
           // Saved on the trip, and the vote is open: everybody sees these
           // same ideas on their own phone. `saved` means they were already
@@ -7646,6 +7807,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           setTrips(null);
           setStep("wait");
           setIdeasRev(r=>r+1);
+          shown(data.trips.length,true);
           if(data.saved)toast(`These are the ${extra.mode==="night"?"ideas for the night":"trip ideas"} the group is voting on`);
           else enrichWithItineraries(data.trips,sd||startDate,ed||endDate,extra);
           return;
@@ -7653,6 +7815,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         if(data.trips&&data.trips.length>0){
           setTrips(data.trips);
           setStep(2);
+          shown(data.trips.length,false);
           // People are voting on where to spend a week and a lot of money.
           // Showing three destination names and asking them to choose is not
           // enough information to choose with, so every option arrives with
@@ -7666,7 +7829,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         }
       }else{
         const err=await res.json().catch(()=>({}));
-        const msg=err.error||"Generation failed";
+        const msg=humanError(err.error)||"Generation failed";
         // Auto-retry once on parse failures. This passed `true` where the
         // extras go, so a retried night out came back as a trip.
         if(!retrying&&(msg.includes("parsing")||msg.includes("parse"))){
@@ -7869,7 +8032,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       }else{
         const err=await res.json().catch(()=>({}));
         console.error("[groupTrip] itinerary request failed",err);
-        toast(err.error||"Couldn't build the day-by-day plan");
+        toast(humanError(err.error)||"Couldn't build the day-by-day plan");
       }
     }catch(e){console.error("Itinerary generation failed",e);toast("Couldn't build the day-by-day plan — try again, or add days yourself");}
     setBuildingItinerary(null);
@@ -8015,11 +8178,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // The server's own wait, whole: one person's twelve hours (lib/
         // nudge.ts) is hours, and this once said "a minute" at most.
         setNudgeWait(retryAfter(d));
-        setAskNote(d.error||"They were nudged lately — try again later.");
+        setAskNote(humanError(d.error)||"They were nudged lately — try again later.");
         setAsking(false);
         return;
       }
-      if(!r.ok)throw new Error(d.error||"Couldn't nudge them just now.");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't nudge them just now.");
       if(d.notified)setNudgeWait(60);
       // Said only the ways it went: "in their Reach notifications" when the
       // bell was written (inApp), never because a phone push got through.
@@ -8129,6 +8292,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
 
           <div style={{height:1,background:C.border,margin:"0 20px 16px"}}/>
 
+          {!trips&&<WidenOffer offer={widenOffer} busy={generating} onWiden={()=>{const [a,b,c,d,e]=widenOffer.args;generate(a,b,c,d,{...e,widen:widenOffer.next});}}/>}
           <TripQuiz
             departure={departure}
             group={group}
@@ -8194,6 +8358,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   {error}
                 </div>
               )}
+              <WidenOffer offer={widenOffer} busy={generating} onWiden={()=>{const [a,b,c,d,e]=widenOffer.args;generate(a,b,c,d,{...e,widen:widenOffer.next});}}/>
               <TripIdeas planId={wp.id} groupId={groupId} group={group} plan={wp} toast={toast} um={um}
                 updateGroup={updateGroup} refreshGroup={refreshGroup} saveItineraryToServer={saveItineraryToServer}
                 departure={departure} rev={ideasRev} enriching={enriching} enrichFailed={enrichFailed}
@@ -8392,6 +8557,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                   :`These ideas aren't saved for the group yet, so only you can see them — and only whoever set up this ${nightOut?"night out":"trip"} can pick one. They can't see these: they'll need to press Find themselves, and will get their own three.`)
                 :`${trips.length===3?"Three":trips.length} ${nightOut?"nights out":"trips"} built around what you said. Pick the one you want.`}
             </div>
+            <div style={{marginTop:10}}><WidenOffer offer={widenOffer} busy={generating} onWiden={()=>{const [a,b,c,d,e]=widenOffer.args;generate(a,b,c,d,{...e,widen:widenOffer.next});}}/></div>
             {/* The days are being written while people read. Say so, rather
                 than letting the cards quietly grow a section. */}
             {enrichFailed&&enriching===0&&(
@@ -8568,7 +8734,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
       const realId=saveGroupToServer?await saveGroupToServer(draft):null;
       if(!realId)throw new Error("Couldn't set up a solo trip — please try again");
       setGid(realId);
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setMakingSolo(false);}
   };
 
@@ -9431,7 +9597,7 @@ async function saySorted(bookingId,number){
   const r=await fetchWithin(`/api/bookings/${bookingId}/confirmation`,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({confirmationNumber:number||null})});
   const d=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+  if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
   return d;
 }
 
@@ -9488,7 +9654,7 @@ async function runNextCta(cta,{na,screen,planId,groupId,push,toast,goToProfileSe
       toast(number&&!d.kept?"Marked as got — keep that number somewhere handy":number?`Marked as got · you entered ${number}`:"Marked as got");
       forgetNext(planId);
       return true;
-    }catch(e){console.error("[next] could not record it as got",{bookingId:cta.bookingId},e);toast(e.message);return false;}
+    }catch(e){console.error("[next] could not record it as got",{bookingId:cta.bookingId},e);toast(errorWords(e,"That didn't go through — try again."));return false;}
   }
   return false;
 }
@@ -9865,7 +10031,7 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
       await saySorted(bid,n);
       toast(n?(solo?`Saved · you entered ${n}`:`Saved · ${n} is on the plan`):"Saved as booked");
       setNumber(null);forgetTables(planId);forgetNext(planId);await onChanged?.();
-    }catch(e){console.error("[tables] could not record it as booked",{bookingId:bid},e);toast(e.message);}
+    }catch(e){console.error("[tables] could not record it as booked",{bookingId:bid},e);toast(errorWords(e,"That didn't go through — try again."));}
     setBusy(false);
   };
   const askCancel=async(confirm)=>{
@@ -9875,7 +10041,7 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
       const r=await fetchWithin(`/api/bookings/${id}/cancel`,{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify(confirm?{confirm:true}:{})},70000,"the cancellation");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok){setCancel({error:d.error||"That table could not be cancelled just now. It is still booked."});}
+      if(!r.ok){setCancel({error:humanError(d.error)||"That table could not be cancelled just now. It is still booked."});}
       else if(d.status==="quoted"){setCancel({quoted:d});}
       else{
         setCancel(null);
@@ -10265,7 +10431,7 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
     try{
       const r=await fetchWithin(`/api/watches/options?${q}`,{},15000,"whether Reach can watch this");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok){setErr(d.error||"Couldn't check that just now.");return;}
+      if(!r.ok){setErr(humanError(d.error)||"Couldn't check that just now.");return;}
       setView(d);
       const t=d.start?.time||null;
       setPick({nights:d.nights?.length===1?[d.nights[0]]:[],from:t?shiftClock(t,-60):"18:00",to:t?shiftClock(t,60):"21:00",party:d.start?.party||party||2});
@@ -10278,8 +10444,8 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
       const r=await fetchWithin("/api/watches",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({...(bookingId?{bookingId}:{venueRef}),nights:pick.nights,from:pick.from,to:pick.to,party:Number(pick.party),...(notBookedElsewhere?{notBookedElsewhere:true}:{})})},20000,"the table watch");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok&&d.code==="ask_first")setAskFirst(d.error||`Have you already booked ${restaurant} yourself?`);
-      else if(!r.ok){setErr(d.error||"Couldn't start watching. Nothing is being watched.");if(d.offer)setView(v=>v?{...v,offer:d.offer}:v);}
+      if(!r.ok&&d.code==="ask_first")setAskFirst(humanError(d.error)||`Have you already booked ${restaurant} yourself?`);
+      else if(!r.ok){setErr(humanError(d.error)||"Couldn't start watching. Nothing is being watched.");if(d.offer)setView(v=>v?{...v,offer:d.offer}:v);}
       else{setOpen(false);toast(`Watching ${restaurant}`);watchesChanged();}
     }catch(e){console.error("[watch] could not start a watch",e);setErr("We didn't hear back. Check your watches before trying again.");watchesChanged();}
     setBusy(false);
@@ -10290,7 +10456,7 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
     try{
       const r=await fetchWithin(`/api/watches/${mine.id}`,{method:"DELETE"},15000,"stopping the watch");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)toast(d.error||"Couldn't stop it just now. Reach is still watching.");
+      if(!r.ok)toast(humanError(d.error)||"Couldn't stop it just now. Reach is still watching.");
       else{toast(`Stopped watching ${restaurant}`);watchesChanged();}
     }catch(e){console.error("[watch] could not stop a watch",e);toast("We didn't hear back. Check again in a moment.");}
     setBusy(false);
@@ -10381,7 +10547,7 @@ function WatchesCard({toast}){
     try{
       const r=await fetchWithin(`/api/watches/${w.id}`,{method:"DELETE"},15000,"stopping the watch");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)toast(d.error||"Couldn't stop it just now. Reach is still watching.");
+      if(!r.ok)toast(humanError(d.error)||"Couldn't stop it just now. Reach is still watching.");
       else{toast(`Stopped watching ${w.restaurant}`);watchesChanged();}
     }catch(e){console.error("[watch] could not stop a watch",e);toast("We didn't hear back. Check again in a moment.");}
     setBusy(null);
@@ -10489,7 +10655,7 @@ function HoldToggle({bookingId,status,toast,onChanged}){
     try{
       const r=await fetchWithin(`/api/bookings/${bookingId}/hold`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({hold:!held})},15000,"saving that");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't change that");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't change that");
       // Let go of after the group changed size: it was held at the old
       // number, and is priced again for who is on it now, before anybody
       // pays (the server refuses money against it until it is).
@@ -10503,7 +10669,7 @@ function HoldToggle({bookingId,status,toast,onChanged}){
       await onChanged?.();
     }catch(e){
       console.error("[hold] could not change",{bookingId},e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setBusy(false);
   };
@@ -10537,11 +10703,11 @@ function RealTrip({trip,startDate,endDate,seats}){
           // are searched for and none shown for a trip nobody flies to.
           flying:previewFlying(trip.away,seats)})},60000,"checking prices");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't check prices just now");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't check prices just now");
       setState({loading:false,data:d,error:null});
     }catch(e){
       console.error("[realTrip] preview failed",{city:trip.city},e);
-      setState({loading:false,data:null,error:e.message});
+      setState({loading:false,data:null,error:errorWords(e,"Couldn't load that just now — try again.")});
     }
   };
   const d=state.data;
@@ -10656,13 +10822,13 @@ function ChoicePanel({booking,vertical,toast,onChanged,autoLoad=false,confirmFir
     try{
       const r=await fetchWithin(`/api/bookings/${booking.id}/options`,{},30000,"finding other options");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't look just now");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't look just now");
       // Refused by the server — booked already, or locked in and not this
       // person's to change — says why, rather than offering a list.
       setState({loading:false,options:d.changeable===false?[]:(d.options||[]),why:d.why||null});
     }catch(e){
       console.error("[choices] could not load options",{booking:booking.id},e);
-      setState({loading:false,options:[],why:e.message});
+      setState({loading:false,options:[],why:errorWords(e,"Couldn't load that just now — try again.")});
     }
   };
   useEffect(()=>{if(autoLoad&&changeable)load();},[booking.id]);
@@ -10673,13 +10839,13 @@ function ChoicePanel({booking,vertical,toast,onChanged,autoLoad=false,confirmFir
     try{
       const r=await fetchWithin(`/api/bookings/${booking.id}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key})},30000,"switching");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't switch to that one");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't switch to that one");
       toast(vertical==="hotel"?"Hotel changed":"Flights changed");
       setState({loading:false,options:null,why:null});
       await onChanged?.();
     }catch(e){
       console.error("[choices] could not switch",{booking:booking.id,key},e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setChoosing(null);
   };
@@ -10835,7 +11001,7 @@ function LineSuggestions({planId,item,list,canApply,toast,onList,onSwapped}){
       const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/suggestions`,{method:"POST",
         headers:{"Content-Type":"application/json"},body:JSON.stringify({action,suggestionId:s.id})},20000,"saving that");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       if(Array.isArray(d.suggestions))onList(item.id,d.suggestions);
       if(action==="apply"&&d.item){
         onSwapped(d.item);
@@ -10843,7 +11009,7 @@ function LineSuggestions({planId,item,list,canApply,toast,onList,onSwapped}){
       }
     }catch(e){
       console.error("[suggestions] could not save",{item:item.id,action},e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setBusy(null);
   };
@@ -10896,11 +11062,11 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
       try{
         const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/alternatives`,{},30000,"finding other places");
         const d=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(d.error||"Couldn't look just now");
+        if(!r.ok)throw new Error(humanError(d.error)||"Couldn't look just now");
         if(live)setAlt({loading:false,data:d,error:null});
       }catch(e){
         console.error("[change] could not read the alternatives",{item:item.id},e);
-        if(live)setAlt({loading:false,data:null,error:e.message});
+        if(live)setAlt({loading:false,data:null,error:errorWords(e,"Couldn't load that just now — try again.")});
       }
     })();
     return()=>{live=false;};
@@ -10950,13 +11116,13 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
       const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/suggestions`,{method:"POST",
         headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"suggest",...freeBody(to,title,cost)})},20000,"suggesting that");
       const out=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(out.error||"Couldn't suggest that — try again");
+      if(!r.ok)throw new Error(humanError(out.error)||"Couldn't suggest that — try again");
       if(Array.isArray(out.suggestions))onList(item.id,out.suggestions);
       toast(out.joined?"Somebody suggested that already — your 👍 is on it":"Suggested — the group can 👍 it");
       onClose();
     }catch(e){
       console.error("[change] could not suggest",{item:item.id,to},e);
-      setSaid(e.message);
+      setSaid(errorWords(e,"That didn't save — try again."));
     }
     setBusy(null);
   };
@@ -10974,11 +11140,11 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
         })},90000,"finding something else");
       const out=await r.json().catch(()=>({}));
       // 422 is the honest "nothing we have verified fits" — said as written.
-      if(!r.ok)throw new Error(out.error||"Couldn't find something else just now");
+      if(!r.ok)throw new Error(humanError(out.error)||"Couldn't find something else just now");
       setOther({loading:false,data:out,error:null});
     }catch(e){
       console.error("[change] something else failed",{item:item.id},e);
-      setOther({loading:false,data:null,error:e.message});
+      setOther({loading:false,data:null,error:errorWords(e,"Couldn't load that just now — try again.")});
     }
   };
 
@@ -11333,7 +11499,7 @@ function WaitFaces({planId,kind,um,toast,organiser=false,solo=false,rev=0,onNudg
     try{
       const r=await fetch(`/api/plans/${planId}/notify?kind=${kind}`);
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||String(r.status));
+      if(!r.ok)throw new Error(humanError(d.error)||String(r.status));
       setFaces(facesShown(d.people));
       setFailed(false);
     }catch(e){console.error("[faces] could not read who is done",{planId,kind},e);setFailed(true);}
@@ -11414,9 +11580,9 @@ function CloseCard({planId,groupId,push,toast}){
     try{
       const r=await fetch(`/api/plans/${planId}/close`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({score})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       setC(x=>({...x,answer:d.answer??score}));
-    }catch(e){console.error("[close] answer not saved",{planId},e);toast(e.message);}
+    }catch(e){console.error("[close] answer not saved",{planId},e);toast(errorWords(e,"That didn't go through — try again."));}
     setSaving(null);
   };
   const owed=closeSettleLine(c.settle);
@@ -11488,10 +11654,10 @@ function MuteReminders({planId,toast,solo=false,night=false}){
     try{
       const r=await fetch(`/api/plans/${planId}/mute`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({muted:!m.muted})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       setM(x=>({...x,muted:d.muted===true}));
       toast(d.muted?"Reminders for this trip are off":"Reminders for this trip are back on");
-    }catch(e){console.error("[mute] not saved",{planId},e);toast(e.message);}
+    }catch(e){console.error("[mute] not saved",{planId},e);toast(errorWords(e,"That didn't go through — try again."));}
     setBusy(false);
   };
   return(
@@ -11552,7 +11718,7 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
     try{
       const [r,s]=await Promise.all([fetch(`/api/plans/${planId}/ledger`),fetch(`/api/plans/${planId}/settlements`)]);
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||String(r.status));
+      if(!r.ok)throw new Error(humanError(d.error)||String(r.status));
       setL(d);setFailed(false);
       const sd=s.ok?await s.json().catch(()=>null):null;
       setDone((sd?.settlements||[]).filter(x=>x.status==="paid"));
@@ -11648,11 +11814,11 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
     try{
       const r=await fetch("/api/profile",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       dismissAsk();
       toast("Saved — friends who owe you can pay you there now");
       await load();
-    }catch(e){console.error("[settle] handles not saved",e);toast(e.message);}
+    }catch(e){console.error("[settle] handles not saved",e);toast(errorWords(e,"That didn't go through — try again."));}
     setSavingHandles(false);
   };
 
@@ -11906,7 +12072,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       });
       const d=await r.json().catch(()=>({}));
       if(r.status===409&&d.needsConfirm){setDropAsk({ref:item.ref,item,warning:d.warning||d.error});setSkipping(null);return;}
-      if(!r.ok)throw new Error(d.error||"That didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"That didn't save — try again");
       setDropAsk(null);
       await loadShare();
       if(item.vertical==="flight"){
@@ -11922,7 +12088,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       }
     }catch(e){
       console.error("[planDetail] could not change who's in",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setSkipping(null);
   };
@@ -11940,12 +12106,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         body:JSON.stringify({ranges}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Those dates didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Those dates didn't save — try again");
       await loadDates();
       if(note)toast(note);
     }catch(e){
       console.error("[planDetail] saving dates failed",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setSavingDates(false);
   };
@@ -11972,13 +12138,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       const r=await fetch(`/api/plans/${planId}/availability`,{method:"DELETE"});
       if(!r.ok){
         const d=await r.json().catch(()=>({}));
-        throw new Error(d.error||"Couldn't clear those — try again");
+        throw new Error(humanError(d.error)||"Couldn't clear those — try again");
       }
       await loadDates();
       toast("Cleared — tell us again when you know");
     }catch(e){
       console.error("[planDetail] clearing dates failed",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setSavingDates(false);
   };
@@ -11999,13 +12165,13 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         body:JSON.stringify({ranges}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Those dates didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Those dates didn't save — try again");
       setMyFrom("");setMyTo("");
       await loadDates();
       toast("Got it — we'll find the dates that suit most of you");
     }catch(e){
       console.error("[planDetail] could not save dates",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setSavingDates(false);
   };
@@ -12141,12 +12307,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // stale read of who has answered must not paper over those.
       if(res.status===409){
         const w=waitRefusal(res.status,d)?waitingFor(readiness?.preferences,me,{night:oneEvening}):{mine:false,sentence:null};
-        setBuildError({msg:(w.mine&&w.sentence)||d.error||((group?.memberIds||[]).length>1?"Waiting on the rest of the group":"Not ready to plan the days yet"),retry:false,answer:w.mine});
+        setBuildError({msg:(w.mine&&w.sentence)||humanError(d.error)||((group?.memberIds||[]).length>1?"Waiting on the rest of the group":"Not ready to plan the days yet"),retry:false,answer:w.mine});
         setBuilding(false);return;
       }
       // The server's own words, as they are: it says when the problem is on
       // our side, and "try again" is the button under it, not more words.
-      if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan.");
+      if(!res.ok)throw new Error(humanError(d.error)||"Couldn't build the day-by-day plan.");
       // A restaurant-type plan is the night out. Labelled as an evening
       // rather than a day, same as the generate path.
       // The flights, the stay and the transfers survive a rebuild.
@@ -12543,7 +12709,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       for(const id of t.bookingIds||[]){
         try{
           const r=await fetchWithin(`/api/bookings/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"pending"})});
-          if(!r.ok){const d=await r.json().catch(()=>({}));console.error("[book] could not take back the booking",{bookingId:id,status:r.status});toast(d.error||"Couldn't save that — try again in a moment");ok=false;}
+          if(!r.ok){const d=await r.json().catch(()=>({}));console.error("[book] could not take back the booking",{bookingId:id,status:r.status});toast(humanError(d.error)||"Couldn't save that — try again in a moment");ok=false;}
         }catch(e){console.error("[book] could not take back the booking",{bookingId:id},e);toast("Couldn't save that — try again in a moment");ok=false;}
       }
       forgetNext(planId);
@@ -12638,10 +12804,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     try{
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({veto:opt,on})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"That veto didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"That veto didn't save — try again");
       forgetNext(planId);
       toast(on?`Vetoed ${opt}`:`Took back your veto of ${opt}`);
-    }catch(e){console.error("[vote] veto failed",{planId},e);toast(e.message);}
+    }catch(e){console.error("[vote] veto failed",{planId},e);toast(errorWords(e,"That didn't go through — try again."));}
     await loadVote();
     setVoteBusy(null);
   };
@@ -13517,11 +13683,11 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                         body:JSON.stringify({everyone:(group.memberIds||[]).length>1}),
                       });
                       const d=await r.json().catch(()=>({}));
-                      if(!r.ok)throw new Error(d.error||"Couldn't send that");
+                      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't send that");
                       toast(d.sent>1?`Sent to all ${d.sent} of you 📬`:"Sent to your inbox 📬");
                     }catch(e){
                       console.error("[planDetail] itinerary email failed",e);
-                      toast(e.message);
+                      toast(errorWords(e,"That didn't go through — try again."));
                     }
                     setEmailing(false);
                   }}>{emailing?"Sending…":(group.memberIds||[]).length>1?"📬 Email this to everyone":"📬 Email this to me"}</button>
@@ -14148,13 +14314,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
       });
       if(!r.ok){
         const d=await r.json().catch(()=>({}));
-        throw new Error(d.error||"Couldn't save that");
+        throw new Error(humanError(d.error)||"Couldn't save that");
       }
       setBookings(bs=>(bs||[]).map(b=>b.id===id?{...b,status}:b));
       toast("Noted — we'll leave it open");
     }catch(e){
       console.error("[checkout] could not record the reservation",e);
-      toast(e.message);
+      toast(errorWords(e,"That didn't go through — try again."));
     }
     setCapturing(null);
   };
@@ -14285,11 +14451,11 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
       // Priced for a different number of people than are going. Nothing was
       // charged; this used to be a toast with nothing on screen to fix it.
       if(r.status===409&&d.code==="stale_quotes"&&Array.isArray(d.stale)){
-        setRepriceIds(d.stale.map(x=>x.id)); setMsg(d.error||""); setRepriceStuck(false); setPhase("reprice"); setBusy(false); return;
+        setRepriceIds(d.stale.map(x=>x.id)); setMsg(humanError(d.error)||""); setRepriceStuck(false); setPhase("reprice"); setBusy(false); return;
       }
-      if(!r.ok||!d.clientSecret)throw new Error(d.error||"Couldn't start the payment \u2014 try again.");
+      if(!r.ok||!d.clientSecret)throw new Error(humanError(d.error)||"Couldn't start the payment \u2014 try again.");
       setClientSecret(d.clientSecret); setPhase("pay");
-    }catch(e){ toast(e.message); }
+    }catch(e){ toast(errorWords(e,"That didn't go through — try again.")); }
     setBusy(false);
   };
 
@@ -14512,7 +14678,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         if(o.kind==="booked")continue;
         const seed=readTableAnswer(status,json,{asked:t.when?.time||null,path:t.path});
         found.push({bookingId:b.id,row:b,kind:o.kind,code:o.code,who:[],seed,
-          message:seed.error||seed.title||o.message||"",step:nextStepFor(o,"restaurant")});
+          message:humanError(seed.error)||seed.title||o.message||"",step:nextStepFor(o,"restaurant")});
       }
       // The tables as they stand now: a table handed over or owing a card
       // must not be drawn on the next screen from the list read before.
@@ -14840,7 +15006,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         try{
           const r=await fetchWithin(`/api/bookings/${id}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reprice:true})},30000,"pricing it again");
           const d=await r.json().catch(()=>({}));
-          if(!r.ok)problems.push({text:d.error||"Couldn't price that again.",code:d.code||null});
+          if(!r.ok)problems.push({text:humanError(d.error)||"Couldn't price that again.",code:d.code||null});
         }catch(e){ console.error("[checkout] reprice failed",{id},e); problems.push({text:e.message||"Couldn't price that again.",code:null}); }
       }
       setBusy(false);
@@ -15821,11 +15987,11 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         body:JSON.stringify({[field]:value||null}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that");
       setDocDraft(x=>({...x,[field]:undefined}));
       toast(value?"Saved":"Removed");
       await load();
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(null);}
   };
 
@@ -15841,10 +16007,10 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         body:JSON.stringify({programName:loyName.trim(),tier:loyTier.trim()||undefined,number:loyNum.trim()||undefined}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't add that programme");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't add that programme");
       setLoyName("");setLoyTier("");setLoyNum("");
       toast("Added — we'll use it when we price things");await load();
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(null);}
   };
   const removeLoyalty=async id=>{
@@ -15855,7 +16021,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       });
       if(!r.ok)throw new Error("Couldn't remove that programme");
       toast("Gone");await load();
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(null);}
   };
 
@@ -15885,9 +16051,9 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         body:JSON.stringify({confirm:"DELETE"}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't schedule that");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't schedule that");
       toast("Deletion scheduled");setDeleteConfirm("");setSection(null);await load();
-    }catch(e){toast(e.message);}
+    }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
     finally{setBusy(null);}
   };
 
@@ -15927,13 +16093,13 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),
         });
         const d=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(d.error||"Couldn't save that");
+        if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that");
         setDocDraft(x=>({...x,__first:undefined,__air:undefined,__city:undefined}));
         toast("Saved");await load();
         // The greeting reads the app's copy of the user, not this screen's,
         // so without this a new name only appeared after a reload.
         if(body.firstName!==undefined)onIdentityChange?.();
-      }catch(e){toast(e.message);}
+      }catch(e){toast(errorWords(e,"That didn't go through — try again."));}
       finally{setBusy(null);}
     };
 
@@ -16043,11 +16209,11 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),
         });
         const d=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(d.error||"Couldn't save that");
+        if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that");
         setDocDraft(x=>({...x,__fFirst:undefined,__last:undefined,__dob:undefined,__gender:undefined,__phone:undefined}));
         toast("Saved");await load();
         if(body.firstName!==undefined)onIdentityChange?.();
-      }catch(err){toast(err.message);}
+      }catch(err){toast(errorWords(err,"That didn't go through — try again."));}
       finally{setBusy(null);}
     };
 
@@ -16263,6 +16429,15 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
   }
 
   // ═══ Privacy ═══
+  if(section==="help"){
+    return(
+      <div className="sc">
+        <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Help"/>
+        <HelpPanel toast={toast}/>
+      </div>
+    );
+  }
+
   if(section==="privacy"){
     const c=data?.consent||{};
     const toggles=[
@@ -16285,6 +16460,19 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
             </div>
           </div>
         ))}
+        {/* Who sees what. Each line is what the API actually hands another
+            member (groups: name, email, picture; readiness: yes/no and the
+            names of missing fields, never the values) — tests/two-person.spec.ts
+            reads it as member B and checks the rest is absent. */}
+        <div style={{padding:"16px 20px 6px"}}><span className="sl">Who sees what</span></div>
+        <div style={{margin:"0 20px 6px",fontSize:13,color:C.t1,lineHeight:1.6}}>
+          <div style={{fontWeight:600,marginBottom:2}}>People in your groups see</div>
+          <div style={{color:C.t2}}>Your name, email address and picture · your votes · whether you've answered a trip's questions, not your answers · whether your travel details are ready, and which are missing, never the details · the airport you fly from on a trip with a flight · whether your share is paid.</div>
+          <div style={{fontWeight:600,margin:"10px 0 2px"}}>Nobody else sees</div>
+          <div style={{color:C.t2}}>Your answers to a trip's questions and your no-ways · your passport, trusted-traveller and loyalty numbers · your card · the summary of places you like, which nobody sees, you included.</div>
+        </div>
+        <Row icon="📄" title="Privacy Policy" sub="Everything Reach stores, and who else receives it"
+          right={<Ic.ChevR/>} onClick={()=>{window.location.href="/privacy";}}/>
         <div style={{padding:"16px 20px 6px"}}><span className="sl">Your data rights</span></div>
         <Row icon="⬇️" title="Download everything Reach holds"
           sub="A JSON export, as required by GDPR Article 20"
@@ -16375,6 +16563,25 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       </div>
 
       <TripMap groups={groups} push={push} toast={toast}/>
+      {/* Your Reach: counted from plans that were booked and are over, never
+          estimated (lib/your-reach.ts). Nothing until there is a trip. */}
+      {(()=>{
+        const r=yourReach(groups,today());
+        if(!r.tripsTaken)return null;
+        return(
+          <div style={{margin:"0 20px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,padding:"12px 14px"}}>
+            <div style={{fontSize:14,fontWeight:600,color:C.t1}}>Your Reach</div>
+            <div style={{fontSize:13,color:C.t2,marginTop:2}}>
+              {r.tripsTaken} trip{r.tripsTaken===1?"":"s"} taken · {r.places} place{r.places===1?"":"s"}
+            </div>
+            {r.groups.filter(g=>g.daysSince!=null).slice(0,4).map(g=>(
+              <div key={g.id} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12.5,color:C.t2,marginTop:6}}>
+                <span style={{color:C.t1}}>{g.name}</span><span>{sinceWords(g.daysSince)}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {loadErr&&(
         <div style={{margin:"0 20px 14px",background:C.redDim,border:`1px solid ${C.red}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t1}}>
@@ -16391,6 +16598,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           just a one-off at sign-up — what you are into in March is not what
           you were into in November. */}
       {profileDrip&&<DripCard id={profileDrip} userId={user?.id} toast={toast} onChange={onIdentityChange}/>}
+      {profileQuiz&&<CrowdSetting saved={profileQuiz.answers?.crowd} onChange={onIdentityChange} toast={toast}/>}
       <Row icon={profileQuiz?.profile?.primary?RESULT_COPY[profileQuiz.profile.primary].emoji:"✨"} title="What kind of traveller you are"
         sub={profileQuiz?.profile
           ?headline(profileQuiz.profile)
@@ -16462,6 +16670,8 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       <Row icon="🛡️" title="Privacy and your data"
         sub={data?.deletion?"Deletion scheduled":"Consent, export, deletion"}
         right={<Ic.ChevR/>} onClick={()=>setSection("privacy")}/>
+      <Row icon="💬" title="Help" sub="Quick answers, or message us"
+        right={<Ic.ChevR/>} onClick={()=>setSection("help")}/>
 
       <div style={{padding:"18px 20px 34px"}}>
         <button className="bs" style={{borderColor:C.red,color:C.red}} onClick={onSignOut}>Sign out</button>
@@ -16617,7 +16827,7 @@ export default function ReachApp({realUser,onSignOut}={}){
         body:JSON.stringify({homeCity:city?.trim()||null,homeAirport:airport?.trim()||null}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that");
       await syncUser();
       showToast("Departing from "+(city?.trim()||"wherever you are"));
       return true;
@@ -17146,7 +17356,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     });
     const d=await r.json().catch(()=>({}));
     // The server refuses to strand a group with no admin, and says so.
-    if(!r.ok)throw new Error(d.error||"Couldn't remove them from the group");
+    if(!r.ok)throw new Error(humanError(d.error)||"Couldn't remove them from the group");
     setGroups(gs=>gs.map(g=>g.id===groupId
       ?{...g,memberIds:(g.memberIds||[]).filter(id=>id!==userId)}:g));
   };
@@ -17179,7 +17389,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     if(isTempId(groupId))throw new Error("That group is still saving — try again in a moment");
     const r=await fetch(`/api/groups/${groupId}`,{method:"DELETE"});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.error||"Couldn't delete that group");
+    if(!r.ok)throw new Error(humanError(d.error)||"Couldn't delete that group");
     setGroups(gs=>{
       const left=gs.filter(g=>g.id!==groupId);
       purgeStaleDraft(left.map(g=>g.id));
@@ -17237,7 +17447,7 @@ export default function ReachApp({realUser,onSignOut}={}){
         if(!res.ok){
           const err=await res.json().catch(()=>({}));
           console.error("[saveGroupToServer] update rejected",res.status,err);
-          showToast(err.error||"Couldn't save that change");
+          showToast(humanError(err.error)||"Couldn't save that change");
           // Null, not the id. Callers could not tell a rejected rename from a
           // saved one, because both came back with the same truthy value — so
           // the screen said "Saved — looking good" over the failure it had
@@ -17370,7 +17580,7 @@ export default function ReachApp({realUser,onSignOut}={}){
           return {needsConfirmation:true,...err};
         }
         console.error("[plan] update rejected",res.status,err);
-        showToast(err.error||"That change didn't save — try again");
+        showToast(humanError(err.error)||"That change didn't save — try again");
         return false;
       }
       // What's next for it has changed: Home and the group must not answer from the cached reads.
@@ -17410,7 +17620,7 @@ export default function ReachApp({realUser,onSignOut}={}){
       if(!res.ok){
         const err=await res.json().catch(()=>({}));
         console.error("[vote] rejected",res.status,err);
-        showToast(err.error||"Your vote didn't save — try again");
+        showToast(humanError(err.error)||"Your vote didn't save — try again");
         return false;
       }
       // What's next for it has changed: Home and the group must not answer from the cached reads.

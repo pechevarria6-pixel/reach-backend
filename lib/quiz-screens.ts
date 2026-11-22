@@ -1,5 +1,5 @@
-// ─── The six upfront quiz screens, and how a tap moves through them ──────
-// Six screens, about a minute. Every screen that asks about you takes as
+// ─── The seven upfront quiz screens, and how a tap moves through them ────
+// Seven screens, about a minute (six until "Busy places?", 2026-11-22). Every screen that asks about you takes as
 // many answers as fit — people are more than one thing — and ends with Done.
 // The owner, 2026-09-25: "make it multiple choice availablity dont just have
 // people have the option to only do 1". An earlier version answered on one
@@ -20,6 +20,8 @@
 //
 // The screen shape and the tap rules live here rather than in the component
 // so a scripted run can be tested without a browser.
+
+import { CROWD_OPTIONS } from './crowd-tolerance.ts';
 
 export interface QuizOption { v: string; e: string; l: string }
 export interface QuizScreen {
@@ -64,6 +66,9 @@ export const QUIZ_SCREENS: QuizScreen[] = [
     {v:"next_spot",e:"🕺",l:"Where's the next spot?"},
     {v:"sunrise",e:"🌄",l:"Watching the sunrise somewhere questionable"},
   ]},
+  // Busy places (destination diversity, 2026-11-22): what the selector reads
+  // as crowd tolerance. Pick all that fit, like every other screen.
+  {id:"crowd",field:"crowd",blend:true,title:"Busy places?",sub:"Pick all that fit.",options:CROWD_OPTIONS},
   {id:"no_way",title:"No way, José.",sub:"Just for us. Your group never sees this."},
 ];
 
