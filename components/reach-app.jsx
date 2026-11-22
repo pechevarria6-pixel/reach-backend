@@ -25,6 +25,7 @@ import { findLinks } from "@/lib/find-links";
 import { pollWhileVisible } from "@/lib/poll";
 import { byDay, dearestDay, linesYoureOff, lineCosts, budgetSplit, budgetLine } from "@/lib/budget";
 import { fetchWithin, isTimeout, stalled } from "@/lib/deadline";
+import { humanError } from "@/lib/human-error";
 import { groupPills, categoryGroup } from "@/lib/discovery/category";
 import { upcomingSections, dayRoll, capSections, rowsIn, milesOf } from "@/lib/discovery/upcoming";
 import { kindWord, withKindWord } from "@/lib/discovery/kind-word";
@@ -591,7 +592,7 @@ async function sendOnce(url,{method="POST",body,key}){
   const r=await fetch(url,{method,keepalive:true,
     headers:{"Content-Type":"application/json","Idempotency-Key":key},
     ...(body!==undefined?{body:JSON.stringify(body)}:{})});
-  if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"");}
+  if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(humanError(d.error)||"");}
   return r.json().catch(()=>({}));
 }
 
@@ -1156,7 +1157,7 @@ function TripPicks({push,userLocation,toast,groups}){
     try{
       const r=await fetch("/api/recommendations/feedback",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({itemRef:p.ref,verdict:"not_interested",vertical:"trip",title:p.title})});
-      if(!r.ok){const e=await r.json().catch(()=>({}));toast(e.error||"Couldn't hide that just now");return;}
+      if(!r.ok){const e=await r.json().catch(()=>({}));toast(humanError(e.error)||"Couldn't hide that just now");return;}
       setHidden(h=>new Set([...h,p.ref]));
     }catch(e){console.error("[home] could not hide a trip idea",e);toast("Couldn't hide that — check your connection");}
     finally{setBusy(null);}
@@ -2253,7 +2254,7 @@ function DiscoverScreen({push,groups,toast,user,userLocation,setPlaceOverride,on
         setHidden(h=>{const n=new Set(h);n.delete(ref);return n;});
         setVisited(v=>{const n=new Set(v);n.delete(ref);return n;});
         setUndo(null);
-        toast(d.error||"Couldn't save that");
+        toast(humanError(d.error)||"Couldn't save that");
       }
     }catch(e){
       console.error("[discover] could not save that",e);
@@ -3802,7 +3803,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
         body:JSON.stringify(payload),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't add them");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't add them");
       if(d.invited){
         toast(d.emailed?`Invite sent to ${d.email}`:`Invite ready for ${d.email}`);
         if(!d.emailed&&d.acceptUrl){try{await navigator.clipboard?.writeText(d.acceptUrl);toast("Link copied — go on, paste it somewhere");}catch(e){}}
@@ -3852,7 +3853,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       if(!r.ok){
         const err=await r.json().catch(()=>({}));
         console.error("[invites] withdraw refused",r.status,err);
-        toast(err.error||"Couldn't withdraw that invite");
+        toast(humanError(err.error)||"Couldn't withdraw that invite");
         return;
       }
       toast("Invite pulled back");loadInvites();
@@ -4612,7 +4613,7 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refre
       });
       if(!r.ok){
         const d=await r.json().catch(()=>({}));
-        throw new Error(d.error||"Couldn't save that");
+        throw new Error(humanError(d.error)||"Couldn't save that");
       }
       toast("Thanks — that's you in");
       // What's next for it has changed: Home and the group must not answer from the cached reads.
@@ -4709,7 +4710,7 @@ async function postQuiz(body){
   try{
     const r=await fetch("/api/me/quiz",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok)return {ok:false,error:d.error||"Couldn't save that — try again"};
+    if(!r.ok)return {ok:false,error:humanError(d.error)||"Couldn't save that — try again"};
     return {ok:true,profile:d.profile||null,stored:d.stored===true};
   }catch(e){
     console.error("[quiz] save failed",e);
@@ -5458,7 +5459,7 @@ function HelpPanel({toast,planId=null,bookingRef=null}){
         body:JSON.stringify({topic,message:msg,planId,bookingRef})});
       const d=await r.json().catch(()=>({}));
       if(r.ok&&d.sent===true){setSent(true);setMsg("");}
-      else setErr(d.error||`We couldn't send that just now. Write to ${SUPPORT_EMAIL} and it reaches the same inbox.`);
+      else setErr(humanError(d.error)||`We couldn't send that just now. Write to ${SUPPORT_EMAIL} and it reaches the same inbox.`);
     }catch(e){
       console.error("[help] send failed",e);
       setErr(`Couldn't reach Reach — check your connection, or write to ${SUPPORT_EMAIL}.`);
@@ -5696,7 +5697,7 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
       if(!r.ok){
         const err=await r.json().catch(()=>({}));
         console.error("[taste] save rejected",r.status,err);
-        toast(err.error||"Couldn't save that — try again");
+        toast(humanError(err.error)||"Couldn't save that — try again");
         setSaving(false);
         return;
       }
@@ -7147,7 +7148,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
   }
   if(!res.ok){
     console.error("[pick] refused",res.status,body);
-    toast(body.error||"Couldn't save that pick — try again");
+    toast(humanError(body.error)||"Couldn't save that pick — try again");
     // Somebody else picked first, or the ideas moved on. Show what stands.
     if(body.alreadyDecided||res.status===409){if(refreshGroup)await refreshGroup(groupId);}
     return body.alreadyDecided?"decided":false;
@@ -7196,7 +7197,7 @@ async function pickTripIdea(trip,{planId,groupId,plan,departure,updateGroup,refr
         updateGroup(groupId,g=>({...g,plans:g.plans.map(p=>p.id===planId?{...p,itinerary:rows}:p)}));
       }else{
         console.error("[pick] itinerary for the pick failed",r.status,d);
-        toast(d.error||"Couldn't build the day-by-day plan — you can add days yourself");
+        toast(humanError(d.error)||"Couldn't build the day-by-day plan — you can add days yourself");
       }
     }
     if(rows.length&&saveItineraryToServer)await saveItineraryToServer(planId,rows);
@@ -7229,7 +7230,7 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
     try{
       const r=await fetch(`/api/plans/${planId}/vote`);
       const d=await r.json().catch(()=>null);
-      if(!r.ok||!d)throw new Error(d?.error||String(r.status));
+      if(!r.ok||!d)throw new Error(humanError(d?.error)||String(r.status));
       setV(d);setLoadErr(false);
     }catch(e){
       console.error("[tripIdeas] could not load the vote",e);
@@ -7317,7 +7318,7 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
     try{
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({option:o.title})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"");
+      if(!r.ok)throw new Error(humanError(d.error)||"");
       forgetNext(planId);
       toast(before?`Changed your vote to ${show(o.title)}`:`Voted for ${show(o.title)}`);
     }catch(e){
@@ -7334,7 +7335,7 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
     try{
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({veto:o.title,on})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"That veto didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"That veto didn't save — try again");
       forgetNext(planId);
     }catch(e){console.error("[tripIdeas] veto failed",e);toast(e.message);}
     await load();
@@ -7828,7 +7829,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         }
       }else{
         const err=await res.json().catch(()=>({}));
-        const msg=err.error||"Generation failed";
+        const msg=humanError(err.error)||"Generation failed";
         // Auto-retry once on parse failures. This passed `true` where the
         // extras go, so a retried night out came back as a trip.
         if(!retrying&&(msg.includes("parsing")||msg.includes("parse"))){
@@ -8031,7 +8032,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
       }else{
         const err=await res.json().catch(()=>({}));
         console.error("[groupTrip] itinerary request failed",err);
-        toast(err.error||"Couldn't build the day-by-day plan");
+        toast(humanError(err.error)||"Couldn't build the day-by-day plan");
       }
     }catch(e){console.error("Itinerary generation failed",e);toast("Couldn't build the day-by-day plan — try again, or add days yourself");}
     setBuildingItinerary(null);
@@ -8177,11 +8178,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // The server's own wait, whole: one person's twelve hours (lib/
         // nudge.ts) is hours, and this once said "a minute" at most.
         setNudgeWait(retryAfter(d));
-        setAskNote(d.error||"They were nudged lately — try again later.");
+        setAskNote(humanError(d.error)||"They were nudged lately — try again later.");
         setAsking(false);
         return;
       }
-      if(!r.ok)throw new Error(d.error||"Couldn't nudge them just now.");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't nudge them just now.");
       if(d.notified)setNudgeWait(60);
       // Said only the ways it went: "in their Reach notifications" when the
       // bell was written (inApp), never because a phone push got through.
@@ -9596,7 +9597,7 @@ async function saySorted(bookingId,number){
   const r=await fetchWithin(`/api/bookings/${bookingId}/confirmation`,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({confirmationNumber:number||null})});
   const d=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+  if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
   return d;
 }
 
@@ -10040,7 +10041,7 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
       const r=await fetchWithin(`/api/bookings/${id}/cancel`,{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify(confirm?{confirm:true}:{})},70000,"the cancellation");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok){setCancel({error:d.error||"That table could not be cancelled just now. It is still booked."});}
+      if(!r.ok){setCancel({error:humanError(d.error)||"That table could not be cancelled just now. It is still booked."});}
       else if(d.status==="quoted"){setCancel({quoted:d});}
       else{
         setCancel(null);
@@ -10430,7 +10431,7 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
     try{
       const r=await fetchWithin(`/api/watches/options?${q}`,{},15000,"whether Reach can watch this");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok){setErr(d.error||"Couldn't check that just now.");return;}
+      if(!r.ok){setErr(humanError(d.error)||"Couldn't check that just now.");return;}
       setView(d);
       const t=d.start?.time||null;
       setPick({nights:d.nights?.length===1?[d.nights[0]]:[],from:t?shiftClock(t,-60):"18:00",to:t?shiftClock(t,60):"21:00",party:d.start?.party||party||2});
@@ -10443,8 +10444,8 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
       const r=await fetchWithin("/api/watches",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({...(bookingId?{bookingId}:{venueRef}),nights:pick.nights,from:pick.from,to:pick.to,party:Number(pick.party),...(notBookedElsewhere?{notBookedElsewhere:true}:{})})},20000,"the table watch");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok&&d.code==="ask_first")setAskFirst(d.error||`Have you already booked ${restaurant} yourself?`);
-      else if(!r.ok){setErr(d.error||"Couldn't start watching. Nothing is being watched.");if(d.offer)setView(v=>v?{...v,offer:d.offer}:v);}
+      if(!r.ok&&d.code==="ask_first")setAskFirst(humanError(d.error)||`Have you already booked ${restaurant} yourself?`);
+      else if(!r.ok){setErr(humanError(d.error)||"Couldn't start watching. Nothing is being watched.");if(d.offer)setView(v=>v?{...v,offer:d.offer}:v);}
       else{setOpen(false);toast(`Watching ${restaurant}`);watchesChanged();}
     }catch(e){console.error("[watch] could not start a watch",e);setErr("We didn't hear back. Check your watches before trying again.");watchesChanged();}
     setBusy(false);
@@ -10455,7 +10456,7 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
     try{
       const r=await fetchWithin(`/api/watches/${mine.id}`,{method:"DELETE"},15000,"stopping the watch");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)toast(d.error||"Couldn't stop it just now. Reach is still watching.");
+      if(!r.ok)toast(humanError(d.error)||"Couldn't stop it just now. Reach is still watching.");
       else{toast(`Stopped watching ${restaurant}`);watchesChanged();}
     }catch(e){console.error("[watch] could not stop a watch",e);toast("We didn't hear back. Check again in a moment.");}
     setBusy(false);
@@ -10546,7 +10547,7 @@ function WatchesCard({toast}){
     try{
       const r=await fetchWithin(`/api/watches/${w.id}`,{method:"DELETE"},15000,"stopping the watch");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)toast(d.error||"Couldn't stop it just now. Reach is still watching.");
+      if(!r.ok)toast(humanError(d.error)||"Couldn't stop it just now. Reach is still watching.");
       else{toast(`Stopped watching ${w.restaurant}`);watchesChanged();}
     }catch(e){console.error("[watch] could not stop a watch",e);toast("We didn't hear back. Check again in a moment.");}
     setBusy(null);
@@ -10654,7 +10655,7 @@ function HoldToggle({bookingId,status,toast,onChanged}){
     try{
       const r=await fetchWithin(`/api/bookings/${bookingId}/hold`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({hold:!held})},15000,"saving that");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't change that");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't change that");
       // Let go of after the group changed size: it was held at the old
       // number, and is priced again for who is on it now, before anybody
       // pays (the server refuses money against it until it is).
@@ -10702,7 +10703,7 @@ function RealTrip({trip,startDate,endDate,seats}){
           // are searched for and none shown for a trip nobody flies to.
           flying:previewFlying(trip.away,seats)})},60000,"checking prices");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't check prices just now");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't check prices just now");
       setState({loading:false,data:d,error:null});
     }catch(e){
       console.error("[realTrip] preview failed",{city:trip.city},e);
@@ -10821,7 +10822,7 @@ function ChoicePanel({booking,vertical,toast,onChanged,autoLoad=false,confirmFir
     try{
       const r=await fetchWithin(`/api/bookings/${booking.id}/options`,{},30000,"finding other options");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't look just now");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't look just now");
       // Refused by the server — booked already, or locked in and not this
       // person's to change — says why, rather than offering a list.
       setState({loading:false,options:d.changeable===false?[]:(d.options||[]),why:d.why||null});
@@ -10838,7 +10839,7 @@ function ChoicePanel({booking,vertical,toast,onChanged,autoLoad=false,confirmFir
     try{
       const r=await fetchWithin(`/api/bookings/${booking.id}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key})},30000,"switching");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't switch to that one");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't switch to that one");
       toast(vertical==="hotel"?"Hotel changed":"Flights changed");
       setState({loading:false,options:null,why:null});
       await onChanged?.();
@@ -11000,7 +11001,7 @@ function LineSuggestions({planId,item,list,canApply,toast,onList,onSwapped}){
       const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/suggestions`,{method:"POST",
         headers:{"Content-Type":"application/json"},body:JSON.stringify({action,suggestionId:s.id})},20000,"saving that");
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       if(Array.isArray(d.suggestions))onList(item.id,d.suggestions);
       if(action==="apply"&&d.item){
         onSwapped(d.item);
@@ -11061,7 +11062,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
       try{
         const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/alternatives`,{},30000,"finding other places");
         const d=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(d.error||"Couldn't look just now");
+        if(!r.ok)throw new Error(humanError(d.error)||"Couldn't look just now");
         if(live)setAlt({loading:false,data:d,error:null});
       }catch(e){
         console.error("[change] could not read the alternatives",{item:item.id},e);
@@ -11115,7 +11116,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
       const r=await fetchWithin(`/api/plans/${planId}/itinerary/${item.id}/suggestions`,{method:"POST",
         headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"suggest",...freeBody(to,title,cost)})},20000,"suggesting that");
       const out=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(out.error||"Couldn't suggest that — try again");
+      if(!r.ok)throw new Error(humanError(out.error)||"Couldn't suggest that — try again");
       if(Array.isArray(out.suggestions))onList(item.id,out.suggestions);
       toast(out.joined?"Somebody suggested that already — your 👍 is on it":"Suggested — the group can 👍 it");
       onClose();
@@ -11139,7 +11140,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
         })},90000,"finding something else");
       const out=await r.json().catch(()=>({}));
       // 422 is the honest "nothing we have verified fits" — said as written.
-      if(!r.ok)throw new Error(out.error||"Couldn't find something else just now");
+      if(!r.ok)throw new Error(humanError(out.error)||"Couldn't find something else just now");
       setOther({loading:false,data:out,error:null});
     }catch(e){
       console.error("[change] something else failed",{item:item.id},e);
@@ -11498,7 +11499,7 @@ function WaitFaces({planId,kind,um,toast,organiser=false,solo=false,rev=0,onNudg
     try{
       const r=await fetch(`/api/plans/${planId}/notify?kind=${kind}`);
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||String(r.status));
+      if(!r.ok)throw new Error(humanError(d.error)||String(r.status));
       setFaces(facesShown(d.people));
       setFailed(false);
     }catch(e){console.error("[faces] could not read who is done",{planId,kind},e);setFailed(true);}
@@ -11579,7 +11580,7 @@ function CloseCard({planId,groupId,push,toast}){
     try{
       const r=await fetch(`/api/plans/${planId}/close`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({score})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       setC(x=>({...x,answer:d.answer??score}));
     }catch(e){console.error("[close] answer not saved",{planId},e);toast(e.message);}
     setSaving(null);
@@ -11653,7 +11654,7 @@ function MuteReminders({planId,toast,solo=false,night=false}){
     try{
       const r=await fetch(`/api/plans/${planId}/mute`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({muted:!m.muted})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       setM(x=>({...x,muted:d.muted===true}));
       toast(d.muted?"Reminders for this trip are off":"Reminders for this trip are back on");
     }catch(e){console.error("[mute] not saved",{planId},e);toast(e.message);}
@@ -11717,7 +11718,7 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
     try{
       const [r,s]=await Promise.all([fetch(`/api/plans/${planId}/ledger`),fetch(`/api/plans/${planId}/settlements`)]);
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||String(r.status));
+      if(!r.ok)throw new Error(humanError(d.error)||String(r.status));
       setL(d);setFailed(false);
       const sd=s.ok?await s.json().catch(()=>null):null;
       setDone((sd?.settlements||[]).filter(x=>x.status==="paid"));
@@ -11813,7 +11814,7 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
     try{
       const r=await fetch("/api/profile",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that — try again");
       dismissAsk();
       toast("Saved — friends who owe you can pay you there now");
       await load();
@@ -12071,7 +12072,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       });
       const d=await r.json().catch(()=>({}));
       if(r.status===409&&d.needsConfirm){setDropAsk({ref:item.ref,item,warning:d.warning||d.error});setSkipping(null);return;}
-      if(!r.ok)throw new Error(d.error||"That didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"That didn't save — try again");
       setDropAsk(null);
       await loadShare();
       if(item.vertical==="flight"){
@@ -12105,7 +12106,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         body:JSON.stringify({ranges}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Those dates didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Those dates didn't save — try again");
       await loadDates();
       if(note)toast(note);
     }catch(e){
@@ -12137,7 +12138,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       const r=await fetch(`/api/plans/${planId}/availability`,{method:"DELETE"});
       if(!r.ok){
         const d=await r.json().catch(()=>({}));
-        throw new Error(d.error||"Couldn't clear those — try again");
+        throw new Error(humanError(d.error)||"Couldn't clear those — try again");
       }
       await loadDates();
       toast("Cleared — tell us again when you know");
@@ -12164,7 +12165,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         body:JSON.stringify({ranges}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Those dates didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"Those dates didn't save — try again");
       setMyFrom("");setMyTo("");
       await loadDates();
       toast("Got it — we'll find the dates that suit most of you");
@@ -12306,12 +12307,12 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       // stale read of who has answered must not paper over those.
       if(res.status===409){
         const w=waitRefusal(res.status,d)?waitingFor(readiness?.preferences,me,{night:oneEvening}):{mine:false,sentence:null};
-        setBuildError({msg:(w.mine&&w.sentence)||d.error||((group?.memberIds||[]).length>1?"Waiting on the rest of the group":"Not ready to plan the days yet"),retry:false,answer:w.mine});
+        setBuildError({msg:(w.mine&&w.sentence)||humanError(d.error)||((group?.memberIds||[]).length>1?"Waiting on the rest of the group":"Not ready to plan the days yet"),retry:false,answer:w.mine});
         setBuilding(false);return;
       }
       // The server's own words, as they are: it says when the problem is on
       // our side, and "try again" is the button under it, not more words.
-      if(!res.ok)throw new Error(d.error||"Couldn't build the day-by-day plan.");
+      if(!res.ok)throw new Error(humanError(d.error)||"Couldn't build the day-by-day plan.");
       // A restaurant-type plan is the night out. Labelled as an evening
       // rather than a day, same as the generate path.
       // The flights, the stay and the transfers survive a rebuild.
@@ -12708,7 +12709,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
       for(const id of t.bookingIds||[]){
         try{
           const r=await fetchWithin(`/api/bookings/${id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"pending"})});
-          if(!r.ok){const d=await r.json().catch(()=>({}));console.error("[book] could not take back the booking",{bookingId:id,status:r.status});toast(d.error||"Couldn't save that — try again in a moment");ok=false;}
+          if(!r.ok){const d=await r.json().catch(()=>({}));console.error("[book] could not take back the booking",{bookingId:id,status:r.status});toast(humanError(d.error)||"Couldn't save that — try again in a moment");ok=false;}
         }catch(e){console.error("[book] could not take back the booking",{bookingId:id},e);toast("Couldn't save that — try again in a moment");ok=false;}
       }
       forgetNext(planId);
@@ -12803,7 +12804,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
     try{
       const r=await fetch(`/api/plans/${planId}/vote`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({veto:opt,on})});
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"That veto didn't save — try again");
+      if(!r.ok)throw new Error(humanError(d.error)||"That veto didn't save — try again");
       forgetNext(planId);
       toast(on?`Vetoed ${opt}`:`Took back your veto of ${opt}`);
     }catch(e){console.error("[vote] veto failed",{planId},e);toast(e.message);}
@@ -13682,7 +13683,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                         body:JSON.stringify({everyone:(group.memberIds||[]).length>1}),
                       });
                       const d=await r.json().catch(()=>({}));
-                      if(!r.ok)throw new Error(d.error||"Couldn't send that");
+                      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't send that");
                       toast(d.sent>1?`Sent to all ${d.sent} of you 📬`:"Sent to your inbox 📬");
                     }catch(e){
                       console.error("[planDetail] itinerary email failed",e);
@@ -14313,7 +14314,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
       });
       if(!r.ok){
         const d=await r.json().catch(()=>({}));
-        throw new Error(d.error||"Couldn't save that");
+        throw new Error(humanError(d.error)||"Couldn't save that");
       }
       setBookings(bs=>(bs||[]).map(b=>b.id===id?{...b,status}:b));
       toast("Noted — we'll leave it open");
@@ -14450,9 +14451,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
       // Priced for a different number of people than are going. Nothing was
       // charged; this used to be a toast with nothing on screen to fix it.
       if(r.status===409&&d.code==="stale_quotes"&&Array.isArray(d.stale)){
-        setRepriceIds(d.stale.map(x=>x.id)); setMsg(d.error||""); setRepriceStuck(false); setPhase("reprice"); setBusy(false); return;
+        setRepriceIds(d.stale.map(x=>x.id)); setMsg(humanError(d.error)||""); setRepriceStuck(false); setPhase("reprice"); setBusy(false); return;
       }
-      if(!r.ok||!d.clientSecret)throw new Error(d.error||"Couldn't start the payment \u2014 try again.");
+      if(!r.ok||!d.clientSecret)throw new Error(humanError(d.error)||"Couldn't start the payment \u2014 try again.");
       setClientSecret(d.clientSecret); setPhase("pay");
     }catch(e){ toast(e.message); }
     setBusy(false);
@@ -14677,7 +14678,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         if(o.kind==="booked")continue;
         const seed=readTableAnswer(status,json,{asked:t.when?.time||null,path:t.path});
         found.push({bookingId:b.id,row:b,kind:o.kind,code:o.code,who:[],seed,
-          message:seed.error||seed.title||o.message||"",step:nextStepFor(o,"restaurant")});
+          message:humanError(seed.error)||seed.title||o.message||"",step:nextStepFor(o,"restaurant")});
       }
       // The tables as they stand now: a table handed over or owing a card
       // must not be drawn on the next screen from the list read before.
@@ -15005,7 +15006,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         try{
           const r=await fetchWithin(`/api/bookings/${id}/options`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reprice:true})},30000,"pricing it again");
           const d=await r.json().catch(()=>({}));
-          if(!r.ok)problems.push({text:d.error||"Couldn't price that again.",code:d.code||null});
+          if(!r.ok)problems.push({text:humanError(d.error)||"Couldn't price that again.",code:d.code||null});
         }catch(e){ console.error("[checkout] reprice failed",{id},e); problems.push({text:e.message||"Couldn't price that again.",code:null}); }
       }
       setBusy(false);
@@ -15986,7 +15987,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         body:JSON.stringify({[field]:value||null}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that");
       setDocDraft(x=>({...x,[field]:undefined}));
       toast(value?"Saved":"Removed");
       await load();
@@ -16006,7 +16007,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         body:JSON.stringify({programName:loyName.trim(),tier:loyTier.trim()||undefined,number:loyNum.trim()||undefined}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't add that programme");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't add that programme");
       setLoyName("");setLoyTier("");setLoyNum("");
       toast("Added — we'll use it when we price things");await load();
     }catch(e){toast(e.message);}
@@ -16050,7 +16051,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         body:JSON.stringify({confirm:"DELETE"}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't schedule that");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't schedule that");
       toast("Deletion scheduled");setDeleteConfirm("");setSection(null);await load();
     }catch(e){toast(e.message);}
     finally{setBusy(null);}
@@ -16092,7 +16093,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),
         });
         const d=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(d.error||"Couldn't save that");
+        if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that");
         setDocDraft(x=>({...x,__first:undefined,__air:undefined,__city:undefined}));
         toast("Saved");await load();
         // The greeting reads the app's copy of the user, not this screen's,
@@ -16208,7 +16209,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),
         });
         const d=await r.json().catch(()=>({}));
-        if(!r.ok)throw new Error(d.error||"Couldn't save that");
+        if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that");
         setDocDraft(x=>({...x,__fFirst:undefined,__last:undefined,__dob:undefined,__gender:undefined,__phone:undefined}));
         toast("Saved");await load();
         if(body.firstName!==undefined)onIdentityChange?.();
@@ -16826,7 +16827,7 @@ export default function ReachApp({realUser,onSignOut}={}){
         body:JSON.stringify({homeCity:city?.trim()||null,homeAirport:airport?.trim()||null}),
       });
       const d=await r.json().catch(()=>({}));
-      if(!r.ok)throw new Error(d.error||"Couldn't save that");
+      if(!r.ok)throw new Error(humanError(d.error)||"Couldn't save that");
       await syncUser();
       showToast("Departing from "+(city?.trim()||"wherever you are"));
       return true;
@@ -17355,7 +17356,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     });
     const d=await r.json().catch(()=>({}));
     // The server refuses to strand a group with no admin, and says so.
-    if(!r.ok)throw new Error(d.error||"Couldn't remove them from the group");
+    if(!r.ok)throw new Error(humanError(d.error)||"Couldn't remove them from the group");
     setGroups(gs=>gs.map(g=>g.id===groupId
       ?{...g,memberIds:(g.memberIds||[]).filter(id=>id!==userId)}:g));
   };
@@ -17388,7 +17389,7 @@ export default function ReachApp({realUser,onSignOut}={}){
     if(isTempId(groupId))throw new Error("That group is still saving — try again in a moment");
     const r=await fetch(`/api/groups/${groupId}`,{method:"DELETE"});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok)throw new Error(d.error||"Couldn't delete that group");
+    if(!r.ok)throw new Error(humanError(d.error)||"Couldn't delete that group");
     setGroups(gs=>{
       const left=gs.filter(g=>g.id!==groupId);
       purgeStaleDraft(left.map(g=>g.id));
@@ -17446,7 +17447,7 @@ export default function ReachApp({realUser,onSignOut}={}){
         if(!res.ok){
           const err=await res.json().catch(()=>({}));
           console.error("[saveGroupToServer] update rejected",res.status,err);
-          showToast(err.error||"Couldn't save that change");
+          showToast(humanError(err.error)||"Couldn't save that change");
           // Null, not the id. Callers could not tell a rejected rename from a
           // saved one, because both came back with the same truthy value — so
           // the screen said "Saved — looking good" over the failure it had
@@ -17579,7 +17580,7 @@ export default function ReachApp({realUser,onSignOut}={}){
           return {needsConfirmation:true,...err};
         }
         console.error("[plan] update rejected",res.status,err);
-        showToast(err.error||"That change didn't save — try again");
+        showToast(humanError(err.error)||"That change didn't save — try again");
         return false;
       }
       // What's next for it has changed: Home and the group must not answer from the cached reads.
@@ -17619,7 +17620,7 @@ export default function ReachApp({realUser,onSignOut}={}){
       if(!res.ok){
         const err=await res.json().catch(()=>({}));
         console.error("[vote] rejected",res.status,err);
-        showToast(err.error||"Your vote didn't save — try again");
+        showToast(humanError(err.error)||"Your vote didn't save — try again");
         return false;
       }
       // What's next for it has changed: Home and the group must not answer from the cached reads.

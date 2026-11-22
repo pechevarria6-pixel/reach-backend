@@ -43,7 +43,7 @@ test('the route says sent only when the provider accepted it, and is limited', (
 test('Help is in Profile, and its form never shows Sent on a failure', () => {
   assert.match(APP, /<Row icon="💬" title="Help" sub="Quick answers, or message us"/);
   assert.match(APP, /if\(r\.ok&&d\.sent===true\)\{setSent\(true\)/);
-  assert.match(APP, /setErr\(d\.error\|\|`We couldn't send that just now\./);
+  assert.match(APP, /setErr\(humanError\(d\.error\)\|\|`We couldn't send that just now\./);
 });
 
 test('Who sees what is in the app and links to the policy', () => {
