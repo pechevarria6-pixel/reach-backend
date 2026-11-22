@@ -73,6 +73,20 @@ three cities in triplicate. The tripwire needed ~36 well-spread places to hold 0
 a 24-place fixture could not, whatever the weights. Seed coordinates (and dedupe the
 triplicates: data deletion, owner's call) and grow the catalogue first.
 
+### Part B audit (2026-11-22, against main; read-only audit, key claims spot-checked)
+| Expectation | State | What is there / the gap |
+|---|---|---|
+| Useful: one primary action | 🟡 | `getNextAction` drives Home, group, plan and checkout. Discover has no primary; Home can show 4 "Waiting on you" actions; plan detail carries up to 7 primary-styled buttons depending on state. Needs a screen-by-screen walk |
+| Easy: one-screen creation < 60 s | ❌ | A trip is 7 steps (`lib/create-plan-steps.ts`); only Where is prefilled; no e2e creates a trip |
+| Time-saving: time to first option | ❌ | One JSON response, no streaming; no timing event (`ai_generation` logs cost, not latency) |
+| Productivity: invite → input in one run | ❌ | Events exist; no e2e covers the invite page through to trip input |
+| Clear: human 4xx copy | 🟡 | Vocabulary guard green; ~243 4xx sites, ~90 with developer strings ("groupId required", "Forbidden"); no client-side map |
+| Engaging: Why this + celebration | 🟡 | Celebration live and tracked; the evidence-backed "Why this" is on this branch (Task 4); no render test yet |
+| Branding: tokens only | 🟡 | Fonts are tokens; ~46 raw hex in the app outside the palette and ~100 more across other pages; no guard bans them |
+| Support: Help + Message us | ❌ | No route, no Profile entry; `lib/email.ts send()` already reports a provider refusal |
+| Privacy: Who sees what | 🟡 | /privacy and /terms exist; the in-app Privacy screen never links to them; no test that member B cannot read A's details |
+| Your Reach card | ❌ | Profile has the trips map only; "last together" is a chosen bucket, not data |
+
 ### What this means for Part A (read before Task 3 merges)
 - **The catalogue is 17 cities, 7 of them in NC.** With code choosing the place, an
   open-ended request the catalogue cannot meet (skiing, a beach abroad) returns fewer
