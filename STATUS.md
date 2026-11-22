@@ -57,6 +57,22 @@ tests** (not 270). Task 6 tests use it.
 - **Accessibility:** ❌ not captured anywhere (no column, no quiz key). Not added
   without Peter's go-ahead (quiz length is capped).
 
+### Part A — done 2026-11-22 (branch `feat/destination-diversity`, not merged)
+| Task | Commit | State |
+|---|---|---|
+| 0 Ground truth | bd687f5 | this section |
+| 1 Migration | ce56d8e | **applied** 2026-11-22 (owner's go-ahead), dry run first; verified: 4 new profile columns, `destination_exposure` with RLS, `bump_destination_exposure`, `users.crowd_tolerance` |
+| 2 Selector | 3435a34 | `lib/destination-select.ts` |
+| 3 Generation | f6f3930 | behind `DESTINATION_SELECT=on` (**off**); `destination_venue_tags` view **applied** (587 rows) |
+| 4 Claims + "Why this" | f0ccd9d | guard in `check:vocabulary`; note it skips all-lowercase strings (an existing limit of the guard) |
+| 5 Crowd tolerance | d08ebf6 | 7th quiz screen, pick-all-that-fit (owner's rule over the directive's "one tap"); Profile setting |
+| 6 Tripwire | b99944e | fixture top-5 share **0.375** (0.458 with the rules off); `pilot_destination_concentration` **applied** |
+
+**Before switching it on:** the production catalogue is 17 places, all coordinates null,
+three cities in triplicate. The tripwire needed ~36 well-spread places to hold 0.40 —
+a 24-place fixture could not, whatever the weights. Seed coordinates (and dedupe the
+triplicates: data deletion, owner's call) and grow the catalogue first.
+
 ### What this means for Part A (read before Task 3 merges)
 - **The catalogue is 17 cities, 7 of them in NC.** With code choosing the place, an
   open-ended request the catalogue cannot meet (skiing, a beach abroad) returns fewer
