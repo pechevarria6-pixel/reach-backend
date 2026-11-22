@@ -16,21 +16,21 @@ const fn = (name: string) => {
 
 test('a failed load is recorded, separately from loading and from empty', () => {
   const load = APP.slice(APP.indexOf('const loadGroups=async()=>{'), APP.indexOf('const loadGroups=async()=>{') + 3000);
-  assert.match(load, /if\(!res\.ok\)\{setGroupsError\(true\)/);
-  assert.match(load, /catch\(e\)\{[^}]*setGroupsError\(true\)/);
-  assert.match(load, /setGroupsError\(false\)/, 'a good answer clears it');
+  assert.match(load, /if\(!res\.ok\)\{setGroupsError\("server"\)/);
+  assert.match(load, /catch\(e\)\{[^}]*setGroupsError\(navigator\.onLine===false\?"offline":"server"\)/);
+  assert.match(load, /setGroupsError\(null\)/, 'a good answer clears it');
 });
 
 test('Groups shows the retry, not "Nothing planned yet", when the load failed', () => {
   const g = fn('GroupsScreen');
-  assert.match(g, /loadFailed&&<TripsLoadFailed onRetry=\{onRetry\}\/>/);
+  assert.match(g, /loadFailed&&<TripsLoadFailed why=\{loadFailed\} onRetry=\{onRetry\}\/>/);
   assert.match(g, /!loading&&groups\.length===0&&!loadFailed&&\(/, 'the empty state is gated on not-failed');
   assert.match(g, /!\(loadFailed&&groups\.length===0\)/, 'no "+ New" over a failed load');
 });
 
 test('Home shows the retry, not "Three ways to start", when the load failed', () => {
   const h = fn('HomeScreen');
-  assert.match(h, /loadFailed&&<TripsLoadFailed onRetry=\{onRetry\}\/>/);
+  assert.match(h, /loadFailed&&<TripsLoadFailed why=\{loadFailed\} onRetry=\{onRetry\}\/>/);
   assert.match(h, /groups\.length===0&&!loading&&!loadFailed&&\(<>/);
 });
 
@@ -44,4 +44,9 @@ test('the card says what happened and offers only the retry', () => {
 test('both screens are handed the state and the retry, and onboarding is not triggered by a failure', () => {
   assert.equal((APP.match(/loadFailed=\{groupsError\} onRetry=\{loadGroups\}/g) ?? []).length, 2);
   assert.match(APP, /if\(groupsError\)return;/);
+});
+
+test('the card names the cause: ours on a server error, the connection only when offline', () => {
+  const c = fn('TripsLoadFailed');
+  assert.match(c, /why==="offline"\?"You're offline\. Check your connection, then try again\.":"Something went wrong on our side\./);
 });
