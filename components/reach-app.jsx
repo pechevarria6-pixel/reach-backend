@@ -40,6 +40,7 @@ import { stepsFor, stepCounter } from "@/lib/quiz-steps";
 import { waitingFor, planStandsLine, failureFrom, datesTally, voteHeading, tieWords, waitRefusal, changeRefusal, planCalled } from "@/lib/plan-words";
 import { QUIZ_SCREENS, QUIZ_COUNT_WORD, needsDone, onOptionPress, stepAfter } from "@/lib/quiz-screens";
 import { CROWD_OPTIONS } from "@/lib/crowd-tolerance";
+import { yourReach, sinceWords } from "@/lib/your-reach";
 import { mayGoAhead as mayGoAheadRule, organiserWaitCopy } from "@/lib/group-answers";
 import { offeredNoGos, isWeatherNoGo, savedWeatherNoGo, CLIMATE_CHECKS_ENABLED, CANT_CHECK_WEATHER } from "@/lib/weather-no-go";
 import { RESULT_COPY, EVERYTHING_COPY, DIALS, DIAL_COPY, dialLabel, headline, Q2_TILES, DIETARY, DISLIKES, DRINKS, SEATING, NOT_DRINKING, revealCards, publicProfile, shareCode, answersFromV2, hasV2Answers, applyDialOverride } from "@/lib/traveler-profile";
@@ -16561,6 +16562,25 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       </div>
 
       <TripMap groups={groups} push={push} toast={toast}/>
+      {/* Your Reach: counted from plans that were booked and are over, never
+          estimated (lib/your-reach.ts). Nothing until there is a trip. */}
+      {(()=>{
+        const r=yourReach(groups,today());
+        if(!r.tripsTaken)return null;
+        return(
+          <div style={{margin:"0 20px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,padding:"12px 14px"}}>
+            <div style={{fontSize:14,fontWeight:600,color:C.t1}}>Your Reach</div>
+            <div style={{fontSize:13,color:C.t2,marginTop:2}}>
+              {r.tripsTaken} trip{r.tripsTaken===1?"":"s"} taken · {r.places} place{r.places===1?"":"s"}
+            </div>
+            {r.groups.filter(g=>g.daysSince!=null).slice(0,4).map(g=>(
+              <div key={g.id} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12.5,color:C.t2,marginTop:6}}>
+                <span style={{color:C.t1}}>{g.name}</span><span>{sinceWords(g.daysSince)}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {loadErr&&(
         <div style={{margin:"0 20px 14px",background:C.redDim,border:`1px solid ${C.red}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t1}}>
