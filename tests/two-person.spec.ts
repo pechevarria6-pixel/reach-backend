@@ -12,7 +12,8 @@ import path from 'path';
 // Against production, so the rules are the gate's (§C):
 //   · reads anywhere both accounts may read;
 //   · writes only inside the QA test group, and only one: a night out A starts
-//     and then calls off, in this file, whatever happens in between;
+//     and then calls off, in this file, whatever happens in between (a
+//     double-tap that wrongly makes two gets both called off);
 //   · the owner's demo plan is only ever read, and only to be refused.
 //
 // API calls run inside each signed-in page with its own fetch, not through a
@@ -71,6 +72,9 @@ test.describe('Two people, one group', () => {
   let bId = '';
   let planId: string | null = null;
   let calledOff = false;
+  // Every plan this file made, so a double-tap that slipped through is
+  // called off too, not left in the QA group.
+  const made = new Set<string>();
 
   test.beforeAll(async ({ browser }, info) => {
     // Once per run: the iPhone project would start and call off a second plan.
@@ -88,9 +92,11 @@ test.describe('Two people, one group', () => {
 
   test.afterAll(async () => {
     // Whatever failed above, nothing this file started is left running.
-    if (planId && !calledOff && A?.page) {
-      const r = await api(A.page, `/api/plans/${planId}`, { method: 'PATCH', body: { status: 'cancelled' } });
-      console.log(`[two-person] cleanup: called off ${planId} → ${r.status}`);
+    for (const id of made) {
+      if (id === planId && calledOff) continue;
+      if (!A?.page) break;
+      const r = await api(A.page, `/api/plans/${id}`, { method: 'PATCH', body: { status: 'cancelled' } });
+      console.log(`[two-person] cleanup: called off ${id} → ${r.status}`);
     }
     await A?.ctx?.close();
     await B?.ctx?.close();
@@ -133,28 +139,47 @@ test.describe('Two people, one group', () => {
     await expect(B.page.getByText('QA test group').first()).toBeVisible({ timeout: 20000 });
   });
 
-  test('a night out A starts is one B can open', async () => {
-    const created = await api(A.page, '/api/plans', {
-      method: 'POST',
-      body: {
-        group_id: QA_GROUP,
-        title: 'E2E two-person check (called off by the test)',
-        type: 'restaurant',
-        destination_style: 'undecided',
-        start_date: tomorrowInNewYork(),
-        budget_cents: 0,
-      },
-    });
-    // One night out at a time per group: if one is already being planned in
+  test('a night out A starts — double-tapped — is one plan, and one B can open', async () => {
+    const body = {
+      group_id: QA_GROUP,
+      title: 'E2E two-person check (called off by the test)',
+      type: 'restaurant',
+      destination_style: 'undecided',
+      start_date: tomorrowInNewYork(),
+      budget_cents: 0,
+    };
+    // A double-tap is two concurrent requests, not two sequential ones
+    // (CLAUDE.md): both leave at the same moment.
+    const both = await Promise.all([
+      api(A.page, '/api/plans', { method: 'POST', body }),
+      api(A.page, '/api/plans', { method: 'POST', body }),
+    ]);
+    const ok = both.filter(c => c.status < 300);
+    for (const c of ok) { const id = c.json.plan?.id ?? c.json.id; if (id) made.add(id); }
+    // One night out at a time per group: if one was already being planned in
     // the QA group, say which and stop, rather than call somebody else's off.
-    test.skip(created.status === 409, `The QA group already has a night out in planning: ${JSON.stringify(created.json).slice(0, 200)}`);
-    expect(created.status, JSON.stringify(created.json).slice(0, 300)).toBeLessThan(300);
-    planId = created.json.plan?.id ?? created.json.id;
+    test.skip(ok.length === 0 && both.every(c => c.status === 409), `The QA group already has a night out in planning: ${JSON.stringify(both[0].json).slice(0, 200)}`);
+    expect(ok.length, `a double-tap made ${ok.length} plans: ${both.map(c => c.status).join(', ')}`).toBe(1);
+    const other = both.find(c => c.status >= 300)!;
+    expect(other.status, 'the second tap is refused as "one at a time", not a server error').toBe(409);
+    planId = ok[0].json.plan?.id ?? ok[0].json.id;
     expect(planId).toMatch(/^[0-9a-f-]{36}$/);
 
     const seen = await api(B.page, `/api/plans/${planId}`);
     expect(seen.status).toBe(200);
     expect(JSON.stringify(seen.json)).toContain(planId as string);
+  });
+
+  test('A and B open the plan at the same moment and see the same plan', async () => {
+    test.skip(!planId, 'no plan to open');
+    const [a, b] = await Promise.all([api(A.page, `/api/plans/${planId}`), api(B.page, `/api/plans/${planId}`)]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    const view = (x: Answer) => { const p = x.json.plan ?? x.json; return [p.id, p.status, p.type, p.start_date, p.group_id]; };
+    expect(view(b)).toEqual(view(a));
+    // And on screen, side by side: each lands on Home signed in as themselves.
+    await Promise.all([A.page.goto(`${BASE_URL}/home`), B.page.goto(`${BASE_URL}/home`)]);
+    await Promise.all([A.page.waitForURL('**/home'), B.page.waitForURL('**/home')]);
   });
 
   test('the organiser\'s debrief is never offered to the member, nor before the trip', async () => {
@@ -177,13 +202,14 @@ test.describe('Two people, one group', () => {
     expect(post.status).toBe(409);
   });
 
-  test('only the organiser can call it off, and then both see it off', async () => {
+  test('only the organiser can call it off — even when both try at once — and then both see it off', async () => {
     test.skip(!planId, 'no plan to call off');
-    const refused = await api(B.page, `/api/plans/${planId}`, { method: 'PATCH', body: { status: 'cancelled' } });
+    const [refused, off] = await Promise.all([
+      api(B.page, `/api/plans/${planId}`, { method: 'PATCH', body: { status: 'cancelled' } }),
+      api(A.page, `/api/plans/${planId}`, { method: 'PATCH', body: { status: 'cancelled' } }),
+    ]);
     expect(refused.status).toBe(403);
     expect(refused.json.error).toMatch(/can call this off/);
-
-    const off = await api(A.page, `/api/plans/${planId}`, { method: 'PATCH', body: { status: 'cancelled' } });
     expect(off.status, JSON.stringify(off.json).slice(0, 300)).toBe(200);
     calledOff = true;
 
