@@ -1611,7 +1611,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
           Telling somebody they have no plans is not a loading state. */}
       {/* Nor is a failed load (F19-03): "Three ways to start" over a 500
           tells somebody with trips that they have none. */}
-      {groups.length===0&&!loading&&loadFailed&&<TripsLoadFailed onRetry={onRetry}/>}
+      {groups.length===0&&!loading&&loadFailed&&<TripsLoadFailed why={loadFailed} onRetry={onRetry}/>}
       {groups.length===0&&!loading&&!loadFailed&&(<>
       <div style={{padding:"0 20px 10px"}}>
         <span className="sl">Three ways to start</span>
@@ -3298,13 +3298,15 @@ function SwipeToDelete({group,onDelete,children}){
 // Shown in place of an empty state, never beside one. Deliberately no "Start
 // planning": the person may well have trips, and a new one made now would be
 // a duplicate of something we simply failed to fetch.
-function TripsLoadFailed({onRetry}){
+function TripsLoadFailed({why,onRetry}){
   const [trying,setTrying]=useState(false);
   return(
     <div role="alert" style={{margin:"0 20px 16px",padding:"24px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:20,textAlign:"center"}}>
       <div style={{fontSize:16,fontWeight:600,color:C.t1,marginBottom:6}}>We couldn't load your trips</div>
       <div style={{fontSize:13,color:C.t2,lineHeight:1.6,marginBottom:16}}>
-        Check your connection, then try again.
+        {/* Which it was: a 500 is ours, and "check your connection" would
+            send somebody to fix a phone that is working. */}
+        {why==="offline"?"You're offline. Check your connection, then try again.":"Something went wrong on our side. It's usually brief."}
       </div>
       <button className="bp" disabled={trying} onClick={async()=>{setTrying(true);try{await onRetry?.();}finally{setTrying(false);}}}>
         {trying?"Trying again…":"Try again"}
@@ -3349,7 +3351,7 @@ function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup})
           Loading your groups…
         </div>
       )}
-      {!loading&&groups.length===0&&loadFailed&&<TripsLoadFailed onRetry={onRetry}/>}
+      {!loading&&groups.length===0&&loadFailed&&<TripsLoadFailed why={loadFailed} onRetry={onRetry}/>}
       {!loading&&groups.length===0&&!loadFailed&&(
         <div style={{margin:"0 20px",padding:"32px 24px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:20,textAlign:"center"}}>
           <div style={{fontSize:40,marginBottom:12}}>👋</div>
@@ -16523,7 +16525,7 @@ export default function ReachApp({realUser,onSignOut}={}){
   // The load failed, which is not the same as "you have none" (UX F19-03).
   // A 500 used to fall through to the empty state, so somebody with three
   // trips was told "Nothing planned yet" and invited to make a fourth.
-  const [groupsError,setGroupsError]=useState(false);
+  const [groupsError,setGroupsError]=useState(null); // null | "server" | "offline"
   // Offline (UX F19-02): the worker keeps each trip wallet it sees, and
   // public/offline.html lists them on a cold open with no signal. Nothing
   // asked for a wallet before, so nothing was ever kept. Once the trips are
@@ -17003,9 +17005,9 @@ export default function ReachApp({realUser,onSignOut}={}){
     try{
       setGroupsLoading(true);
       const res=await fetch("/api/groups");
-      if(!res.ok){setGroupsError(true);setGroupsLoading(false);return;}
+      if(!res.ok){setGroupsError("server");setGroupsLoading(false);return;}
       const {groups:data}=await res.json();
-      setGroupsError(false);
+      setGroupsError(null);
       if(!data||data.length===0){setGroupsLoading(false);return;}
 
       // Every member row carries its user, so the avatar map can be filled in
@@ -17033,7 +17035,7 @@ export default function ReachApp({realUser,onSignOut}={}){
       // Only safe to prune once the real list is in hand — a failed load must
       // never look like "you have no groups" and wipe a valid draft.
       purgeStaleDraft(data.map(g=>g.id));
-    }catch(e){console.log("API unavailable, using local state",e);setGroupsError(true);}
+    }catch(e){console.log("API unavailable, using local state",e);setGroupsError(navigator.onLine===false?"offline":"server");}
     finally{setGroupsLoading(false);}
   };
 
