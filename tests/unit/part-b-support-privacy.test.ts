@@ -48,7 +48,7 @@ test('Help is in Profile, and its form never shows Sent on a failure', () => {
 
 test('Who sees what is in the app and links to the policy', () => {
   assert.match(APP, /<span className="sl">Who sees what<\/span>/);
-  assert.match(APP, /Your name, email address and picture/);
+  assert.match(APP, /Your name and picture, never your email address/);
   assert.match(APP, /title="Privacy Policy"[\s\S]{0,140}window\.location\.href="\/privacy"/);
   assert.match(E2E, /a private field reached another member/);
 });

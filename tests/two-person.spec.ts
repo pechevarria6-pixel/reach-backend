@@ -207,9 +207,12 @@ test.describe('Two people, one group', () => {
     const PRIVATE = /passport|ktn|global_entry|date_of_birth|tsa_precheck|quiz_answers|traveler_profile|no_way_jose|dietary|stripe_customer|(?<!venue_|place_|business_)phone|loyalty/i;
     // A venue's own phone number is the venue's, printed on its door; only a person's is private.
     const reads = [await api(B.page, `/api/groups/${QA_GROUP}`), await api(B.page, '/api/groups')];
-    if (planId) reads.push(await api(B.page, `/api/plans/${planId}/readiness`));
+    if (planId) reads.push(await api(B.page, `/api/plans/${planId}/readiness`), await api(B.page, `/api/plans/${planId}`));
+    // Members never see each other's email address (owner, 2026-11-22).
+    const aEmail = String(process.env.TEST_EMAIL || '').toLowerCase();
     for (const r of reads) {
       expect(r.status).toBe(200);
+      if (aEmail) expect(JSON.stringify(r.json).toLowerCase().includes(aEmail), "A's email reached B").toBe(false);
       const keys = JSON.stringify(r.json).match(/"([a-z_]+)":/g) ?? [];
       expect(keys.filter(k => PRIVATE.test(k)), 'a private field reached another member').toEqual([]);
     }

@@ -16467,7 +16467,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         <div style={{padding:"16px 20px 6px"}}><span className="sl">Who sees what</span></div>
         <div style={{margin:"0 20px 6px",fontSize:13,color:C.t1,lineHeight:1.6}}>
           <div style={{fontWeight:600,marginBottom:2}}>People in your groups see</div>
-          <div style={{color:C.t2}}>Your name, email address and picture · your votes · whether you've answered a trip's questions, not your answers · whether your travel details are ready, and which are missing, never the details · the airport you fly from on a trip with a flight · whether your share is paid.</div>
+          <div style={{color:C.t2}}>Your name and picture, never your email address · your votes · whether you've answered a trip's questions, not your answers · whether your travel details are ready, and which are missing, never the details · the airport you fly from on a trip with a flight · whether your share is paid.</div>
           <div style={{fontWeight:600,margin:"10px 0 2px"}}>Nobody else sees</div>
           <div style={{color:C.t2}}>Your answers to a trip's questions and your no-ways · your passport, trusted-traveller and loyalty numbers · your card · the summary of places you like, which nobody sees, you included.</div>
         </div>
