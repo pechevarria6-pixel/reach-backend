@@ -8,6 +8,101 @@ Legend: ✅ done · 🟡 partial · ❌ missing · 🔒 owner-blocked
 
 ---
 
+## Accessibility and palette — REACH-ACCESSIBILITY-PALETTE-2026-11-22.md, Task 0
+
+Ground truth, 2026-11-22. No code changed. Measured with the WCAG formula against the real tokens, and
+on production at iPhone 14 width (390 px) signed in as the QA account, both themes. Screenshots (half
+size) and the raw audit: `docs/a11y/before/` (`audit.json`). Raw colours: `docs/a11y/RAW-COLOURS.md`.
+
+### Where the colours live (corrects the directive)
+
+- **The token file is the `PALETTE` block in `components/reach-app.jsx` (lines 99–172)**, turned into CSS
+  variables (`--c-*`) and read through `C.*`. `lib/brand.ts` holds the shell, email and loading copies.
+- **The landing page has its own second palette** in `app/page.tsx` line 39 (`.lp{--pg…}`), duplicating
+  token values by hand. The sign-in and sign-up pages are themed separately again (`lib/clerk-appearance.ts`,
+  `components/ThemedAuth.tsx`).
+- **129 raw colours sit outside the token files** across 12 files: `components/reach-app.jsx` 70,
+  `lib/email.ts` 30 (email HTML cannot use CSS variables, so these need a different rule), `ThemedAuth` 7,
+  `clerk-appearance` 7, the rest 1–3 each. The full list with file and line is in `docs/a11y/RAW-COLOURS.md`.
+- The repo already has a contrast gate, `check:contrast` (60 pairs). It only checks a `background:C.x` and a
+  `color:C.y` written in the same style object, with a 3.0 floor for everything. So it misses text on the
+  inherited page or card colour, which is most text, and it never applies 4.5.
+
+**Real values vs the directive's "Now" column:**
+
+| Token | Directive said | Real (dark) | Real (light) |
+|---|---|---|---|
+| Background `bg` | `#2C0E18` / `#EBEFEC` | `#2C0E18` ✓ | `#EBEFEC` ✓ |
+| Card `s2` | `#3F1619` / `#E4EAE6` | `#3F1619` ✓ | `#E4EAE6` ✓ |
+| Other surfaces | — | `s1 #36121B`, `s3 #4A1B20` | `s1 #F4F7F5`, `s3 #DAE2DC` |
+| Control border | "faint" | `border #5A2430`, `borderLight #6B2C39` | `border #D8DED4`, `borderLight #C3CCC5` |
+| Primary text `t1` | `#FEF7D9` / `#142119` | `#FEF7D9` ✓ | `#142119` ✓ |
+| Secondary `t2` | `#CFC182` / `#576E61` | `#CFC182` ✓ | `#576E61` ✓ |
+| Tertiary `t3` (167 uses) | not listed | `#B89A6A` | `#5E766A` |
+| `t4` | not listed | `#9C815A` (unused) | `#6E8577` (unused) |
+| Action fill `accent` | gold / orange | **gold `#C3A342`** | **orange `#EC6032`** |
+| Accent as text `accentText` | gold / orange | gold `#C3A342` | **green `#2B583B`**, not orange or gold |
+| Label on a fill `onAccent` | — | `#2A1D06` | `#2A1D06` |
+| Orange | `#EC6032` in dark | **not a dark token**; the dark accent word is gold | `#EC6032` |
+| Light gold | `#CD9D2E` | — | **no such token**; only the landing logo `--mark #B8912A` |
+| Error `red` | unknown | `#E85D5D` | `#C0392B` |
+| Success `green` | unknown | `#7FB58A` | `#2F7D43` |
+| Also | — | `amber #E8A33D`, `blue #7FA8D9` | `amber #6F4B00`, `blue #1E62C4` |
+
+### The findings, recomputed
+
+| # | Verdict | Real measurement |
+|---|---|---|
+| F1 cards don't separate | **Confirmed, worse** | Card on background: dark 1.13:1, light 1.05:1. Control borders on background are **1.46:1 dark, 1.18:1 light**, under the 3:1 target. Light cards rely on a shadow at 7% opacity. |
+| F2 one hue does every job | **Confirmed in dark; corrected in light** | Dark: cream headings, tan `t2` body, tan `t3`, gold links and buttons: one warm family. Light: text and links are green (`accentText #2B583B` 7.06:1) and fills are orange, so links and body text are both green-grey. Links in sentences are not underlined in either theme. |
+| F3 orange fails as text in light | **Confirmed, narrow** | 2.88:1 on background. Used as text in one place: the Home greeting's accent word ("better"), 34 px, which needs 3:1 and fails. The orange `Pay` / `Get started` fills carry dark labels. |
+| F4 white on orange fails | **Ratio confirmed, not used** | White on orange 3.34:1; nothing in the app puts white on it. Dark ink on orange is **4.92:1** (the directive's 5.31 was orange on the maroon background). A related failure: **white on the dark red is 3.41:1** (the "Delete" button on Groups). |
+| F5 gold washes out in light | **Corrected** | The light app uses no gold. The landing page's gold hands logo (`#B8912A`) is 2.31:1 on its page colour. It is decorative (`alt=""`), so it fails only as brand legibility, not as text. |
+| F6 light secondary text has no margin | **Confirmed, and the tertiary is worse** | `t2` 4.75:1 on background, 4.52:1 on a card, 4.17:1 on `s3`. **`t3` (167 uses) is 4.23:1 on background and 4.03:1 on a card: a fail.** This was the most common low-contrast text in the audit (28 instances, e.g. "From Southern Pines", "Traveller"). On the landing page's own background, `t2` is 4.31:1 and the "How it works" label 3.35:1: both fail. |
+| F7 landing chips look tappable | **Confirmed** | `app/page.tsx:105–107`: three `<span>` pills with a border and fill, no link or role. |
+| F8 long body text centred and tinted | **Confirmed** | Landing intro: four centred lines in `t2`. The same pattern appears in-app: the trip-question intro is four centred lines. |
+| F9 emoji as interface icons | **Confirmed** | For example 🧪 group badges, 🍽️🏖️✈️ chips, 💬 Help, 📄 Privacy Policy, the quiz's 💭 and 👋. **An icon set exists:** `Ic` in `components/reach-app.jsx` (line 460), 14 hand-drawn SVG icons, so emoji can be replaced rather than only hidden. |
+| F10 error and success unknown | **Measured; mixed** | Dark red: 5.20:1 on background, 4.59:1 on a card, 4.19:1 on `s3` (fail). Light red: 4.68:1 on background, **4.46:1 on a card** (fail). Light success green `#2F7D43`: **4.37:1 on background** (fail) and 4.16:1 on a card. Dark success is fine (7.50:1). |
+
+### Per screen (audit on production, both themes)
+
+Captured: landing, sign-in, sign-up, onboarding quiz, Home, Discover, Groups, a group, trip creation, plan
+overview, budget, checkout, Profile, Privacy, empty Groups, the group's empty plan list, the Groups error,
+the Discover error, 404 and offline. Each has a dark and a light capture, and the dark captures also have
+200% text versions.
+
+**Not captured, with the reason:**
+- **Options and voting:** no group holds ideas right now. Making some means generating a trip, and the audit
+  refuses every write.
+- **Trip input:** a trip-answers step past the first was not reached without writing.
+- **Itinerary:** the plan screen's tabs are Overview / Budget / Book; the day-by-day sits inside Overview.
+
+Capturing options and voting needs a QA trip generated and then called off. I'll do that in Task 5 if you agree.
+
+| Check | Result |
+|---|---|
+| Text under target | **Dark: almost none.** 3 lines on Groups and Profile: the white "Delete" label, and the map credit "Leaflet" at 3.64:1. A fourth hit, the 👋 emoji on the quiz, is a false alarm. **Light: 47 unique lines** across 11 screens, nearly all `t3` and `t2` on cards, the light success green, and the orange accent word. |
+| Tap targets under 44×44 | Every signed-in screen has some. The worst: group badges (46×14), "Plan the weekend / night / this trip →" links on idea cards (216×29), "Not for me" ✕ on ideas (20×44), "Edit" / "Edit plan" pills (50×29, 78×29), the venue phone link (138×37), the bell (31×44), and Clerk's sign-in fields (30 px tall). |
+| Looks tappable, isn't (or the reverse) | Home's idea cards and "See all →" have a pointer cursor but cannot be reached by keyboard. The checkout back arrow "←" is the same. Landing chips: the reverse of a control (F7). **Privacy toggles** report as buttons with no on/off state, and the off track is invisible (edge 1.24:1 dark, 1.14:1 light). |
+| Accessible names | No unnamed controls found on any captured screen. |
+| Heading order | **The app screens have no headings at all.** Home, Groups, group, trip creation, plan, budget, checkout, Profile and Privacy each report zero `h1`–`h6`. Titles are styled `div`s. Discover, 404, offline, onboarding and the auth pages have an `h1`. The landing page skips from `h1` to `h3`, and "How it works" is a `<p>`. |
+| Focus ring | **Present on keyboard focus** on every app screen. Dark: 2 px gold, 7.30:1 on background. Light: 2 px green, 7.06:1. Sign-in and sign-up use Clerk's ring (orange in light). The offline page uses the browser default. |
+| 200% text | No sideways scrolling on any screen. Text is clipped (ellipsis or fixed boxes) on Groups (12 places), plan overview (4), trip creation (4) and Home (1–2). Much of the app's type is fixed `px` in inline styles, so the reader's text size changes less than it should. |
+| Reduced motion | **Respected.** A global `@media (prefers-reduced-motion: reduce)` turns every animation and transition to 0.01 ms, and the shimmer, pin-drop and Discover press have their own rules. There is no confetti: the booking celebration is a pin drop. |
+| Status by colour alone | Privacy toggles (above). The checkout progress dots carry words ("Plan · Lock in · Pay · Booked"). Home's "Waiting on you" card has an orange dot plus words. Status pills ("Paying", "Ready to book") are words. |
+| Automated checker | **None present** (no axe in `package.json`). **Asking:** may I add `@axe-core/playwright` as a dev-only dependency for Task 6? It never ships to the app. |
+
+### What this changes in the plan
+
+- The token work is in `PALETTE`, `lib/brand.ts`, the landing page's `.lp` block and the Clerk theme. The
+  landing and Clerk palettes should read from the same values rather than copies.
+- **Email** colours need a token map of their own (`lib/brand.ts`), because email HTML cannot read CSS variables.
+- **Light theme accent rules, as proposed, would change the brand.** Light text and links are green, not
+  orange or gold. The proposal (Task 1) keeps green as the light link colour and moves only orange-as-text.
+- **Headings** are the largest structural gap: every app screen needs real headings (Task 4).
+
+---
+
 ## Pilot gate — REACH-PILOT-GATE-2026-11-08.md
 
 Maintained by the coordinator. Updated 2026-11-08.
