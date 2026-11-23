@@ -538,6 +538,8 @@ export interface ReserveInput {
     accept?: { terms?: string | null; policy?: boolean } | null;
     /** For the restaurant, under the booking. */
     notes?: string;
+    /** For a call: minutes either side of the time the member is happy with (0, 30, 60). */
+    flexMinutes?: 0 | 30 | 60;
     /** Move a table Reach booked to `time`/`date` (OpenTable; Yelp answers no_change). */
     change?: boolean;
     /** The person says they have not booked it themselves (a row already handed to them). */
@@ -812,7 +814,7 @@ async function viaCall(input: ReserveInput, deps: ReserveDeps, f: TableFacts, b:
     plan: input.plan,
     requester: { id: input.requester.id, firstName: input.requester.firstName },
     venue: input.venue,
-    chosen: { date: f.date!, time: f.time!, partySize: f.partySize, notes: input.chosen.notes?.slice(0, 300) ?? null },
+    chosen: { date: f.date!, time: f.time!, partySize: f.partySize, notes: input.chosen.notes?.slice(0, 300) ?? null, flexMinutes: input.chosen.flexMinutes ?? 0 },
     now: input.now,
   }, deps.call);
   if (placed.ok === false) {

@@ -23,3 +23,17 @@ export function windowFor(facts: CallFacts, start?: string | null, end?: string 
   if (ok(start) && ok(end) && start <= facts.time && facts.time <= end) return { start, end };
   return { start: facts.time, end: facts.time };
 }
+
+/**
+ * The window a member says yes to on screen: the time they chose, and up to
+ * an hour either side. Kept inside the same evening (never past 23:59 or
+ * before 00:00), and null when they want that time only.
+ */
+export function flexWindow(time: string, flexMinutes: unknown): { start: string; end: string } | null {
+  const flex = flexMinutes === 30 || flexMinutes === 60 ? flexMinutes : 0;
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(time);
+  if (!flex || !m) return null;
+  const at = Number(m[1]) * 60 + Number(m[2]);
+  const hhmm = (x: number) => `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`;
+  return { start: hhmm(Math.max(0, at - flex)), end: hhmm(Math.min(23 * 60 + 59, at + flex)) };
+}

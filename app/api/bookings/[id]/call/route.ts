@@ -150,6 +150,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       time: typeof body.time === 'string' ? body.time : undefined,
       partySize: body.partySize == null ? undefined : Number(body.partySize),
       notes: typeof body.notes === 'string' ? body.notes : null,
+      flexMinutes: body.flexMinutes === 30 || body.flexMinutes === 60 ? body.flexMinutes : 0,
     },
   }, {
     env: process.env,

@@ -148,5 +148,7 @@ export function chosenFrom(body: Record<string, unknown>) {
     notes: str(body.notes),
     change: body.change === true,
     notBookedElsewhere: body.notBookedElsewhere === true,
+    // For a call: how far either side of the time the member said yes to (0, 30 or 60).
+    flexMinutes: body.flexMinutes === 30 || body.flexMinutes === 60 ? body.flexMinutes as 30 | 60 : 0,
   } as const;
 }

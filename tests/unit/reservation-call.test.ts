@@ -775,3 +775,34 @@ test('a slot a refused placement released is taken again, so holes never cap the
   assert.equal(full.ok === false && full.why, 'cap');
   assert.equal(new Set(rows.map(r => r.day_slot)).size, DAILY_CAP);
 });
+
+// ── the member's window (the calling agent, 2026-11-23) ─────────────────
+test('a yes at another time inside the member\'s window books that time, says that time, and moves the line to it', async () => {
+  const { flexWindow } = await import('../../lib/reservations/agent/settle-window.ts');
+  assert.deepEqual(flexWindow('19:30', 30), { start: '19:00', end: '20:00' });
+  assert.deepEqual(flexWindow('23:30', 60), { start: '22:30', end: '23:59' }, 'never past the evening');
+  assert.equal(flexWindow('19:30', 0), null);
+  assert.equal(flexWindow('19:30', 45), null, 'only the three choices on screen');
+
+  const line = { id: 'i1', scheduled_time: 'Day 2 · Dinner', startDate: '2026-11-05', endDate: '2026-11-08' };
+  const m = await placedLive(LIVE_ENV, { chosen: { date: '2026-11-06', time: '19:30', partySize: 4, flexMinutes: 30 } }, { line });
+  const yes = ended([OPEN, A('So that is 4 people on Friday, November 6 at 8:00 PM under Maria, is that right?'), S('Yes, that\'s right.')],
+    { outcome: 'confirmed', staff_quote: 'Yes, that\'s right.', held_time: '20:00', held_party: 4 });
+  const r = await settleCall(yes, 'retell', m.store);
+  assert.ok(r.ok && r.settled.outcome === 'confirmed' && r.settled.held?.time === '20:00');
+  assert.match(m.notes[0].title, /8:00 for 4/, 'the member is told the time actually booked');
+  assert.equal(m.line!.scheduled_time, 'Day 2 · Dinner · 8:00 PM');
+});
+
+test('outside the window, or with no window, another time is never booked', async () => {
+  const m = await placedLive(LIVE_ENV, { chosen: { date: '2026-11-06', time: '19:30', partySize: 4, flexMinutes: 30 } });
+  const late = ended([OPEN, A('So that is 4 people on Friday, November 6 at 9:00 PM under Maria, is that right?'), S('Yes.')],
+    { outcome: 'confirmed', staff_quote: 'Yes.', held_time: '21:00', held_party: 4 });
+  const r = await settleCall(late, 'retell', m.store);
+  assert.ok(r.ok && r.settled.outcome !== 'confirmed');
+  assert.notEqual(m.bookings.get(booking().id)!.status, 'confirmed');
+
+  const exact = await placedLive();
+  const r2 = await settleCall(ended([OPEN, A('So 4 at 8:00 PM, is that right?'), S('Yes.')], { outcome: 'confirmed', staff_quote: 'Yes.', held_time: '20:00', held_party: 4 }), 'retell', exact.store);
+  assert.ok(r2.ok && r2.settled.outcome !== 'confirmed', 'no window: only the time they chose');
+});

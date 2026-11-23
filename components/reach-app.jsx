@@ -9764,6 +9764,8 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
   const [warning,setWarning]=useState(seed?.warning||null);
   const [busy,setBusy]=useState(false);
   const [pick,setPick]=useState({date:entry?.when?.date||"",time:entry?.when?.time||""});
+  // For a call: how far either side of the time Reach may say yes to (0, 30, 60 minutes).
+  const [flex,setFlex]=useState(0);
   const [notes,setNotes]=useState("");
   const [now,setNow]=useState(()=>Date.now());
   const [number,setNumber]=useState(null);
@@ -9910,7 +9912,7 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
 
   const option=(a,i)=>{
     if(a.kind==="call")return mayCall&&entry.path!=="call"?(
-      <button key={`c${i}`} disabled={busy} onClick={()=>press({path:"call",...chosen()})} style={tableLink}>📞 Have Reach call</button>
+      <button key={`c${i}`} disabled={busy} onClick={()=>press({path:"call",flexMinutes:flex,...chosen()})} style={tableLink}>📞 Have Reach call</button>
     ):null;
     if(a.kind==="confirm")return number===null?(
       <button key={`g${i}`} disabled={busy} onClick={()=>setNumber("")} style={tableLink}>{a.label}</button>
@@ -10073,11 +10075,21 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
             <button className="bsm bsm-p" disabled={busy||missing||(!id&&!makeRow)} onClick={()=>press(chosen())}>
               {busy?"Holding it…":"Book it"}
             </button>
-          ):ctl.primary==="call"?(
-            <button className="bsm bsm-p" disabled={busy||missing} onClick={()=>press({path:"call",...chosen()})}>
+          ):ctl.primary==="call"?(<>
+            {/* Said before the call, so the restaurant can be answered on the spot:
+                a time inside this is a yes, anything else is a "we'll call back". */}
+            <label style={{display:"block",marginBottom:8}}>
+              <span style={{display:"block",fontSize:12.5,fontWeight:600,color:C.t2,marginBottom:6}}>If they can't do {timeLabel(pick.time||entry.when?.time||"")||"that time"}</span>
+              <select className="inp" value={flex} onChange={e=>setFlex(Number(e.target.value))} style={{fontSize:13}}>
+                <option value={0}>Only that time</option>
+                <option value={30}>Up to 30 minutes either side</option>
+                <option value={60}>Up to an hour either side</option>
+              </select>
+            </label>
+            <button className="bsm bsm-p" disabled={busy||missing} onClick={()=>press({path:"call",flexMinutes:flex,...chosen()})}>
               {busy?"Asking…":"📞 Have Reach call"}
             </button>
-          ):null}
+          </>):null}
           {ctl.ownAccount&&(
             <a href={entry.ownAccount.href} target="_blank" rel="noopener noreferrer" style={tableLink}>{entry.ownAccount.label} →</a>
           )}

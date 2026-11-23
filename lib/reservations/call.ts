@@ -32,7 +32,7 @@
 import { gate, dialTarget, type Env, type Gate, type ProviderName } from './gate.ts';
 import { checkFacts, opening, instructions, type CallFacts, type FactProblem } from './script.ts';
 import { settle, type Outcome, type Settled } from './outcome.ts';
-import { settleWithin, windowFor } from './agent/settle-window.ts';
+import { settleWithin, windowFor, flexWindow } from './agent/settle-window.ts';
 import { callWording, type WordingContext, type Wording } from './wording.ts';
 import { toE164, dialable, openForCalls, localMinute, HOURS_MARGIN, type LineLookup, type LineType } from './policy.ts';
 import type { Provider, CallEnded } from './providers.ts';
@@ -200,7 +200,7 @@ export interface PlaceInput {
   /** The held venue: its own number, hours and longitude. */
   venue: { name: string; phone: string | null; opening_hours: string | null; lng: number | null; reserveUrl: string | null } | null;
   /** What the person chose for this call. */
-  chosen: { date?: string; time?: string; partySize?: number; notes?: string | null };
+  chosen: { date?: string; time?: string; partySize?: number; notes?: string | null; flexMinutes?: number };
   /**
    * The status a call that books nothing puts the row back to, when the
    * caller already took the row for this call (reserve.ts marks it 'pending'
@@ -315,6 +315,7 @@ export async function placeCall(input: PlaceInput, deps: PlaceDeps): Promise<Pla
   if (!to) return no('calls_off');
   const request: StoredRequest = {
     ...facts, solo: input.plan.solo, reserveUrl, previousStatus: input.previousStatus ?? b.status, groupId: input.plan.group_id,
+    window: flexWindow(facts.time, input.chosen.flexMinutes),
   };
   const claim = await deps.store.claim({
     booking_id: b.id, plan_id: input.plan.id, requested_by: input.requester.id,
