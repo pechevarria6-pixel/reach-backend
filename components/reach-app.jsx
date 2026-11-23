@@ -226,7 +226,7 @@ button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2
 }
 .inp::placeholder{color:${C.t3};}
 .ov{position:absolute;inset:0;background:${C.overlay};backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
-.sh{width:100%;max-height:90%;background:${C.s1};background-image:${C.grain};border-radius:28px 28px 0 0;border-top:1px solid ${C.border};box-shadow:inset 0 1px 0 ${C.edgeHi};overflow-y:auto;scrollbar-width:none;animation:su .2s cubic-bezier(.32,.72,0,1);padding-bottom:30px;outline:none;}
+.sh{width:100%;max-height:90%;background:${C.s1};background-image:${C.grain};border-radius:28px 28px 0 0;border-top:1px solid ${C.borderLight};box-shadow:inset 0 1px 0 ${C.edgeHi};overflow-y:auto;scrollbar-width:none;animation:su .2s cubic-bezier(.32,.72,0,1);padding-bottom:30px;outline:none;}
 .sh::-webkit-scrollbar{display:none;}
 .sh-hdl{width:36px;height:4px;border-radius:2px;background:${C.border};margin:12px auto 0;}
 /* The handle is what a thumb drags down (components/Sheet.jsx): a strip
@@ -263,7 +263,7 @@ button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2
   .skel::after{display:none;}
   .pin-drop,.pin-drop-shadow{animation:none;}
 }
-.sh-hdr{padding:20px 20px 16px;border-bottom:1px solid ${C.border};display:flex;align-items:center;justify-content:space-between;}
+.sh-hdr{padding:20px 20px 16px;border-bottom:1px solid ${C.borderLight};display:flex;align-items:center;justify-content:space-between;}
 .sh-ttl{font-size:17px;font-weight:600;color:${C.t1};}
 .toast{position:absolute;top:70px;left:16px;right:16px;background:${C.green};color:${C.onGreen};border-radius:14px;padding:12px 16px;font-size:13px;font-weight:600;z-index:500;text-align:center;animation:ti .3s ease,to .3s ease 2.2s forwards;}
 .ri{display:flex;align-items:center;gap:13px;padding:15px 20px;cursor:pointer;transition:background .1s;}
@@ -295,7 +295,7 @@ button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2
 .it-tt{font-size:14px;font-weight:500;color:${C.t1};}
 .it-sb{font-size:12px;color:${C.t2};margin-top:2px;}
 .it-cf{font-size:10px;color:${C.green};margin-top:3px;font-weight:500;}
-.bk-row{display:flex;justify-content:space-between;align-items:flex-start;padding:11px 20px;border-bottom:1px solid ${C.border};}
+.bk-row{display:flex;justify-content:space-between;align-items:flex-start;padding:11px 20px;border-bottom:1px solid ${C.borderLight};}
 .bk-k{font-size:13px;color:${C.t2};}
 .bk-v{font-size:13px;color:${C.t1};font-weight:500;text-align:right;max-width:200px;}
 @keyframes fi{from{opacity:0}to{opacity:1}}
@@ -941,7 +941,7 @@ function NotificationsBell(){
                 {data.available?"Nothing yet. When a plan needs you, it shows up here.":"Nothing here yet."}
               </div>
             ):data.items.map(n=>(
-              <a key={n.id} href={n.url||"/home"} style={{display:"block",textDecoration:"none",padding:"11px 0",borderTop:`1px solid ${C.border}`}}>
+              <a key={n.id} href={n.url||"/home"} style={{display:"block",textDecoration:"none",padding:"11px 0",borderTop:`1px solid ${C.borderLight}`}}>
                 <div style={{display:"flex",justifyContent:"space-between",gap:10}}>
                   <div style={{fontSize:13.5,fontWeight:n.read_at?500:700,color:C.t1}}>{n.title}</div>
                   <div style={{fontSize:11,color:C.t3,flexShrink:0}}>{ago(n.created_at)}</div>
@@ -1389,7 +1389,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
         <div style={{margin:"0 20px 18px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:16}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
             <div style={{width:8,height:8,borderRadius:"50%",background:C.accent}}/>
-            <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",color:C.accentText}}>
+            <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",color:C.t2}}>
               {actions.length===1?"Waiting on you":`${actions.length} things waiting on you`}
             </span>
           </div>
@@ -1563,7 +1563,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
             <ForecastNote f={n.weather} style={{marginTop:6}}/>
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
-            {n.price&&<div style={{fontSize:12,color:C.accentText,fontWeight:600}}>{n.price}</div>}
+            {n.price&&<div style={{fontSize:12,color:C.t1,fontWeight:600}}>{n.price}</div>}
             {n.dist&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{n.dist}</div>}
           </div>
         </div>
@@ -1700,7 +1700,7 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
       <div {...pressable} data-place-line="" onClick={()=>setPicking(true)}
         style={{fontSize:".9375rem",color:C.t2,minHeight:44,margin:"-4px 0",display:"flex",alignItems:"center",flexWrap:"wrap",cursor:setPlaceOverride?"pointer":"default"}}>
         <span>{city?prefix+" "+city:fallback}</span>
-        {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap"}}>· change <span aria-hidden="true">▾</span></span>:null}
+        {setPlaceOverride?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap",textDecoration:"underline",textUnderlineOffset:3}}>· change <span aria-hidden="true">▾</span></span>:null}
       </div>
       {picking&&setPlaceOverride&&(
         <div style={{marginTop:10,padding:"12px 14px",background:C.s2,
@@ -1719,7 +1719,7 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
                 setPicking(false);setQuery("");setHits([]);
                 toast&&toast("Showing "+label);
               }}
-              style={{padding:"9px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,
+              style={{padding:"9px 2px",borderTop:`1px solid ${C.borderLight}`,fontSize:13,
                 color:C.t1,cursor:"pointer",lineHeight:1.4}}>
               {h.label}
             </div>
@@ -1830,7 +1830,7 @@ function DiscoverHide({title,open,onToggle,onClose,onRule,onPhoto}){
             borderRadius:14,overflow:"hidden",minWidth:188,boxShadow:C.popShadow}}>
           <button role="menuitem" tabIndex={-1} onClick={()=>onRule("done")} style={item}>Already done it</button>
           <button role="menuitem" tabIndex={-1} onClick={()=>onRule("not_interested")}
-            style={{...item,borderTop:`1px solid ${C.border}`}}>Not for me</button>
+            style={{...item,borderTop:`1px solid ${C.borderLight}`}}>Not for me</button>
         </div>
       )}
     </div>
@@ -1930,7 +1930,7 @@ function DiscoverPlaceCard({exp,visited,open,onToggle,onClose,onRule,onOpen}){
                 {where&&<span style={{display:"block",...T.subhead,color:soft,marginTop:2}}><WhereLine exp={exp}/></span>}
               </span>
             </span>
-            <span style={{display:"block",padding:"12px 16px",borderTop:`1px solid ${C.border}`}}>
+            <span style={{display:"block",padding:"12px 16px",borderTop:`1px solid ${C.borderLight}`}}>
               {when&&<span style={{display:"block",...T.footnote,fontWeight:600,color:C.t1,marginBottom:2}}>{when}</span>}
               <span style={{display:"block",...T.footnote,color:price.known?C.t1:C.t2,fontWeight:price.known?600:400}}>{price.text}</span>
               {because&&<span style={{display:"block",...T.footnote,color:C.t2,marginTop:2}}>{because}</span>}
@@ -2795,7 +2795,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
         {/* Where it is, when the listing says. */}
         {getIncludes().length>0&&<div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:10}}>Where</div>}
         {getIncludes().map((it,i)=>(
-          <div key={i} style={{fontSize:13,color:C.t2,padding:"6px 0",borderBottom:i<getIncludes().length-1?"1px solid "+C.border:"none"}}>
+          <div key={i} style={{fontSize:13,color:C.t2,padding:"6px 0",borderBottom:i<getIncludes().length-1?"1px solid "+C.borderLight:"none"}}>
             {it}
           </div>
         ))}
@@ -2945,7 +2945,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     <div>
                       <div style={{fontSize:14,fontWeight:600,color:C.t1}}>{exp.title}</div>
                       <div style={{fontSize:12,color:C.t2}}>{exp.sub}</div>
-                      {exp.price&&<div style={{fontSize:13,color:C.accentText,fontWeight:600,marginTop:2}}>{exp.price} · as listed</div>}
+                      {exp.price&&<div style={{fontSize:13,color:C.t1,fontWeight:600,marginTop:2}}>{exp.price} · as listed</div>}
                     </div>
                   </div>
 
@@ -3028,7 +3028,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                       {l:"💰 Total est.",v:exp.price&&bookGuests?((parseInt(exp.price.replace(/[^0-9]/g,""))||0)*(parseInt(bookGuests)||2))>0?"$"+((parseInt(exp.price.replace(/[^0-9]/g,""))||0)*(parseInt(bookGuests)||2))+" est.":"—":"—"},
                       bookNotes?{l:"📝 Notes",v:bookNotes}:null,
                     ].filter(Boolean).map((row,i)=>(
-                      <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderTop:i?"1px solid "+C.border:"none"}}>
+                      <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderTop:i?"1px solid "+C.borderLight:"none"}}>
                         <div style={{fontSize:13,color:C.t2}}>{row.l}</div>
                         <div style={{fontSize:13,color:C.t1,fontWeight:500,textAlign:"right",maxWidth:"55%"}}>{row.v}</div>
                       </div>
@@ -3300,7 +3300,7 @@ function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup})
               const bars=weekBars(dated,week);
               const lanes=bars.length?Math.max(...bars.map(b=>b.lane))+1:0;
               return(
-                <div key={week[0].day} style={{borderTop:`1px solid ${C.border}`,padding:"5px 0 7px"}}>
+                <div key={week[0].day} style={{borderTop:`1px solid ${C.borderLight}`,padding:"5px 0 7px"}}>
                   <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)"}}>
                     {week.map(d=>(
                       <div key={d.day} style={{textAlign:"center",fontSize:11,padding:"1px 0",
@@ -3337,13 +3337,13 @@ function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup})
                 the first plan takes it away. */}
             {next&&(
               <div {...pressable} onClick={()=>setMonth(monthOf(next.day))}
-                style={{borderTop:`1px solid ${C.border}`,padding:"12px 18px",textAlign:"center",fontSize:12.5,color:C.t2,lineHeight:1.55,cursor:"pointer"}}>
+                style={{borderTop:`1px solid ${C.borderLight}`,padding:"12px 18px",textAlign:"center",fontSize:12.5,color:C.t2,lineHeight:1.55,cursor:"pointer"}}>
                 Nothing this month. Next up: <span style={{color:C.t1,fontWeight:600}}>{next.group.emoji} {next.plan.title}</span>, {formatDates(next.day)}{" "}
-                <span style={{color:C.accentText,fontWeight:600}}>Show →</span>
+                <span style={{color:C.accentText,fontWeight:600,textDecoration:"underline",textUnderlineOffset:3}}>Show →</span>
               </div>
             )}
             {dated.length===0&&(
-              <div style={{borderTop:`1px solid ${C.border}`,padding:"13px 18px",textAlign:"center",fontSize:12,color:C.t3,lineHeight:1.55}}>
+              <div style={{borderTop:`1px solid ${C.borderLight}`,padding:"13px 18px",textAlign:"center",fontSize:12,color:C.t3,lineHeight:1.55}}>
                 Plans you make show up here, so you can see your month at a glance.
               </div>
             )}
@@ -3504,7 +3504,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
             </div>
           </div>
         )}
-        <div style={{display:"flex",gap:0,marginTop:16,borderBottom:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",gap:0,marginTop:16,borderBottom:`1px solid ${C.borderLight}`}}>
           {(isAlone?["plans"]:["plans","members","wallet"]).map(t=>(
             <button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"10px 0",background:"none",border:"none",borderBottom:`2px solid ${tab===t?C.accentText:"transparent"}`,color:tab===t?C.accentText:C.t2,fontSize:13,fontWeight:600,cursor:"pointer",textTransform:"capitalize",transition:"all .15s"}}>{t}</button>
           ))}
@@ -3556,7 +3556,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                     vote that has votes in it would be a count that is wrong.
                     The count is on the trip's Vote tab. */}
                 {plan.status==="voting"&&plan.hasIdeas&&plan.options.length>0&&(
-                  <div style={{background:C.s2,borderRadius:12,padding:10,marginBottom:10,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+                  <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:12,padding:10,marginBottom:10,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
                     <span style={{color:C.t1,fontWeight:600}}>Voting on: </span>{plan.options.join(" · ")}
                   </div>
                 )}
@@ -3565,7 +3565,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
                     real votes in it. The options are named, as the ideas
                     vote above them is; the count is on the vote itself. */}
                 {plan.status==="voting"&&!plan.hasIdeas&&plan.options.length>0&&(
-                  <div style={{background:C.s2,borderRadius:12,padding:10,marginBottom:10,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
+                  <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:12,padding:10,marginBottom:10,fontSize:12.5,color:C.t2,lineHeight:1.5}}>
                     <span style={{color:C.t1,fontWeight:600}}>Vote in progress: </span>{plan.options.join(" · ")}
                   </div>
                 )}
@@ -3623,7 +3623,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
       {tab==="wallet"&&(
         <div style={{padding:"18px 20px"}}>
           <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
-            <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Group wallet</div>
+            <div style={{fontSize:12,color:C.t2,textTransform:"uppercase",letterSpacing:".08em",marginBottom:8}}>Group wallet</div>
             <div style={{fontFamily:"var(--font-display)",fontSize:44,color:C.t1}}>${group.wallet.toLocaleString()}</div>
             <div style={{fontSize:12,color:C.t2,marginTop:4}}>Shared · {group.memberIds.length} members</div>
           </div>
@@ -4204,7 +4204,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
           ))}
           {(members.length>0||inviteEmails.length>0)&&(
             <div style={{padding:"0 20px 12px"}}>
-              <div style={{fontSize:12,color:C.accentText,fontWeight:500,marginBottom:8}}>
+              <div style={{fontSize:12,color:C.t2,fontWeight:500,marginBottom:8}}>
                 {members.length} member{members.length!==1?"s":""} selected
                 {inviteEmails.length>0?` · ${inviteEmails.length} to invite`:""}
               </div>
@@ -5083,7 +5083,7 @@ function QuizReveal({profile,stored,user,userLocation,groups,push,toast,required
     <div className="sc" style={{padding:"18px 16px 36px"}}>
       <div style={{textAlign:"center",padding:"8px 4px 16px"}}>
         <div style={{fontSize:54,marginBottom:6}}>{copy?copy.emoji:EVERYTHING_COPY.emoji}</div>
-        <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.accentText,lineHeight:1.15}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1,lineHeight:1.15}}>
           {headline(p)}{p?.primary?".":""}
         </div>
         <div style={{fontSize:14,color:C.t1,marginTop:8,lineHeight:1.5}}>{copy?copy.line:EVERYTHING_COPY.line}</div>
@@ -5578,13 +5578,14 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
               return(
                 <button key={opt.id}
                   onClick={()=>q.multi?tog(q.id,value):sel(q.id,value)}
+                  aria-pressed={!!(selected||isVeto)} aria-label={`${opt.l}${isVeto?", ruled out":selected?", chosen":""}`}
                   style={{padding:"14px 8px",borderRadius:14,
                     border:"2px solid "+(isVeto?C.red:selected?C.accent:C.border),
                     background:isVeto?C.redDim:selected?C.accentDim:C.s2,
                     cursor:"pointer",textAlign:"center",transition:"all .15s"}}>
                   <div style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
                   <div style={{fontSize:11,fontWeight:600,lineHeight:1.2,
-                    color:isVeto?C.red:selected?C.accentText:C.t1}}>{opt.l}</div>
+                    color:isVeto?C.red:selected?C.accentText:C.t1}}>{isVeto?<span aria-hidden="true">✕ </span>:selected?<span aria-hidden="true">✓ </span>:null}{opt.l}</div>
                 </button>
               );
             })}
@@ -5601,7 +5602,7 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
                 placeholder={q.customPlaceholder}/>
             </div>
             {custom[q.id]&&(
-              <div style={{fontSize:12,color:C.accentText,marginTop:4,paddingLeft:4}}>
+              <div style={{fontSize:12,color:C.t2,marginTop:4,paddingLeft:4}}>
                 ✓ Added: {custom[q.id]}
               </div>
             )}
@@ -5609,7 +5610,7 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
         )}
 
         {q.multi&&(answers[q.id]||[]).length>0&&(
-          <div style={{textAlign:"center",fontSize:12,color:C.accentText,fontWeight:500,padding:"4px 0"}}>
+          <div style={{textAlign:"center",fontSize:12,color:C.t2,fontWeight:500,padding:"4px 0"}}>
             {(answers[q.id]||[]).length} selected
           </div>
         )}
@@ -5755,7 +5756,7 @@ function DepartureLine({departure,saveDeparture}){
     <div {...pressable} onClick={saveDeparture?open:undefined}
       style={{fontSize:14,color:C.t2,cursor:saveDeparture?"pointer":"default"}}>
       {`Departing from ${departure?.city||"your location"}${departure?.airport?" ("+departure.airport+")":""}`}
-      {saveDeparture?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap"}}>{" · change ▾"}</span>:null}
+      {saveDeparture?<span style={{color:C.accentText,marginLeft:6,fontWeight:600,whiteSpace:"nowrap",textDecoration:"underline",textUnderlineOffset:3}}>{" · change ▾"}</span>:null}
     </div>
   );
 }
@@ -6309,7 +6310,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
           {!isNight&&!takenNow&&nights>0&&(
             <div style={{textAlign:"center",padding:"14px",background:C.accentDim,
               border:"1px solid "+C.accentBorder,borderRadius:14,marginBottom:16}}>
-              <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.accentText}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:28,color:C.t1}}>
                 {nights} night{nights!==1?"s":""}
               </div>
               <div style={{fontSize:13,color:C.t2,marginTop:2}}>
@@ -6411,6 +6412,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
                 const isVeto=quizQ.noWay&&selected;
                 return(
                   <button key={opt.id}
+                    aria-pressed={!!(selected||isVeto)} aria-label={`${opt.l}${isVeto?", ruled out":selected?", chosen":""}`}
                     onClick={()=>isMulti?tog(quizQ.id,opt.id):sel(quizQ.id,opt.id)}
                     style={{
                       padding:"14px 8px",borderRadius:14,
@@ -6421,7 +6423,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
                     }}>
                     <div style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
                     <div style={{fontSize:11,fontWeight:600,lineHeight:1.2,
-                      color:isVeto?C.red:selected?C.accentText:C.t1}}>{opt.l}</div>
+                      color:isVeto?C.red:selected?C.accentText:C.t1}}>{isVeto?<span aria-hidden="true">✕ </span>:selected?<span aria-hidden="true">✓ </span>:null}{opt.l}</div>
                   </button>
                 );
               })}
@@ -6466,7 +6468,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
                   />
                 </div>
                 {customInputs[quizQ.id]&&(
-                  <div style={{fontSize:12,color:C.accentText,marginTop:4,paddingLeft:4}}>
+                  <div style={{fontSize:12,color:C.t2,marginTop:4,paddingLeft:4}}>
                     ✓ Added: {customInputs[quizQ.id]}
                   </div>
                 )}
@@ -6474,7 +6476,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
             )}
 
             {quizQ.multi&&(answers[quizQ.id]||[]).length>0&&(
-              <div style={{textAlign:"center",fontSize:12,color:C.accentText,fontWeight:500,padding:"4px 0"}}>
+              <div style={{textAlign:"center",fontSize:12,color:C.t2,fontWeight:500,padding:"4px 0"}}>
                 {(answers[quizQ.id]||[]).length} selected
               </div>
             )}
@@ -6710,7 +6712,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
                 {trip.tagline}
               </div>
               {trip.why_this_group&&(
-                <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>
+                <div style={{fontSize:12,color:C.t2,fontWeight:500}}>
                   ✨ {trip.why_this_group}
                 </div>
               )}
@@ -6740,12 +6742,12 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
               listened to; a generic "great for your group" is what
               every other travel site says. */}
           {(trip.used_suggestions||[]).length>0&&(
-            <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+            <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.borderLight}`}}>
               <div style={{fontSize:10.5,color:C.t3,textTransform:"uppercase",
                 letterSpacing:".06em",marginBottom:6}}>Because you said</div>
               {trip.used_suggestions.slice(0,3).map((line,i)=>(
                 <div key={i} style={{display:"flex",gap:7,marginBottom:4}}>
-                  <span style={{color:C.accentText,flexShrink:0,fontSize:12}}>›</span>
+                  <span style={{color:C.t3,flexShrink:0,fontSize:12}}>›</span>
                   <span style={{fontSize:12,color:C.t2,lineHeight:1.5}}>{line}</span>
                 </div>
               ))}
@@ -6754,7 +6756,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
         </div>
 
         {/* Cost breakdown */}
-        <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
+        <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.borderLight}}>
           <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
             Full cost breakdown per person
           </div>
@@ -6778,7 +6780,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
               <div style={{fontSize:14,fontWeight:600,color:C.t1,flexShrink:0}}>${c.cost}</div>
             </div>
           ))}
-          <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border,display:"flex",justifyContent:"space-between"}}>
+          <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid "+C.borderLight,display:"flex",justifyContent:"space-between"}}>
             <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Total per person, est.</div>
             <div style={{fontSize:16,fontWeight:700,color:voted?C.accentText:C.t1}}>${ideaPerPerson(trip).toLocaleString()}</div>
           </div>
@@ -6808,7 +6810,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
         {!nightOut&&<RealTrip trip={trip} startDate={startDate} endDate={endDate} seats={Math.max(1,groupSize||1)}/>}
 
         {/* Itinerary preview */}
-        <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
+        <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.borderLight}}>
           <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
             Day-by-day
           </div>
@@ -6825,8 +6827,8 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
             const cashOnly=[day.morning,day.afternoon,day.evening]
               .map(pay).filter(Boolean).find(x=>/cash only/i.test(x));
             return(
-            <div key={j} style={{marginBottom:12,paddingBottom:12,borderBottom:j<1?"1px solid "+C.border:"none"}}>
-              <div style={{fontSize:12,fontWeight:700,color:C.accentText,marginBottom:6}}>
+            <div key={j} style={{marginBottom:12,paddingBottom:12,borderBottom:j<1?"1px solid "+C.borderLight:"none"}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.t1,marginBottom:6}}>
                 Day {day.day} · {day.title}
               </div>
               {/* Each slot's tip under the slot it is about. It used to
@@ -6866,7 +6868,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
 
         {/* Scene info */}
         {(trip.food_scene||trip.music_scene)&&(
-          <div style={{padding:"12px 18px",borderBottom:"1px solid "+C.border,display:"flex",gap:12}}>
+          <div style={{padding:"12px 18px",borderBottom:"1px solid "+C.borderLight,display:"flex",gap:12}}>
             {trip.food_scene&&(
               <div style={{flex:1}}>
                 <div style={{fontSize:11,color:C.t3,marginBottom:3}}>🍽️ Food scene</div>
@@ -8804,7 +8806,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
         {planType&&(
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0 2px"}}>
             <span style={{fontSize:16}}>{planType==="restaurant"?"🍽️":planType==="concert"?"🎵":planType==="weekend"?"🏡":"✈️"}</span>
-            <span style={{fontSize:12,color:C.accentText,fontWeight:600}}>{planType==="restaurant"?"Dinner out":planType==="concert"?"Concert":planType==="weekend"?"Weekend away":"Trip"}</span>
+            <span style={{fontSize:12,color:C.t2,fontWeight:600}}>{planType==="restaurant"?"Dinner out":planType==="concert"?"Concert":planType==="weekend"?"Weekend away":"Trip"}</span>
             {!isEvent&&nights()>0&&<span style={{fontSize:12,color:C.t3}}>· {getDurationLabel()}</span>}
             {isEvent&&eventDate&&<span style={{fontSize:12,color:C.t3}}>· {eventDate}</span>}
           </div>
@@ -8898,7 +8900,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 {whereHits.map((h,i)=>(
                   <div key={i} {...pressable}
                     onClick={()=>{setWhere({city:h.city||h.label.split(",")[0].trim(),country:h.country||null,label:h.label.split(",").slice(0,3).join(","),lat:Number.isFinite(h.lat)?h.lat:null,lng:Number.isFinite(h.lng)?h.lng:null});setWhereHits([]);}}
-                    style={{padding:"10px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,color:C.t1,cursor:"pointer",lineHeight:1.4}}>
+                    style={{padding:"10px 2px",borderTop:`1px solid ${C.borderLight}`,fontSize:13,color:C.t1,cursor:"pointer",lineHeight:1.4}}>
                     {h.label}
                   </div>
                 ))}
@@ -8936,7 +8938,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                     <div style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>
                       {new Date(eventDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}
                     </div>
-                    {eventTime&&<div style={{fontSize:13,color:C.accentText,marginTop:4}}>{eventTime}</div>}
+                    {eventTime&&<div style={{fontSize:13,color:C.t2,marginTop:4}}>{eventTime}</div>}
                   </div>
                 )}
               </>
@@ -10299,7 +10301,7 @@ function WatchesCard({toast}){
     <div style={{margin:"0 20px 16px",padding:"12px 14px",background:C.s2,border:`1px solid ${C.border}`,borderRadius:16}}>
       <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginBottom:6}}>Tables you're watching</div>
       {live.map((w,i)=>(
-        <div key={w.id} style={{padding:"8px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+        <div key={w.id} style={{padding:"8px 0",borderTop:i?`1px solid ${C.borderLight}`:"none"}}>
           <div style={{fontSize:13.5,fontWeight:600,color:C.t1}}>{w.restaurant}</div>
           <div style={{fontSize:12,color:C.t2,lineHeight:1.45}}>{w.window}</div>
           <div style={{fontSize:12,color:w.held?C.accentText:C.t2,lineHeight:1.45,marginTop:2}}>{w.said}</div>
@@ -10455,7 +10457,7 @@ function RealTrip({trip,startDate,endDate,seats}){
   };
   const d=state.data;
   return(
-    <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border}}>
+    <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.borderLight}}>
       <div style={{fontSize:11,color:C.t3,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>
         The real flights & hotels
       </div>
@@ -10478,7 +10480,7 @@ function RealTrip({trip,startDate,endDate,seats}){
           )}
           {d.flights.length===0&&<div style={{fontSize:12,color:C.t3,marginBottom:6}}>{d.flightsWhy||"No flights found for those dates."}</div>}
           {d.flights.map(o=>(
-            <div key={o.key} style={{padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
+            <div key={o.key} style={{padding:"7px 0",borderTop:`1px solid ${C.borderLight}`}}>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,color:C.t1,fontWeight:600}}>
                 <span>{o.airline}</span><span>{usd(o.priceCents)}</span>
               </div>
@@ -10489,7 +10491,7 @@ function RealTrip({trip,startDate,endDate,seats}){
           <div style={{fontSize:12.5,fontWeight:600,color:C.t1,margin:"12px 0 6px"}}>🏨 Places to stay{d.rooms>1?` · ${d.rooms} rooms`:""}</div>
           {d.hotels.length===0&&<div style={{fontSize:12,color:C.t3}}>{d.hotelsWhy||"No hotels with rooms for those dates."}</div>}
           {d.hotels.map(h=>(
-            <div key={h.key} style={{display:"flex",gap:10,alignItems:"center",padding:"7px 0",borderTop:`1px solid ${C.border}`}}>
+            <div key={h.key} style={{display:"flex",gap:10,alignItems:"center",padding:"7px 0",borderTop:`1px solid ${C.borderLight}`}}>
               {h.photo&&<img src={h.photo} alt="" style={{width:52,height:52,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12.5,color:C.t1,fontWeight:600}}>{h.name}{h.stars?` · ${h.stars}★`:""}</div>
@@ -10636,7 +10638,7 @@ function ChoicePanel({booking,vertical,toast,onChanged,autoLoad=false,confirmFir
             // booking's difference otherwise, as it always was.
             const each=deltaWords(o.deltaPerPersonCents,solo);
             return(
-              <div key={o.key} style={{display:"flex",gap:10,alignItems:"center",padding:"9px 0",borderTop:`1px solid ${C.border}`}}>
+              <div key={o.key} style={{display:"flex",gap:10,alignItems:"center",padding:"9px 0",borderTop:`1px solid ${C.borderLight}`}}>
                 {vertical==="hotel"&&o.photo&&<img src={o.photo} alt="" style={{width:52,height:52,borderRadius:8,objectFit:"cover",flexShrink:0}}/>}
                 <div style={{flex:1,minWidth:0}}>
                   {vertical==="hotel"?(
@@ -10923,7 +10925,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
                     whose words name no kind gets what is near, called that. */}
                   {d.like===false?"Nearby":mayApply?"Pick another":"Others like it"}</div>
                 {d.alternatives.map(a=>(
-                  <div key={a.ref} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:`1px solid ${C.border}`}}>
+                  <div key={a.ref} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:`1px solid ${C.borderLight}`}}>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:13.5,color:C.t1,fontWeight:600}}>{a.name}</div>
                       <div style={{fontSize:11.5,color:C.t2,marginTop:2,lineHeight:1.45}}>{a.why}</div>
@@ -10951,7 +10953,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
 
             {/* Something else: their words, one stop, from the same menu. */}
             {!priced&&slot&&(mayApply||maySuggest)&&(
-              <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
+              <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${C.borderLight}`}}>
                 <div className="sl" style={{marginBottom:6}}>Something else…</div>
                 <input className="inp" aria-label="What would you like there instead?" maxLength={200}
                   placeholder="What would you like there instead?" value={ask} onChange={e=>setAsk(e.target.value)}
@@ -11134,7 +11136,7 @@ function BookedTripHead({plan,funding,bookings,solo,toast}){
       {lines.length>0&&(
         <div role="group" aria-label="What this trip cost" style={{display:"flex",background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,overflow:"hidden",marginBottom:10}}>
           {lines.map((l,i)=>(
-            <div key={l.key} style={{flex:1,padding:"11px 8px",textAlign:"center",borderLeft:i?`1px solid ${C.border}`:"none",minWidth:0}}>
+            <div key={l.key} style={{flex:1,padding:"11px 8px",textAlign:"center",borderLeft:i?`1px solid ${C.borderLight}`:"none",minWidth:0}}>
               <div style={{fontFamily:"var(--font-display)",fontSize:19,color:C.t1}}>{dollars(l.cents)}</div>
               <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:".05em",marginTop:2}}>{l.label}</div>
             </div>
@@ -11660,7 +11662,7 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
                 {done.map(s=>{
                   const w=settledWords(s,me,nameOf);
                   return(
-                    <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.t2,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}>
+                    <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.t2,padding:"6px 0",borderBottom:`1px solid ${C.borderLight}`}}>
                       <span style={{flex:1,minWidth:0}}>
                         {w.confirmed?<span style={{color:C.green,fontWeight:700}}>✓ </span>:null}{w.text}
                       </span>
@@ -11707,7 +11709,7 @@ function PlacePrompt({onPick,onCancel,toast}){
       {looking&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
       {hits.map((h,i)=>(
         <div key={i} {...pressable} onClick={()=>onPick({city:h.city||h.label.split(",")[0].trim(),country:h.country||null})}
-          style={{padding:"9px 2px",borderTop:`1px solid ${C.border}`,fontSize:13,color:C.t1,cursor:"pointer"}}>{h.label}</div>
+          style={{padding:"9px 2px",borderTop:`1px solid ${C.borderLight}`,fontSize:13,color:C.t1,cursor:"pointer"}}>{h.label}</div>
       ))}
       <button className="bs" style={{marginTop:10}} onClick={onCancel}>Not now</button>
     </div>
@@ -12697,7 +12699,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           {!booked&&<span className="pill" style={{background:C.photoChip,color:C.onPhoto}}>${plan.budget}/person</span>}
         </div>
       </div>
-      <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,background:C.s1,flexShrink:0}}>
+      <div style={{display:"flex",borderBottom:`1px solid ${C.borderLight}`,background:C.s1,flexShrink:0}}>
         {tabs.map(t=>(
           <button key={t} onClick={()=>setAtab(t)} style={{flex:1,padding:"11px 0",background:"none",border:"none",borderBottom:`2px solid ${atab===t?C.accentText:"transparent"}`,color:atab===t?C.accentText:C.t2,fontSize:12,fontWeight:600,cursor:"pointer"}}>
             {t==="bookings"&&booked?"Your trip":(TAB_LABEL[t]||t)}
@@ -12789,7 +12791,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
                   {plan.aiData.used_suggestions.slice(0,4).map((line,i)=>(
                     <div key={i} style={{display:"flex",gap:8,marginBottom:i<Math.min(3,plan.aiData.used_suggestions.length-1)?8:0}}>
-                      <span style={{color:C.accentText,flexShrink:0,fontSize:13}}>›</span>
+                      <span style={{color:C.t3,flexShrink:0,fontSize:13}}>›</span>
                       <span style={{fontSize:13,color:C.t2,lineHeight:1.55}}>{line}</span>
                     </div>
                   ))}
@@ -12799,7 +12801,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             <div style={{padding:"0 20px 14px"}}>
               <div className="sl" style={{marginBottom:10}}>Who's coming</div>
               {plan.participants.map(uid=>{const u=um[uid];return u?(
-                <div key={uid} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                <div key={uid} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${C.borderLight}`}}>
                   <div className="av-lg" style={{background:u.color}}>{u.initials}</div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:14,fontWeight:500,color:C.t1}}>{u.name}</div>
@@ -12910,7 +12912,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     {datesTally(dates.respondents,dates.members)}
                     {dates.mine?.length?(
                       <span {...pressable} onClick={clearMyDates}
-                        style={{color:C.accentText,cursor:"pointer",marginLeft:6,fontWeight:600}}>
+                        style={{color:C.accentText,cursor:"pointer",marginLeft:6,fontWeight:600,textDecoration:"underline",textUnderlineOffset:3}}>
                         Clear mine
                       </span>
                     ):null}
@@ -12919,7 +12921,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       leaves out. A count tells somebody the shape of the
                       problem; a name tells them who to go and ask. */}
                   {(dates.bestWindows||[]).slice(1,3).length>0&&(
-                    <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                    <div style={{marginTop:12,paddingTop:10,borderTop:`1px solid ${C.borderLight}`}}>
                       <div style={{fontSize:10.5,color:C.t3,textTransform:"uppercase",
                         letterSpacing:".06em",marginBottom:6}}>Also possible</div>
                       {(dates.bestWindows||[]).slice(1,3).map((w,i)=>{
@@ -12951,7 +12953,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 {share.items.map(it=>{
                   const flight=it.vertical==="flight";
                   return(
-                  <div key={it.ref} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div key={it.ref} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${C.borderLight}`}}>
                     <span style={{fontSize:18}}>{tIc[it.vertical]||"🎟️"}</span>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:14,color:it.imIn?C.t1:C.t3,fontWeight:500}}>{it.title}</div>
@@ -13048,7 +13050,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     const found=item.type==="restaurant"?tableFor(tables.list,{itemId:item.id}):null;
                     const table=found&&!(t.done&&found.open)?found:null;
                     return(
-                      <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                      <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.borderLight}`:"none"}}>
                         <div style={{display:"flex",gap:10,alignItems:"flex-start"}}>
                           <span style={{fontSize:16,lineHeight:1.2,color:t.done?C.green:C.t3}}>{t.done?"✓":"○"}</span>
                           <div style={{flex:1,minWidth:0}}>
@@ -13355,7 +13357,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                             {item.venue_note}
                             {item.venue_note_credit&&(
                               <a href={item.venue_note_credit} target="_blank" rel="noopener noreferrer"
-                                style={{color:C.accentText,marginLeft:6,textDecoration:"none"}}>source →</a>
+                                style={{color:C.accentText,marginLeft:6,textDecoration:"underline",textUnderlineOffset:3}}>source →</a>
                             )}
                           </span>
                         </div>
@@ -13402,7 +13404,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                           tell them — the plan reads like a guidebook rather
                           than like their trip. */}
                       {item.because&&(
-                        <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,color:C.accentText}}>
+                        <div style={{display:"flex",gap:6,marginTop:6,fontSize:12,lineHeight:1.5,color:C.t2}}>
                           <span style={{flexShrink:0}}>›</span>
                           <span>{item.because}</span>
                         </div>
@@ -13608,7 +13610,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       </button>}
                     </div>
                   ):mine?(
-                    <div style={{fontSize:12,color:C.accentText,fontWeight:500}}>✓ Your vote</div>
+                    <div style={{fontSize:12,color:C.t1,fontWeight:500}}>✓ Your vote</div>
                   ):null}
                 </div>
               );
@@ -13619,7 +13621,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
         {atab==="budget"&&(
           <div style={{padding:"16px 20px"}}>
             <div style={{background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:20,padding:20,marginBottom:18,textAlign:"center"}}>
-              <div style={{fontSize:12,color:C.accentText,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Budget per person</div>
+              <div style={{fontSize:12,color:C.t2,textTransform:"uppercase",letterSpacing:".08em",marginBottom:6}}>Budget per person</div>
               <div style={{fontFamily:"var(--font-display)",fontSize:44,color:C.t1}}>${plan.budget.toLocaleString()}</div>
               <div style={{fontSize:12,color:C.t2,marginTop:4}}>{soloTrip?"Travelling on your own":`${plural(plan.participants.length,"traveller")} total`}</div>
             </div>
@@ -13692,7 +13694,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                   <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:10}}>{note}</div>
                   {rows.map((r,i)=>(
                     <div key={i} style={{display:"flex",justifyContent:"space-between",gap:12,
-                      padding:"7px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                      padding:"7px 0",borderTop:i?`1px solid ${C.borderLight}`:"none"}}>
                       <div style={{minWidth:0}}>
                         <div style={{fontSize:13,color:C.t1,lineHeight:1.35}}>{r.l}</div>
                         {r.d&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{r.d}</div>}
@@ -13737,7 +13739,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                       </div>
                       {unpriced.map((r,i)=>(
                         <div key={i} style={{display:"flex",justifyContent:"space-between",gap:12,
-                          padding:"7px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                          padding:"7px 0",borderTop:i?`1px solid ${C.borderLight}`:"none"}}>
                           <div style={{minWidth:0}}>
                             <div style={{fontSize:13,color:C.t1,lineHeight:1.35}}>{r.l}</div>
                             {r.d&&<div style={{fontSize:11,color:C.t3,marginTop:1}}>{r.d}</div>}
@@ -13769,7 +13771,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                         {days.map(g=>(
                           <div key={g.key} style={{marginBottom:10}}>
                             <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",
-                              padding:"6px 0 2px",borderTop:`1px solid ${C.border}`}}>
+                              padding:"6px 0 2px",borderTop:`1px solid ${C.borderLight}`}}>
                               <span style={{fontSize:12,fontWeight:600,color:C.t2}}>{g.label}</span>
                               <span style={{fontSize:12,color:C.t2,fontVariantNumeric:"tabular-nums"}}>{money(g.totalCents)}</span>
                             </div>
@@ -14892,7 +14894,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             read "Amount charged $0", and a top-up read as the whole trip. */}
         {myPaid>0&&(
           <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",marginBottom:16}}>
-            <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between"}}>
+            <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.borderLight}`,display:"flex",justifyContent:"space-between"}}>
               <span style={{fontSize:13,color:C.t2}}>Paid by you</span>
               <span style={{fontSize:13,color:C.t1,fontWeight:700}}>{fmt(myPaid)}</span></div>
             <div style={{padding:"12px 16px",display:"flex",justifyContent:"space-between"}}>
@@ -15016,7 +15018,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             </div>
             <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:"4px 14px"}}>
               {stillOpen.map((item,i)=>(
-                <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+                <div key={item.id||i} style={{padding:"11px 0",borderTop:i?`1px solid ${C.borderLight}`:"none"}}>
                   <div style={{fontSize:13.5,color:C.t1,lineHeight:1.4}}>{item.title}</div>
                   {item.time&&<div style={{fontSize:11.5,color:C.t3,marginTop:1}}>{item.time}</div>}
                   {item.payment_note&&(
@@ -15083,7 +15085,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             that is about exactly that — it used to be in both, with "Yours
             to book" as a pill up here and "things you book yourself" as a
             heading down there. */}
-        {lines.filter(it=>!isYours(it)&&!it.table).map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderBottom:i<lines.length-1?`1px solid ${C.border}`:"none"}}>
+        {lines.filter(it=>!isYours(it)&&!it.table).map((it,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",borderBottom:i<lines.length-1?`1px solid ${C.borderLight}`:"none"}}>
           <span style={{fontSize:20}}>{it.icon}</span>
           <div style={{flex:1}}><div style={{fontSize:14,color:C.t1,fontWeight:600}}>{it.l}</div>
             {it.when?<div style={{fontSize:12,color:C.t2}}>{it.when}</div>:null}
@@ -15179,7 +15181,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
           <div style={{fontSize:13,color:C.t1,fontWeight:600,marginBottom:2}}>{lines.filter(it=>it.table).length===1?"Dinner":"Tables"}</div>
           <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginBottom:4}}>Reach takes no payment for a table, and none is in the total below.</div>
           {lines.filter(it=>it.table).map((it,i)=>(
-            <div key={it.id||`t${i}`} style={{padding:"9px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+            <div key={it.id||`t${i}`} style={{padding:"9px 0",borderTop:i?`1px solid ${C.borderLight}`:"none"}}>
               <div style={{fontSize:12.5,color:C.t1,fontWeight:600,lineHeight:1.4}}>{it.l}</div>
               {/* Book it, below, books these too: the row does not offer it again. */}
               <TableReserve entry={it.table} planId={planId} solo={participants<=1} toast={toast} onChanged={tablesChanged}
@@ -15213,7 +15215,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             goes on your own card so your card's dining benefits still count.
           </div>
           {mine.map((it,i)=>(
-            <div key={it.id||`b${i}`} style={{padding:"9px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+            <div key={it.id||`b${i}`} style={{padding:"9px 0",borderTop:i?`1px solid ${C.borderLight}`:"none"}}>
               <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{it.l}</div>
               {it.when?<div style={{fontSize:11,color:C.t2,marginTop:1}}>{it.when}</div>:null}
               {it.d?<div style={{fontSize:11,color:C.t3,marginTop:1}}>{it.d}</div>:null}
@@ -15252,7 +15254,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             </div>
           ))}
           {yoursToBook.map((item,i)=>(
-            <div key={item.id||i} style={{padding:"9px 0",borderTop:(i||mine.length)?`1px solid ${C.border}`:"none"}}>
+            <div key={item.id||i} style={{padding:"9px 0",borderTop:(i||mine.length)?`1px solid ${C.borderLight}`:"none"}}>
               <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{item.title}</div>
               {/* The night the table is for, from the line itself — and,
                   when nobody gave a time, that no time is set. */}
@@ -15290,7 +15292,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
               {checkout.step==="book"?"Before it's booked":"Before you pay"}
             </div>
             {terms.map(({f,t},i)=>(
-              <div key={f.id} style={{padding:"7px 0",borderTop:i?`1px solid ${C.border}`:"none"}}>
+              <div key={f.id} style={{padding:"7px 0",borderTop:i?`1px solid ${C.borderLight}`:"none"}}>
                 <div style={{fontSize:12.5,color:C.t1,lineHeight:1.4}}>{itemTitle(f,lineTitle({itinerary_item_id:f.itineraryItemId}))}</div>
                 <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginTop:2}}>{t.terms}</div>
                 {t.kept&&<div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:2}}>{t.kept}</div>}
@@ -15299,7 +15301,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             {/* Once, for the whole block: what approval does to the price
                 between now and the booking. It used to name a time the price was "held" to,
                 over the offer's expiry, a hold nothing used. */}
-            <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`}}>{PRICE_CHECK_WORDS}</div>
+            <div style={{fontSize:11.5,color:C.t3,lineHeight:1.5,marginTop:6,paddingTop:6,borderTop:`1px solid ${C.borderLight}`}}>{PRICE_CHECK_WORDS}</div>
           </div>
         );
       })()}
@@ -15858,7 +15860,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           </div>
         </div>
 
-        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
+        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.borderLight}`,paddingTop:18}}>
           <div className="sl" style={{marginBottom:8}}>Home airport</div>
           <div style={{display:"flex",gap:8}}>
             <input aria-label="Home airport" className="inp" value={airDraft} placeholder="SFO" maxLength={3}
@@ -15983,7 +15985,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           </div>
         </div>
 
-        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
+        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.borderLight}`,paddingTop:18}}>
           <div className="sl" style={{marginBottom:8}}>Date of birth</div>
           <input aria-label="Date of birth" className="inp" type="date" value={dobDraft}
             max={today()}
@@ -15995,7 +15997,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           )}
         </div>
 
-        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
+        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.borderLight}`,paddingTop:18}}>
           <div className="sl" style={{marginBottom:8}}>Phone number</div>
           <input aria-label="Phone number" className="inp" type="tel" value={phoneDraft}
             placeholder="+1 555 123 4567"
@@ -16006,7 +16008,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           </div>
         </div>
 
-        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.border}`,paddingTop:18}}>
+        <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.borderLight}`,paddingTop:18}}>
           <div className="sl" style={{marginBottom:8}}>Gender on your ID</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {GENDERS.map(g=>(
@@ -16068,7 +16070,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           const draft=docDraft[d.key];
           const editing=draft!==undefined;
           return(
-            <div key={d.key} style={{padding:"12px 20px",borderTop:`1px solid ${C.border}`}}>
+            <div key={d.key} style={{padding:"12px 20px",borderTop:`1px solid ${C.borderLight}`}}>
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
                 <span style={{fontSize:18}}>{d.icon}</span>
                 <span style={{fontSize:14,fontWeight:600,color:C.t1,flex:1}}>{d.label}</span>
@@ -16127,7 +16129,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
             right={<button className="bsm bsm-r" disabled={busy===p.id} onClick={()=>removeLoyalty(p.id)}>
               {busy===p.id?"…":"Remove"}</button>}/>
         ))}
-        <div style={{padding:"16px 20px 30px",borderTop:`1px solid ${C.border}`,marginTop:8}}>
+        <div style={{padding:"16px 20px 30px",borderTop:`1px solid ${C.borderLight}`,marginTop:8}}>
           <div className="sl" style={{marginBottom:10}}>Add a programme</div>
           <input aria-label="Loyalty programme" className="inp" value={loyName} onChange={e=>setLoyName(e.target.value)}
             placeholder="Programme, e.g. United MileagePlus" style={{marginBottom:8}}/>
@@ -16185,9 +16187,13 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Privacy"/>
         <div style={{padding:"0 20px 6px"}}><span className="sl">What Reach may do with your data</span></div>
         {toggles.map(t=>(
-          <div key={t.k} className="ri" style={{cursor:"pointer"}} {...pressable} onClick={()=>setConsent(t.k,t.col,!c[t.k])}>
+          // A switch says whether it is on, to a screen reader (aria-checked)
+          // and on screen (On / Off): never by its colour and knob alone.
+          <div key={t.k} className="ri" style={{cursor:"pointer"}} {...pressable} role="switch" aria-checked={!!c[t.k]}
+            onClick={()=>setConsent(t.k,t.col,!c[t.k])}>
             <div className="ri-inf"><div className="ri-t">{t.l}</div><div className="ri-s">{t.d}</div></div>
-            <div style={{width:44,height:26,borderRadius:20,flexShrink:0,position:"relative",transition:"background .15s",
+            <span aria-hidden="true" style={{fontSize:12,fontWeight:600,color:c[t.k]?C.t1:C.t2,minWidth:24,textAlign:"right"}}>{c[t.k]?"On":"Off"}</span>
+            <div aria-hidden="true" style={{width:44,height:26,borderRadius:20,flexShrink:0,position:"relative",transition:"background .15s",
               background:c[t.k]?C.accentText:C.s3,border:`1px solid ${c[t.k]?C.accentText:C.border}`}}>
               <div style={{width:20,height:20,borderRadius:"50%",background:C.s1,position:"absolute",top:2,
                 left:c[t.k]?21:2,transition:"left .15s"}}/>
@@ -16271,12 +16277,12 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>
           {user?.email}
-          {data?.provider&&data.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.accentDim,color:C.accentText,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{data.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
+          {data?.provider&&data.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.s3,color:C.t2,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{data.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
         </div>
         <div style={{display:"flex",gap:0,background:C.s2,borderRadius:16,marginTop:14,border:`1px solid ${C.border}`,overflow:"hidden"}}>
           {[{v:stats?.groups,l:"Groups"},{v:stats?.plans,l:"Plans"},{v:stats?.friends,l:"Travel with"}].map((s,i)=>(
-            <div key={i} style={{flex:1,padding:"13px 0",textAlign:"center",borderLeft:i?`1px solid ${C.border}`:"none"}}>
-              <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.accentText}}>{s.v??"—"}</div>
+            <div key={i} style={{flex:1,padding:"13px 0",textAlign:"center",borderLeft:i?`1px solid ${C.borderLight}`:"none"}}>
+              <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1}}>{s.v??"—"}</div>
               <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:".06em",marginTop:2}}>{s.l}</div>
             </div>
           ))}
