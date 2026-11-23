@@ -209,10 +209,15 @@ test.describe('Two people, one group', () => {
     const reads = [await api(B.page, `/api/groups/${QA_GROUP}`), await api(B.page, '/api/groups')];
     if (planId) reads.push(await api(B.page, `/api/plans/${planId}/readiness`), await api(B.page, `/api/plans/${planId}`));
     // Members never see each other's email address (owner, 2026-11-22).
-    const aEmail = String(process.env.TEST_EMAIL || '').toLowerCase();
+    // A's own address, as A sees it on their own group list (the only one A gets).
+    const EMAIL = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+    const aOwn = await api(A.page, `/api/groups/${QA_GROUP}`);
+    const aEmails = new Set((JSON.stringify(aOwn.json).match(EMAIL) ?? []).map(e => e.toLowerCase()));
+    expect(aEmails.size, 'A should see their own email, or this check proves nothing').toBeGreaterThan(0);
     for (const r of reads) {
       expect(r.status).toBe(200);
-      if (aEmail) expect(JSON.stringify(r.json).toLowerCase().includes(aEmail), "A's email reached B").toBe(false);
+      const seen = (JSON.stringify(r.json).match(EMAIL) ?? []).map(e => e.toLowerCase());
+      expect(seen.filter(e => aEmails.has(e)), "A's email reached B").toEqual([]);
       const keys = JSON.stringify(r.json).match(/"([a-z_]+)":/g) ?? [];
       expect(keys.filter(k => PRIVATE.test(k)), 'a private field reached another member').toEqual([]);
     }
