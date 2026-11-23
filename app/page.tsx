@@ -49,6 +49,9 @@ ${scopedVars(".lp",{pg:"page",bg:"bg",s2:"s2",bd:"border",ac:"accent",acd:"accen
 .lp-hero{padding:40px 0 28px;text-align:center;position:relative}
 .lp-hero:before{content:"";position:absolute;inset:-40px 0 auto;height:320px;background:radial-gradient(closest-side,var(--glow),transparent);pointer-events:none}
 .lp-hands{width:min(300px,78%);height:auto;margin:0 auto 22px;display:block;position:relative}
+/* The hands are a gold drawing (2.3:1 on the light page). Light theme deepens
+   them towards the light mark token, about 5:1; dark keeps the gold. */
+:root:not([data-theme="dark"]) .lp-hands{filter:brightness(.6) saturate(1.2)}
 .lp h1{font-family:var(--font-display);font-weight:600;font-size:clamp(34px,8.5vw,58px);line-height:1.05;letter-spacing:-.02em;margin:0 auto 16px;max-width:15ch;position:relative}
 .lp-lede{font-size:clamp(16px,4.2vw,19px);line-height:1.55;color:var(--t2);max-width:34em;margin:0 auto 28px;position:relative;text-align:left}
 .lp-ctas{display:flex;flex-direction:column;gap:12px;align-items:center;position:relative}

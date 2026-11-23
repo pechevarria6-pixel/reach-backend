@@ -1,0 +1,2789 @@
+{
+ "landing-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 2,
+  "smallTargets": [
+   {
+    "name": "Terms",
+    "w": 38,
+    "h": 44
+   }
+  ],
+  "smallTargetCount": 1,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Plans with your people, actually made."
+   },
+   {
+    "level": 2,
+    "text": "HOW IT WORKS"
+   },
+   {
+    "level": 3,
+    "text": "Start a group"
+   },
+   {
+    "level": 3,
+    "text": "Everyone says what they like"
+   },
+   {
+    "level": 3,
+    "text": "Reach finds the options"
+   },
+   {
+    "level": 3,
+    "text": "Vote, then go"
+   },
+   {
+    "level": 2,
+    "text": "Where to next?"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Reach",
+    "ring": false,
+    "outline": "none 3px rgb(254, 247, 217)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign in",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Get started",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "rgba(195, 163, 66, 0.14) 0px 10px 30px 0px"
+   },
+   {
+    "name": "Already have an account?\nSign ",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "\ud83c\udf7d\ufe0f\nA night out",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "\ud83c\udfd6\ufe0f\nA weekend away",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/"
+ },
+ "sign-in-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 4,
+  "smallTargets": [
+   {
+    "name": "Clerk logo",
+    "w": 48,
+    "h": 14
+   }
+  ],
+  "smallTargetCount": 1,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Sign in to Reach"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Continue with Google",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "oklab(0 0 0 / 0.07) 0px 0px 0px 1px, rgba(0, 0, 0, 0.08) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(254, 247, 217)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "Continue",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "rgb(195, 163, 66) 0px 0px 0px 1px, rgba(255, 255, 255, 0.07)"
+   },
+   {
+    "name": "Sign up",
+    "ring": false,
+    "outline": "none 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Clerk logo",
+    "ring": false,
+    "outline": "none 3px rgb(227, 217, 204)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 1
+  },
+  "url": "https://www.alcanzar.io/sign-in"
+ },
+ "sign-up-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 4,
+  "smallTargets": [
+   {
+    "name": "Show password",
+    "w": 40,
+    "h": 24
+   },
+   {
+    "name": "Sign in",
+    "w": 42,
+    "h": 18
+   },
+   {
+    "name": "Clerk logo",
+    "w": 48,
+    "h": 14
+   }
+  ],
+  "smallTargetCount": 3,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Create your account"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Continue with Google",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "oklab(0 0 0 / 0.07) 0px 0px 0px 1px, rgba(0, 0, 0, 0.08) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(254, 247, 217)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(254, 247, 217)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(254, 247, 217)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(254, 247, 217)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "Show password",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "oklab(0 0 0 / 0) 0px 0px 0px 0px"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 2
+  },
+  "url": "https://www.alcanzar.io/sign-up"
+ },
+ "onboarding-quiz-dark": {
+  "lowContrast": [
+   {
+    "text": "\ud83d\udc4b",
+    "ratio": 1.18,
+    "need": 3,
+    "color": "rgb(0, 0, 0)",
+    "bg": "rgb(44,14,24)",
+    "size": 40
+   }
+  ],
+  "lowContrastCount": 1,
+  "unknownBgCount": 1,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "First, who are we talking to?"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "First name",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Last name",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Where you live",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Nearest airport code",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Continue \u2192",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "I\u2019ll do this later",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/onboarding"
+ },
+ "home-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 1,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [
+   "See all \u2192",
+   "\ud83e\udd7e Campbell House Park park \u00b7 450 East New Hampshire Avenue ",
+   "\ud83c\udfa8 The Encore Center arts centre \u00b7 160 East New Hampshire Av",
+   "\ud83c\udfa8 The Carolina Philharmonic arts centre \u00b7 5 Market Square 5"
+  ],
+  "fakeTappableCount": 4,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Who's on your mind today?"
+   },
+   {
+    "level": 2,
+    "text": "Upcoming trips"
+   },
+   {
+    "level": 2,
+    "text": "Ideas for you"
+   },
+   {
+    "level": 2,
+    "text": "Near you"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "2 new notifications",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Pay $969.24\nDEMO \u2014 Charleston ",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Pay \u2192",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "\uff0b\nNew plan",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 1
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "discover-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Discover"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Near you in Southern Pines\n\u00b7 c",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Home",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Discover",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Groups",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "groups-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 8,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea Dinner in Southern Pines",
+   "\ud83e\uddea Dinner in Southern Pines",
+   "\ud83e\uddea Dinner and drinks in Southern Pines",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea Long weekend somewhere warm by the sea",
+   "\ud83e\uddcd DEMO \u2014 Charleston weekend"
+  ],
+  "fakeTappableCount": 12,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Your trips"
+   },
+   {
+    "level": 2,
+    "text": "Coming up"
+   },
+   {
+    "level": 2,
+    "text": "All groups"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "+ New",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Previous month",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Next month",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Delete QA solo (Test)",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 12
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "group-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 21,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "QA test group"
+   },
+   {
+    "level": 2,
+    "text": "Called off"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Groups",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Edit",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Plans",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Members",
+    "ring": true,
+    "outline": "solid 3px rgb(227, 217, 204)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "trip-creation-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 1,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "What's this trip about?"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Back",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "What's this trip about?",
+    "ring": false,
+    "outline": "none 3px rgb(254, 247, 217)",
+    "shadow": "none"
+   },
+   {
+    "name": "Continue \u2192",
+    "ring": true,
+    "outline": "solid 3px rgb(42, 29, 6)",
+    "shadow": "rgba(195, 163, 66, 0.22) 0px 4px 20px 0px, rgba(255, 255, 25"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "plan-overview-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 6,
+  "smallTargets": [
+   {
+    "name": "NASA POWER",
+    "w": 70,
+    "h": 13
+   },
+   {
+    "name": "Mute reminders for this trip",
+    "w": 20,
+    "h": 20
+   }
+  ],
+  "smallTargetCount": 2,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "DEMO \u2014 Charleston weekend"
+   },
+   {
+    "level": 2,
+    "text": "Who's coming"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Back",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Edit plan",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Overview",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Budget",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 4
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "budget-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 5,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "DEMO \u2014 Charleston weekend"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Back",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Edit plan",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Overview",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Budget",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "group-no-plans-empty-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 21,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "QA test group"
+   },
+   {
+    "level": 2,
+    "text": "Called off"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Groups",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Edit",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Plans",
+    "ring": true,
+    "outline": "solid 3px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Members",
+    "ring": true,
+    "outline": "solid 3px rgb(227, 217, 204)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "checkout-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Your trip"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Back",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Hold off on this for now",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Hold off on this for now",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Shokud\u00f4 \u2192",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "profile-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 1,
+  "smallTargets": [
+   {
+    "name": "Leaflet",
+    "w": 51,
+    "h": 14
+   },
+   {
+    "name": "OpenStreetMap",
+    "w": 85,
+    "h": 14
+   }
+  ],
+  "smallTargetCount": 2,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Test Test"
+   },
+   {
+    "level": 2,
+    "text": "Your map"
+   },
+   {
+    "level": 2,
+    "text": "You"
+   },
+   {
+    "level": 2,
+    "text": "Travel"
+   },
+   {
+    "level": 2,
+    "text": "Money"
+   },
+   {
+    "level": 2,
+    "text": "Appearance"
+   },
+   {
+    "level": 2,
+    "text": "Account"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Map of your trips: Charleston,",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "path",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Leaflet",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "OpenStreetMap",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 1
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "privacy-settings-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Privacy"
+   },
+   {
+    "level": 2,
+    "text": "What Reach may do with your data"
+   },
+   {
+    "level": 2,
+    "text": "Your data rights"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Profile",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Personalised recommendations\nU",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Usage analytics\nAnonymous coun",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Product emails\nOccasional upda",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "empty-groups-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 4,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [
+   "\ud83e\udd7e Campbell House Park park \u00b7 450 East New Hampshire Avenue ",
+   "\ud83c\udfa8 The Encore Center arts centre \u00b7 160 East New Hampshire Av",
+   "\ud83c\udfa8 Arts Council of Moore County arts centre \u00b7 482 East Conne"
+  ],
+  "fakeTappableCount": 3,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Who would make this week better?"
+   },
+   {
+    "level": 2,
+    "text": "Ideas for you"
+   },
+   {
+    "level": 2,
+    "text": "Three ways to start"
+   },
+   {
+    "level": 2,
+    "text": "Near you"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "2 new notifications",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not for me: A night out in Sou",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Plan the night \u2192",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not for me: A weekend in Ralei",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 1
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "error-groups-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 5,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [
+   "\ud83e\udd7e Campbell House Park park \u00b7 450 East New Hampshire Avenue ",
+   "\ud83c\udfa8 The Encore Center arts centre \u00b7 160 East New Hampshire Av",
+   "\ud83c\udfa8 Arts Council of Moore County arts centre \u00b7 482 East Conne"
+  ],
+  "fakeTappableCount": 3,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Who would make this week better?"
+   },
+   {
+    "level": 2,
+    "text": "Ideas for you"
+   },
+   {
+    "level": 2,
+    "text": "Near you"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "2 new notifications",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not for me: A night out in Sou",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Plan the night \u2192",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not for me: A weekend in Alexa",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 3
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "error-discover-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Discover"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the light theme",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Near you in Southern Pines\n\u00b7 c",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Home",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Discover",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   },
+   {
+    "name": "Groups",
+    "ring": true,
+    "outline": "solid 2px rgb(195, 163, 66)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 1
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "not-found-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [
+   {
+    "name": "Terms",
+    "w": 42,
+    "h": 44
+   }
+  ],
+  "smallTargetCount": 1,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "That page isn\u2019t here"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Take me back",
+    "ring": true,
+    "outline": "solid 2px rgb(221, 178, 89)",
+    "shadow": "none"
+   },
+   {
+    "name": "Privacy",
+    "ring": true,
+    "outline": "solid 2px rgb(221, 178, 89)",
+    "shadow": "none"
+   },
+   {
+    "name": "Terms",
+    "ring": true,
+    "outline": "solid 2px rgb(221, 178, 89)",
+    "shadow": "none"
+   },
+   {
+    "name": "Take me back",
+    "ring": true,
+    "outline": "solid 2px rgb(221, 178, 89)",
+    "shadow": "none"
+   },
+   {
+    "name": "Privacy",
+    "ring": true,
+    "outline": "solid 2px rgb(221, 178, 89)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/no-such-page"
+ },
+ "offline-dark": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [],
+  "headingSkips": [],
+  "h1Count": 0,
+  "hOverflow": false,
+  "focus": [],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "landing-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 2,
+  "smallTargets": [
+   {
+    "name": "Terms",
+    "w": 38,
+    "h": 44
+   }
+  ],
+  "smallTargetCount": 1,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Plans with your people, actually made."
+   },
+   {
+    "level": 2,
+    "text": "HOW IT WORKS"
+   },
+   {
+    "level": 3,
+    "text": "Start a group"
+   },
+   {
+    "level": 3,
+    "text": "Everyone says what they like"
+   },
+   {
+    "level": 3,
+    "text": "Reach finds the options"
+   },
+   {
+    "level": 3,
+    "text": "Vote, then go"
+   },
+   {
+    "level": 2,
+    "text": "Where to next?"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Reach",
+    "ring": false,
+    "outline": "none 3px rgb(20, 33, 25)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign in",
+    "ring": true,
+    "outline": "solid 3px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Get started",
+    "ring": true,
+    "outline": "solid 3px rgb(43, 88, 59)",
+    "shadow": "rgba(236, 96, 50, 0.12) 0px 10px 30px 0px"
+   },
+   {
+    "name": "Already have an account?\nSign ",
+    "ring": true,
+    "outline": "solid 3px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "\ud83c\udf7d\ufe0f\nA night out",
+    "ring": true,
+    "outline": "solid 3px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "\ud83c\udfd6\ufe0f\nA weekend away",
+    "ring": true,
+    "outline": "solid 3px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/"
+ },
+ "sign-in-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 4,
+  "smallTargets": [
+   {
+    "name": "Clerk logo",
+    "w": 48,
+    "h": 14
+   }
+  ],
+  "smallTargetCount": 1,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Sign in to Reach"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Continue with Google",
+    "ring": true,
+    "outline": "solid 2px rgb(236, 96, 50)",
+    "shadow": "oklab(0 0 0 / 0.07) 0px 0px 0px 1px, rgba(0, 0, 0, 0.08) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(20, 33, 25)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "Continue",
+    "ring": true,
+    "outline": "solid 2px rgb(236, 96, 50)",
+    "shadow": "rgb(236, 96, 50) 0px 0px 0px 1px, rgba(255, 255, 255, 0.07) "
+   },
+   {
+    "name": "Sign up",
+    "ring": false,
+    "outline": "none 3px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Clerk logo",
+    "ring": false,
+    "outline": "none 3px rgb(76, 97, 86)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 1
+  },
+  "url": "https://www.alcanzar.io/sign-in"
+ },
+ "sign-up-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 4,
+  "smallTargets": [
+   {
+    "name": "Show password",
+    "w": 40,
+    "h": 24
+   },
+   {
+    "name": "Sign in",
+    "w": 42,
+    "h": 18
+   },
+   {
+    "name": "Clerk logo",
+    "w": 48,
+    "h": 14
+   }
+  ],
+  "smallTargetCount": 3,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Create your account"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Continue with Google",
+    "ring": true,
+    "outline": "solid 2px rgb(236, 96, 50)",
+    "shadow": "oklab(0 0 0 / 0.07) 0px 0px 0px 1px, rgba(0, 0, 0, 0.08) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(20, 33, 25)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(20, 33, 25)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(20, 33, 25)",
+    "shadow": "oklab(0 0 0 / 0.11) 0px 0px 0px 1px, oklab(0 0 0 / 0.07) 0px"
+   },
+   {
+    "name": "INPUT",
+    "ring": true,
+    "outline": "none 3px rgb(20, 33, 25)",
+    "shadow": "oklab(0 0 0 / 0.122036) 0px 0px 0px 1px, oklab(0 0 0 / 0.072"
+   },
+   {
+    "name": "Show password",
+    "ring": true,
+    "outline": "solid 2px rgb(236, 96, 50)",
+    "shadow": "oklab(0 0 0 / 0) 0px 0px 0px 0px"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 2
+  },
+  "url": "https://www.alcanzar.io/sign-up"
+ },
+ "onboarding-quiz-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 1,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "First, who are we talking to?"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "First name",
+    "ring": true,
+    "outline": "solid 3px rgb(236, 96, 50)",
+    "shadow": "none"
+   },
+   {
+    "name": "Last name",
+    "ring": true,
+    "outline": "solid 3px rgb(236, 96, 50)",
+    "shadow": "none"
+   },
+   {
+    "name": "Where you live",
+    "ring": true,
+    "outline": "solid 3px rgb(236, 96, 50)",
+    "shadow": "none"
+   },
+   {
+    "name": "Nearest airport code",
+    "ring": true,
+    "outline": "solid 3px rgb(236, 96, 50)",
+    "shadow": "none"
+   },
+   {
+    "name": "Continue \u2192",
+    "ring": true,
+    "outline": "solid 3px rgb(236, 96, 50)",
+    "shadow": "none"
+   },
+   {
+    "name": "I\u2019ll do this later",
+    "ring": true,
+    "outline": "solid 3px rgb(236, 96, 50)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/onboarding"
+ },
+ "home-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 4,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [
+   "See all \u2192",
+   "\ud83e\udd7e Campbell House Park park \u00b7 450 East New Hampshire Avenue ",
+   "\ud83c\udfa8 The Encore Center arts centre \u00b7 160 East New Hampshire Av",
+   "\ud83c\udfa8 The Carolina Philharmonic arts centre \u00b7 5 Market Square 5"
+  ],
+  "fakeTappableCount": 4,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Who's on your mind today?"
+   },
+   {
+    "level": 2,
+    "text": "Upcoming trips"
+   },
+   {
+    "level": 2,
+    "text": "Ideas for you"
+   },
+   {
+    "level": 2,
+    "text": "Near you"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "2 new notifications",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Pay $969.24\nDEMO \u2014 Charleston ",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Pay \u2192",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "\uff0b\nNew plan",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 1
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "discover-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Discover"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Near you in Southern Pines\n\u00b7 c",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Home",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Discover",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Groups",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "groups-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 8,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea Dinner in Southern Pines",
+   "\ud83e\uddea Dinner in Southern Pines",
+   "\ud83e\uddea Dinner and drinks in Southern Pines",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea E2E two-person check (called off by the test)",
+   "\ud83e\uddea Long weekend somewhere warm by the sea",
+   "\ud83e\uddcd DEMO \u2014 Charleston weekend"
+  ],
+  "fakeTappableCount": 12,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Your trips"
+   },
+   {
+    "level": 2,
+    "text": "Coming up"
+   },
+   {
+    "level": 2,
+    "text": "All groups"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "+ New",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Previous month",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Next month",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Delete QA solo (Test)",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 12
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "group-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 21,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "QA test group"
+   },
+   {
+    "level": 2,
+    "text": "Called off"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Groups",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Edit",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Plans",
+    "ring": true,
+    "outline": "solid 3px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Members",
+    "ring": true,
+    "outline": "solid 3px rgb(76, 97, 86)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "trip-creation-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 1,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "What's this trip about?"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Back",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "What's this trip about?",
+    "ring": false,
+    "outline": "none 3px rgb(20, 33, 25)",
+    "shadow": "none"
+   },
+   {
+    "name": "Continue \u2192",
+    "ring": true,
+    "outline": "solid 3px rgb(42, 29, 6)",
+    "shadow": "rgba(236, 96, 50, 0.22) 0px 4px 16px 0px, rgba(255, 255, 255"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "plan-overview-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 6,
+  "smallTargets": [
+   {
+    "name": "NASA POWER",
+    "w": 70,
+    "h": 13
+   },
+   {
+    "name": "Mute reminders for this trip",
+    "w": 20,
+    "h": 20
+   }
+  ],
+  "smallTargetCount": 2,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "DEMO \u2014 Charleston weekend"
+   },
+   {
+    "level": 2,
+    "text": "Who's coming"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Back",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Edit plan",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Overview",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Budget",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 4
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "budget-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 5,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "DEMO \u2014 Charleston weekend"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Back",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Edit plan",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Overview",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Budget",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "group-no-plans-empty-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 21,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "QA test group"
+   },
+   {
+    "level": 2,
+    "text": "Called off"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Groups",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Edit",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Plans",
+    "ring": true,
+    "outline": "solid 3px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Members",
+    "ring": true,
+    "outline": "solid 3px rgb(76, 97, 86)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "checkout-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Your trip"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Back",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Hold off on this for now",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Hold off on this for now",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Shokud\u00f4 \u2192",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "profile-light": {
+  "lowContrast": [
+   {
+    "text": "\u25cf",
+    "ratio": 1.48,
+    "need": 4.5,
+    "color": "rgb(226, 195, 94)",
+    "bg": "rgb(235,239,236)",
+    "size": 11.5
+   }
+  ],
+  "lowContrastCount": 1,
+  "unknownBgCount": 1,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Test Test"
+   },
+   {
+    "level": 2,
+    "text": "Your map"
+   },
+   {
+    "level": 2,
+    "text": "You"
+   },
+   {
+    "level": 2,
+    "text": "Travel"
+   },
+   {
+    "level": 2,
+    "text": "Money"
+   },
+   {
+    "level": 2,
+    "text": "Appearance"
+   },
+   {
+    "level": 2,
+    "text": "Account"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "\ud83d\ude4b\nName and home airport\n\u2026",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not now",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "\ud83c\udf5d Plates of food",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "\ud83c\udfdb\ufe0f Old buildings and art",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 1
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "privacy-settings-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Privacy"
+   },
+   {
+    "level": 2,
+    "text": "What Reach may do with your data"
+   },
+   {
+    "level": 2,
+    "text": "Your data rights"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Profile",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Personalised recommendations\nU",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Usage analytics\nAnonymous coun",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Product emails\nOccasional upda",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "empty-groups-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 4,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [
+   "\ud83e\udd7e Campbell House Park park \u00b7 450 East New Hampshire Avenue ",
+   "\ud83c\udfa8 The Encore Center arts centre \u00b7 160 East New Hampshire Av",
+   "\ud83c\udfa8 Arts Council of Moore County arts centre \u00b7 482 East Conne"
+  ],
+  "fakeTappableCount": 3,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Who would make this week better?"
+   },
+   {
+    "level": 2,
+    "text": "Ideas for you"
+   },
+   {
+    "level": 2,
+    "text": "Three ways to start"
+   },
+   {
+    "level": 2,
+    "text": "Near you"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "2 new notifications",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not for me: A night out in Sou",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Plan the night \u2192",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not for me: A weekend in Alexa",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 3
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "error-groups-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 5,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [
+   "\ud83e\udd7e Campbell House Park park \u00b7 450 East New Hampshire Avenue ",
+   "\ud83c\udfa8 The Encore Center arts centre \u00b7 160 East New Hampshire Av",
+   "\ud83c\udfa8 Arts Council of Moore County arts centre \u00b7 482 East Conne"
+  ],
+  "fakeTappableCount": 3,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Who would make this week better?"
+   },
+   {
+    "level": 2,
+    "text": "Ideas for you"
+   },
+   {
+    "level": 2,
+    "text": "Near you"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "2 new notifications",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not for me: A night out in Sou",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Plan the night \u2192",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Not for me: A weekend in Alexa",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 2
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "error-discover-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "Discover"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Switch to the dark theme",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Sign out",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Near you in Southern Pines\n\u00b7 c",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Home",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Discover",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   },
+   {
+    "name": "Groups",
+    "ring": true,
+    "outline": "solid 2px rgb(43, 88, 59)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ },
+ "not-found-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [
+   {
+    "name": "Terms",
+    "w": 42,
+    "h": 44
+   }
+  ],
+  "smallTargetCount": 1,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [
+   {
+    "level": 1,
+    "text": "That page isn\u2019t here"
+   }
+  ],
+  "headingSkips": [],
+  "h1Count": 1,
+  "hOverflow": false,
+  "focus": [
+   {
+    "name": "Take me back",
+    "ring": true,
+    "outline": "solid 2px rgb(138, 101, 18)",
+    "shadow": "none"
+   },
+   {
+    "name": "Privacy",
+    "ring": true,
+    "outline": "solid 2px rgb(138, 101, 18)",
+    "shadow": "none"
+   },
+   {
+    "name": "Terms",
+    "ring": true,
+    "outline": "solid 2px rgb(138, 101, 18)",
+    "shadow": "none"
+   },
+   {
+    "name": "Take me back",
+    "ring": true,
+    "outline": "solid 2px rgb(138, 101, 18)",
+    "shadow": "none"
+   },
+   {
+    "name": "Privacy",
+    "ring": true,
+    "outline": "solid 2px rgb(138, 101, 18)",
+    "shadow": "none"
+   }
+  ],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/no-such-page"
+ },
+ "offline-light": {
+  "lowContrast": [],
+  "lowContrastCount": 0,
+  "unknownBgCount": 0,
+  "smallTargets": [],
+  "smallTargetCount": 0,
+  "noName": [],
+  "noNameCount": 0,
+  "fakeTappable": [],
+  "fakeTappableCount": 0,
+  "headings": [],
+  "headingSkips": [],
+  "h1Count": 0,
+  "hOverflow": false,
+  "focus": [],
+  "at200": {
+   "hOverflow": false,
+   "clipped": 0
+  },
+  "url": "https://www.alcanzar.io/home"
+ }
+}

@@ -38,7 +38,7 @@ const css = `
 .nf-go:focus-visible{outline:2px solid var(--nf-acc);outline-offset:3px;}
 .nf-alt{display:flex;gap:18px;justify-content:center;font-size:14px;
   border-top:1px solid var(--nf-line);margin-top:32px;padding-top:20px;flex-wrap:wrap;}
-.nf-alt a{color:var(--nf-acc);text-decoration:none;font-weight:500;}
+.nf-alt a{color:var(--nf-acc);text-decoration:none;font-weight:500;display:inline-flex;align-items:center;min-height:44px;}
 .nf-alt a:hover{text-decoration:underline;}
 .nf-alt a:focus-visible{outline:2px solid var(--nf-acc);outline-offset:3px;border-radius:3px;}
 `;

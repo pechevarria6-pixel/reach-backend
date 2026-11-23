@@ -101,6 +101,42 @@ Capturing options and voting needs a QA trip generated and then called off. I'll
   orange or gold. The proposal (Task 1) keeps green as the light link colour and moves only orange-as-text.
 - **Headings** are the largest structural gap: every app screen needs real headings (Task 4).
 
+
+### Tasks 2–5 done, 2026-11-23 (waiting on owner review of the after screenshots)
+
+Measured by the same in-page audit as Task 0. The after captures come from this branch, served locally at
+production's address with the QA session, read-only. Before: `docs/a11y/before/`. After: `docs/a11y/after/`,
+plus `docs/a11y/after/zoom200/` for 200% zoom.
+
+| Check (all captured screens, both themes) | Before | After |
+|---|---|---|
+| Text below its contrast target | 51 (47 in light) | **2**: the Profile map legend dot (decorative, the words beside it carry the meaning) and the onboarding 👋 (false alarm) |
+| Tap targets under 44 × 44 | 154 | **18**: Clerk's own "Secured by Clerk" mark and "Show password" ring, the map's third-party credit, inline credit links inside sentences, footer links narrower than 44 px but 44 tall |
+| Screens with no heading | 24 | **0** (offline not re-captured, see below) |
+| Controls without a name | 0 | 0 |
+| Sideways scrolling at 200% zoom | not measured | **none** on 8 main screens. Groups' month switcher, Profile's email and theme switch, and the plan's stat tiles and member rows were fixed to wrap |
+| Reduced motion | respected | respected: confetti is never drawn, every transition is cut |
+
+**Notes**
+- **"Looks tappable but keyboard can't reach it": 22 → 24.** The 12 Groups calendar bars were taken out of the
+  keyboard order on purpose, because the same trips are listed below them as full rows. Home's "See all →" and
+  its place cards, which were already failing in Task 0, are now real controls.
+- **Text size vs zoom.** The app sets almost every font size in fixed pixels, so a browser's text-size setting
+  barely changes it. Zoom, including Safari's aA, scales everything and now reflows cleanly. Moving every size to
+  `rem` touches thousands of values; it is reported, not done.
+- **Light-theme walk,** for what the contrast gate can't see:
+  - the plan header gradient ended on gold or orange, with white text at 2.4:1 and 3.3:1. It now ends on new
+    `heroEnd` tokens: deep gold in dark, deep rust in light, 7.1:1 and 7.8:1;
+  - the booking celebration and the "all paid" card ended on mint in dark, with white at 1.7:1. They now end on
+    `celebrateEnd`, 7.1:1;
+  - the landing hands are deepened in light with a filter;
+  - the map's credit sits on the map's own ground.
+- **Not re-captured:**
+  - **Offline:** the after capture blocks service workers so the local branch can be served, and the offline
+    page needs one.
+  - **Options and voting:** not in Task 0's set either. The QA-trip approval was not used, so nothing was
+    written to production.
+
 ---
 
 ## Pilot gate — REACH-PILOT-GATE-2026-11-08.md

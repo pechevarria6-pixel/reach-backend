@@ -54,6 +54,8 @@ const DARK = {
   frameGlow: 'rgba(195,163,66,0.10)',
   // The landing page's mark and the sign-in card's shadow.
   mark: '#C3A342',
+  // Where the plan's hero gradient ends: deep enough for white words on it.
+  heroEnd: '#6E5414',
   authShadow: '0 24px 80px rgba(0,0,0,.6)',
 } as const;
 
@@ -92,6 +94,7 @@ const LIGHT: { [K in keyof typeof DARK]: string } = {
   frameShadow: '0 60px 140px rgba(30,50,38,0.24)',
   frameGlow: 'rgba(236,96,50,0.10)',
   mark: '#7A5C10',
+  heroEnd: '#8A3A1C',
   authShadow: '0 24px 80px rgba(30,50,38,.16)',
 };
 
@@ -114,7 +117,7 @@ export const FIXED = {
   // The plan's hero runs from this to the accent.
   heroDeep: '#1A1060',
   // The booking celebration and the "all paid" card.
-  celebrateDeep: '#064E3B',
+  celebrateDeep: '#064E3B', celebrateEnd: '#166534',
   goldDeep: '#3B2F0B', goldMid: '#7C5A12',
   confettiPink: '#F472B6',
   // Status pills on a photograph.

@@ -250,6 +250,8 @@ button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible,
 .dsc-fade{animation:fi .15s ease both;}
 .dsc-clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;}
 .dsc-roll::-webkit-scrollbar{display:none;}
+.leaflet-control-attribution{background:${C.mapBg}!important;color:${C.mapText}!important;}
+.leaflet-control-attribution a{color:${C.mapText}!important;}
 .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
 @media (prefers-reduced-motion:reduce){
   .dsc-press:active{transform:none;}
@@ -1409,7 +1411,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
       {(alsoComing.length>0||groups.length>0)&&(
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 20px 10px"}}>
         <span className="sl" role="heading" aria-level={2}>Upcoming trips</span>
-        <span style={{fontSize:12,color:C.accentText,cursor:"pointer"}} onClick={()=>setTab("groups")}>See all →</span>
+        <button onClick={()=>setTab("groups")} style={{background:"none",border:"none",padding:0,fontSize:12,color:C.accentText,cursor:"pointer",minHeight:44}}>See all →</button>
       </div>
       )}
       {(alsoComing.length>0||groups.length>0)&&(
@@ -1418,7 +1420,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
           <PhotoFrame key={plan.id} src={plan.imageUrl&&plan.imageCredit?plan.imageUrl:null}
             alt={photoAlt(plan.destinationCity,plan.title)}>{({ok:hasPhoto,img})=>(
           <div {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id,...(nexts[plan.id]?.bookedForMe?{initialTab:"bookings"}:{})})}
-            style={{minWidth:200,background:`linear-gradient(145deg,${C.heroDeep},${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
+            style={{minWidth:200,background:`linear-gradient(145deg,${C.heroDeep},${C.heroEnd})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
               // A picture of the place they are actually going. The gradient
               // stays underneath, so a photo that fails to load leaves the
               // card as it always looked rather than a white rectangle.
@@ -1555,7 +1557,8 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
           second, worse copy of Discover — and it ignored everything somebody
           had said "not for me" to there. Same key Discover hides by. */}
       {nearbyEvents.filter(n=>!hiddenRefs.has(`${String(n.source||"unknown").toLowerCase()}:local_${n.id}`)).slice(0,3).map((n,i)=>(
-        <div key={i}
+        // A card that opens somewhere is a control for a keyboard too.
+        <div key={i} {...(n.url?{...pressable,"aria-label":`${n.title||"Place"}, opens their page`}:{})}
           onClick={()=>{ if(n.url)window.open(n.url,"_blank","noopener,noreferrer"); }}
           style={{margin:"0 20px 8px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:14,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,cursor:n.url?"pointer":"default"}}>
           <span style={{fontSize:26,flexShrink:0}}>{n.emoji}</span>
@@ -2754,7 +2757,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
     <div className="sc" style={{paddingBottom:0}}>
       {/* Header */}
       <PhotoFrame src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok:hasPhoto,img})=>(<>
-      <div style={{height:200,background:exp.bg||`linear-gradient(135deg,${C.heroDeep},${C.accent})`,position:"relative",flexShrink:0,overflow:"hidden"}}>
+      <div style={{height:200,background:exp.bg||`linear-gradient(135deg,${C.heroDeep},${C.heroEnd})`,position:"relative",flexShrink:0,overflow:"hidden"}}>
         {img}
         <ScreenHeader onBack={onBack} overlay/>
         <div style={{position:"absolute",inset:0,background:`linear-gradient(to bottom,transparent 40%,${C.shade3})`,display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:20}}>
@@ -3186,10 +3189,10 @@ function SwipeToDelete({group,onDelete,children}){
           ?<div style={{display:"flex",alignItems:"center",gap:8,padding:"0 14px",background:C.s1,width:"100%",justifyContent:"flex-end"}}>
             <span style={{fontSize:12.5,color:C.t2,marginRight:"auto"}}>Delete {group.name} and its trips?</span>
             <button onClick={()=>{setAsking(false);setDx(0);}} disabled={busy}
-              style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999}}>
+              style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,fontSize:12.5,fontWeight:600,minHeight:44,padding:"7px 12px",borderRadius:999}}>
               Keep it</button>
             <button onClick={confirm} disabled={busy}
-              style={{background:C.red,border:"none",color:C.onRed,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,opacity:busy?.6:1}}>
+              style={{background:C.red,border:"none",color:C.onRed,fontSize:12.5,fontWeight:700,minHeight:44,padding:"7px 12px",borderRadius:999,opacity:busy?.6:1}}>
               {busy?"…":"Delete"}</button>
           </div>
           :<button aria-label={`Delete ${group.name}`} onClick={()=>setAsking(true)}
@@ -3282,12 +3285,12 @@ function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup})
           next is still free. Those are shapes, and a list cannot show one. */}
       {groups.length>0&&(
         <div style={{margin:"0 20px 18px"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:"4px 8px",marginBottom:10}}>
             <span className="sl" role="heading" aria-level={2}>Coming up</span>
             <div style={{display:"flex",alignItems:"center",gap:2}}>
               <button aria-label="Previous month" onClick={()=>setMonth(m=>addMonths(m,-1))}
                 style={{background:"none",border:"none",color:C.t2,fontSize:17,lineHeight:1,cursor:"pointer",minWidth:44,minHeight:44,padding:0,borderRadius:8}}>‹</button>
-              <span style={{fontSize:12.5,color:C.t1,minWidth:108,textAlign:"center"}}>{monthLabel(month)}</span>
+              <span style={{fontSize:12.5,color:C.t1,textAlign:"center",minWidth:0}}>{monthLabel(month)}</span>
               <button aria-label="Next month" onClick={()=>setMonth(m=>addMonths(m,1))}
                 style={{background:"none",border:"none",color:C.t2,fontSize:17,lineHeight:1,cursor:"pointer",minWidth:44,minHeight:44,padding:0,borderRadius:8}}>›</button>
             </div>
@@ -9467,7 +9470,7 @@ function Celebration({title,sub,onDone}){
     <div role="dialog" aria-modal="true" aria-label={title} onClick={()=>done.current()}
       style={{position:"fixed",inset:0,zIndex:1000,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
         padding:"28px",textAlign:"center",overflow:"hidden",cursor:"pointer",
-        background:`linear-gradient(160deg,${C.celebrateDeep},${C.green})`}}>
+        background:`linear-gradient(160deg,${C.celebrateDeep},${C.celebrateEnd})`}}>
       {!reduced&&<style dangerouslySetInnerHTML={{__html:`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}@keyframes rpop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.08);opacity:1}100%{transform:scale(1)}}`}}/>}
       {bits.map(i=>(<span key={i} aria-hidden="true" style={{position:"absolute",left:(i*137)%100+"%",top:-12,width:8,height:12,borderRadius:2,
         background:[C.accent,C.onPhoto,C.blue,C.confettiPink][i%4],animation:`rfall ${1.8+(i%5)*.3}s ${(i%7)*.12}s ease-in forwards`}}/>))}
@@ -11062,7 +11065,7 @@ function ItemActions({item,markGot,tight,city}){
         <a href={item.venue_website} target="_blank" rel="noopener noreferrer"
           style={{display:"inline-flex",alignItems:"center",gap:6,
             border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:600,
-            padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
+            minHeight:44,padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
           {item.venue_name||"Their site"} →
         </a>
       )}
@@ -11073,7 +11076,7 @@ function ItemActions({item,markGot,tight,city}){
         <a href={`tel:${String(item.venue_phone).replace(/[^0-9+]/g,"")}`}
           style={{display:"inline-flex",alignItems:"center",gap:6,
             border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:600,
-            padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
+            minHeight:44,padding:"7px 12px",borderRadius:999,textDecoration:"none"}}>
           📞 {item.venue_phone}
         </a>
       )}
@@ -11096,7 +11099,7 @@ function ItemActions({item,markGot,tight,city}){
       {markGot&&(ticketed||item.booking_mode==="ahead")&&(
         <button onClick={()=>markGot(item)}
           style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
-            fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+            fontSize:12.5,fontWeight:600,minHeight:44,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
           {ticketed?"I've got them":item.type==="restaurant"?"I've reserved a table":"I've sorted it"}</button>
       )}
     </div>
@@ -12678,7 +12681,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           toast={toast} onClose={()=>setChanging(null)} onSwapped={lineSwapped}
           onList={setLineSuggestions} onBookingsChanged={refreshBookings}/>
       )}
-      <div style={{background:`linear-gradient(145deg,${C.heroDeep},${C.accent})`,padding:"calc(18px + env(safe-area-inset-top)) 20px 22px",flexShrink:0}}>
+      <div style={{background:`linear-gradient(145deg,${C.heroDeep},${C.heroEnd})`,padding:"calc(18px + env(safe-area-inset-top)) 20px 22px",flexShrink:0}}>
         {/* The back button floats (position:absolute), so it is not in this
             row: with space-between the pill was the row's only item and sat
             at the left, under the back button. The row keeps the button's
@@ -12765,9 +12768,9 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             {!isTempId(planId)&&<NextStepCard na={na} busy={acting||building||loading}
               onCta={act} onDot={openDot}
               unknown={planStandsLine({fundingFailed:fundingFailed||(bookingsFailed&&!bookingsLoaded),funding:bookingsFailed&&!bookingsLoaded?null:funding,bookingsLoaded})}/>}
-            <div style={{display:"flex",gap:10,padding:"0 20px 14px"}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:10,padding:"0 20px 14px"}}>
               {[{l:plan.type==="restaurant"?"Going":soloTrip?"Traveller":"Travellers",v:soloTrip?"Just you":plan.participants.length,e:soloTrip?"🧍":"👥"},{l:"Budget",v:`$${plan.budget}`,e:"💳"},(plan.startDate&&plan.startDate===plan.endDate)?{l:"When",v:dayLabel(plan.startDate)||"—",e:"🌃"}:{l:"Nights",v:nightsBetween(plan.startDate,plan.endDate)??"—",e:"🌙"}].map((s,i)=>(
-                <div key={i} style={{flex:1,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
+                <div key={i} style={{flex:"1 1 80px",minWidth:0,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,textAlign:"center"}}>
                   <div style={{fontSize:20}}>{s.e}</div>
                   <div style={{fontFamily:"var(--font-display)",fontSize:18,color:C.t1,marginTop:4}}>{s.v}</div>
                   <div style={{fontSize:10,color:C.t3,textTransform:"uppercase",letterSpacing:".06em"}}>{s.l}</div>
@@ -12806,7 +12809,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             <div style={{padding:"0 20px 14px"}}>
               <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Who's coming</div>
               {plan.participants.map(uid=>{const u=um[uid];return u?(
-                <div key={uid} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${C.borderLight}`}}>
+                <div key={uid} style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:12,padding:"8px 0",borderBottom:`1px solid ${C.borderLight}`}}>
                   <div className="av-lg" style={{background:u.color}}>{u.initials}</div>
                   <div style={{flex:1}}>
                     <div style={{fontSize:14,fontWeight:500,color:C.t1}}>{u.name}</div>
@@ -14576,7 +14579,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
           {canRefund&&(
             <button disabled={refunding} onClick={askRefund}
-              style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:refunding?"progress":"pointer",opacity:refunding?.6:1}}>
+              style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,minHeight:44,padding:"7px 12px",borderRadius:999,cursor:refunding?"progress":"pointer",opacity:refunding?.6:1}}>
               {refunding?"Asking Stripe…":"Refund what wasn't spent"}
             </button>
           )}
@@ -14785,7 +14788,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // "Go back", with the money already taken.
   if(phase==="problems"){
     const rowOf=id=>(bookings||[]).find(b=>b.id===id);
-    const btn={background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:"pointer"};
+    const btn={background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,minHeight:44,padding:"7px 12px",borderRadius:999,cursor:"pointer"};
     return(<div className="sc" style={{paddingBottom:40}}>
       <div style={{padding:"18px 20px 6px"}}>
         <span style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>Not everything was booked</span>
@@ -14878,7 +14881,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     const failedRows=checkout.rows.filter(r=>r.status==="failed");
     return(<div className="sc" style={{paddingBottom:40,position:"relative",overflow:"hidden"}}>
       {celebrating&&<Celebration {...celebrationFor(plan,group)} onDone={endCelebration}/>}
-      <div style={{background:celebrate?`linear-gradient(145deg,${C.celebrateDeep},${C.green})`:`linear-gradient(145deg,${C.goldDeep},${C.goldMid})`,padding:"48px 28px 36px",textAlign:"center"}}>
+      <div style={{background:celebrate?`linear-gradient(145deg,${C.celebrateDeep},${C.celebrateEnd})`:`linear-gradient(145deg,${C.goldDeep},${C.goldMid})`,padding:"48px 28px 36px",textAlign:"center"}}>
         <div style={{width:72,height:72,borderRadius:"50%",background:C.photoChip,display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px",color:C.onPhoto}}>{celebrate?"✓":"!"}</div>
         {/* Nothing in the app books an itinerary yet, so when no booking rows
             exist this said "You're all booked!" over a line reading "Nothing is
@@ -14922,13 +14925,13 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                   {b.error?<span style={{color:C.t2}}> — {b.error}</span>:null}
                   {fix&&goToProfileSection&&(
                     <div><button onClick={()=>goToProfileSection(fix.section)}
-                      style={{marginTop:4,background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12,fontWeight:700,padding:"6px 11px",borderRadius:999,cursor:"pointer"}}>{fix.label}</button></div>
+                      style={{marginTop:4,background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12,fontWeight:700,minHeight:44,padding:"6px 11px",borderRadius:999,cursor:"pointer"}}>{fix.label}</button></div>
                   )}
                 </div>
               );
             })}
             <button onClick={()=>{setPhase("loading");load();}}
-              style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+              style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,fontSize:12.5,fontWeight:700,minHeight:44,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
               Price {failedRows.length===1?"it":"them"} again
             </button>
           </div>
@@ -14989,7 +14992,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             {it.st?chip(BOOKING_STATE[it.st]?.label||"Not booked",BOOKING_STATE[it.st]?.tone||"plain"):null}
             {it.href?(
               <a href={it.href} target="_blank" rel="noopener noreferrer"
-                style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
+                style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",minHeight:44}}>
                 Finish on {PROVIDER_NAME[it.provider]||"their site"} →
               </a>
             ):null}
@@ -15064,8 +15067,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
 
   if(phase==="pay")return(<div className="sc" style={{paddingBottom:40}}>
     <div style={{padding:"18px 20px 6px",display:"flex",alignItems:"center",gap:10}}>
-      <span onClick={()=>setPhase("review")} style={{cursor:"pointer",color:C.t2,fontSize:20}}>←</span>
-      <span style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>Your share · {fmt(myShareCents)}</span>
+      <button aria-label="Back" onClick={()=>setPhase("review")} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,fontSize:20,minWidth:44,minHeight:44,padding:0}}>←</button>
+      <span role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>Your share · {fmt(myShareCents)}</span>
     </div>
     <div style={{padding:"8px 20px 0"}}>
       <div ref={payRef} style={{minHeight:220,background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}/>
@@ -15080,8 +15083,8 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // phase === review
   return(<div className="sc" style={{paddingBottom:40}}>
     <div style={{padding:"18px 20px 6px",display:"flex",alignItems:"center",gap:10}}>
-      <span onClick={onBack} style={{cursor:"pointer",color:C.t2,fontSize:20}}>←</span>
-      <span style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{plan?.destination||plan?.name||"Your trip"}</span>
+      <button aria-label="Back" onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",color:C.t2,fontSize:20,minWidth:44,minHeight:44,padding:0}}>←</button>
+      <span role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:22,color:C.t1}}>{plan?.destination||plan?.name||"Your trip"}</span>
     </div>
     <div style={{padding:"6px 20px 0"}}>
       <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:16,padding:"6px 4px",marginBottom:14}}>
@@ -15124,7 +15127,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
           {it.href?(
             <a href={it.href} target="_blank" rel="noopener noreferrer"
               onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
-              style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
+              style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",minHeight:44}}>
               {it.provider==="resy"||it.provider==="opentable"||it.provider==="tock"
                 ?`Reserve on ${PROVIDER_NAME[it.provider]} →`
                 :`Finish on ${PROVIDER_NAME[it.provider]||"their site"} →`}
@@ -15134,7 +15137,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             // take a table, and a tap dials it on the device this is on.
             <a href={`tel:${String(it.phone).replace(/[^0-9+]/g,"")}`}
               onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
-              style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap"}}>
+              style={{fontSize:12,fontWeight:700,color:C.accentText,textDecoration:"none",whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",minHeight:44}}>
               Call to reserve →
             </a>
           ):null}
@@ -15229,7 +15232,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                   <a href={it.href} target="_blank" rel="noopener noreferrer"
                     onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
                     style={{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,
-                      color:C.accentText,fontSize:12.5,fontWeight:600,padding:"7px 12px",
+                      color:C.accentText,fontSize:12.5,fontWeight:600,minHeight:44,padding:"7px 12px",
                       borderRadius:999,textDecoration:"none"}}>
                     {it.provider==="resy"||it.provider==="opentable"||it.provider==="tock"
                       ?`Reserve on ${PROVIDER_NAME[it.provider]} →`
@@ -15240,7 +15243,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                   <a href={`tel:${String(it.phone).replace(/[^0-9+]/g,"")}`}
                     onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
                     style={{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,
-                      color:C.accentText,fontSize:12.5,fontWeight:600,padding:"7px 12px",
+                      color:C.accentText,fontSize:12.5,fontWeight:600,minHeight:44,padding:"7px 12px",
                       borderRadius:999,textDecoration:"none"}}>
                     📞 Call to reserve →
                   </a>
@@ -15251,7 +15254,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                 {it.id&&!isTempId(it.id)&&!handedOver[it.id]&&it.st!=="confirmed"&&it.st!=="redirected"?(
                   <button onClick={()=>setHandedOver(h=>({...h,[it.id]:true}))}
                     style={{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,background:"none",
-                      color:C.green,fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+                      color:C.green,fontSize:12.5,fontWeight:600,minHeight:44,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
                     {BOOKED_IT}
                   </button>
                 ):null}
@@ -15519,14 +15522,14 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                 {fixFor(b.error)&&goToProfileSection&&(
                   <div><button onClick={()=>goToProfileSection(fixFor(b.error).section)}
                     style={{marginTop:4,background:"none",border:`1px solid ${C.border}`,color:C.accentText,
-                      fontSize:12,fontWeight:700,padding:"6px 11px",borderRadius:999,cursor:"pointer"}}>{fixFor(b.error).label}</button></div>
+                      fontSize:12,fontWeight:700,minHeight:44,padding:"6px 11px",borderRadius:999,cursor:"pointer"}}>{fixFor(b.error).label}</button></div>
                 )}
               </div>
             ))}
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
               <button onClick={()=>{setPhase("loading");load();}}
                 style={{background:"none",border:`1px solid ${C.border}`,color:C.accentText,
-                  fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+                  fontSize:12.5,fontWeight:700,minHeight:44,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
                 Try these again
               </button>
               {/* Never a trap. Moab's flight cannot be booked at any price —
@@ -15536,7 +15539,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
                   nothing to carry on to. */}
               {checkout.step==="blocked"&&<button onClick={()=>setSkipBroken(true)}
                 style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,
-                  fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
+                  fontSize:12.5,fontWeight:600,minHeight:44,padding:"7px 12px",borderRadius:999,cursor:"pointer"}}>
                 {/* "Book the rest without them" was the first wording and
                     check:promises refused it, rightly: this button books
                     nothing. It uncovers the pay button, and the booking
@@ -16280,7 +16283,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           {ownPhoto(user?.avatar)?<img src={user.avatar} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover"}} alt=""/>:(user?.name||"?")[0]}
         </div>
         <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
-        <div style={{fontSize:13,color:C.t2,marginTop:2}}>
+        <div style={{fontSize:13,color:C.t2,marginTop:2,overflowWrap:"anywhere"}}>
           {user?.email}
           {data?.provider&&data.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.s3,color:C.t2,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{data.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
         </div>
@@ -16358,12 +16361,12 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
 
       <div style={{padding:"16px 20px 6px"}}><span className="sl" role="heading" aria-level={2}>Appearance</span></div>
       <div style={{margin:"0 20px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
           {[{v:"light",icon:"☀️",label:"Light"},{v:"dark",icon:"🌙",label:"Dark"}].map(o=>{
             const on=theme===o.v;
             return(
               <button key={o.v} onClick={()=>chooseTheme&&chooseTheme(o.v)} aria-pressed={on}
-                style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                style={{flex:"1 1 96px",display:"flex",alignItems:"center",justifyContent:"center",gap:8,
                   padding:"12px 10px",borderRadius:12,cursor:"pointer",
                   border:`2px solid ${on?C.accentText:C.border}`,
                   background:on?C.accentDim:C.s2,

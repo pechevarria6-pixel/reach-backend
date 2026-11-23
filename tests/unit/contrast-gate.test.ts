@@ -31,7 +31,7 @@ for (const theme of ['light', 'dark'] as Theme[]) {
   for (const bg of ['bg', 's1', 's2'] as const) PAIRS.push({ theme, fg: 'accentText', bg, min: TARGET.edge, why: 'the focus ring' });
   PAIRS.push({ theme, fg: 'mark', bg: 'page', min: TARGET.edge, why: 'the landing mark, a graphic' });
   // Fixed grounds: the same in both themes.
-  for (const bg of ['heroDeep', 'celebrateDeep', 'goldDeep', 'goldMid', 'photoBlank'] as const) PAIRS.push({ theme, fg: 'onPhoto', bg, min: TARGET.text, why: 'white on a dark ground of its own' });
+  for (const bg of ['heroDeep', 'heroEnd', 'celebrateDeep', 'celebrateEnd', 'goldDeep', 'goldMid', 'photoBlank'] as const) PAIRS.push({ theme, fg: 'onPhoto', bg, min: TARGET.text, why: 'white on a dark ground of its own' });
   PAIRS.push({ theme, fg: 'mapText', bg: 'mapBg', min: TARGET.text, why: 'the map\'s empty state' });
   PAIRS.push({ theme, fg: 'mapMuted', bg: 'mapBg', min: TARGET.text, why: 'the map\'s empty state' });
 }
