@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { normalizeEmail, newInviteToken, INVITE_TTL_DAYS } from '@/lib/invites';
 import { z } from 'zod';
+import { withoutOthersEmails } from '@/lib/member-privacy';
 
 const CreateGroupSchema = z.object({
   name: z.string().min(1).max(100),
@@ -55,6 +56,7 @@ export async function GET() {
       const participants = (g.group_members || []).map((m: any) => m.user_id);
       return {
         ...g,
+        group_members: withoutOthersEmails(g.group_members, user.id),
         role: roleByGroup[g.id],
         plans: (plansByGroup.get(g.id) || []).map(p => ({ ...p, participants })),
       };

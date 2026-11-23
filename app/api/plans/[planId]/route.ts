@@ -23,6 +23,7 @@ import { voteOpenedNotes } from '@/lib/vote-complete';
 import { planReadiness } from '@/lib/plan-readiness';
 import { recordPlanDeletion } from '@/lib/integrity/plan-deletion';
 import { reopenRefusal } from '@/lib/integrity/one-active-copy';
+import { withoutOthersEmails } from '@/lib/member-privacy';
 
 const UpdatePlanSchema = z.object({
   // Sent by the organiser on the second call, having read what moving the
@@ -95,7 +96,7 @@ export async function GET(_: NextRequest, { params }: { params: { planId: string
   return NextResponse.json({
     plan: { ...plan, participants },
     participants,
-    members: membersRes.data || [],
+    members: withoutOthersEmails(membersRes.data, user.id),
     itinerary: itineraryRes.data || [],
     votes: tally,
     myVote,
