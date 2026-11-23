@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, isFail } from '@/lib/auth';
 import { holdsSomething } from '@/lib/booking/claim';
+import { withoutOthersEmails } from '@/lib/member-privacy';
 
 // GET /api/groups/[id] — get a single group with members and plans
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
@@ -39,7 +40,7 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 
   return NextResponse.json({
     group: groupRes.data,
-    members: membersRes.data,
+    members: withoutOthersEmails(membersRes.data, user.id),
     plans: (plansRes.data || []).map(p => ({ ...p, participants })),
     myRole: membership.role,
   });
