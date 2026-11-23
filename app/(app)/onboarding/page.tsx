@@ -17,6 +17,7 @@ import { useUser } from '@clerk/nextjs';
 // six screens (2026-11-06).
 import { QUIZ_COUNT_WORD as QUIZ_COUNT } from '@/lib/quiz-screens';
 import { scopedVars } from '@/lib/tokens';
+import { startKind } from '@/lib/after-sign-up';
 // One palette per theme, the app's own (PALETTE in components/reach-app.jsx).
 // This screen was fixed maroon while sign-up before it and the app after it
 // are cream by default: a new account went light, dark, light in its first
@@ -126,6 +127,11 @@ export default function OnboardingPage() {
     if (next && /^\/invite\/[A-Za-z0-9_-]{8,}$/.test(next)) { router.push(next); return; }
     // The quiz lives in the app rather than here, so there is one of it
     // rather than two that drift apart.
+    // What they chose on the front page (a night out, a weekend, a trip)
+    // opens that plan straight away; the taste questions stay on Home.
+    let kind: string | null = null;
+    try { kind = startKind(new URLSearchParams(window.location.search).get('kind')); } catch { kind = null; }
+    if (kind) { router.push(`/home?kind=${kind}`); return; }
     router.push(withQuiz ? '/home?start=taste' : '/home');
   };
 

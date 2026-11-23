@@ -42,22 +42,23 @@ ${scopedVars(".lp",{pg:"page",bg:"bg",s2:"s2",bd:"border",ac:"accent",acd:"accen
 .lp *{box-sizing:border-box}
 .lp-in{max-width:960px;margin:0 auto;padding:0 16px}
 .lp-top{display:flex;align-items:center;justify-content:space-between;padding:18px 0}
-.lp-brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--t1)}
+.lp-brand{display:flex;align-items:center;gap:10px;min-height:44px;text-decoration:none;color:var(--t1)}
 .lp-brand img{height:22px;width:auto}
 .lp-brand span{font-family:var(--font-display);font-size:24px;font-weight:600;letter-spacing:-.01em}
-.lp-signin{color:var(--link);font-weight:600;font-size:15px;text-decoration:none;padding:10px 4px}
+.lp-signin{color:var(--link);font-weight:600;font-size:15px;text-decoration:none;display:inline-flex;align-items:center;min-height:44px;padding:0 8px}
 .lp-hero{padding:40px 0 28px;text-align:center;position:relative}
 .lp-hero:before{content:"";position:absolute;inset:-40px 0 auto;height:320px;background:radial-gradient(closest-side,var(--glow),transparent);pointer-events:none}
 .lp-hands{width:min(300px,78%);height:auto;margin:0 auto 22px;display:block;position:relative}
 .lp h1{font-family:var(--font-display);font-weight:600;font-size:clamp(34px,8.5vw,58px);line-height:1.05;letter-spacing:-.02em;margin:0 auto 16px;max-width:15ch;position:relative}
-.lp-lede{font-size:clamp(16px,4.2vw,19px);line-height:1.55;color:var(--t2);max-width:34em;margin:0 auto 28px;position:relative}
+.lp-lede{font-size:clamp(16px,4.2vw,19px);line-height:1.55;color:var(--t2);max-width:34em;margin:0 auto 28px;position:relative;text-align:left}
 .lp-ctas{display:flex;flex-direction:column;gap:12px;align-items:center;position:relative}
 .lp-go{display:inline-flex;align-items:center;justify-content:center;min-height:52px;padding:0 28px;border-radius:999px;background:linear-gradient(135deg,var(--acd),var(--ac));color:var(--on);font-weight:700;font-size:16px;text-decoration:none;box-shadow:0 10px 30px var(--glow);width:100%;max-width:340px}
 .lp-go:focus-visible,.lp-signin:focus-visible,.lp-ghost:focus-visible{outline:3px solid var(--link);outline-offset:3px}
-.lp-ghost{color:var(--t2);font-size:14.5px;text-decoration:none}
+.lp-ghost{color:var(--t2);font-size:14.5px;text-decoration:none;display:inline-flex;align-items:center;min-height:44px}
 .lp-ghost b{color:var(--link)}
 .lp-kinds{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:28px auto 0;position:relative}
-.lp-kinds span{font-size:13.5px;color:var(--t2);background:var(--bg);border:1px solid var(--bd);border-radius:999px;padding:7px 14px}
+.lp-kinds a{display:inline-flex;align-items:center;gap:6px;min-height:44px;font-size:14px;font-weight:600;color:var(--link);background:var(--bg);border:1px solid var(--bd);border-radius:999px;padding:0 16px;text-decoration:none}
+.lp-kinds a:focus-visible{outline:3px solid var(--link);outline-offset:3px}
 .lp-how{padding:36px 0 8px}
 .lp-eyebrow{text-transform:uppercase;letter-spacing:.14em;font-size:12px;font-weight:700;color:var(--t3);text-align:center;margin:0 0 18px}
 .lp-steps{list-style:none;margin:0;padding:0;display:grid;gap:12px;grid-template-columns:1fr}
@@ -70,7 +71,7 @@ ${scopedVars(".lp",{pg:"page",bg:"bg",s2:"s2",bd:"border",ac:"accent",acd:"accen
 .lp-end{padding:36px 0 28px;text-align:center}
 .lp-end h2{font-family:var(--font-display);font-weight:600;font-size:clamp(26px,6.5vw,38px);margin:0 0 18px;letter-spacing:-.01em}
 .lp-foot{border-top:1px solid var(--bd);padding:20px 0 calc(20px + env(safe-area-inset-bottom));display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:center;font-size:13px;color:var(--t3)}
-.lp-foot a{color:var(--t2);text-decoration:none}
+.lp-foot a{color:var(--t2);text-decoration:none;display:inline-flex;align-items:center;min-height:44px}
 `;
 
 export default function RootPage() {
@@ -101,15 +102,15 @@ export default function RootPage() {
             <Link href="/sign-up" className="lp-go">Get started</Link>
             <Link href="/sign-in" className="lp-ghost">Already have an account? <b>Sign in</b></Link>
           </div>
-          <div className="lp-kinds" aria-label="What you can plan">
-            <span>🍽️ A night out</span>
-            <span>🏖️ A weekend away</span>
-            <span>✈️ A proper trip</span>
-          </div>
+          <nav className="lp-kinds" aria-label="Start planning">
+            <Link href="/sign-up?kind=night"><span aria-hidden="true">🍽️</span> A night out</Link>
+            <Link href="/sign-up?kind=weekend"><span aria-hidden="true">🏖️</span> A weekend away</Link>
+            <Link href="/sign-up?kind=trip"><span aria-hidden="true">✈️</span> A proper trip</Link>
+          </nav>
         </section>
 
         <section className="lp-how" aria-labelledby="lp-how-title">
-          <p className="lp-eyebrow" id="lp-how-title">How it works</p>
+          <h2 className="lp-eyebrow" id="lp-how-title">How it works</h2>
           <ol className="lp-steps">
             {STEPS.map(s => (
               <li key={s.title} className="lp-step">

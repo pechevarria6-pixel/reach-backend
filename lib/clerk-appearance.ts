@@ -84,7 +84,7 @@ const appearance = (c: AuthColours): Appearance => ({
       color: c.t1,
       minHeight: 48,
     },
-    formFieldInput: { background: c.s2, border: `1px solid ${c.border}` },
+    formFieldInput: { background: c.s2, border: `1px solid ${c.border}`, minHeight: 44 },
     footerActionLink: { color: c.accentText },
     // Clerk's dev-instance badge is noise on a branded screen.
     logoBox: { display: 'none' },

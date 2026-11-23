@@ -203,7 +203,7 @@ button{min-height:44px;}
 .bp:disabled{opacity:.35;cursor:not-allowed;}
 .bs{width:100%;padding:15px 20px;background:${C.s2};color:${C.t1};border:1px solid ${C.border};border-radius:18px;font-family:var(--font-body);font-size:15px;font-weight:500;cursor:pointer;transition:border-color .15s;}
 .bs:hover{border-color:${C.borderLight};}
-.bsm{padding:7px 14px;border-radius:10px;font-family:var(--font-body);font-size:12px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s;}
+.bsm{min-height:44px;display:inline-flex;align-items:center;justify-content:center;padding:7px 14px;border-radius:10px;font-family:var(--font-body);font-size:12px;font-weight:600;cursor:pointer;border:none;transition:opacity .15s;}
 .bsm:hover{opacity:.85;}
 .bsm-p{background:${C.accent};color:${C.onAccent};}
 .bsm-g{background:${C.s3};color:${C.t2};}
@@ -216,14 +216,15 @@ button{min-height:44px;}
    Anyone navigating by keyboard had no idea where they were. :focus-visible
    keeps it off mouse clicks. */
 :focus-visible{outline:2px solid ${C.accentText};outline-offset:2px;border-radius:6px;}
-button:focus-visible,.card:focus-visible,[role="button"]:focus-visible{outline:2px solid ${C.accentText};outline-offset:3px;}
-.inp:focus-visible{outline:none;}
+button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible,.card:focus-visible,[role="button"]:focus-visible,[role="switch"]:focus-visible,[role="link"]:focus-visible,[role="tab"]:focus-visible,[tabindex="0"]:focus-visible{outline:2px solid ${C.accentText};outline-offset:3px;}
+.inp:focus-visible{outline:2px solid ${C.accentText};outline-offset:1px;}
 /* Respect someone who has asked their system for less movement. Spinners,
    slide-ups and the progress bar all animate by default. */
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
     transition-duration:.01ms!important;scroll-behavior:auto!important;}
 }
+.fl-t{display:block;font-size:12.5px;font-weight:600;color:${C.t2};margin:0 0 6px;}
 .inp::placeholder{color:${C.t3};}
 .ov{position:absolute;inset:0;background:${C.overlay};backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:200;display:flex;align-items:flex-end;animation:fi .2s ease;}
 .sh{width:100%;max-height:90%;background:${C.s1};background-image:${C.grain};border-radius:28px 28px 0 0;border-top:1px solid ${C.borderLight};box-shadow:inset 0 1px 0 ${C.edgeHi};overflow-y:auto;scrollbar-width:none;animation:su .2s cubic-bezier(.32,.72,0,1);padding-bottom:30px;outline:none;}
@@ -367,6 +368,7 @@ const INIT_GROUPS = [];
 
 // Icons
 const Ic = {
+  Bell:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="22" height="22" aria-hidden="true"><path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 003.4 0"/></svg>,
   // The header's three: the theme in each direction, and the way out. Sized
   // here because they sit in a 44px button rather than a nav column.
   Sun:()=><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" width="20" height="20"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>,
@@ -411,7 +413,7 @@ function ScreenHeader({onBack,label="Back",title,right,overlay=false}){
   return(
     <div className="hd">
       <div className="hd-row">{back}{right}</div>
-      <div className="pt" style={{fontSize:24}}>{title}</div>
+      <div className="pt" role="heading" aria-level={1} style={{fontSize:24}}>{title}</div>
     </div>
   );
 }
@@ -909,8 +911,8 @@ function NotificationsBell(){
   return(
     <>
       <button onClick={openBell} aria-label={data.unread?`${data.unread} new notifications`:"Notifications"}
-        style={{position:"relative",background:"none",border:"none",cursor:"pointer",fontSize:22,padding:4,lineHeight:1}}>
-        🔔
+        style={{position:"relative",background:"none",border:"none",cursor:"pointer",color:C.accentText,minWidth:44,minHeight:44,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,lineHeight:1}}>
+        <Ic.Bell/>
         {data.unread>0&&(
           <span style={{position:"absolute",top:0,right:0,minWidth:17,height:17,borderRadius:9,background:C.accent,
             color:C.onAccent,fontSize:10.5,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px"}}>
@@ -1093,7 +1095,7 @@ function TripPicks({push,userLocation,toast,groups}){
   return(
     <>
       <div style={{padding:"4px 20px 10px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
-        <span className="sl">Ideas for you</span>
+        <span className="sl" role="heading" aria-level={2}>Ideas for you</span>
         {data.from&&<span style={{fontSize:11,color:C.t3,textAlign:"right"}}>From {data.from}</span>}
       </div>
       {/* A no-go nothing we hold can check (cold weather, crowds), said as
@@ -1148,7 +1150,7 @@ function TripPicks({push,userLocation,toast,groups}){
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                 <span className="pill pill-p">{BAND_PILL[p.band]}</span>
                 <button aria-label={`Not for me: ${p.title}`} disabled={busy===p.ref} onClick={()=>dismiss(p)}
-                  style={{background:"none",border:"none",color:C.t3,fontSize:18,lineHeight:1,cursor:"pointer",padding:4}}>×</button>
+                  style={{background:"none",border:"none",color:C.t3,fontSize:18,lineHeight:1,cursor:"pointer",minWidth:44,minHeight:44,padding:0,margin:"-10px -10px -10px 0"}}>×</button>
               </div>
               <div style={{fontFamily:"var(--font-display)",fontSize:19,color:C.t1,lineHeight:1.2,marginTop:2}}>{p.title}</div>
               <div style={{fontSize:11.5,color:C.t3}}>{p.who} · {p.howFar}</div>
@@ -1330,7 +1332,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
           // Same reason: which day it is depends on where you are standing.
           const q=GREETING_QUESTIONS[(mounted?dayIndex():0)%GREETING_QUESTIONS.length];
           return(
-            <div className="display" style={{fontSize:34,color:C.t1,lineHeight:1.15,fontWeight:600,letterSpacing:"-.01em"}}>
+            <div className="display" role="heading" aria-level={1} style={{fontSize:34,color:C.t1,lineHeight:1.15,fontWeight:600,letterSpacing:"-.01em"}}>
               {q.before}<span style={{color:C.accentWord}}>{q.word}</span>{q.after}
             </div>
           );
@@ -1406,7 +1408,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
       )}
       {(alsoComing.length>0||groups.length>0)&&(
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 20px 10px"}}>
-        <span className="sl">Upcoming trips</span>
+        <span className="sl" role="heading" aria-level={2}>Upcoming trips</span>
         <span style={{fontSize:12,color:C.accentText,cursor:"pointer"}} onClick={()=>setTab("groups")}>See all →</span>
       </div>
       )}
@@ -1523,7 +1525,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
       {groups.length===0&&!loading&&loadFailed&&<TripsLoadFailed why={loadFailed} onRetry={onRetry}/>}
       {groups.length===0&&!loading&&!loadFailed&&(<>
       <div style={{padding:"0 20px 10px"}}>
-        <span className="sl">Three ways to start</span>
+        <span className="sl" role="heading" aria-level={2}>Three ways to start</span>
       </div>
       {([
 
@@ -1537,7 +1539,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
         {emoji:"✈️",text:"Or do the whole thing — solo, or with everyone.",cta:"Plan a trip →",action:()=>push("createGroup")},
       ]).filter(Boolean).map((ins,i)=>(
         <div key={i} {...pressable} onClick={ins.action} style={{margin:"0 20px 10px",background:C.s1,border:"1px solid "+C.border,borderRadius:16,padding:14,display:"flex",gap:12,cursor:"pointer"}}>
-          <span style={{fontSize:24}}>{ins.emoji}</span>
+          <span aria-hidden="true" style={{fontSize:24}}>{ins.emoji}</span>
           <div>
             <div style={{fontSize:13,color:C.t1,lineHeight:1.5}}>{ins.text}</div>
             <div style={{fontSize:12,color:C.accentText,marginTop:4,fontWeight:500}}>{ins.cta}</div>
@@ -1546,7 +1548,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
       ))}
       </>)}
       <div style={{padding:"14px 20px 6px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-        <span className="sl">Near you</span>
+        <span className="sl" role="heading" aria-level={2}>Near you</span>
         {(userLocation?.city||userLocation?.formatted)&&<span style={{fontSize:11,color:C.t3}}>📍 {userLocation.city||userLocation.formatted}</span>}
       </div>
       {/* Three, and the rest on Discover. Home showing the whole list was a
@@ -1629,7 +1631,7 @@ function BuildingItinerary({destination,nights,onCancel}){
     <div style={{position:"absolute",inset:0,background:C.bg,zIndex:300,
       display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 32px"}}>
       <div style={{fontSize:44,marginBottom:18}}>🗺️</div>
-      <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,textAlign:"center",lineHeight:1.2,marginBottom:8}}>
+      <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,textAlign:"center",lineHeight:1.2,marginBottom:8}}>
         Building your {destination||"trip"}
       </div>
       <div style={{fontSize:13.5,color:C.t2,textAlign:"center",marginBottom:26,minHeight:38,lineHeight:1.5}}>
@@ -1708,8 +1710,8 @@ function PlaceLine({userLocation,setPlaceOverride,toast,prefix,fallback,hint}){
           <div style={{fontSize:12.5,color:C.t2,marginBottom:8,lineHeight:1.5}}>
             {hint||"Where should we look? This sticks until you clear it."}
           </div>
-          <input className="inp" autoFocus value={query} placeholder="Aberdeen, Scotland"
-            onChange={e=>{setQuery(e.target.value);search(e.target.value);}}/>
+          <label style={{display:"block"}}><span className="fl-t">Town or city</span><input className="inp" autoFocus value={query} placeholder="Aberdeen, Scotland"
+            onChange={e=>{setQuery(e.target.value);search(e.target.value);}}/></label>
           {searching&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
           {hits.map((h,i)=>(
             <div key={i} {...pressable}
@@ -2757,7 +2759,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
         <ScreenHeader onBack={onBack} overlay/>
         <div style={{position:"absolute",inset:0,background:`linear-gradient(to bottom,transparent 40%,${C.shade3})`,display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:20}}>
           <div style={{fontSize:40,marginBottom:8}}>{exp.emoji||"🎯"}</div>
-          <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.onPhoto,lineHeight:1.2}}>{exp.title}</div>
+          <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:24,color:C.onPhoto,lineHeight:1.2}}>{exp.title}</div>
           <div style={{fontSize:13,color:C.onPhotoSoft,marginTop:4}}>{exp.sub}</div>
         </div>
         {exp.dist&&(
@@ -3079,7 +3081,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     nobody rings a venue. What actually happened is that it
                     was saved, which is worth saying plainly and is not the
                     same claim. */}
-                <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,marginBottom:8}}>Saved to your plans</div>
+                <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,marginBottom:8}}>Saved to your plans</div>
                 <div style={{fontSize:14,color:C.t2,lineHeight:1.7,marginBottom:24}}>
                   {exp.title}, {formatDates(fixedDate||bookDate)}{bookTime?" at "+bookTime:""}, {bookGuests==="8+"?"8+ people":plural(parseInt(bookGuests)||2,"person","people")}. It's saved in {bookedPlan?.groupName||"your plans"} — open it whenever you like.
                 </div>
@@ -3247,7 +3249,7 @@ function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup})
   return(
     <div style={{padding:"12px 0 0"}}>
       <div style={{padding:"10px 20px 14px",display:"flex",justifyContent:"space-between",alignItems:"flex-end"}}>
-        <div><div className="pt">Your trips</div><div style={{fontSize:13,color:C.t2,marginTop:2}}>Solo and together</div></div>
+        <div><div className="pt" role="heading" aria-level={1}>Your trips</div><div style={{fontSize:13,color:C.t2,marginTop:2}}>Solo and together</div></div>
         {/* Not beside the empty state's own button, which does the same
             thing: two ways to the one screen on an empty page (2026-11-06). */}
         {(loading||groups.length>0)&&!(loadFailed&&groups.length===0)&&<button className="bsm bsm-p" onClick={()=>push("createGroup")}>+ New</button>}
@@ -3281,13 +3283,13 @@ function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup})
       {groups.length>0&&(
         <div style={{margin:"0 20px 18px"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-            <span className="sl">Coming up</span>
+            <span className="sl" role="heading" aria-level={2}>Coming up</span>
             <div style={{display:"flex",alignItems:"center",gap:2}}>
               <button aria-label="Previous month" onClick={()=>setMonth(m=>addMonths(m,-1))}
-                style={{background:"none",border:"none",color:C.t2,fontSize:17,lineHeight:1,cursor:"pointer",padding:"5px 9px",borderRadius:8}}>‹</button>
+                style={{background:"none",border:"none",color:C.t2,fontSize:17,lineHeight:1,cursor:"pointer",minWidth:44,minHeight:44,padding:0,borderRadius:8}}>‹</button>
               <span style={{fontSize:12.5,color:C.t1,minWidth:108,textAlign:"center"}}>{monthLabel(month)}</span>
               <button aria-label="Next month" onClick={()=>setMonth(m=>addMonths(m,1))}
-                style={{background:"none",border:"none",color:C.t2,fontSize:17,lineHeight:1,cursor:"pointer",padding:"5px 9px",borderRadius:8}}>›</button>
+                style={{background:"none",border:"none",color:C.t2,fontSize:17,lineHeight:1,cursor:"pointer",minWidth:44,minHeight:44,padding:0,borderRadius:8}}>›</button>
             </div>
           </div>
           <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden"}}>
@@ -3313,7 +3315,10 @@ function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup})
                       trip runs across the days it actually covers. */}
                   <div style={{position:"relative",height:lanes?lanes*16:2,marginTop:3}}>
                     {bars.map(b=>(
-                      <div key={b.plan.id} {...pressable}
+                      // A shortcut for a pointer: the same trips are listed under the
+                      // calendar as full-size rows, so the 14px bar stays out of the
+                      // keyboard and screen-reader order (WCAG 2.5.8, equivalent control).
+                      <div key={b.plan.id} aria-hidden="true"
                         onClick={()=>push("planDetail",{planId:b.plan.id,groupId:b.group.id})}
                         title={`${b.plan.title} — ${b.group.name}`}
                         style={{position:"absolute",top:b.lane*16,
@@ -3351,7 +3356,7 @@ function GroupsScreen({groups,um,push,loading,loadFailed,onRetry,onDeleteGroup})
         </div>
       )}
       {groups.length>0&&(
-        <div style={{padding:"0 20px 8px"}}><span className="sl">All groups</span></div>
+        <div style={{padding:"0 20px 8px"}}><span className="sl" role="heading" aria-level={2}>All groups</span></div>
       )}
       {named.map(g=>{
         // Still on, by date as well as status: nothing ever marks a plan
@@ -3465,7 +3470,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
           <div>
             <div style={{fontSize:32,marginBottom:4}}>{group.emoji}</div>
-            <div className="pt">{group.name}</div>
+            <div className="pt" role="heading" aria-level={1}>{group.name}</div>
             <div style={{fontSize:13,color:C.t2,marginTop:2}}>
               {isAlone?"Travelling on your own":`${plural(group.memberIds.length,"person","people")} · $${group.wallet.toLocaleString()} wallet`}
             </div>
@@ -3527,7 +3532,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           {planSections(group.plans,todayISO).map(section=>(
           <div key={section.key}>
             <div style={{padding:"6px 20px 10px",display:"flex",alignItems:"baseline",justifyContent:"space-between"}}>
-              <span className="sl">{section.label}</span>
+              <span className="sl" role="heading" aria-level={2}>{section.label}</span>
               <span style={{fontSize:11.5,color:C.t3}}>{plural(section.plans.length,"plan")}</span>
             </div>
           {section.plans.map(plan=>(
@@ -3588,7 +3593,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           {/* Only on a real group: the card needs two people who have done the quiz. */}
           {!isAlone&&<GroupMixCard groupId={groupId}/>}
           <div style={{padding:"0 20px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <span className="sl">{group.memberIds.length} Members</span>
+            <span className="sl" role="heading" aria-level={2}>{group.memberIds.length} Members</span>
             {isAdmin&&<button className="bsm bsm-p" onClick={()=>push("editGroup",{groupId,focus:"add"})}>Add someone</button>}
           </div>
           {group.memberIds.map(uid=>{
@@ -3634,7 +3639,7 @@ function GroupDetailScreen({onBack,groupId,groups,um,updateGroup,push,toast,setG
           {/* This mapped over a literal empty array, so the heading was
               permanent and what sat under it never was. A heading over
               nothing reads as a section that failed to load. */}
-          <div className="sl" style={{marginBottom:12}}>Recent transactions</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:12}}>Recent transactions</div>
           <div style={{padding:"18px 0",textAlign:"center",fontSize:13,color:C.t3,lineHeight:1.6}}>
             Nothing yet. Shares paid at checkout show up here.
           </div>
@@ -3818,7 +3823,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       <div style={{height:1,background:C.border,margin:"6px 0 14px"}}/>
 
       <div style={{padding:"0 20px 10px"}}>
-        <span className="sl">Add someone</span>
+        <span className="sl" role="heading" aria-level={2}>Add someone</span>
         <input ref={addRef} aria-label="Search people by name or email" className="inp" value={q} onChange={e=>search(e.target.value)}
           placeholder="Search by name, or type an email to invite"
           style={{width:"100%",marginTop:8}}/>
@@ -3850,7 +3855,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       })}
 
       <div style={{padding:"14px 20px 10px"}}>
-        <span className="sl">{members.length<=1?"Bring someone along":`Members (${members.length})`}</span>
+        <span className="sl" role="heading" aria-level={2}>{members.length<=1?"Bring someone along":`Members (${members.length})`}</span>
       </div>
       {members.map(uid=>{
         const u=um[uid];if(!u)return null;
@@ -3868,7 +3873,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       {invites.length>0&&(
         <>
           <div style={{padding:"14px 20px 10px"}}>
-            <span className="sl">Invited ({invites.length})</span>
+            <span className="sl" role="heading" aria-level={2}>Invited ({invites.length})</span>
           </div>
           {invites.map(inv=>(
             <div key={inv.id} className="ri">
@@ -3888,7 +3893,7 @@ function EditGroupScreen({onBack,groupId,groups,um,updateGroup,toast,refreshGrou
       </div>
 
       <div style={{height:1,background:C.border,margin:"10px 20px 16px"}}/>
-      <div style={{padding:"0 20px 6px"}}><span className="sl" style={{color:C.red}}>Danger zone</span></div>
+      <div style={{padding:"0 20px 6px"}}><span className="sl" role="heading" aria-level={2} style={{color:C.red}}>Danger zone</span></div>
 
       <div style={{margin:"0 20px 30px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden"}}>
         {/* Leaving */}
@@ -4084,7 +4089,7 @@ function CreateGroupScreen({onBack,setGroups,toast,um,saveGroupToServer,me,repla
     <div className="sc">
       <div style={{padding:"12px 20px 18px"}}>
         <ScreenHeader onBack={onBack} label="Cancel"/>
-        <div className="pt">
+        <div className="pt" role="heading" aria-level={1}>
           {!mode?"Who's going?":mode==="solo"?"Name your trip":step===0?"Name your group":"Add people"}
         </div>
         {mode&&mode!=="solo"&&(
@@ -4563,7 +4568,7 @@ function PlanPreferencesScreen({onBack,planId,groupId,groups,groupsLoading,refre
         have answered, never what you said.
       </div>
       {loadErr&&(
-        <div style={{margin:"0 20px 10px",padding:"11px 13px",background:C.amberDim,
+        <div role="alert" style={{margin:"0 20px 10px",padding:"11px 13px",background:C.amberDim,
           border:`1px solid ${C.amber}`,borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
           We could not load anything you had already said. Saving now will replace it.
         </div>
@@ -4876,7 +4881,7 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
       </div>
 
       <div style={{padding:"6px 16px 10px",textAlign:"center"}}>
-        <div style={{fontFamily:"var(--font-display)",fontSize:25,color:C.t1,lineHeight:1.2}}>{s.title}</div>
+        <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:25,color:C.t1,lineHeight:1.2}}>{s.title}</div>
         {s.sub&&<div style={{fontSize:13,color:C.t2,lineHeight:1.5,marginTop:4}}>{s.sub}</div>}
       </div>
 
@@ -4962,7 +4967,7 @@ function TravelerQuizScreen({onBack,toast,onSaved,required,user,userLocation,gro
           );
         })()}
         {error&&(
-          <div style={{marginTop:12,padding:"10px 12px",background:C.redDim,border:`1px solid ${C.red}`,
+          <div role="alert" style={{marginTop:12,padding:"10px 12px",background:C.redDim,border:`1px solid ${C.red}`,
             borderRadius:12,fontSize:12.5,color:C.t1}}>{error}</div>
         )}
       </div>
@@ -5110,7 +5115,7 @@ function QuizReveal({profile,stored,user,userLocation,groups,push,toast,required
       </div>
       <div style={{fontSize:12,color:C.t3,textAlign:"center",marginBottom:18}}>Not quite you? Tap a bar to adjust.</div>
 
-      <div className="sl" style={{marginBottom:8}}>Here's what that means near you</div>
+      <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Here's what that means near you</div>
       {cards===null&&(
         <div style={{padding:"14px 0",fontSize:13,color:C.t3}}>Looking near you…</div>
       )}
@@ -5184,7 +5189,7 @@ function GroupMixCard({groupId}){
   if(!mix)return null;
   return(
     <div style={{margin:"0 20px 14px",background:C.accentDim,border:`1px solid ${C.accentBorder}`,borderRadius:18,padding:"14px 14px 12px"}}>
-      <div className="sl" style={{marginBottom:10}}>Your group's mix</div>
+      <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Your group's mix</div>
       <div style={{display:"flex",gap:10,overflowX:"auto",scrollbarWidth:"none",paddingBottom:4}}>
         {mix.members.map(m=>{
           const c=m.profile.primary?RESULT_COPY[m.profile.primary]:null;
@@ -5559,9 +5564,9 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
 
       <div style={{padding:"8px 20px 14px",textAlign:"center"}}>
         <div style={{fontSize:40,marginBottom:8}}>{q.icon}</div>
-        <div style={{fontFamily:"var(--font-display)",fontSize:26,
+        <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:26,
           color:q.noWay?C.red:C.t1,lineHeight:1.2,marginBottom:4}}>{q.title}</div>
-        {q.sub&&<div style={{fontSize:13,color:C.t2,lineHeight:1.5}}>{q.sub}</div>}
+        {q.sub&&<div style={{...T.body,color:C.t2,textAlign:"left"}}>{q.sub}</div>}
       </div>
 
       <div style={{flex:1,overflowY:"auto",scrollbarWidth:"none",padding:"0 20px 8px"}}>
@@ -5583,7 +5588,7 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
                     border:"2px solid "+(isVeto?C.red:selected?C.accent:C.border),
                     background:isVeto?C.redDim:selected?C.accentDim:C.s2,
                     cursor:"pointer",textAlign:"center",transition:"all .15s"}}>
-                  <div style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
+                  <div aria-hidden="true" style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
                   <div style={{fontSize:11,fontWeight:600,lineHeight:1.2,
                     color:isVeto?C.red:selected?C.accentText:C.t1}}>{isVeto?<span aria-hidden="true">✕ </span>:selected?<span aria-hidden="true">✓ </span>:null}{opt.l}</div>
                 </button>
@@ -5720,12 +5725,12 @@ function DepartureLine({departure,saveDeparture}){
       <div style={{fontSize:12.5,color:C.t2,marginBottom:8,lineHeight:1.5}}>
         Where do you fly from? Every flight price on this trip starts here.
       </div>
-      <input className="inp" autoFocus value={city} placeholder="Raleigh, North Carolina"
-        onChange={e=>setCity(e.target.value)}/>
+      <label style={{display:"block"}}><span className="fl-t">Your home city</span><input className="inp" autoFocus value={city} placeholder="Raleigh, North Carolina"
+        onChange={e=>setCity(e.target.value)}/></label>
       <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
-        <input aria-label="Departure airport" className="inp" value={air} placeholder={airportForCity(city)||"RDU"}
-          maxLength={3} style={{width:96,textTransform:"uppercase",fontWeight:600,letterSpacing:".08em"}}
-          onChange={e=>setAir(e.target.value)}/>
+        <label style={{display:"block",width:96}}><span className="fl-t">Departure airport</span><input className="inp" value={air} placeholder={airportForCity(city)||"RDU"}
+          maxLength={3} style={{textTransform:"uppercase",fontWeight:600,letterSpacing:".08em"}}
+          onChange={e=>setAir(e.target.value)}/></label>
         <div style={{fontSize:11.5,color:C.t3,lineHeight:1.4,flex:1}}>
           {air.trim()
             ?"Using the airport you typed."
@@ -6227,7 +6232,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
               cause — which was never the cause, and is not something the
               person reading it can act on. */}
           {error&&(
-            <div style={{background:C.redDim,border:`1px solid ${C.red}`,borderRadius:12,padding:12,marginBottom:16,fontSize:13,color:C.t1,display:"flex",alignItems:"flex-start",gap:8}}>
+            <div role="alert" style={{background:C.redDim,border:`1px solid ${C.red}`,borderRadius:12,padding:12,marginBottom:16,fontSize:13,color:C.t1,display:"flex",alignItems:"flex-start",gap:8}}>
               <span>⚠️</span>
               <div>
                 <div style={{fontWeight:600,marginBottom:2,color:C.red}}>Couldn't build your trips</div>
@@ -6362,11 +6367,11 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
           )}
           <div style={{padding:"8px 20px 14px",textAlign:"center"}}>
             <div style={{fontSize:40,marginBottom:8}}>{quizQ.icon}</div>
-            <div style={{fontFamily:"var(--font-display)",fontSize:26,
+            <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:26,
               color:quizQ.noWay?C.red:C.t1,lineHeight:1.2,marginBottom:4}}>
               {quizQ.title}
             </div>
-            {quizQ.sub&&<div style={{fontSize:13,color:C.t2}}>{quizQ.sub}</div>}
+            {quizQ.sub&&<div style={{...T.body,color:C.t2,textAlign:"left",marginTop:6}}>{quizQ.sub}</div>}
             {/* Said where they are writing it, not after: for a group trip
                 this sentence is the one answer everybody sees. */}
             {goalNote&&quizQ.id==="goalBlurb"&&(
@@ -6421,7 +6426,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
                       cursor:"pointer",textAlign:"center",
                       transition:"all .15s",
                     }}>
-                    <div style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
+                    <div aria-hidden="true" style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
                     <div style={{fontSize:11,fontWeight:600,lineHeight:1.2,
                       color:isVeto?C.red:selected?C.accentText:C.t1}}>{isVeto?<span aria-hidden="true">✕ </span>:selected?<span aria-hidden="true">✓ </span>:null}{opt.l}</div>
                   </button>
@@ -6702,7 +6707,7 @@ function TripIdeaCard({trip,highlight=false,nightOut=false,startDate,endDate,gro
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
             <div style={{flex:1}}>
               <div style={{fontSize:32,marginBottom:6}}>{trip.emoji}</div>
-              <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:4}}>
+              <div role="heading" aria-level={2} style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:4}}>
                 {/* The name a vote goes by, which tells two ideas at one place apart —
                     or, for an evening whose days are written, the name its own
                     venues give it (never a title naming places it doesn't go). */}
@@ -8083,7 +8088,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         if(wp.destStyle!=="undecided"){
           return(
             <div style={{padding:"8px 20px 30px"}}>
-              <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>{wp.title}</div>
+              <div role="heading" aria-level={2} style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>{wp.title}</div>
               <div style={{fontSize:13.5,color:C.t2,lineHeight:1.6,marginBottom:16}}>
                 This trip already has its destination.
               </div>
@@ -8100,7 +8105,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                 {tripName(wp)}{wp.dates?` · ${wp.dates}`:""}
               </div>
               {error&&(
-                <div style={{margin:"0 20px 12px",padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
+                <div role="alert" style={{margin:"0 20px 12px",padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
                   borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5}}>
                   {error}
                 </div>
@@ -8162,7 +8167,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
                 somebody on their own. */}
             {!isSolo&&(
               <>
-                <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,lineHeight:1.2,marginBottom:8}}>
+                <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1,lineHeight:1.2,marginBottom:8}}>
                   {allAnswered?"Everyone has answered":orgWait?orgWait.title:wait.mine?"Waiting on your answers":"Waiting on everyone's answers"}
                 </div>
                 <div style={{fontSize:14,color:C.t2,lineHeight:1.6,marginBottom:14}}>
@@ -8187,7 +8192,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             )}
 
             {answeredErr&&!answered&&(
-              <div style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
+              <div role="alert" style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
                 borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:12}}>
                 Couldn't check who has answered just now.{" "}
                 <button onClick={()=>loadAnswered(waitPlanId)} style={{background:"none",border:"none",padding:0,
@@ -8225,7 +8230,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
             )}
 
             {shownError&&(
-              <div style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
+              <div role="alert" style={{padding:"11px 13px",background:C.amberDim,border:`1px solid ${C.amber}`,
                 borderRadius:14,fontSize:12.5,color:C.t1,lineHeight:1.5,marginBottom:12}}>
                 {shownError}
               </div>
@@ -8269,7 +8274,7 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
         // Three cards drawn where the three options will land, so the
         // screen already has the shape of the answer while it is worked out.
         <div style={{flex:1,overflowY:"auto",scrollbarWidth:"none",padding:"4px 20px 30px"}}>
-          <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:6}}>
+          <div role="heading" aria-level={2} style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:6}}>
             {/* A solo group is named "Just me"; a night out has no flights. */}
             {isSolo?(nightOut?"Planning your night":"Planning your trip"):`Planning for ${group.name}`}
           </div>
@@ -8816,11 +8821,11 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
 
         {label==="Type"&&(
           <div>
-            <div className="pt" style={{marginBottom:6}}>Who's joining?</div>
+            <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>Who's joining?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>{withOthers.length?"Pick who it's for and what you're planning.":"Who it's for, and what you're planning."}</div>
             <input aria-label="Plan name" className="inp" value={planName} onChange={e=>setPlanName(e.target.value)}
               placeholder={planType==="restaurant"||(evening&&!planType)?"Plan name (e.g., Friday dinner)":planType==="concert"?"Plan name (e.g., Saturday's gig)":planType==="weekend"?"Plan name (e.g., Lake weekend)":"Plan name (e.g., Summer beach trip)"} style={{marginBottom:14}}/>
-            <div className="sl" style={{marginBottom:10}}>Who is this for?</div>
+            <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Who is this for?</div>
             <div {...pressable} onClick={chooseSolo}
               style={{display:"flex",alignItems:"center",gap:12,padding:13,borderRadius:14,
                 border:`2px solid ${isSoloGroup&&gid?C.accentText:C.border}`,
@@ -8836,7 +8841,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               {isSoloGroup&&gid&&<div style={{color:C.accentText}}><Ic.Check/></div>}
             </div>
             {withOthers.length>0&&(
-              <div className="sl" style={{margin:"14px 0 10px"}}>Or with a group</div>
+              <div className="sl" role="heading" aria-level={2} style={{margin:"14px 0 10px"}}>Or with a group</div>
             )}
             {/* Nobody to pick yet: the way to plan with friends is to start a
                 group, and the screen used to offer only "Just me" — a dinner
@@ -8859,7 +8864,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 {gid===g.id&&<div style={{color:C.accentText}}><Ic.Check/></div>}
               </div>
             ))}
-            <div className="sl" style={{margin:"14px 0 10px"}}>What are you planning?</div>
+            <div className="sl" role="heading" aria-level={2} style={{margin:"14px 0 10px"}}>What are you planning?</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
               {[{id:"trip",e:"✈️",l:"Trip"},{id:"restaurant",e:"🍽️",l:"Dinner out"},{id:"concert",e:"🎵",l:"Concert"},{id:"weekend",e:"🏡",l:"Weekend away"}]
                 .filter(t=>allKinds||t.id===planType||t.id==="restaurant"||t.id==="concert").map(t=>(
@@ -8885,7 +8890,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
 
         {label==="Where"&&(
           <div>
-            <div className="pt" style={{marginBottom:6}}>Where is it?</div>
+            <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>Where is it?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:14}}>The town or city. Everything Reach suggests is found there.</div>
             {where?(
               <div style={{padding:"12px 14px",borderRadius:14,border:`2px solid ${C.accentText}`,background:C.accentDim,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
@@ -8894,8 +8899,8 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               </div>
             ):(
               <>
-                <input className="inp" autoFocus value={whereQuery} placeholder="Charlotte, NC"
-                  onChange={e=>{setWhereQuery(e.target.value);findWhere(e.target.value);}}/>
+                <label style={{display:"block"}}><span className="fl-t">Town or city</span><input className="inp" autoFocus value={whereQuery} placeholder="Charlotte, NC"
+                  onChange={e=>{setWhereQuery(e.target.value);findWhere(e.target.value);}}/></label>
                 {whereLooking&&<div style={{fontSize:12,color:C.t3,marginTop:8}}>Looking…</div>}
                 {whereHits.map((h,i)=>(
                   <div key={i} {...pressable}
@@ -8913,7 +8918,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           <div>
             {isEvent?(
               <>
-                <div className="pt" style={{marginBottom:6}}>When is it?</div>
+                <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>When is it?</div>
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>
                   {planType==="restaurant"?"Pick the date and time for your dinner.":"Pick the date for the concert or event."}
                 </div>
@@ -8944,7 +8949,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               </>
             ):(
               <>
-                <div className="pt" style={{marginBottom:6}}>When?</div>
+                <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>When?</div>
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>
                   {/* Nothing checks anyone's availability. Saying so was a
                       promise the app had no way to keep, and it is the sort
@@ -9018,7 +9023,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
           <div>
             {planType==="restaurant"?(
               <>
-                <div className="pt" style={{marginBottom:6}}>What are you in the mood for?</div>
+                <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>What are you in the mood for?</div>
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Reach will find the best options for your group.</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
                   {CUISINES.map(c=>(
@@ -9027,7 +9032,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                     </button>
                   ))}
                 </div>
-                <div className="sl" style={{marginBottom:8}}>Atmosphere</div>
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Atmosphere</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {["Casual & fun","Date night vibes","Special occasion","Lively & loud","Quiet & intimate"].map(a=>(
                     <button key={a} onClick={()=>setVibe(v=>v===a?null:a)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${vibe===a?C.accentText:C.border}`,background:vibe===a?C.accentDim:C.s2,color:vibe===a?C.accentText:C.t2,fontSize:13,cursor:"pointer"}}>{a}</button>
@@ -9036,7 +9041,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               </>
             ):planType==="concert"?(
               <>
-                <div className="pt" style={{marginBottom:6}}>What kind of show?</div>
+                <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>What kind of show?</div>
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>This helps us find events your whole group will love.</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
                   {GENRES.map(g=>(
@@ -9045,7 +9050,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                     </button>
                   ))}
                 </div>
-                <div className="sl" style={{marginBottom:8}}>Venue type</div>
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Venue type</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   {["Arena","Club / Bar","Outdoor festival","Intimate venue","Theater"].map(v=>(
                     <button key={v} onClick={()=>setDest(d=>d===v?null:v)} style={{padding:"8px 14px",borderRadius:20,border:`1.5px solid ${dest===v?C.accentText:C.border}`,background:dest===v?C.accentDim:C.s2,color:dest===v?C.accentText:C.t2,fontSize:13,cursor:"pointer"}}>{v}</button>
@@ -9054,9 +9059,9 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
               </>
             ):(
               <>
-                <div className="pt" style={{marginBottom:6}}>What's the vibe?</div>
+                <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>What's the vibe?</div>
                 <div style={{fontSize:13,color:C.t2,marginBottom:18}}>This shapes every AI recommendation.</div>
-                <div className="sl" style={{marginBottom:10}}>Energy</div>
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Energy</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
                   {[{id:"chill",e:"🧘",l:"Chill & Relax"},{id:"active",e:"⚡",l:"High Energy"},{id:"culture",e:"🎭",l:"Culture & Arts"},{id:"mix",e:"🎲",l:"Mix It Up"}].map(v=>(
                     <button key={v.id} onClick={()=>setVibe(v.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${vibe===v.id?C.accentText:C.border}`,background:vibe===v.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
@@ -9064,7 +9069,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                     </button>
                   ))}
                 </div>
-                <div className="sl" style={{marginBottom:10}}>Destination style</div>
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Destination style</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                   {[{id:"city",e:"🏙️",l:"City"},{id:"beach",e:"🏖️",l:"Beach"},{id:"mountains",e:"🏔️",l:"Mountains"},{id:"nature",e:"🌿",l:"Nature"}].map(d=>(
                     <button key={d.id} onClick={()=>setDest(d.id)} style={{padding:"16px 12px",borderRadius:14,border:`2px solid ${dest===d.id?C.accentText:C.border}`,background:dest===d.id?C.accentDim:C.s2,cursor:"pointer",textAlign:"center"}}>
@@ -9100,7 +9105,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                 )}
                 {isSoloGroup&&aiRecs.length>0&&(
                   <div style={{marginTop:16}}>
-                    <div className="sl" style={{marginBottom:10}}>✨ AI picks for you</div>
+                    <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>✨ AI picks for you</div>
                     <div style={{display:"flex",gap:10,overflowX:"auto",scrollbarWidth:"none",paddingBottom:4}}>
                       {aiRecs.slice(0,3).map((r,i)=>(
                         <div key={i} style={{minWidth:160,background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:12,flexShrink:0}}>
@@ -9121,7 +9126,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
 
         {label==="Stay"&&(
           <div>
-            <div className="pt" style={{marginBottom:6}}>Where to stay?</div>
+            <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>Where to stay?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Choose your preferred accommodation type.</div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               {[{id:"hotel",e:"🏨",l:"Hotel",s:"Service & convenience"},{id:"rental",e:"🏡",l:"Vacation rental",s:"Space & flexibility"},{id:"luxury",e:"✨",l:"Luxury resort",s:"Premium all-inclusive"},{id:"boutique",e:"🎪",l:"Boutique / Unique",s:"One-of-a-kind stays"},{id:"hostel",e:"🎒",l:"Budget / Hostel",s:"Save money, meet people"}].map(a=>(
@@ -9137,7 +9142,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
 
         {label==="Rules"&&(
           <div>
-            <div className="pt" style={{marginBottom:6}}>Any dealbreakers?</div>
+            <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>Any dealbreakers?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Reach won't recommend anything that crosses these lines.</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:18}}>
               {DBS.map(d=>{const sel=bks.includes(d);return(
@@ -9151,7 +9156,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
 
         {label==="Budget"&&(
           <div>
-            <div className="pt" style={{marginBottom:6}}>What's the budget?</div>
+            <div className="pt" role="heading" aria-level={1} style={{marginBottom:6}}>What's the budget?</div>
             <div style={{fontSize:13,color:C.t2,marginBottom:18}}>Per person, everything in. We plan three options around it.</div>
             {/* No "AI cost estimate" here: it was this very answer multiplied by
                 0.7 and 1.05, labelled as if something had worked it out. A real
@@ -9183,7 +9188,7 @@ function CreatePlanFlow({onBack,replace,groups,updateGroup,um,toast,defaultGroup
                   </button>
                 </div>
                 {voting&&vopts.map((opt,i)=>(
-                  <input aria-label="Something to vote on" key={i} className="inp" style={{fontSize:13,marginTop:8}} placeholder={`Option ${i+1} (e.g. Lisbon)`} value={opt} onChange={e=>setVopts(v=>v.map((x,j)=>j===i?e.target.value:x))}/>
+                  <label key={i} style={{display:"block",marginTop:8}}><span className="fl-t">{`Option ${i+1}`}</span><input className="inp" style={{fontSize:13}} placeholder={`Option ${i+1} (e.g. Lisbon)`} value={opt} onChange={e=>setVopts(v=>v.map((x,j)=>j===i?e.target.value:x))}/></label>
                 ))}
               </div>
             )}
@@ -9469,7 +9474,7 @@ function Celebration({title,sub,onDone}){
       {/* The same gold pin that drops for paid and joined: booked. */}
       <div aria-hidden="true" style={{width:84,height:84,borderRadius:"50%",background:C.photoChip,display:"flex",alignItems:"center",
         justifyContent:"center",marginBottom:20,animation:reduced?"none":"rpop .5s ease-out both"}}><PinDrop size={30} label="Booked"/></div>
-      <div style={{fontFamily:"var(--font-display)",fontSize:32,lineHeight:1.15,color:C.onPhoto,maxWidth:340}}>{title}</div>
+      <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:32,lineHeight:1.15,color:C.onPhoto,maxWidth:340}}>{title}</div>
       {sub&&<div style={{fontSize:14.5,color:C.onPhotoSoft,marginTop:10,maxWidth:320,lineHeight:1.5}}>{sub}</div>}
       <button onClick={e=>{e.stopPropagation();done.current();}}
         style={{position:"absolute",bottom:"max(28px, env(safe-area-inset-bottom))",background:C.photoChip,border:"none",color:C.onPhoto,
@@ -9582,8 +9587,8 @@ function NextStepCard({na,onCta,onDot,busy,unknown}){
         )}
         {second&&second.kind==="confirm"&&second.bookingId&&asking?(
           <div style={{marginTop:10,display:"flex",gap:8}}>
-            <input className="inp" aria-label="Confirmation number" placeholder="Confirmation number (optional)"
-              value={number} onChange={e=>setNumber(e.target.value)} style={{flex:1,minWidth:0,color:C.t1}}/>
+            <label style={{display:"block",flex:1}}><span className="fl-t">Confirmation number (optional)</span><input className="inp" placeholder="Confirmation number (optional)"
+              value={number} onChange={e=>setNumber(e.target.value)} style={{minWidth:0,color:C.t1}}/></label>
             <button className="bsm bsm-p" disabled={busy} onClick={async()=>{await onCta({...second,confirmation:number});setAsking(false);setNumber("");}}>
               {busy?"…":"Save"}
             </button>
@@ -9659,7 +9664,7 @@ function useTables(planId,{on=true,rev=0}={}){
 const tableFor=(list,{itemId=null,bookingId=null}={})=>
   (list||[]).find(t=>(itemId&&t.itemId===itemId)||(bookingId&&t.bookingId===bookingId))||null;
 
-const tableLink={display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${C.border}`,color:C.accentText,
+const tableLink={display:"inline-flex",alignItems:"center",gap:6,minHeight:44,border:`1px solid ${C.border}`,color:C.accentText,
   fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999,textDecoration:"none",background:"none",cursor:"pointer"};
 
 /**
@@ -9905,8 +9910,8 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
                 onClick={()=>press({...last.current})}>{busy?"Holding it…":"Hold it again"}</button>
             ):(
               <>
-                <input className="inp" maxLength={300} aria-label={`A note for ${name}`} placeholder={`A note for ${name} (optional)`}
-                  value={notes} onChange={e=>setNotes(e.target.value)} style={{marginTop:10}}/>
+                <label style={{display:"block",marginTop:10}}><span className="fl-t">{`A note for ${name} (optional)`}</span><input className="inp" maxLength={300} placeholder={`A note for ${name} (optional)`}
+                  value={notes} onChange={e=>setNotes(e.target.value)} /></label>
                 <button className="bp" disabled={busy} style={{marginTop:8,width:"100%"}}
                   onClick={()=>press({holdId:hold.holdId,accept:{terms:hold.terms?.version??null,policy:true},...(notes.trim()?{notes:notes.trim()}:{})},{pressTwo:true})}>
                   {busy?"Booking…":answer.button}
@@ -10002,8 +10007,8 @@ function TableReserve({entry,planId,solo,toast,onChanged,via="reserve",seed=null
       )}
       {number!==null&&(
         <div style={{display:"flex",gap:8,marginTop:8}}>
-          <input className="inp" autoFocus aria-label={`Confirmation number for ${name}`} placeholder="Confirmation number (optional)"
-            value={number} onChange={e=>setNumber(e.target.value)} style={{flex:1,minWidth:0}}/>
+          <label style={{display:"block",flex:1}}><span className="fl-t">Confirmation number (optional)</span><input className="inp" autoFocus placeholder="Confirmation number (optional)"
+            value={number} onChange={e=>setNumber(e.target.value)} style={{minWidth:0}}/></label>
           <button className="bsm bsm-p" disabled={busy} onClick={gotIt}>{busy?"…":"Save"}</button>
         </div>
       )}
@@ -10274,7 +10279,7 @@ function WatchTable({bookingId=null,venueRef=null,restaurant,party=null,toast}){
         </div>
       )}
       {offer?.alert&&offer.can==="none"&&<div style={{...quiet,marginTop:6}}>{offer.alert.say}</div>}
-      {err&&<div style={{...quiet,color:C.t1,marginTop:8}}>{err}</div>}
+      {err&&<div role="alert" style={{...quiet,color:C.t1,marginTop:8}}>{err}</div>}
       {!ready&&view&&can&&<div style={{...quiet,marginTop:6}}>Reach can't save watches yet.</div>}
     </div>
   );
@@ -10921,7 +10926,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
             {right==="locked_out"&&d?.why&&<div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:10}}>{d.why}</div>}
             {d?.status==="ok"&&(
               <>
-                <div className="sl" style={{marginBottom:6}}>{/* "Others like it" only where they are: a hand-written line
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:6}}>{/* "Others like it" only where they are: a hand-written line
                     whose words name no kind gets what is near, called that. */}
                   {d.like===false?"Nearby":mayApply?"Pick another":"Others like it"}</div>
                 {d.alternatives.map(a=>(
@@ -10954,7 +10959,7 @@ function ChangeSheet({plan,planId,groupId,item,booking,solo,locked,toast,onClose
             {/* Something else: their words, one stop, from the same menu. */}
             {!priced&&slot&&(mayApply||maySuggest)&&(
               <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${C.borderLight}`}}>
-                <div className="sl" style={{marginBottom:6}}>Something else…</div>
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:6}}>Something else…</div>
                 <input className="inp" aria-label="What would you like there instead?" maxLength={200}
                   placeholder="What would you like there instead?" value={ask} onChange={e=>setAsk(e.target.value)}
                   style={{width:"100%",color:C.t1}}/>
@@ -11169,7 +11174,7 @@ function BookedRowFacts({item,booking,tracked,city,onUndo,quietDone=false,reachH
   // changed or cancelled where it was confirmed, never set by hand.
   const undo=onUndo&&!reachHasIt&&tracked?.who==="you"&&tracked.done;
   if(!done&&!where&&!detail&&!contacts.length)return null;
-  const link={color:C.accentText,fontWeight:600,textDecoration:"none"};
+  const link={color:C.accentText,fontWeight:600,textDecoration:"none",display:"inline-flex",alignItems:"center",minHeight:44};
   return(
     <div style={{marginTop:6,fontSize:12,lineHeight:1.45}}>
       {detail&&<div style={{color:C.t2,marginBottom:3}}>{detail}</div>}
@@ -11609,8 +11614,8 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
                   onChange={e=>setHandles(h=>({...h,venmo:e.target.value}))} style={{width:"100%",marginBottom:8,color:C.t1}}/>
                 <input className="inp" placeholder="$Cashtag" aria-label="Cash App $Cashtag" value={handles.cashtag}
                   onChange={e=>setHandles(h=>({...h,cashtag:e.target.value}))} style={{width:"100%",marginBottom:8,color:C.t1}}/>
-                <input className="inp" placeholder="Zelle email or phone" aria-label="Zelle email or phone" value={handles.zelle}
-                  onChange={e=>setHandles(h=>({...h,zelle:e.target.value}))} style={{width:"100%",marginBottom:10,color:C.t1}}/>
+                <label style={{display:"block",width:"100%",marginBottom:10}}><span className="fl-t">Zelle email or phone</span><input className="inp" placeholder="Zelle email or phone" value={handles.zelle}
+                  onChange={e=>setHandles(h=>({...h,zelle:e.target.value}))} style={{color:C.t1}}/></label>
                 <div style={{display:"flex",gap:8}}>
                   <button className="bp" style={{flex:1}} disabled={savingHandles} onClick={saveHandles}>{savingHandles?"Saving…":"Save"}</button>
                   <button className="bs" style={{flex:1}} onClick={dismissAsk}>Not now</button>
@@ -11658,7 +11663,7 @@ function SettleUpScreen({onBack,planId,groupId,groups,um,toast,me}){
             })}
             {done.length>0&&(
               <div style={{marginTop:16}}>
-                <div className="sl" style={{marginBottom:8}}>Settled</div>
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Settled</div>
                 {done.map(s=>{
                   const w=settledWords(s,me,nameOf);
                   return(
@@ -12685,7 +12690,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           <ScreenHeader onBack={onBack} overlay/>
           <button className="bsm" style={{marginLeft:"auto",background:C.photoChip,color:C.onPhoto,border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
         </div>
-        <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.onPhoto,marginBottom:4}}>{plan.title}</div>
+        <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:26,color:C.onPhoto,marginBottom:4}}>{plan.title}</div>
         <div style={{fontSize:13,color:C.onPhotoSoft,marginBottom:12}}>{plan.dates} · {group.name}</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {/* On the header's own dark gradient, in both themes: the theme's
@@ -12787,7 +12792,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 lib/group-answers). */}
             {(plan.aiData?.used_suggestions||[]).length>0&&(
               <div style={{padding:"0 20px 14px"}}>
-                <div className="sl" style={{marginBottom:10}}>Why this trip</div>
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Why this trip</div>
                 <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
                   {plan.aiData.used_suggestions.slice(0,4).map((line,i)=>(
                     <div key={i} style={{display:"flex",gap:8,marginBottom:i<Math.min(3,plan.aiData.used_suggestions.length-1)?8:0}}>
@@ -12799,7 +12804,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               </div>
             )}
             <div style={{padding:"0 20px 14px"}}>
-              <div className="sl" style={{marginBottom:10}}>Who's coming</div>
+              <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Who's coming</div>
               {plan.participants.map(uid=>{const u=um[uid];return u?(
                 <div key={uid} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${C.borderLight}`}}>
                   <div className="av-lg" style={{background:u.color}}>{u.initials}</div>
@@ -12876,7 +12881,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
               <div style={{padding:"0 20px 14px"}}>
                 {/* About dates only. Under "Everyone has answered" a bare
                     "0 of 2 have answered" read as contradicting it. */}
-                <div className="sl" style={{marginBottom:10}}>{plan.type==="restaurant"?"Which evening works for you?":"Which dates work for you?"}</div>
+                <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>{plan.type==="restaurant"?"Which evening works for you?":"Which dates work for you?"}</div>
                 <div style={{background:C.s2,border:`1px solid ${C.border}`,borderRadius:14,padding:14}}>
                   {dates.bestWindows?.[0]&&(
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:12}}>
@@ -12947,7 +12952,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             {!soloTrip&&share?.ready&&share.items?.length>0&&(
               <div style={{padding:"0 20px 14px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10}}>
-                  <div className="sl">What you're in for</div>
+                  <div className="sl" role="heading" aria-level={2}>What you're in for</div>
                   <div style={{fontSize:13,color:C.t1,fontWeight:600}}>Your trip: {share.estimate?"about ":""}{usd(share.yourShare_cents)}</div>
                 </div>
                 {share.items.map(it=>{
@@ -13034,7 +13039,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             {tracker.total>0&&!booked&&(
               <div style={{padding:"4px 20px 14px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
-                  <div className="sl">To book</div>
+                  <div className="sl" role="heading" aria-level={2}>To book</div>
                   <span style={{fontSize:13,fontWeight:600,color:tracker.done===tracker.total?C.green:C.t2}}>
                     {tracker.done} of {tracker.total} done
                   </span>
@@ -13459,7 +13464,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           <div style={{padding:"16px 20px"}}>
             {/* What is being voted on. On a plan whose place is set, it is
                 which plan for that place — not "Where should we go?". */}
-            <div className="pt" style={{fontSize:22,marginBottom:6}}>
+            <div className="pt" role="heading" aria-level={1} style={{fontSize:22,marginBottom:6}}>
               {voteHeading({night:nightPlan,undecided:plan.destStyle==="undecided",city:plan.destinationCity})}
             </div>
             {/* Closed until everyone has answered: that is said first, with
@@ -13889,7 +13894,7 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
           <ScreenHeader onBack={leave} label="Back"/>
           <button className="bsm bsm-p" disabled={saving} onClick={save}>{saving?"Saving…":"Save"}</button>
         </div>
-        <div className="pt" style={{fontSize:24,marginTop:12}}>Edit itinerary</div>
+        <div className="pt" role="heading" aria-level={1} style={{fontSize:24,marginTop:12}}>Edit itinerary</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>{plan.title}</div>
       </div>
       {items.map((item,i)=>(
@@ -13909,18 +13914,18 @@ function EditItineraryScreen({onBack,planId,groupId,groups,updateGroup,toast,sav
       ))}
       {adding?(
         <div style={{margin:"0 20px 12px",background:C.s2,borderRadius:16,padding:16,border:`1px solid ${C.accentBorder}`}}>
-          <div className="sl" style={{marginBottom:12}}>New item</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:12}}>New item</div>
           <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
             {Object.entries(tIc).map(([type,icon])=>(
               <button key={type} onClick={()=>setNi(n=>({...n,type}))} style={{padding:"6px 10px",borderRadius:10,border:`1.5px solid ${ni.type===type?C.accentText:C.border}`,background:ni.type===type?C.accentDim:C.s3,cursor:"pointer",fontSize:12,color:C.t1}}>{icon} {type}</button>
             ))}
           </div>
           <div style={{display:"flex",gap:8,marginBottom:8}}>
-            <input aria-label="Time or day" className="inp" style={{width:88,fontSize:13}} placeholder="Time / Day" value={ni.time} onChange={e=>setNi(n=>({...n,time:e.target.value}))}/>
-            <input aria-label="Title" className="inp" style={{flex:1,fontSize:13}} placeholder="Title (required)" value={ni.title} onChange={e=>setNi(n=>({...n,title:e.target.value}))}/>
+            <label style={{display:"block",width:88}}><span className="fl-t">Time or day</span><input className="inp" style={{fontSize:13}} placeholder="Time / Day" value={ni.time} onChange={e=>setNi(n=>({...n,time:e.target.value}))}/></label>
+            <label style={{display:"block",flex:1}}><span className="fl-t">Title</span><input className="inp" style={{fontSize:13}} placeholder="Title (required)" value={ni.title} onChange={e=>setNi(n=>({...n,title:e.target.value}))}/></label>
           </div>
-          <input aria-label="Details or location" className="inp" style={{marginBottom:8,fontSize:13}} placeholder="Details or location" value={ni.sub} onChange={e=>setNi(n=>({...n,sub:e.target.value}))}/>
-          <input aria-label="Confirmation number" className="inp" style={{marginBottom:12,fontSize:13}} placeholder="Confirmation number (if booked)" value={ni.conf} onChange={e=>setNi(n=>({...n,conf:e.target.value}))}/>
+          <label style={{display:"block",marginBottom:8}}><span className="fl-t">Details or location</span><input className="inp" style={{fontSize:13}} placeholder="Details or location" value={ni.sub} onChange={e=>setNi(n=>({...n,sub:e.target.value}))}/></label>
+          <label style={{display:"block",marginBottom:12}}><span className="fl-t">Confirmation number (if booked)</span><input className="inp" style={{fontSize:13}} placeholder="Confirmation number (if booked)" value={ni.conf} onChange={e=>setNi(n=>({...n,conf:e.target.value}))}/></label>
           <div style={{display:"flex",gap:8}}>
             <button className="bsm bsm-p" style={{flex:1}} onClick={addItem} disabled={!ni.title}>Add item</button>
             <button className="bsm bsm-g" style={{flex:1}} onClick={()=>setAdding(false)}>Cancel</button>
@@ -14684,7 +14689,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // what has been collected, not what this visit guessed it would be.
   if(phase==="clearing")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{marginBottom:12}}><PinDrop size={36} label="On its way"/></div>
-    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Your bank payment is on its way</div>
+    <div role="heading" aria-level={2} style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Your bank payment is on its way</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>
       Bank payments take a few business days to clear. There's nothing more to do, and please don't pay again. Once every share has cleared we'll email everyone, and anyone on the trip can press Book it.
     </div>
@@ -14693,7 +14698,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
 
   if(phase==="waiting")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{marginBottom:12}}><PinDrop size={36} label="Paid"/></div>
-    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Your part is paid</div>
+    <div role="heading" aria-level={2} style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Your part is paid</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in. The moment the last share lands we'll email everyone, and anyone on the trip can open checkout and press Book it.</div>
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents||0)/Math.max(funding.targetCents||0,1))*100));
       return(<div><div style={{height:8,background:C.s3,borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
@@ -14714,7 +14719,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // was the whole message, over a rise that could be anything above 5%.
   if(phase==="priceUp")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:40,marginBottom:12}}>📈</div>
-    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>The price went up</div>
+    <div role="heading" aria-level={2} style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>The price went up</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:8}}>
       {priceRise?.oldCents&&priceRise?.newCents
         ?`${priceRise.title} was ${fmt(priceRise.oldCents)} when it was priced and is ${fmt(priceRise.newCents)} now.`
@@ -14741,7 +14746,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
   // reloads with the new total — nothing is charged or booked until then.
   if(phase==="reprice")return(<div className="sc"><div style={{padding:"60px 24px",textAlign:"center"}}>
     <div style={{fontSize:40,marginBottom:12}}>🔁</div>
-    <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>This needs pricing again</div>
+    <div role="heading" aria-level={2} style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>This needs pricing again</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:20}}>{msg||"Part of this trip was priced for a different number of people. Nothing has been charged or booked."}</div>
     <button disabled={busy} onClick={async()=>{
       if(busy)return;
@@ -14880,7 +14885,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             priced yet" \u2014 contradicting itself on the screen where a real card
             had just been charged. Money in is worth celebrating; it is simply
             not the same claim as a booking. */}
-        <div style={{fontFamily:"var(--font-display)",fontSize:30,color:C.onPhoto,marginBottom:6}}>
+        <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:30,color:C.onPhoto,marginBottom:6}}>
           {said.title}
         </div>
         <div style={{fontSize:14,color:C.onPhotoSoft}}>
@@ -14930,7 +14935,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
         )}
         {spare>0&&refundBox(null)}
         <div style={{marginBottom:16}}>
-          <div className="sl" style={{marginBottom:10}}>Your bookings</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Your bookings</div>
           {/* Lines of the itinerary that are not on this list. Said here, on
               the screen where somebody is about to pay, because the amount
               below covers what is listed and nothing else. */}
@@ -15009,7 +15014,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
             the same markGot, so ticking one off here ticks it off there. */}
         {stillOpen.length>0&&(
           <div style={{marginBottom:16}}>
-            <div className="sl" style={{marginBottom:6}}>
+            <div className="sl" role="heading" aria-level={2} style={{marginBottom:6}}>
               {plural(stillOpen.length,"thing","things")} left for you
             </div>
             <div style={{fontSize:12.5,color:C.t2,lineHeight:1.5,marginBottom:10}}>
@@ -15150,9 +15155,9 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
           <div style={{fontSize:12,color:C.t2,lineHeight:1.5,marginBottom:10}}>
             {it.when?`For ${it.when}. `:""}{confirmQuestion(it.vertical)}
           </div>
-          <input className="inp" aria-label={`Confirmation number for ${it.l}`} placeholder="Confirmation number (optional)"
+          <label style={{display:"block",marginBottom:8}}><span className="fl-t">Confirmation number (optional)</span><input className="inp" placeholder="Confirmation number (optional)"
             value={capturedRef[it.id]||""} onChange={e=>{const v=e.target.value;setCapturedRef(m=>({...m,[it.id]:v}));}}
-            style={{marginBottom:8}}/>
+            /></label>
           <div style={{display:"flex",gap:8}}>
             <button className="bs" style={{flex:1,color:C.green,borderColor:C.green}}
               disabled={capturing===it.id} onClick={()=>captureBooking(it.id,"confirmed")}>
@@ -15673,7 +15678,7 @@ function TripMap({groups,push,toast}){
   return(
     <div style={{padding:"0 20px 16px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:8}}>
-        <span className="sl">Your map</span>
+        <span className="sl" role="heading" aria-level={2}>Your map</span>
         {pins&&!empty&&(
           <span style={{fontSize:11.5,color:C.t3,display:"flex",gap:10}}>
             {pins.upcoming.length>0&&<span><span aria-hidden="true" style={{color:MAP_PIN.upcoming}}>●</span> {count(pins.upcoming.length,"upcoming","upcoming")}</span>}
@@ -15804,7 +15809,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
 
   const Row=({icon,title,sub,right,onClick})=>(
     <div className="ri" {...(onClick?pressable:{})} onClick={onClick} style={{cursor:onClick?"pointer":"default"}}>
-      <div className="ri-ic" style={{background:C.accentDim,color:C.accentText}}>{icon}</div>
+      <div className="ri-ic" aria-hidden="true" style={{background:C.accentDim,color:C.accentText}}>{icon}</div>
       <div className="ri-inf"><div className="ri-t">{title}</div>{sub&&<div className="ri-s">{sub}</div>}</div>
       {right}
     </div>
@@ -15852,7 +15857,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       <div className="sc">
         <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="You"/>
         <div style={{padding:"0 20px 18px"}}>
-          <div className="sl" style={{marginBottom:8}}>What should we call you?</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>What should we call you?</div>
           <input aria-label="First name" className="inp" value={firstDraft} placeholder="First name"
             onChange={e=>setDocDraft(x=>({...x,__first:e.target.value}))}/>
           <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
@@ -15861,7 +15866,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         </div>
 
         <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.borderLight}`,paddingTop:18}}>
-          <div className="sl" style={{marginBottom:8}}>Home airport</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Home airport</div>
           <div style={{display:"flex",gap:8}}>
             <input aria-label="Home airport" className="inp" value={airDraft} placeholder="SFO" maxLength={3}
               style={{width:96,textTransform:"uppercase",fontWeight:600,letterSpacing:".08em"}}
@@ -15972,12 +15977,12 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         </Empty>
 
         <div style={{padding:"0 20px 18px"}}>
-          <div className="sl" style={{marginBottom:8}}>Name, as printed on your ID</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Name, as printed on your ID</div>
           <div style={{display:"flex",gap:8}}>
-            <input aria-label="Legal first name" className="inp" value={firstDraft} placeholder="First"
-              style={{flex:1}} onChange={ev=>setDocDraft(x=>({...x,__fFirst:ev.target.value}))}/>
-            <input aria-label="Legal last name" className="inp" value={lastDraft} placeholder="Last"
-              style={{flex:1}} onChange={ev=>setDocDraft(x=>({...x,__last:ev.target.value}))}/>
+            <label style={{display:"block",flex:1}}><span className="fl-t">First</span><input className="inp" value={firstDraft} placeholder="First"
+               onChange={ev=>setDocDraft(x=>({...x,__fFirst:ev.target.value}))}/></label>
+            <label style={{display:"block",flex:1}}><span className="fl-t">Last</span><input className="inp" value={lastDraft} placeholder="Last"
+               onChange={ev=>setDocDraft(x=>({...x,__last:ev.target.value}))}/></label>
           </div>
           <div style={{fontSize:11.5,color:C.t3,marginTop:8,lineHeight:1.5}}>
             This is the same name your group already sees. A ticket that doesn't match
@@ -15986,7 +15991,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         </div>
 
         <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.borderLight}`,paddingTop:18}}>
-          <div className="sl" style={{marginBottom:8}}>Date of birth</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Date of birth</div>
           <input aria-label="Date of birth" className="inp" type="date" value={dobDraft}
             max={today()}
             onChange={ev=>setDocDraft(x=>({...x,__dob:ev.target.value}))}/>
@@ -15998,7 +16003,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         </div>
 
         <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.borderLight}`,paddingTop:18}}>
-          <div className="sl" style={{marginBottom:8}}>Phone number</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Phone number</div>
           <input aria-label="Phone number" className="inp" type="tel" value={phoneDraft}
             placeholder="+1 555 123 4567"
             onChange={ev=>setDocDraft(x=>({...x,__phone:ev.target.value}))}/>
@@ -16009,7 +16014,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         </div>
 
         <div style={{padding:"0 20px 18px",borderTop:`1px solid ${C.borderLight}`,paddingTop:18}}>
-          <div className="sl" style={{marginBottom:8}}>Gender on your ID</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:8}}>Gender on your ID</div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             {GENDERS.map(g=>(
               <button key={g.v} className="bs"
@@ -16130,7 +16135,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
               {busy===p.id?"…":"Remove"}</button>}/>
         ))}
         <div style={{padding:"16px 20px 30px",borderTop:`1px solid ${C.borderLight}`,marginTop:8}}>
-          <div className="sl" style={{marginBottom:10}}>Add a programme</div>
+          <div className="sl" role="heading" aria-level={2} style={{marginBottom:10}}>Add a programme</div>
           <input aria-label="Loyalty programme" className="inp" value={loyName} onChange={e=>setLoyName(e.target.value)}
             placeholder="Programme, e.g. United MileagePlus" style={{marginBottom:8}}/>
           <input aria-label="Tier" className="inp" value={loyTier} onChange={e=>setLoyTier(e.target.value)}
@@ -16152,7 +16157,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
     return(
       <div className="sc">
         <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Payment"/>
-        <div style={{padding:"0 20px 6px"}}><span className="sl">Saved cards</span></div>
+        <div style={{padding:"0 20px 6px"}}><span className="sl" role="heading" aria-level={2}>Saved cards</span></div>
         {cards.length===0
           ?<Empty>No card saved yet. A card is stored by Stripe the first time you pay into a plan — Reach never sees the number.</Empty>
           :cards.map(c=>(
@@ -16160,7 +16165,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
               title={`${c.brand[0].toUpperCase()}${c.brand.slice(1)} ···· ${c.last4}`}
               sub={c.expMonth?`Expires ${String(c.expMonth).padStart(2,"0")}/${String(c.expYear).slice(-2)} · held by Stripe`:"Held by Stripe"}/>
           ))}
-        <div style={{padding:"16px 20px 6px"}}><span className="sl">Recent payments</span></div>
+        <div style={{padding:"16px 20px 6px"}}><span className="sl" role="heading" aria-level={2}>Recent payments</span></div>
         {pays.length===0
           ?<Empty>Nothing yet. Payments appear here once you contribute to a plan.</Empty>
           :pays.map(p=>(
@@ -16185,7 +16190,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
     return(
       <div className="sc">
         <ScreenHeader onBack={()=>setSection(null)} label="Profile" title="Privacy"/>
-        <div style={{padding:"0 20px 6px"}}><span className="sl">What Reach may do with your data</span></div>
+        <div style={{padding:"0 20px 6px"}}><span className="sl" role="heading" aria-level={2}>What Reach may do with your data</span></div>
         {toggles.map(t=>(
           // A switch says whether it is on, to a screen reader (aria-checked)
           // and on screen (On / Off): never by its colour and knob alone.
@@ -16200,7 +16205,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
             </div>
           </div>
         ))}
-        <div style={{padding:"16px 20px 6px"}}><span className="sl">Your data rights</span></div>
+        <div style={{padding:"16px 20px 6px"}}><span className="sl" role="heading" aria-level={2}>Your data rights</span></div>
         <Row icon="⬇️" title="Download everything Reach holds"
           sub="A JSON export, as required by GDPR Article 20"
           right={<span style={{fontSize:12,color:C.accentText,fontWeight:600}}>Export</span>}
@@ -16274,7 +16279,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         <div style={{width:80,height:80,borderRadius:"50%",background:`linear-gradient(135deg,${C.accent},${C.accentDeep})`,margin:"0 auto 12px",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"var(--font-display)",fontSize:32,color:C.onAccent,border:`3px solid ${C.border}`,overflow:"hidden"}}>
           {ownPhoto(user?.avatar)?<img src={user.avatar} style={{width:80,height:80,borderRadius:"50%",objectFit:"cover"}} alt=""/>:(user?.name||"?")[0]}
         </div>
-        <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
+        <div role="heading" aria-level={1} style={{fontFamily:"var(--font-display)",fontSize:26,color:C.t1}}>{user?.name||user?.email||"You"}</div>
         <div style={{fontSize:13,color:C.t2,marginTop:2}}>
           {user?.email}
           {data?.provider&&data.provider!=="email"&&<span style={{marginLeft:6,fontSize:11,background:C.s3,color:C.t2,padding:"2px 8px",borderRadius:20,fontWeight:600}}>{data.provider==="apple"?"🍎 Apple":"🌐 Google"}</span>}
@@ -16292,13 +16297,13 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
       <TripMap groups={groups} push={push} toast={toast}/>
 
       {loadErr&&(
-        <div style={{margin:"0 20px 14px",background:C.redDim,border:`1px solid ${C.red}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t1}}>
+        <div role="alert" style={{margin:"0 20px 14px",background:C.redDim,border:`1px solid ${C.red}`,borderRadius:14,padding:"12px 14px",fontSize:13,color:C.t1}}>
           Couldn't load your profile.{" "}
           <button onClick={load} style={{background:"none",border:"none",color:C.accentText,fontWeight:600,cursor:"pointer",padding:0,textDecoration:"underline"}}>Try again</button>
         </div>
       )}
 
-      <div style={{padding:"0 20px 6px"}}><span className="sl">You</span></div>
+      <div style={{padding:"0 20px 6px"}}><span className="sl" role="heading" aria-level={2}>You</span></div>
       <Row icon="🙋" title="Name and home airport"
         sub={until([data?.identity?.firstName||null,data?.home?.airport||null].filter(Boolean).join(" · ")||"Not set yet")}
         right={<Ic.ChevR/>} onClick={()=>setSection("you")}/>
@@ -16318,7 +16323,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         sub="Food, music, budget, and the rest of what you're into"
         right={<Ic.ChevR/>} onClick={()=>push&&push("tasteAll")}/>
 
-      <div style={{padding:"16px 20px 6px"}}><span className="sl">Travel</span></div>
+      <div style={{padding:"16px 20px 6px"}}><span className="sl" role="heading" aria-level={2}>Travel</span></div>
       {/* The three things no airline will sell a seat without. Shown before
           travel documents because a passport number is optional and these
           are not. */}
@@ -16346,12 +16351,12 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
           sub={connected.map(a=>a.label||a.provider).join(", ")}/>
       )}
 
-      <div style={{padding:"16px 20px 6px"}}><span className="sl">Money</span></div>
+      <div style={{padding:"16px 20px 6px"}}><span className="sl" role="heading" aria-level={2}>Money</span></div>
       <Row icon="💳" title="Payment"
         sub={until(data?.cards?.length?`${data.cards.length} card${data.cards.length===1?"":"s"} on file`:"No card saved yet")}
         right={<Ic.ChevR/>} onClick={()=>setSection("payment")}/>
 
-      <div style={{padding:"16px 20px 6px"}}><span className="sl">Appearance</span></div>
+      <div style={{padding:"16px 20px 6px"}}><span className="sl" role="heading" aria-level={2}>Appearance</span></div>
       <div style={{margin:"0 20px 16px",background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,padding:14}}>
         <div style={{display:"flex",gap:8}}>
           {[{v:"light",icon:"☀️",label:"Light"},{v:"dark",icon:"🌙",label:"Dark"}].map(o=>{
@@ -16373,7 +16378,7 @@ function ProfileScreen({toast,user,onSignOut,theme,chooseTheme,push,onIdentityCh
         </div>
       </div>
 
-      <div style={{padding:"0 20px 6px"}}><span className="sl">Account</span></div>
+      <div style={{padding:"0 20px 6px"}}><span className="sl" role="heading" aria-level={2}>Account</span></div>
       <Row icon="🛡️" title="Privacy and your data"
         sub={data?.deletion?"Deletion scheduled":"Consent, export, deletion"}
         right={<Ic.ChevR/>} onClick={()=>setSection("privacy")}/>
@@ -16564,7 +16569,17 @@ export default function ReachApp({realUser,onSignOut}={}){
     // should a link somebody pastes to a friend.
     if(typeof window!=="undefined"){
       const params=new URLSearchParams(window.location.search);
-      if(params.get("start")==="taste"){
+      // From the front page's "A night out / A weekend away / A proper trip":
+      // that plan, already the right kind. Cleared like ?start=.
+      const kind=params.get("kind");
+      if(kind==="night"||kind==="weekend"||kind==="trip"){
+        params.delete("kind");
+        const rest=params.toString();
+        window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
+        if(kind==="night")push("createPlan",{fresh:true,evening:true});
+        else push("createPlan",{fresh:true,seed:{planType:kind}});
+      }
+      else if(params.get("start")==="taste"){
         params.delete("start");
         const rest=params.toString();
         window.history.replaceState({},"",window.location.pathname+(rest?"?"+rest:""));
