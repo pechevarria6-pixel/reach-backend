@@ -29,9 +29,10 @@
 // (lib/reservations/outcome.ts), settles the row exactly once, honours a
 // "stop calling", moves the booking and tells the person — the exact
 // wording in lib/reservations/wording.ts.
-import { gate, dialTarget, type Env, type Gate } from './gate.ts';
+import { gate, dialTarget, type Env, type Gate, type ProviderName } from './gate.ts';
 import { checkFacts, opening, instructions, type CallFacts, type FactProblem } from './script.ts';
 import { settle, type Outcome, type Settled } from './outcome.ts';
+import { settleWithin, windowFor } from './agent/settle-window.ts';
 import { callWording, type WordingContext, type Wording } from './wording.ts';
 import { toE164, dialable, openForCalls, localMinute, HOURS_MARGIN, type LineLookup, type LineType } from './policy.ts';
 import type { Provider, CallEnded } from './providers.ts';
@@ -97,7 +98,7 @@ export interface CallRow {
   plan_id: string;
   requested_by: string;
   mode: 'test' | 'live';
-  provider: 'retell' | 'vapi';
+  provider: ProviderName;
   provider_call_id: string | null;
   dialed_number: string;
   venue_phone: string;
@@ -120,6 +121,12 @@ export interface StoredRequest extends CallFacts {
   /** The booking's status before the call, restored when the call books nothing. */
   previousStatus: string;
   groupId: string | null;
+  /**
+   * The times the member said yes to ahead of the call (HH:MM, both ends
+   * included). Absent: only the time they chose. The agent may accept any
+   * time inside it, and the proof is run against the time agreed.
+   */
+  window?: { start: string; end: string } | null;
 }
 
 export type Claim = { ok: true; row: CallRow } | { ok: false; why: 'already' | 'cap' | 'not_migrated' | 'error' };
@@ -324,6 +331,7 @@ export async function placeCall(input: PlaceInput, deps: PlaceDeps): Promise<Pla
   const placed = await provider.place({
     callId: row.id, to,
     variables: { opening: row.opening, instructions: instructions(facts), first_name: facts.firstName, restaurant: facts.restaurant },
+    facts, window: windowFor(facts, request.window?.start, request.window?.end),
   });
   if (placed.ok === false) {
     if (placed.placed === false) {
@@ -399,7 +407,10 @@ export async function settleCall(event: CallEnded, providerName: string, store: 
   if (!event.final) return { ok: false, why: 'not_final' };
 
   const req = row.request;
-  const settled = settle(req, event.turns, event.extraction, event.signals);
+  const settled = settleWithin(req, windowFor(req, req.window?.start, req.window?.end), event.turns, event.extraction, event.signals);
+  // The time the restaurant agreed: the one asked for, or another inside the
+  // member's window. Every write below says the time actually booked.
+  const bookedTime = settled.held?.time ?? req.time;
   const wrote = await store.settleOnce(row.id, {
     status: 'settled', outcome: settled.outcome, staff_quote: settled.staffQuote ?? null,
     disclosed: settled.disclosed,
@@ -427,12 +438,12 @@ export async function settleCall(event: CallEnded, providerName: string, store: 
   }
 
   const wording = callWording({ state: 'settled', outcome: settled.outcome, offeredTime: settled.offeredTime },
-    wordingFor(req, row.venue_phone, test));
+    wordingFor(settled.outcome === 'confirmed' ? { ...req, time: bookedTime } : req, row.venue_phone, test));
 
   if (!test) {
     // Only a call that moved the booking to pending moves it back, and only
     // while it is still pending: somebody who marked it themselves meanwhile wins.
-    const base = { path: 'call' as const, date: req.date, time: req.time, partySize: req.partySize, callId: row.id, at: now.toISOString() };
+    const base = { path: 'call' as const, date: req.date, time: settled.outcome === 'confirmed' ? bookedTime : req.time, partySize: req.partySize, callId: row.id, at: now.toISOString() };
     const mark: ReserveMark = settled.outcome === 'confirmed'
       ? { ...base, state: 'confirmed', ref: `reach-call:${row.id}` }
       : settled.outcome === 'alternative_offered' && settled.offeredTime
@@ -446,7 +457,7 @@ export async function settleCall(event: CallEnded, providerName: string, store: 
     // Confirmed at the night and time asked — which may be a time somebody
     // picked, or one the restaurant offered on an earlier call — so the line
     // says what the restaurant now expects, as the instant path's does.
-    if (moved && settled.outcome === 'confirmed') await moveLineTo(store, row.booking_id, req.date, req.time);
+    if (moved && settled.outcome === 'confirmed') await moveLineTo(store, row.booking_id, req.date, bookedTime);
   }
   await tell(store, row.plan_id, req, row.requested_by, row.mode, wording);
   return { ok: true, settled, wording, row };

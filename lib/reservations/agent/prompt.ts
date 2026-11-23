@@ -42,6 +42,7 @@ export function systemPrompt(f: CallFacts, w: Window, step: Step): string {
     `Never accept a time outside ${spokenClock(w.start)} to ${spokenClock(w.end)}. If offered one, say you will check with ${f.firstName} and call back.`,
     'If they would rather not speak to an automated assistant, apologise and end at once.',
     'Reply in one or two short spoken sentences. No lists, no markdown, no digits read as a long string.',
+    'Answer with JSON only, no other text: {"say": "what you say", "move": "one of the moves above", "heard": {"time": "HH:MM or null", "digits": "digits or null", "depositDollars": "a number or null"}}',
   ].join('\n');
 }
 

@@ -1,0 +1,24 @@
+# Reach's call relay on Fly.io. The owner creates the app and sets its secrets:
+#   fly apps create reach-call-relay
+#   fly secrets set RELAY_SECRET=... ANTHROPIC_API_KEY=... --app reach-call-relay
+# then, from the repository root:
+#   fly deploy --config relay/fly.toml --dockerfile relay/Dockerfile
+app = "reach-call-relay"
+primary_region = "iad"
+
+[env]
+  REACH_WEBHOOK_URL = "https://www.alcanzar.io/api/webhooks/reservation-call"
+  RELAY_MODEL = "claude-haiku-5-5"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  min_machines_running = 1
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  path = "/health"
+  timeout = "5s"

@@ -25,6 +25,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { Env, ProviderName } from './gate.ts';
 import type { Extraction, Signals, Turn } from './outcome.ts';
+import type { CallFacts } from './script.ts';
+import type { Window } from './agent/machine.ts';
 
 /** The post-call fields both providers are configured to extract. */
 export const EXTRACTION = {
@@ -42,6 +44,9 @@ export interface PlaceArgs {
   callId: string;
   to: string;
   variables: Record<string, string>;
+  /** The relay runs the conversation itself, so it is handed the facts and the window. */
+  facts?: CallFacts;
+  window?: Window;
 }
 
 export type Placed =
@@ -65,7 +70,7 @@ export interface CallEnded {
 export interface Provider {
   name: ProviderName;
   place(args: PlaceArgs, fetchImpl?: typeof fetch): Promise<Placed>;
-  verify(rawBody: string, headers: { get(name: string): string | null }, now?: number): boolean;
+  verify(rawBody: string, headers: { get(name: string): string | null }, now?: number, url?: string): boolean;
   parse(body: unknown): CallEnded | null;
 }
 
@@ -189,12 +194,130 @@ export function vapi(env: Env): Provider {
   };
 }
 
+// ── Reach's relay (Twilio ConversationRelay + relay/server.ts) ───────────
+// Twilio dials and does the speech both ways; our relay server holds the
+// call's WebSocket and runs lib/reservations/agent (Claude words each reply,
+// the rules decide). Two kinds of delivery reach the webhook:
+//   · the relay's report when a connected call ends — x-reach-relay-signature,
+//     "t=<ms>,v=<hex HMAC-SHA256 of '<t>.<body>' keyed with RELAY_SECRET>";
+//   · Twilio's own status callback, for a call nobody answered (the relay
+//     never hears of those) — x-twilio-signature, HMAC-SHA1 of the URL plus
+//     the sorted form fields, keyed with the auth token (Twilio's scheme).
+// Recording is never switched on: the call is transcribed, not recorded
+// (design D4).
+export const xmlEscape = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+/** The signed bundle the relay is handed: the facts, the window and our row id. */
+export function relayTicket(secret: string, callId: string, facts: CallFacts, window: Window): { payload: string; sig: string } {
+  const payload = Buffer.from(JSON.stringify({ callId, facts, window, iat: Date.now() })).toString('base64url');
+  return { payload, sig: createHmac('sha256', secret).update(payload).digest('hex') };
+}
+
+/** The relay's check of a ticket: the bundle, or null when the signature does not hold. */
+export function readTicket(secret: string, payload: string, sig: string, now = Date.now()): { callId: string; facts: CallFacts; window: Window } | null {
+  if (!secret || !payload || !sig) return null;
+  const want = createHmac('sha256', secret).update(payload).digest('hex');
+  if (!same(want, sig)) return null;
+  let t: { callId: string; facts: CallFacts; window: Window; iat?: number };
+  try { t = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { return null; }
+  // A ticket is good for one call placed in the last fifteen minutes; an old one is never replayed.
+  if (typeof t.iat !== 'number' || now - t.iat > 15 * 60 * 1000 || t.iat - now > 60 * 1000) return null;
+  return { callId: t.callId, facts: t.facts, window: t.window };
+}
+
+/** What Twilio is told to do when the call is answered. */
+export function relayTwiml(wssUrl: string, greeting: string, ticket: { payload: string; sig: string }): string {
+  return '<?xml version="1.0" encoding="UTF-8"?><Response><Connect>'
+    + `<ConversationRelay url="${xmlEscape(wssUrl)}" welcomeGreeting="${xmlEscape(greeting)}" welcomeGreetingInterruptible="none" interruptible="speech" dtmfDetection="true">`
+    + `<Parameter name="ticket" value="${xmlEscape(ticket.payload)}"/><Parameter name="sig" value="${xmlEscape(ticket.sig)}"/>`
+    + '</ConversationRelay></Connect></Response>';
+}
+
+/** Twilio's request signature: base64 HMAC-SHA1 of the URL and the form fields, sorted by name. */
+export function twilioSignature(authToken: string, url: string, params: Record<string, string>): string {
+  const data = url + Object.keys(params).sort().map(k => k + params[k]).join('');
+  return createHmac('sha1', authToken).update(data).digest('base64');
+}
+
+export function relaySignature(secret: string, body: string, t: number): string {
+  return `t=${t},v=${createHmac('sha256', secret).update(`${t}.${body}`).digest('hex')}`;
+}
+
+export function relay(env: Env): Provider {
+  const sid = str(env.TWILIO_ACCOUNT_SID), token = str(env.TWILIO_AUTH_TOKEN), secret = str(env.RELAY_SECRET);
+  const app = str(env.NEXT_PUBLIC_APP_URL) || 'https://www.alcanzar.io';
+  return {
+    name: 'relay',
+    async place({ callId, to, variables, facts, window }, fetchImpl = fetch) {
+      if (!facts || !window) return { ok: false, placed: false, detail: 'the relay needs the facts and the window' };
+      const twiml = relayTwiml(str(env.RELAY_WSS_URL), variables.opening, relayTicket(secret, callId, facts, window));
+      const form = new URLSearchParams({
+        To: to, From: str(env.TWILIO_FROM_NUMBER), Twiml: twiml,
+        StatusCallback: `${app}/api/webhooks/reservation-call?call=${encodeURIComponent(callId)}`,
+        StatusCallbackEvent: 'completed', Timeout: '30',
+      });
+      let res: Response;
+      try {
+        res = await fetchImpl(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Calls.json`, {
+          method: 'POST',
+          headers: { Authorization: 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64'), 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: form.toString(),
+        });
+      } catch (e) {
+        return { ok: false, placed: 'unknown', detail: `no answer from Twilio: ${(e as Error).message}` };
+      }
+      const json = await res.json().catch(() => null) as Record<string, unknown> | null;
+      const callSid = json && json.sid;
+      if (res.ok && typeof callSid === 'string' && callSid) return { ok: true, providerCallId: callSid };
+      if (res.status >= 400 && res.status < 500) return { ok: false, placed: false, detail: `Twilio refused ${res.status}: ${str(json?.message).slice(0, 200)}` };
+      return { ok: false, placed: 'unknown', detail: `Twilio status ${res.status} and no call sid` };
+    },
+    verify(rawBody, headers, now = Date.now(), url) {
+      const ours = headers.get('x-reach-relay-signature');
+      if (ours) {
+        const m = /^t=(\d+),v=([0-9a-f]+)$/i.exec(ours);
+        if (!m || !secret) return false;
+        if (Math.abs(now - Number(m[1])) > 5 * 60 * 1000) return false;
+        return same(relaySignature(secret, rawBody, Number(m[1])), ours);
+      }
+      const tw = headers.get('x-twilio-signature');
+      if (!tw || !token || !url) return false;
+      const params = Object.fromEntries(new URLSearchParams(rawBody));
+      return same(twilioSignature(token, url, params), tw);
+    },
+    parse(body) {
+      // Twilio's status callback arrives as form fields; the route hands it
+      // over as { twilio: {...fields}, call: <our id from the URL> }.
+      const b = body as Record<string, any> | null;
+      if (b?.twilio) {
+        const status = str(b.twilio.CallStatus);
+        // A call that was answered is settled by the relay's own report.
+        if (!/^(no-answer|busy|failed|canceled)$/.test(status)) return null;
+        return { providerCallId: str(b.twilio.CallSid) || null, callId: str(b.call) || null, final: true, turns: [], extraction: null, signals: { noAnswer: true } };
+      }
+      if (b?.event !== 'call_ended') return null;
+      const turns: Turn[] = (Array.isArray(b.turns) ? b.turns : [])
+        .map((t: any) => ({ speaker: t?.speaker === 'assistant' ? 'assistant' : 'staff', text: str(t?.text) }) as Turn)
+        .filter((t: Turn) => t.text.trim());
+      return {
+        providerCallId: str(b.providerCallId) || null,
+        callId: str(b.callId) || null,
+        final: true,
+        turns,
+        extraction: (b.extraction ?? null) as Extraction | null,
+        signals: { noAnswer: b.signals?.noAnswer === true, voicemail: b.signals?.voicemail === true },
+      };
+    },
+  };
+}
+
 export function providerFor(name: ProviderName, env: Env): Provider {
-  return name === 'retell' ? retell(env) : vapi(env);
+  return name === 'relay' ? relay(env) : name === 'retell' ? retell(env) : vapi(env);
 }
 
 /** Which provider sent this webhook, by the header only that provider sends. */
 export function senderOf(headers: { get(name: string): string | null }): ProviderName | null {
+  if (headers.get('x-reach-relay-signature') || headers.get('x-twilio-signature')) return 'relay';
   if (headers.get('x-retell-signature')) return 'retell';
   if (headers.get('x-vapi-secret') || headers.get('authorization')) return 'vapi';
   return null;

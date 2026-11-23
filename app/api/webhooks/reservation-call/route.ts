@@ -1,5 +1,6 @@
 // ─── POST /api/webhooks/reservation-call — the provider says a call ended ─
-// Retell (call_ended, call_analyzed) or Vapi (end-of-call-report). Public, as
+// Reach's relay (its report, or Twilio's status callback), Retell
+// (call_ended, call_analyzed) or Vapi (end-of-call-report). Public, as
 // every webhook is (middleware.ts), so nothing is read from the body until
 // its signature checks out against the provider's own secret:
 //
@@ -23,10 +24,16 @@ export async function POST(req: NextRequest) {
   const name = senderOf(req.headers);
   if (!name) return NextResponse.json({ error: 'No signature' }, { status: 401 });
   const provider = providerFor(name, process.env);
-  if (!provider.verify(raw, req.headers)) return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+  // Twilio signs the exact address it called, query string included.
+  if (!provider.verify(raw, req.headers, Date.now(), req.url)) return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
 
   let body: unknown;
-  try { body = JSON.parse(raw); } catch { return NextResponse.json({ error: 'Not JSON' }, { status: 400 }); }
+  if (req.headers.get('x-twilio-signature')) {
+    // Twilio's status callback: form fields, and our call id in the address we gave it.
+    body = { twilio: Object.fromEntries(new URLSearchParams(raw)), call: new URL(req.url).searchParams.get('call') };
+  } else {
+    try { body = JSON.parse(raw); } catch { return NextResponse.json({ error: 'Not JSON' }, { status: 400 }); }
+  }
   const event = provider.parse(body);
   // Events we do not settle on (call_started, transcript updates, Vapi's
   // status-update): acknowledged and ignored.

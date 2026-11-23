@@ -16,7 +16,7 @@
 // mean disabled, not "try anyway".
 
 export type CallMode = 'off' | 'test' | 'live';
-export type ProviderName = 'retell' | 'vapi';
+export type ProviderName = 'relay' | 'retell' | 'vapi';
 
 export type Env = Record<string, string | undefined>;
 
@@ -49,9 +49,14 @@ export function lawyerApproved(env: Env): boolean {
   return String(env.RESERVATION_CALLS_LAWYER_APPROVED ?? '').trim().toLowerCase() === 'yes';
 }
 
-/** The first provider whose keys are all present: Retell, then Vapi. */
+/**
+ * The first provider whose keys are all present. Reach's own relay first
+ * (Twilio ConversationRelay, with Claude running the conversation: design D1,
+ * approved 2026-11-22), then Retell, then Vapi.
+ */
 export function providerFrom(env: Env): ProviderName | null {
   const has = (...keys: string[]) => keys.every(k => String(env[k] ?? '').trim() !== '');
+  if (has('TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER', 'RELAY_WSS_URL', 'RELAY_SECRET')) return 'relay';
   if (has('RETELL_API_KEY', 'RETELL_AGENT_ID', 'RETELL_FROM_NUMBER')) return 'retell';
   if (has('VAPI_API_KEY', 'VAPI_ASSISTANT_ID', 'VAPI_PHONE_NUMBER_ID', 'VAPI_WEBHOOK_SECRET')) return 'vapi';
   return null;

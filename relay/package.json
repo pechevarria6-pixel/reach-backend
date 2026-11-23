@@ -1,0 +1,17 @@
+{
+  "name": "reach-call-relay",
+  "private": true,
+  "type": "module",
+  "description": "Holds Twilio ConversationRelay WebSockets for Reach's calling agent (lib/reservations/agent).",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types server.ts",
+    "test": "node --experimental-strip-types --test server.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.125.0",
+    "ws": "8.18.0"
+  }
+}
