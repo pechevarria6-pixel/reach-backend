@@ -10,6 +10,7 @@
 // layout already defines.
 import type { Appearance } from '@clerk/types';
 import { BRAND } from '@/lib/brand';
+import { PALETTE } from './tokens.ts';
 
 export const authShell: React.CSSProperties = {
   display: 'flex',
@@ -33,25 +34,18 @@ type AuthColours = {
 // The same values the app uses for its light theme (PALETTE.light in
 // components/reach-app.jsx): gold stays the button fill, and links use the
 // deepened gold, because gold text on cream is 2.0:1.
-const LIGHT: AuthColours = {
-  bg: '#EBEFEC', s2: '#E4EAE6', border: '#D8DED4',
-  accent: '#EC6032', accentDeep: '#D24E24', accentText: '#2B583B', onAccent: '#2A1D06',
-  t1: '#142119', t2: '#576E61',
-  danger: '#C0392B', success: '#2F7D43', warning: '#6F4B00',
-  shadow: '0 24px 80px rgba(30,50,38,.16)',
+const fromTheme = (t: 'light' | 'dark'): AuthColours => {
+  const p = PALETTE[t];
+  return {
+    bg: p.bg, s2: p.s2, border: p.border,
+    accent: p.accent, accentDeep: p.accentDeep, accentText: p.accentText, onAccent: p.onAccent,
+    t1: p.t1, t2: p.t2,
+    danger: p.red, success: p.green, warning: p.amber,
+    shadow: p.authShadow,
+  };
 };
-
-// Maroon and gold, from the same BRAND constants the shell and the emails use.
-// The primary button is gold, as it is on every dark screen of the app (Done,
-// Get started, Start planning); it was orange here alone, which showed once
-// sign-up opened in the brand theme by default (2026-11-08).
-const DARK: AuthColours = {
-  bg: BRAND.bg, s2: BRAND.s2, border: BRAND.border,
-  accent: BRAND.accent, accentDeep: BRAND.accentDeep, accentText: BRAND.accent, onAccent: BRAND.onAccent,
-  t1: BRAND.t1, t2: BRAND.t2,
-  danger: '#E85D5D', success: '#7FB58A', warning: '#E8A33D',
-  shadow: '0 24px 80px rgba(0,0,0,.6)',
-};
+const LIGHT = fromTheme('light');
+const DARK = fromTheme('dark');
 
 const appearance = (c: AuthColours): Appearance => ({
   variables: {

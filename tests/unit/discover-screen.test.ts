@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { FIXED } from '../../lib/tokens.ts';
 
 const app = readFileSync(new URL('../../components/reach-app.jsx', import.meta.url), 'utf8');
 
@@ -73,8 +74,10 @@ const ratio = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b
 
 test('a place card\'s words on its photo are 4.5:1 over the palest pixel, from the first word down', () => {
   const top = Number(/const PLACE_SCRIM_TEXT_TOP=(\d+);/.exec(app)?.[1]);
-  const scrim = /const PLACE_SCRIM="([^"]+)";/.exec(app)?.[1] ?? '';
-  const stops = [...scrim.matchAll(/rgba\(0,0,0,([\d.]+)\)\s+([\d.]+)(px|%)/g)].map(m => ({ a: Number(m[1]), at: Number(m[2]), unit: m[3] }));
+  // The scrim's stops are tokens now (lib/tokens.ts FIXED.shade*); read each one's alpha there.
+  const scrim = /const PLACE_SCRIM=`([^`]+)`;/.exec(app)?.[1] ?? '';
+  const alphaOf = (name: string) => Number(/rgba\(0,0,0,([\d.]+)\)/.exec((FIXED as Record<string, string>)[name] ?? '')?.[1]);
+  const stops = [...scrim.matchAll(/\$\{C\.(shade\d)\}\s+([\d.]+)(px|%)/g)].map(m => ({ a: alphaOf(m[1]), at: Number(m[2]), unit: m[3] }));
   assert.ok(top > 0 && stops.length >= 2, 'the scrim and where the words start are both named');
   // Every px stop at or after the first word, and every % stop (which lands
   // below it whatever the block's height), is at least the alpha it reaches
@@ -86,7 +89,8 @@ test('a place card\'s words on its photo are 4.5:1 over the palest pixel, from t
   // White and the soft .88 white over a pure white pixel shaded by atText.
   const shaded = lum(1 - atText);
   assert.ok(ratio(1, shaded) >= 4.5, `white ${ratio(1, shaded).toFixed(2)}:1`);
-  const soft = lum(0.88 + 0.12 * (1 - atText));
+  const softAlpha = Number(/rgba\(255,255,255,([\d.]+)\)/.exec(FIXED.onPhotoSoft)?.[1]);
+  const soft = lum(softAlpha + (1 - softAlpha) * (1 - atText));
   assert.ok(ratio(soft, shaded) >= 4.5, `soft white ${ratio(soft, shaded).toFixed(2)}:1`);
   const card = body('DiscoverPlaceCard');
   assert.match(card, /padding:`\$\{PLACE_SCRIM_TEXT_TOP\}px/);

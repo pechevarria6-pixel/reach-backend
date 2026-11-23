@@ -6,37 +6,35 @@
 // was warm #0A0805, the loading spinner and every email button were still the
 // indigo #6C63FF from a palette the app stopped using, and the theme colour
 // was a third value again. One import now, so a change lands everywhere.
+// The values themselves live in lib/tokens.ts.
+import { PALETTE, SHELL, SURFACE } from './tokens.ts';
 
+const D = PALETTE.dark;
 export const BRAND = {
   /** The surround outside the app frame. */
-  page: '#1F080F',
+  page: D.page,
   /** The app's own surface — the maroon sampled from REF6. */
-  bg: '#2C0E18',
+  bg: D.bg,
   /** The wordmark gold, sampled from REF6. */
-  accent: '#C3A342',
+  accent: D.accent,
   /** Gradient foot for raised buttons. */
-  accentDeep: '#A8892F',
+  accentDeep: D.accentDeep,
   /** Text on gold or orange. White on the orange is 3.34:1 and fails. */
-  onAccent: '#2A1D06',
+  onAccent: D.onAccent,
   /** Raised surfaces. */
-  s1: '#36121B',
-  s2: '#3F1619',
-  border: '#5A2430',
-  /** Primary and muted text on maroon. Both clear 4.5:1 on bg. */
-  t1: '#FEF7D9',
-  t2: '#CFC182',
-  t3: '#B89A6A',
+  s1: D.s1,
+  s2: D.s2,
+  border: D.border,
+  /** Primary and muted text on maroon. */
+  t1: D.t1,
+  t2: D.t2,
+  t3: D.t3,
 } as const;
 
-/** The surround outside the app frame, one value per theme.
- *  The HTML shell paints this before React mounts, so it cannot reach the
- *  app's own CSS variables — these two have to live somewhere the server can
- *  read. Everything inside the frame themes itself from the token block in
- *  reach-app.jsx. */
-export const SHELL = { light: '#DFE5E0', dark: '#1F080F' } as const;
-
-/** The app surface behind the frame, per theme. Used for the browser chrome. */
-export const SURFACE = { light: '#EBEFEC', dark: '#2C0E18' } as const;
+/** The surround outside the app frame, and the app surface behind it, per
+ *  theme. The HTML shell paints these before React mounts, so it cannot reach
+ *  the app's CSS variables; they come from lib/tokens.ts like everything else. */
+export { SHELL, SURFACE };
 
 /** The key the app stores the viewer's theme choice under. Shared so the
  *  no-flash script in the shell and the toggle in the app cannot drift. */

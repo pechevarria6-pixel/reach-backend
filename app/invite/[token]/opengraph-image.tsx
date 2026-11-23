@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { BRAND } from '@/lib/brand';
 import { frauncesFor } from '@/lib/og-font';
 import { invitePreview } from './invite-preview';
+import { FIXED } from '@/lib/tokens';
 
 export const alt = 'An invitation to plan together on Reach';
 export const size = { width: 1200, height: 630 };
@@ -20,7 +21,7 @@ export default async function InviteImage({ params }: { params: { token: string 
     (
       <div style={{
         width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', background: `radial-gradient(circle at 50% 30%, #4A1B20 0%, ${BRAND.bg} 55%, ${BRAND.page} 100%)`,
+        justifyContent: 'center', background: `radial-gradient(circle at 50% 30%, ${FIXED.ogGlow} 0%, ${BRAND.bg} 55%, ${BRAND.page} 100%)`,
         color: BRAND.t1, fontFamily: font ? 'Fraunces' : 'serif', padding: 60, textAlign: 'center',
       }}>
         {/* eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text */}

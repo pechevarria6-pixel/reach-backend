@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SHELL, SURFACE } from '@/lib/brand';
+import { PAPER } from '@/lib/tokens';
 
 export const metadata: Metadata = {
   title: 'Not found — Reach',
@@ -19,9 +20,9 @@ export const metadata: Metadata = {
 // stamps before paint. An explicit background on the body, because a page
 // that inherits transparent is a page that flashes white in dark mode.
 const css = `
-:root{--nf-bg:${SURFACE.light};--nf-ink:#241C10;--nf-mut:#63553A;--nf-line:#E5DCCA;--nf-acc:#8A6512;--nf-card:${SHELL.light};}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--nf-bg:${SURFACE.dark};--nf-ink:#F3EBD9;--nf-mut:#AC9C7E;--nf-line:#332B1B;--nf-acc:#DDB259;--nf-card:${SHELL.dark};}}
-:root[data-theme="dark"]{--nf-bg:${SURFACE.dark};--nf-ink:#F3EBD9;--nf-mut:#AC9C7E;--nf-line:#332B1B;--nf-acc:#DDB259;--nf-card:${SHELL.dark};}
+:root{--nf-bg:${SURFACE.light};--nf-ink:${PAPER.light.ink};--nf-mut:${PAPER.light.muted};--nf-line:${PAPER.light.line};--nf-acc:${PAPER.light.link};--nf-card:${SHELL.light};}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--nf-bg:${SURFACE.dark};--nf-ink:${PAPER.dark.ink};--nf-mut:${PAPER.dark.muted};--nf-line:${PAPER.dark.line};--nf-acc:${PAPER.dark.link};--nf-card:${SHELL.dark};}}
+:root[data-theme="dark"]{--nf-bg:${SURFACE.dark};--nf-ink:${PAPER.dark.ink};--nf-mut:${PAPER.dark.muted};--nf-line:${PAPER.dark.line};--nf-acc:${PAPER.dark.link};--nf-card:${SHELL.dark};}
 .nf-body{background:var(--nf-bg);color:var(--nf-ink);min-height:100dvh;margin:0;
   display:flex;align-items:center;justify-content:center;
   font-family:var(--font-body);line-height:1.6;padding:24px 16px;}

@@ -2,6 +2,7 @@
 import { SignIn, SignUp, ClerkLoaded, ClerkLoading } from '@clerk/nextjs';
 import { useEffect, useState } from 'react';
 import { clerkAppearance } from '@/lib/clerk-appearance';
+import { scopedVars } from '@/lib/tokens';
 import { afterSignUp } from '@/lib/after-sign-up';
 
 // Everything on these two screens used to come from Clerk's script and
@@ -31,10 +32,9 @@ function useShellTheme(): 'light' | 'dark' {
 const PATIENCE_MS = 10_000;
 
 const FALLBACK_CSS = `
-  .auth-fb{color:#142119}
-  .auth-fb .auth-fb-dim{color:#576E61}
-  :root[data-theme="dark"] .auth-fb{color:#FEF7D9}
-  :root[data-theme="dark"] .auth-fb .auth-fb-dim{color:#CFC182}
+  ${scopedVars(':root', { 'afb-t1': 't1', 'afb-t2': 't2', 'afb-t3': 't3', 'afb-ac': 'accent', 'afb-acd': 'accentDeep', 'afb-on': 'onAccent' })}
+  .auth-fb{color:var(--afb-t1)}
+  .auth-fb .auth-fb-dim{color:var(--afb-t2)}
   @keyframes auth-fb-spin{to{transform:rotate(360deg)}}
 `;
 
@@ -73,7 +73,7 @@ function Waiting({ what }: { what: string }) {
             <button
               onClick={() => window.location.reload()}
               style={{
-                background: 'linear-gradient(135deg, #D24E24, #EC6032)', color: '#2A1D06',
+                background: 'linear-gradient(135deg, var(--afb-acd), var(--afb-ac))', color: 'var(--afb-on)',
                 border: 'none', borderRadius: 16, padding: '13px 26px',
                 fontSize: 14.5, fontWeight: 600, cursor: 'pointer', minHeight: 48,
                 fontFamily: 'var(--font-body)',
@@ -88,7 +88,7 @@ function Waiting({ what }: { what: string }) {
               aria-hidden
               style={{
                 width: 28, height: 28, margin: '0 auto 14px',
-                border: '3px solid #EC6032', borderTopColor: 'transparent', borderRadius: '50%',
+                border: '3px solid var(--afb-ac)', borderTopColor: 'transparent', borderRadius: '50%',
                 animation: 'auth-fb-spin .8s linear infinite',
               }}
             />
@@ -138,7 +138,7 @@ function NoScriptNote() {
       {/* With no script the spinner would spin for ever beside a message
           saying it never will. */}
       <style dangerouslySetInnerHTML={{ __html: '.auth-fb-wait{display:none}' }} />
-      <div style={{ textAlign: 'center', padding: 24, color: '#9A8A6A', fontSize: 13.5, lineHeight: 1.6 }}>
+      <div style={{ textAlign: 'center', padding: 24, color: 'var(--afb-t3)', fontSize: 13.5, lineHeight: 1.6 }}>
         Signing in to Reach needs JavaScript. Please turn it on for this site and reload.
       </div>
     </noscript>

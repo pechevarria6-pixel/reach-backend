@@ -16,13 +16,13 @@ import { useUser } from '@clerk/nextjs';
 // Read from the quiz itself: this said "Nine quick questions" over a quiz of
 // six screens (2026-11-06).
 import { QUIZ_COUNT_WORD as QUIZ_COUNT } from '@/lib/quiz-screens';
+import { scopedVars } from '@/lib/tokens';
 // One palette per theme, the app's own (PALETTE in components/reach-app.jsx).
 // This screen was fixed maroon while sign-up before it and the app after it
 // are cream by default: a new account went light, dark, light in its first
 // minute (new-user walk, 2026-11-06).
 const THEME_CSS = `
-.ob{--bg:#EBEFEC;--s2:#E4EAE6;--bd:#D8DED4;--ac:#EC6032;--acd:#D24E24;--on:#2A1D06;--t1:#142119;--t2:#576E61;--t3:#5E766A;--tint:rgba(236,96,50,.12);--tintbd:rgba(236,96,50,.30);--err:#C0392B}
-:root[data-theme="dark"] .ob{--bg:#2C0E18;--s2:#3F1619;--bd:#5A2430;--ac:#C3A342;--acd:#A8892F;--on:#2A1D06;--t1:#FEF7D9;--t2:#CFC182;--t3:#B89A6A;--tint:rgba(195,163,66,.14);--tintbd:rgba(195,163,66,.32);--err:#E85D5D}
+${scopedVars(".ob",{bg:"bg",s2:"s2",bd:"border",ac:"accent",acd:"accentDeep",on:"onAccent",t1:"t1",t2:"t2",t3:"t3",tint:"accentDim",tintbd:"accentBorder",err:"red"})}
 .ob *{box-sizing:border-box}
 .ob input::placeholder{color:var(--t3);opacity:1;text-transform:none;letter-spacing:normal;font-weight:400}
 .ob input:focus-visible,.ob button:focus-visible{outline:3px solid var(--ac);outline-offset:2px}

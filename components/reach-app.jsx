@@ -62,6 +62,7 @@ import Sheet from "@/components/Sheet";
 import { haptic, prefersReducedMotion, revertWords } from "@/lib/feel";
 import { createUndoQueue, UNDO_MS } from "@/lib/undo";
 import { away as awayOf } from "@/lib/away";
+import { PALETTE, AVATAR_COLORS, MAP_PIN, GOOGLE_MARK } from "@/lib/tokens";
 
 // ─── Design tokens ───────────────────────────────────────────────────────
 // The single source of truth for colour. Anything hardcoded in a style block
@@ -76,105 +77,13 @@ import { away as awayOf } from "@/lib/away";
 //
 // Contrast is measured against `bg` for body surfaces and `s2` for cards.
 // Every text pairing below clears 4.5:1 in BOTH themes.
-const TOKENS = [
-  "page", "bg", "s1", "s2", "s3", "border", "borderLight",
-  "accent", "accentDeep", "accentHover", "accentDim", "accentBorder",
-  // `accent` is the gold FILL and stays bright in both themes so buttons keep
-  // their identity. `accentText` is gold used AS TEXT, and has to darken in
-  // the light theme: #D4A843 on white is 2.0:1 and unreadable.
-  "accentText", "onAccent", "onGreen",
-  "green", "greenDim", "amber", "amberDim", "red", "redDim", "blue", "blueDim",
-  "t1", "t2", "t3", "t4",
-  // Surfaces that are translucent or shadowed, and so cannot be a flat token.
-  "navBg", "overlay", "cardShadow", "cardShadowHover", "accentGlow",
-  // Texture: a paper grain on the ground, and the hairline highlight along
-  // the top edge of anything raised. Both sit behind content, so neither
-  // can change how readable a word is.
-  "grain", "edgeHi",
-  "accentGlowHover", "focusRing", "frameShadow", "frameGlow",
-];
+const TOKENS = Object.keys(PALETTE.dark);
 
 const C = Object.fromEntries(
   TOKENS.map(t => [t, `var(--c-${t.replace(/[A-Z]/g, m => "-" + m.toLowerCase())})`])
 );
 
-const PALETTE = {
-  // ── Light — off-white and deep green, sampled from REF4. ───────────────
-  // Ground #EBEFEC, cards #E4EAE6, ink #142119, the green #2B583B. The muted
-  // green was sampled at #617A6C and measured 4.01:1 on the ground — under
-  // the body-text bar — so it is deepened to #576E61, which clears it at
-  // 4.75:1 without touching the brand green.
-  light: {
-    page: "#DFE5E0",
-    bg: "#EBEFEC", s1: "#F4F7F5", s2: "#E4EAE6", s3: "#DAE2DC",
-    border: "#D8DED4", borderLight: "#C3CCC5",
-
-    // Orange stays the action colour in both themes; as TEXT on the pale
-    // ground it is only 3.2:1, so the green carries text and links.
-    accent: "#EC6032", accentDeep: "#D24E24", accentHover: "#F2764D",
-    accentDim: "rgba(236,96,50,0.12)", accentBorder: "rgba(236,96,50,0.30)",
-    accentText: "#2B583B",
-    onAccent: "#2A1D06", onGreen: "#FFFFFF",
-
-    green: "#2F7D43", greenDim: "rgba(47,125,67,0.12)",
-    amber: "#6F4B00", amberDim: "rgba(111,75,0,0.12)",
-    red: "#C0392B", redDim: "rgba(192,57,43,0.10)",
-    blue: "#1E62C4", blueDim: "rgba(30,98,196,0.10)",
-
-    t1: "#142119", t2: "#576E61", t3: "#5E766A", t4: "#6E8577",
-
-    navBg: "rgba(235,239,236,0.94)",
-    overlay: "rgba(20,33,25,0.45)",
-    cardShadow: "0 2px 8px rgba(30,50,38,0.07)",
-    cardShadowHover: "0 10px 28px rgba(30,50,38,0.14)",
-    accentGlow: "0 4px 16px rgba(236,96,50,0.22)",
-    accentGlowHover: "0 8px 24px rgba(236,96,50,0.30)",
-    focusRing: "rgba(236,96,50,0.28)",
-    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.16%22/%3E%3C/svg%3E')",
-    edgeHi: "rgba(255,255,255,0.75)",
-    frameShadow: "0 60px 140px rgba(30,50,38,0.24)",
-    frameGlow: "rgba(236,96,50,0.10)",
-  },
-
-  // ── Dark — maroon and gold, sampled from REF6. The default. ────────────
-  // Every value here was read off the reference screens rather than guessed:
-  // the ground is #2C0E18, cards #3F1619, the wordmark gold #C3A342, headings
-  // cream #FEF7D9 and the accent word orange #EC6032.
-  dark: {
-    page: "#1F080F",
-    bg: "#2C0E18", s1: "#36121B", s2: "#3F1619", s3: "#4A1B20",
-    border: "#5A2430", borderLight: "#6B2C39",
-
-    // Gold stays the fill in both themes; on maroon it is also readable as
-    // text at 7.3:1, so accentText is the same value here.
-    accent: "#C3A342", accentDeep: "#A8892F", accentHover: "#D8BC63",
-    accentDim: "rgba(195,163,66,0.14)", accentBorder: "rgba(195,163,66,0.32)",
-    accentText: "#C3A342",
-    // The orange from REF6, used for the one accent word and for primary
-    // actions. White on it is 3.34:1, so anything sitting ON it uses ink.
-    onAccent: "#2A1D06", onGreen: "#0C2A17",
-
-    green: "#7FB58A", greenDim: "rgba(127,181,138,0.12)",
-    amber: "#E8A33D", amberDim: "rgba(232,163,61,0.12)",
-    red: "#E85D5D", redDim: "rgba(232,93,93,0.12)",
-    blue: "#7FA8D9", blueDim: "rgba(127,168,217,0.12)",
-
-    t1: "#FEF7D9", t2: "#CFC182", t3: "#B89A6A", t4: "#9C815A",
-
-    navBg: "rgba(44,14,24,0.95)",
-    overlay: "rgba(20,5,10,0.78)",
-    cardShadow: "0 2px 10px rgba(0,0,0,0.35)",
-    cardShadowHover: "0 8px 30px rgba(0,0,0,0.45)",
-    accentGlow: "0 4px 20px rgba(195,163,66,0.22)",
-    accentGlowHover: "0 6px 24px rgba(195,163,66,0.32)",
-    focusRing: "rgba(236,96,50,0.35)",
-    grain: "url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22140%22%20height=%22140%22%3E%3Cfilter%20id=%22n%22%3E%3CfeTurbulence%20type=%22fractalNoise%22%20baseFrequency=%22.85%22%20numOctaves=%222%22/%3E%3CfeColorMatrix%20type=%22saturate%22%20values=%220%22/%3E%3C/filter%3E%3Crect%20width=%22140%22%20height=%22140%22%20filter=%22url(%23n)%22%20opacity=%22.18%22/%3E%3C/svg%3E')",
-    edgeHi: "rgba(255,255,255,0.10)",
-    frameShadow: "0 80px 200px rgba(0,0,0,.95)",
-    frameGlow: "rgba(195,163,66,0.10)",
-  },
-};
-
+// The values live in lib/tokens.ts, the one file a colour may be written in.
 const THEMES = Object.keys(PALETTE);
 
 // The type scale, in rem so it follows the reader's own text size. Discover
@@ -276,7 +185,7 @@ button{min-height:44px;}
 .hd-back:hover{color:${C.t1};}
 .hd-back:active{opacity:.6;}
 .hd-back svg{width:18px;height:18px;}
-.hd-ov{position:absolute;top:calc(16px + env(safe-area-inset-top));left:16px;width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;z-index:10;}
+.hd-ov{position:absolute;top:calc(16px + env(safe-area-inset-top));left:16px;width:44px;height:44px;border-radius:50%;background:${C.photoButton};backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:${C.onPhoto};z-index:10;}
 .hd-ov:active{transform:scale(.94);}
 .sl{font-size:12.5px;font-weight:600;letter-spacing:0;text-transform:none;color:${C.t2};}
 .card{background:linear-gradient(145deg,${C.s1},${C.s2});border:1px solid ${C.border};border-radius:24px;overflow:hidden;transition:all .2s;cursor:pointer;box-shadow:${C.cardShadow},inset 0 1px 0 ${C.edgeHi};}
@@ -288,7 +197,7 @@ button{min-height:44px;}
 .pill-r{background:${C.redDim};color:${C.red};}
 .pill-p{background:${C.accentDim};color:${C.accentText};}
 .pill-m{background:${C.s3};color:${C.t2};}
-.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:var(--font-body);font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:${C.accentGlow},inset 0 1px 0 rgba(255,255,255,.32);}
+.bp{width:100%;min-height:52px;padding:16px 20px;background:linear-gradient(135deg,${C.accentDeep},${C.accent});color:${C.onAccent};border:none;border-radius:18px;font-family:var(--font-body);font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;letter-spacing:.01em;box-shadow:${C.accentGlow},inset 0 1px 0 ${C.sheen};}
 .bp:hover{transform:translateY(-1px);box-shadow:${C.accentGlowHover};}
 .bp:active{transform:scale(.98);}
 .bp:disabled{opacity:.35;cursor:not-allowed;}
@@ -407,7 +316,7 @@ const ALL_CONTACTS = [];
 // avatar shouts louder than the others, and all dark enough that the white
 // initials clear 4.5:1. The previous set was bright and fully saturated,
 // every one of them failing contrast and fighting the warm noir surface.
-const AVATAR_COLORS = ["#8C6D1F","#9E4B57","#3F7D63","#8A5A2B","#3D6389","#6B4A80","#A0563C","#4A7A52"];
+
 function initialsFor(name,email){
   const src=(name||"").trim()||(email||"").split("@")[0]||"";
   const parts=src.split(/[\s._-]+/).filter(Boolean);
@@ -1231,8 +1140,8 @@ function TripPicks({push,userLocation,toast,groups}){
                       whole credit stays in the title and for screen readers. */}
                   {p.photo.credit&&<div title={`Photo: ${p.photo.credit}`} aria-label={`Photo: ${p.photo.credit}`}
                     style={{position:"absolute",left:0,right:0,bottom:0,padding:"14px 10px 5px",
-                      background:"linear-gradient(to top,rgba(0,0,0,.55),rgba(0,0,0,0))",
-                      fontSize:9.5,lineHeight:1.2,color:"rgba(255,255,255,.92)",
+                      background:`linear-gradient(to top,${C.shade2},${C.shade0})`,
+                      fontSize:9.5,lineHeight:1.2,color:C.onPhotoSoft,
                       whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textAlign:"right"}}>📷 {p.photo.credit}</div>}
                 </div>
               )}
@@ -1422,7 +1331,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
           const q=GREETING_QUESTIONS[(mounted?dayIndex():0)%GREETING_QUESTIONS.length];
           return(
             <div className="display" style={{fontSize:34,color:C.t1,lineHeight:1.15,fontWeight:600,letterSpacing:"-.01em"}}>
-              {q.before}<span style={{color:C.accent}}>{q.word}</span>{q.after}
+              {q.before}<span style={{color:C.accentWord}}>{q.word}</span>{q.after}
             </div>
           );
         })()}
@@ -1455,7 +1364,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
           // turn out to be a five-screen dinner.
           const totalSteps=dr.planType?createPlanSteps(dr.planType).length:null;
           return(
-            <div style={{margin:"0 20px 14px",background:`linear-gradient(135deg,${C.accentDim},rgba(108,99,255,.05))`,border:`1px solid ${C.accentBorder}`,borderRadius:16,padding:"12px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>push("createPlan",{})}>
+            <div style={{margin:"0 20px 14px",background:`linear-gradient(135deg,${C.accentDim},${C.accentDim})`,border:`1px solid ${C.accentBorder}`,borderRadius:16,padding:"12px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer"}} onClick={()=>push("createPlan",{})}>
               <div style={{fontSize:26,flexShrink:0}}>{dr.planType==="restaurant"?"🍽️":dr.planType==="concert"?"🎵":dr.planType==="weekend"?"🏡":"✈️"}</div>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,fontWeight:600,color:C.t1}}>Resume your draft</div>
@@ -1507,7 +1416,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
           <PhotoFrame key={plan.id} src={plan.imageUrl&&plan.imageCredit?plan.imageUrl:null}
             alt={photoAlt(plan.destinationCity,plan.title)}>{({ok:hasPhoto,img})=>(
           <div {...pressable} onClick={()=>push("planDetail",{planId:plan.id,groupId:plan.group.id,...(nexts[plan.id]?.bookedForMe?{initialTab:"bookings"}:{})})}
-            style={{minWidth:200,background:`linear-gradient(145deg,#1a1060,${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
+            style={{minWidth:200,background:`linear-gradient(145deg,${C.heroDeep},${C.accent})`,borderRadius:20,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,transition:"transform .15s",
               // A picture of the place they are actually going. The gradient
               // stays underneath, so a photo that fails to load leaves the
               // card as it always looked rather than a white rectangle.
@@ -1516,7 +1425,7 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
             {/* Dark enough to read white text on any photograph. */}
             {hasPhoto&&(
               <div style={{position:"absolute",inset:0,
-                background:"linear-gradient(160deg,rgba(0,0,0,.28),rgba(0,0,0,.78))"}}/>
+                background:`linear-gradient(160deg,${C.shade1},${C.shade3})`}}/>
             )}
             <div style={{padding:16,position:"relative"}}>
               {/* Where it stands, from the same answer as the plan's own
@@ -1527,8 +1436,8 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
                   {nexts[plan.id].chip}
                 </span>
               )}
-              <div style={{fontFamily:"var(--font-display)",fontSize:20,color:"white",marginBottom:4}}>{plan.title}</div>
-              <div style={{fontSize:12,color:"rgba(255,255,255,.65)",marginBottom:10}}>{plan.startDate?plan.dates:"No date yet"} · {plan.group.name}</div>
+              <div style={{fontFamily:"var(--font-display)",fontSize:20,color:C.onPhoto,marginBottom:4}}>{plan.title}</div>
+              <div style={{fontSize:12,color:C.onPhotoSoft,marginBottom:10}}>{plan.startDate?plan.dates:"No date yet"} · {plan.group.name}</div>
               {/* How long until it. Counted between calendar days rather
                   than between instants, so a trip on Friday reads "In 2
                   days" all Wednesday instead of ticking over at eight in the
@@ -1537,8 +1446,8 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
                   app invented. */}
               {countdown(plan)&&(
                 <div style={{display:"inline-flex",alignItems:"center",gap:5,marginBottom:10,
-                  padding:"3px 9px",borderRadius:20,background:"rgba(255,255,255,.16)",
-                  fontSize:11,fontWeight:700,color:"white",letterSpacing:".01em"}}>
+                  padding:"3px 9px",borderRadius:20,background:C.photoChip,
+                  fontSize:11,fontWeight:700,color:C.onPhoto,letterSpacing:".01em"}}>
                   {countdown(plan)}
                 </div>
               )}
@@ -1547,13 +1456,13 @@ function HomeScreen({groups,um,push,toast,loading,loadFailed,onRetry,user,setTab
                   card is the one way in — this is its label, not a second
                   button beside it. */}
               {nexts[plan.id]?.bookedForMe&&(
-                <div style={{fontSize:12,fontWeight:700,color:"white",marginTop:10}}>See your trip →</div>
+                <div style={{fontSize:12,fontWeight:700,color:C.onPhoto,marginTop:10}}>See your trip →</div>
               )}
               {/* Whose photograph it is. A picture is somebody's work, and
                   the licence it is free under asks for the credit — so it
                   travels with the picture or the picture is not shown. */}
               {hasPhoto&&(
-                <div style={{fontSize:9.5,color:"rgba(255,255,255,.55)",marginTop:8,lineHeight:1.3}}>
+                <div style={{fontSize:9.5,color:C.onPhotoSoft,marginTop:8,lineHeight:1.3}}>
                   Photo: {plan.imageCredit}
                 </div>
               )}
@@ -1912,13 +1821,13 @@ function DiscoverHide({title,open,onToggle,onClose,onRule,onPhoto}){
         <span aria-hidden="true" style={{width:32,height:32,borderRadius:16,display:"flex",alignItems:"center",
           justifyContent:"center",fontSize:"1.125rem",lineHeight:1,
           ...(onPhoto
-            ?{background:"rgba(0,0,0,.5)",color:"#fff",backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)"}
+            ?{background:C.photoButton,color:C.onPhoto,backdropFilter:"blur(6px)",WebkitBackdropFilter:"blur(6px)"}
             :{background:C.s2,color:C.t1,border:`1px solid ${C.border}`})}}>⋯</span>
       </button>
       {open&&(
         <div ref={menu} role="menu" aria-label={title}
           style={{position:"absolute",top:44,right:4,zIndex:5,background:C.s1,border:`1px solid ${C.border}`,
-            borderRadius:14,overflow:"hidden",minWidth:188,boxShadow:"0 10px 28px rgba(0,0,0,.22)"}}>
+            borderRadius:14,overflow:"hidden",minWidth:188,boxShadow:C.popShadow}}>
           <button role="menuitem" tabIndex={-1} onClick={()=>onRule("done")} style={item}>Already done it</button>
           <button role="menuitem" tabIndex={-1} onClick={()=>onRule("not_interested")}
             style={{...item,borderTop:`1px solid ${C.border}`}}>Not for me</button>
@@ -1987,7 +1896,7 @@ function DiscoverEventCard({exp,when:computed,day,visited,open,onToggle,onClose,
 // Now it belongs to the words' own block: clear at its top edge, at .6 by
 // the time the first word starts, so white over the palest pixel is 5.8:1.
 const PLACE_SCRIM_TEXT_TOP=28;
-const PLACE_SCRIM="linear-gradient(180deg,rgba(0,0,0,0) 0px,rgba(0,0,0,.6) 24px,rgba(0,0,0,.85) 100%)";
+const PLACE_SCRIM=`linear-gradient(180deg,${C.shade0} 0px,${C.shade2} 24px,${C.shade3} 100%)`;
 
 /** A place to go: what it is, its name, where and how far, where its price is. */
 function DiscoverPlaceCard({exp,visited,open,onToggle,onClose,onRule,onOpen}){
@@ -2001,23 +1910,23 @@ function DiscoverPlaceCard({exp,visited,open,onToggle,onClose,onRule,onOpen}){
     price.text,because,visited?"You've been":null].filter(Boolean).join(". ");
   return(
     <PhotoFrame src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok,img})=>{
-      const soft=ok?"rgba(255,255,255,.88)":C.t2;
+      const soft=ok?C.onPhotoSoft:C.t2;
       return(
       <div style={{position:"relative",margin:"0 16px 8px"}}>
         <div style={{background:C.s1,border:`1px solid ${C.border}`,borderRadius:16,boxShadow:C.cardShadow,overflow:"hidden"}}>
           <button id={`dsc-card-${exp.id}`} className="exp-card dsc-press" aria-label={spoken} onClick={onOpen}
             style={{display:"block",width:"100%",padding:0,border:"none",background:C.s1,textAlign:"left",cursor:"pointer",color:C.t1}}>
             <span style={{position:"relative",display:"flex",flexDirection:"column",justifyContent:"flex-end",minHeight:"9rem",
-              background:ok?"#1a1a1a":DISCOVER_TINT[categoryGroup(exp.category)],overflow:"hidden"}}>
+              background:ok?C.photoBlank:DISCOVER_TINT[categoryGroup(exp.category)],overflow:"hidden"}}>
               {img}
               <span style={{position:"relative",display:"block",padding:`${PLACE_SCRIM_TEXT_TOP}px 56px 14px 16px`,
                 background:ok?PLACE_SCRIM:"none"}}>
                 <span style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",...T.caption,color:soft}}>
                   <span aria-hidden="true">{exp.emoji}</span>
                   {kind&&<span>{kind}</span>}
-                  {visited&&<span style={{fontWeight:600,color:ok?"#fff":C.t1}}>· ✓ You've been</span>}
+                  {visited&&<span style={{fontWeight:600,color:ok?C.onPhoto:C.t1}}>· ✓ You've been</span>}
                 </span>
-                <span className="dsc-clamp2" style={{...T.title2,color:ok?"#fff":C.t1,marginTop:4}}>{exp.title}</span>
+                <span className="dsc-clamp2" style={{...T.title2,color:ok?C.onPhoto:C.t1,marginTop:4}}>{exp.title}</span>
                 {where&&<span style={{display:"block",...T.subhead,color:soft,marginTop:2}}><WhereLine exp={exp}/></span>}
               </span>
             </span>
@@ -2843,16 +2752,16 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
     <div className="sc" style={{paddingBottom:0}}>
       {/* Header */}
       <PhotoFrame src={exp.image&&exp.imageCredit?exp.image:null} alt={photoAlt(exp.imageOf,exp.title)}>{({ok:hasPhoto,img})=>(<>
-      <div style={{height:200,background:exp.bg||`linear-gradient(135deg,#1a1060,${C.accent})`,position:"relative",flexShrink:0,overflow:"hidden"}}>
+      <div style={{height:200,background:exp.bg||`linear-gradient(135deg,${C.heroDeep},${C.accent})`,position:"relative",flexShrink:0,overflow:"hidden"}}>
         {img}
         <ScreenHeader onBack={onBack} overlay/>
-        <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 40%,rgba(0,0,0,.9))",display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:20}}>
+        <div style={{position:"absolute",inset:0,background:`linear-gradient(to bottom,transparent 40%,${C.shade3})`,display:"flex",flexDirection:"column",justifyContent:"flex-end",padding:20}}>
           <div style={{fontSize:40,marginBottom:8}}>{exp.emoji||"🎯"}</div>
-          <div style={{fontFamily:"var(--font-display)",fontSize:24,color:"white",lineHeight:1.2}}>{exp.title}</div>
-          <div style={{fontSize:13,color:"rgba(255,255,255,.65)",marginTop:4}}>{exp.sub}</div>
+          <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.onPhoto,lineHeight:1.2}}>{exp.title}</div>
+          <div style={{fontSize:13,color:C.onPhotoSoft,marginTop:4}}>{exp.sub}</div>
         </div>
         {exp.dist&&(
-          <div style={{position:"absolute",top:16,right:16,background:"rgba(0,0,0,.5)",borderRadius:20,padding:"4px 12px",fontSize:12,color:"white"}}>
+          <div style={{position:"absolute",top:16,right:16,background:C.photoButton,borderRadius:20,padding:"4px 12px",fontSize:12,color:C.onPhoto}}>
             📍 {exp.dist}
           </div>
         )}
@@ -3126,7 +3035,7 @@ function ExpDetailScreen({onBack,exp,groups,push,toast,updateGroup,savePlanToSer
                     ))}
                   </div>
 
-                  <div style={{background:"rgba(108,99,255,.08)",border:"1px solid "+C.accentBorder,borderRadius:12,padding:12,marginBottom:16,fontSize:12,color:C.t2,lineHeight:1.6}}>
+                  <div style={{background:C.accentDim,border:"1px solid "+C.accentBorder,borderRadius:12,padding:12,marginBottom:16,fontSize:12,color:C.t2,lineHeight:1.6}}>
                     💡 Reach takes it from here and confirms with {exp.title}. It lands in your plans straight away, so you can see it whatever happens. Nothing is charged until it's confirmed.
                   </div>
 
@@ -3278,11 +3187,11 @@ function SwipeToDelete({group,onDelete,children}){
               style={{background:"none",border:`1px solid ${C.border}`,color:C.t2,fontSize:12.5,fontWeight:600,padding:"7px 12px",borderRadius:999}}>
               Keep it</button>
             <button onClick={confirm} disabled={busy}
-              style={{background:C.red,border:"none",color:"#fff",fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,opacity:busy?.6:1}}>
+              style={{background:C.red,border:"none",color:C.onRed,fontSize:12.5,fontWeight:700,padding:"7px 12px",borderRadius:999,opacity:busy?.6:1}}>
               {busy?"…":"Delete"}</button>
           </div>
           :<button aria-label={`Delete ${group.name}`} onClick={()=>setAsking(true)}
-            style={{width:WIDTH,background:C.red,border:"none",color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+            style={{width:WIDTH,background:C.red,border:"none",color:C.onRed,fontSize:13,fontWeight:700,cursor:"pointer"}}>
             Delete</button>}
       </div>
       <div style={{transform:`translateX(${asking?-9999:dx}px)`,transition:start.current==null?"transform .18s ease":"none",
@@ -5670,8 +5579,8 @@ function TasteQuizScreen({onBack,toast,onSaved,required}){
                 <button key={opt.id}
                   onClick={()=>q.multi?tog(q.id,value):sel(q.id,value)}
                   style={{padding:"14px 8px",borderRadius:14,
-                    border:"2px solid "+(isVeto?"rgba(239,68,68,.6)":selected?C.accent:C.border),
-                    background:isVeto?"rgba(239,68,68,.1)":selected?C.accentDim:C.s2,
+                    border:"2px solid "+(isVeto?C.red:selected?C.accent:C.border),
+                    background:isVeto?C.redDim:selected?C.accentDim:C.s2,
                     cursor:"pointer",textAlign:"center",transition:"all .15s"}}>
                   <div style={{fontSize:24,marginBottom:4}}>{opt.e}</div>
                   <div style={{fontSize:11,fontWeight:600,lineHeight:1.2,
@@ -6468,7 +6377,7 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
             )}
             {quizQ.noWay&&(
               <div style={{marginTop:8,padding:"6px 14px",
-                background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.2)",
+                background:C.redDim,border:"1px solid "+C.red,
                 borderRadius:10,display:"inline-block"}}>
                 <div style={{fontSize:12,color:C.red}}>
                   🚫 These will <strong>never</strong> appear in your options
@@ -6505,8 +6414,8 @@ function TripQuiz({group,userLocation,departure,setPlaceOverride,saveDeparture,t
                     onClick={()=>isMulti?tog(quizQ.id,opt.id):sel(quizQ.id,opt.id)}
                     style={{
                       padding:"14px 8px",borderRadius:14,
-                      border:"2px solid "+(isVeto?"rgba(239,68,68,.6)":selected?C.accent:C.border),
-                      background:isVeto?"rgba(239,68,68,.1)":selected?C.accentDim:C.s2,
+                      border:"2px solid "+(isVeto?C.red:selected?C.accent:C.border),
+                      background:isVeto?C.redDim:selected?C.accentDim:C.s2,
                       cursor:"pointer",textAlign:"center",
                       transition:"all .15s",
                     }}>
@@ -7287,8 +7196,8 @@ function TripIdeas({planId,groupId,group,plan,toast,um,updateGroup,refreshGroup,
                 <div style={{display:"flex",gap:8,marginBottom:v.mayPick?8:0}}>
                   {v.vetoesAvailable&&(
                     <button disabled={!!busy||mine} onClick={()=>veto(o,!vetoed)}
-                      style={{flex:1,padding:"12px 8px",borderRadius:12,border:"1px solid rgba(239,68,68,.4)",
-                        background:vetoed?"rgba(239,68,68,.18)":"rgba(239,68,68,.08)",color:C.red,fontSize:13,fontWeight:600,
+                      style={{flex:1,padding:"12px 8px",borderRadius:12,border:"1px solid "+C.red,
+                        background:vetoed?C.redDim:C.redDim,color:C.red,fontSize:13,fontWeight:600,
                         cursor:busy||mine?"default":"pointer",opacity:mine?.5:1}}>
                       {busy===o.title?"…":vetoed?"Vetoed · undo":"Veto"}
                     </button>
@@ -8109,11 +8018,11 @@ function GroupTripScreen({onBack,groupId,groups,updateGroup,toast,push,userLocat
           {/* Solo banner - only show for solo */}
           {isSolo&&(
             <div style={{padding:"0 20px 16px"}}>
-              <div style={{background:"linear-gradient(135deg,rgba(212,168,67,0.1),rgba(196,154,56,0.05))",
-                border:"1px solid rgba(212,168,67,0.25)",borderRadius:20,padding:"16px",
+              <div style={{background:C.accentDim,
+                border:"1px solid "+C.accentBorder,borderRadius:20,padding:"16px",
                 display:"flex",alignItems:"center",gap:14}}>
                 <div style={{width:48,height:48,borderRadius:16,
-                  background:"linear-gradient(135deg,rgba(212,168,67,0.2),rgba(196,154,56,0.1))",
+                  background:C.accentDim,
                   display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>
                   🧳
                 </div>
@@ -9401,9 +9310,9 @@ function useNextActions(entries,me){
 const nextTone=na=>na.state==="booked"?"pill-g":na.state==="needs_attention"||na.state==="needs_travel_details"?"pill-a":"pill-p";
 /** The same tones over a dark photo or gradient, whatever the theme: light text on a tint. */
 const HEADER_CHIP={
-  "pill-g":{background:"rgba(16,185,129,.30)",color:"#ecfdf5"},
-  "pill-a":{background:"rgba(245,158,11,.32)",color:"#fffbeb"},
-  "pill-p":{background:"rgba(255,255,255,.18)",color:"white"},
+  "pill-g":{background:C.pillGood,color:C.onPillGood},
+  "pill-a":{background:C.pillWarn,color:C.onPillWarn},
+  "pill-p":{background:C.photoChip,color:C.onPhoto},
 };
 
 const ctaId=c=>!c?"none":c.kind==="navigate"?`${c.route.screen}${c.route.params?.initialTab?`:${c.route.params.initialTab}`:""}`
@@ -9551,17 +9460,17 @@ function Celebration({title,sub,onDone}){
     <div role="dialog" aria-modal="true" aria-label={title} onClick={()=>done.current()}
       style={{position:"fixed",inset:0,zIndex:1000,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
         padding:"28px",textAlign:"center",overflow:"hidden",cursor:"pointer",
-        background:`linear-gradient(160deg,#064E3B,${C.green})`}}>
+        background:`linear-gradient(160deg,${C.celebrateDeep},${C.green})`}}>
       {!reduced&&<style dangerouslySetInnerHTML={{__html:`@keyframes rfall{0%{transform:translateY(-20px) rotate(0deg);opacity:1}100%{transform:translateY(110vh) rotate(540deg);opacity:0}}@keyframes rpop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.08);opacity:1}100%{transform:scale(1)}}`}}/>}
       {bits.map(i=>(<span key={i} aria-hidden="true" style={{position:"absolute",left:(i*137)%100+"%",top:-12,width:8,height:12,borderRadius:2,
-        background:[C.accent,"#FFFFFF",C.blue,"#F472B6"][i%4],animation:`rfall ${1.8+(i%5)*.3}s ${(i%7)*.12}s ease-in forwards`}}/>))}
+        background:[C.accent,C.onPhoto,C.blue,C.confettiPink][i%4],animation:`rfall ${1.8+(i%5)*.3}s ${(i%7)*.12}s ease-in forwards`}}/>))}
       {/* The same gold pin that drops for paid and joined: booked. */}
-      <div aria-hidden="true" style={{width:84,height:84,borderRadius:"50%",background:"rgba(255,255,255,.16)",display:"flex",alignItems:"center",
+      <div aria-hidden="true" style={{width:84,height:84,borderRadius:"50%",background:C.photoChip,display:"flex",alignItems:"center",
         justifyContent:"center",marginBottom:20,animation:reduced?"none":"rpop .5s ease-out both"}}><PinDrop size={30} label="Booked"/></div>
-      <div style={{fontFamily:"var(--font-display)",fontSize:32,lineHeight:1.15,color:"white",maxWidth:340}}>{title}</div>
-      {sub&&<div style={{fontSize:14.5,color:"rgba(255,255,255,.8)",marginTop:10,maxWidth:320,lineHeight:1.5}}>{sub}</div>}
+      <div style={{fontFamily:"var(--font-display)",fontSize:32,lineHeight:1.15,color:C.onPhoto,maxWidth:340}}>{title}</div>
+      {sub&&<div style={{fontSize:14.5,color:C.onPhotoSoft,marginTop:10,maxWidth:320,lineHeight:1.5}}>{sub}</div>}
       <button onClick={e=>{e.stopPropagation();done.current();}}
-        style={{position:"absolute",bottom:"max(28px, env(safe-area-inset-bottom))",background:"rgba(255,255,255,.16)",border:"none",color:"white",
+        style={{position:"absolute",bottom:"max(28px, env(safe-area-inset-bottom))",background:C.photoChip,border:"none",color:C.onPhoto,
           fontSize:13,fontWeight:700,padding:"10px 22px",borderRadius:999,cursor:"pointer",minHeight:44}}>Skip</button>
     </div>
   );
@@ -11305,11 +11214,11 @@ function WaitFace({f,u,busy,onTap}){
       style={{background:"none",border:"none",padding:0,display:"flex",flexDirection:"column",alignItems:"center",gap:4,width:56,cursor:tappable?"pointer":"default"}}>
       <span style={{position:"relative",width:40,height:40,display:"block"}}>
         <span style={{width:40,height:40,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",
-          background:f.done?(u?.color||C.accent):C.s3,color:f.done?"#fff":C.t2,fontSize:13,fontWeight:700,
+          background:f.done?(u?.color||C.accent):C.s3,color:f.done?C.onPhoto:C.t2,fontSize:13,fontWeight:700,
           opacity:f.done?1:.6,border:tappable?`1px dashed ${C.t3}`:"1px solid transparent"}}>{initials}</span>
         {f.done&&(
           <span aria-hidden="true" style={{position:"absolute",right:-3,bottom:-3,width:18,height:18,borderRadius:"50%",
-            background:C.green,color:"#fff",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",
+            background:C.green,color:C.onGreen,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",
             border:`2px solid ${C.s1}`}}>✓</span>
         )}
       </span>
@@ -12762,7 +12671,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           toast={toast} onClose={()=>setChanging(null)} onSwapped={lineSwapped}
           onList={setLineSuggestions} onBookingsChanged={refreshBookings}/>
       )}
-      <div style={{background:`linear-gradient(145deg,#1a1060,${C.accent})`,padding:"calc(18px + env(safe-area-inset-top)) 20px 22px",flexShrink:0}}>
+      <div style={{background:`linear-gradient(145deg,${C.heroDeep},${C.accent})`,padding:"calc(18px + env(safe-area-inset-top)) 20px 22px",flexShrink:0}}>
         {/* The back button floats (position:absolute), so it is not in this
             row: with space-between the pill was the row's only item and sat
             at the left, under the back button. The row keeps the button's
@@ -12772,10 +12681,10 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
             the button dropped below this row onto the plan's title. */}
         <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",minHeight:44,marginBottom:14}}>
           <ScreenHeader onBack={onBack} overlay/>
-          <button className="bsm" style={{marginLeft:"auto",background:"rgba(255,255,255,.15)",color:"white",border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
+          <button className="bsm" style={{marginLeft:"auto",background:C.photoChip,color:C.onPhoto,border:"none"}} onClick={()=>push("editItinerary",{planId,groupId})}>Edit plan</button>
         </div>
-        <div style={{fontFamily:"var(--font-display)",fontSize:26,color:"white",marginBottom:4}}>{plan.title}</div>
-        <div style={{fontSize:13,color:"rgba(255,255,255,.65)",marginBottom:12}}>{plan.dates} · {group.name}</div>
+        <div style={{fontFamily:"var(--font-display)",fontSize:26,color:C.onPhoto,marginBottom:4}}>{plan.title}</div>
+        <div style={{fontSize:13,color:C.onPhotoSoft,marginBottom:12}}>{plan.dates} · {group.name}</div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {/* On the header's own dark gradient, in both themes: the theme's
               pill colours are for the page, and in light mode the dark
@@ -12785,7 +12694,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
           {/* The budget is what somebody hoped to spend. Once it is all
               booked, what it cost is on the trip itself, and a second money
               figure up here that is not that one would be a wrong number. */}
-          {!booked&&<span className="pill" style={{background:"rgba(255,255,255,.15)",color:"white"}}>${plan.budget}/person</span>}
+          {!booked&&<span className="pill" style={{background:C.photoChip,color:C.onPhoto}}>${plan.budget}/person</span>}
         </div>
       </div>
       <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,background:C.s1,flexShrink:0}}>
@@ -13576,7 +13485,7 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                   {prefs.members.map(m=>(
                     <span key={m.userId} style={{fontSize:11,fontWeight:600,padding:"3px 10px",borderRadius:20,
-                      background:m.ready?"rgba(16,185,129,.15)":"rgba(255,255,255,.08)",
+                      background:m.ready?C.greenDim:C.s3,
                       color:m.ready?C.green:C.t2}}>
                       {m.ready?"✓ ":""}{m.userId===me?"You":(m.name.trim().split(/\s+/)[0]||"Someone")}{m.ready?"":" · waiting…"}
                     </span>
@@ -13684,8 +13593,8 @@ function PlanDetailScreen({onBack,planId,groupId,groups,um,updateGroup,push,toas
                     <div style={{display:"flex",gap:8}}>
                       {voteView?.vetoesAvailable&&!mine&&(
                         <button disabled={!!voteBusy} onClick={()=>vetoOption(opt,!vetoed)}
-                          style={{flex:1,padding:"10px 8px",borderRadius:12,border:"1px solid rgba(239,68,68,.4)",
-                            background:vetoed?"rgba(239,68,68,.18)":"rgba(239,68,68,.08)",color:C.red,fontSize:13,fontWeight:600,
+                          style={{flex:1,padding:"10px 8px",borderRadius:12,border:"1px solid "+C.red,
+                            background:vetoed?C.redDim:C.redDim,color:C.red,fontSize:13,fontWeight:600,
                             cursor:voteBusy?"default":"pointer"}}>
                           {voteBusy===opt?"…":vetoed?"Vetoed · undo":"Veto"}
                         </button>
@@ -14582,7 +14491,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     payments:[...myPayments,...(extra.payments||[])],bookings:extra.bookings||[]});
 
   const chip=(label,tone)=>(<span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,letterSpacing:.3,
-    background:tone==="green"?"rgba(16,185,129,.15)":tone==="gold"?"rgba(212,175,55,.15)":tone==="red"?C.redDim:"rgba(255,255,255,.08)",
+    background:tone==="green"?C.greenDim:tone==="gold"?C.accentDim:tone==="red"?C.redDim:C.s3,
     color:tone==="green"?C.green:tone==="gold"?C.accentText:tone==="red"?C.red:C.t2}}>{label}</span>);
 
   // Whether anything was actually booked, as opposed to paid for or merely
@@ -14785,7 +14694,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     <div style={{fontFamily:"var(--font-display)",fontSize:24,color:C.t1,marginBottom:8}}>Your part is paid</div>
     <div style={{color:C.t2,fontSize:14,lineHeight:1.5,marginBottom:16}}>A few people still need to chip in. The moment the last share lands we'll email everyone, and anyone on the trip can open checkout and press Book it.</div>
     <div style={{margin:"0 auto 20px",maxWidth:260}}>{funding&&(()=>{const pct=Math.min(100,Math.round(((funding.collectedCents||0)/Math.max(funding.targetCents||0,1))*100));
-      return(<div><div style={{height:8,background:"rgba(255,255,255,.08)",borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
+      return(<div><div style={{height:8,background:C.s3,borderRadius:8,overflow:"hidden"}}><div style={{width:pct+"%",height:"100%",background:`linear-gradient(90deg,${C.accent},${C.green})`}}/></div>
       <div style={{fontSize:12,color:C.t2,marginTop:6}}>{pct}% of the trip funded</div></div>);})()}</div>
     {/* Who has paid, as faces — ✓ or grey, never an amount (owner decision
         13). A grey face nudges that one person; the button is everyone. */}
@@ -14962,17 +14871,17 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
     const failedRows=checkout.rows.filter(r=>r.status==="failed");
     return(<div className="sc" style={{paddingBottom:40,position:"relative",overflow:"hidden"}}>
       {celebrating&&<Celebration {...celebrationFor(plan,group)} onDone={endCelebration}/>}
-      <div style={{background:celebrate?`linear-gradient(145deg,#064E3B,${C.green})`:`linear-gradient(145deg,#3B2F0B,#7C5A12)`,padding:"48px 28px 36px",textAlign:"center"}}>
-        <div style={{width:72,height:72,borderRadius:"50%",background:"rgba(255,255,255,.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px",color:"white"}}>{celebrate?"✓":"!"}</div>
+      <div style={{background:celebrate?`linear-gradient(145deg,${C.celebrateDeep},${C.green})`:`linear-gradient(145deg,${C.goldDeep},${C.goldMid})`,padding:"48px 28px 36px",textAlign:"center"}}>
+        <div style={{width:72,height:72,borderRadius:"50%",background:C.photoChip,display:"flex",alignItems:"center",justifyContent:"center",fontSize:32,margin:"0 auto 16px",color:C.onPhoto}}>{celebrate?"✓":"!"}</div>
         {/* Nothing in the app books an itinerary yet, so when no booking rows
             exist this said "You're all booked!" over a line reading "Nothing is
             priced yet" \u2014 contradicting itself on the screen where a real card
             had just been charged. Money in is worth celebrating; it is simply
             not the same claim as a booking. */}
-        <div style={{fontFamily:"var(--font-display)",fontSize:30,color:"white",marginBottom:6}}>
+        <div style={{fontFamily:"var(--font-display)",fontSize:30,color:C.onPhoto,marginBottom:6}}>
           {said.title}
         </div>
-        <div style={{fontSize:14,color:"rgba(255,255,255,.75)"}}>
+        <div style={{fontSize:14,color:C.onPhotoSoft}}>
           {said.sub}
         </div>
       </div>
@@ -15678,7 +15587,7 @@ function CheckoutScreenV2({onBack,replace,planId,groupId,groups,um,updateGroup,t
 // their licence asks. The map is always dark whatever the app's theme, so
 // the two pin colours are fixed rather than theme tokens: they are chosen
 // against those tiles, which do not change.
-const MAP_PIN={upcoming:"#E2C35E",past:"#8E99A4"};
+
 //
 // Carto's basemaps take a key on every tile now (carto.com/basemaps/apikey;
 // free, no account). Without one every tile is a grey square reading "API
@@ -15744,7 +15653,7 @@ function TripMap({groups,push,toast}){
         // Past first, so where you're going sits on top where two overlap.
         for(const pin of placed){
           const upcoming=pin.when==="upcoming";
-          const m=L.circleMarker([pin.lat,pin.lng],{radius:upcoming?9:7,weight:2,color:upcoming?"#FFF3C4":"#C9D1D9",
+          const m=L.circleMarker([pin.lat,pin.lng],{radius:upcoming?9:7,weight:2,color:upcoming?MAP_PIN.upcomingRing:MAP_PIN.pastRing,
             fillColor:MAP_PIN[pin.when],fillOpacity:upcoming?1:.75,bubblingMouseEvents:false}).addTo(map);
           m.bindTooltip(String(pin.label||"Trip"),{direction:"top",offset:[0,-6]});
           m.on("click",()=>open(pin));
@@ -15771,15 +15680,15 @@ function TripMap({groups,push,toast}){
         )}
       </div>
       {MAP_TILES.dim&&<style dangerouslySetInnerHTML={{__html:`.trip-map-dim{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.3);}`}}/>}
-      <div style={{position:"relative",height:200,borderRadius:16,overflow:"hidden",border:`1px solid ${C.border}`,background:"#0E1116",isolation:"isolate"}}>
+      <div style={{position:"relative",height:200,borderRadius:16,overflow:"hidden",border:`1px solid ${C.border}`,background:C.mapBg,isolation:"isolate"}}>
         <div ref={box} role="region" aria-label={empty?`Map: ${emptyLine}`:`Map of your trips: ${all.map(p=>p.label).join(", ")}`} style={{position:"absolute",inset:0}}/>
         {empty&&(
           <div style={{position:"absolute",inset:0,zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none",
-            background:"rgba(14,17,22,.45)"}}>
-            <div style={{color:"#F2F2F2",fontFamily:"var(--font-display)",fontSize:20,textAlign:"center",padding:"0 16px"}}>{emptyLine}</div>
+            background:C.mapShade}}>
+            <div style={{color:C.mapText,fontFamily:"var(--font-display)",fontSize:20,textAlign:"center",padding:"0 16px"}}>{emptyLine}</div>
           </div>
         )}
-        {!pins&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12.5,color:"#B8C0C8"}}>Loading your map…</div>}
+        {!pins&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12.5,color:C.mapMuted}}>Loading your map…</div>}
       </div>
     </div>
   );
@@ -17636,9 +17545,9 @@ function AppleIcon(){return(
 
 function GoogleIcon(){return(
   <svg width="20" height="20" viewBox="0 0 24 24">
-    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+    <path fill={GOOGLE_MARK.blue} d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+    <path fill={GOOGLE_MARK.green} d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+    <path fill={GOOGLE_MARK.yellow} d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+    <path fill={GOOGLE_MARK.red} d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
   </svg>
 );}

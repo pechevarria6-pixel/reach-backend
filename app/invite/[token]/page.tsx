@@ -3,13 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@clerk/nextjs';
 import { useRouter } from 'next/navigation';
+import { scopedVars } from '@/lib/tokens';
 // ─── The first screen a friend of a member ever sees ────────────────────
 // It was a fixed maroon page with a test-tube emoji, a name and a button:
 // nothing about what Reach is, no way in for someone who already has an
 // account, and a dark screen in front of a cream sign-up (2026-11-06).
 const CSS = `
-.iv{--bg:#EBEFEC;--s1:#F4F7F5;--s2:#E4EAE6;--bd:#D8DED4;--ac:#EC6032;--acd:#D24E24;--on:#2A1D06;--link:#2B583B;--t1:#142119;--t2:#576E61;--t3:#5E766A;--tint:rgba(236,96,50,.12);--tintbd:rgba(236,96,50,.30)}
-:root[data-theme="dark"] .iv{--bg:#2C0E18;--s1:#36121B;--s2:#3F1619;--bd:#5A2430;--ac:#C3A342;--acd:#A8892F;--on:#2A1D06;--link:#C3A342;--t1:#FEF7D9;--t2:#CFC182;--t3:#B89A6A;--tint:rgba(195,163,66,.14);--tintbd:rgba(195,163,66,.32)}
+${scopedVars(".iv",{bg:"bg",s1:"s1",s2:"s2",bd:"border",ac:"accent",acd:"accentDeep",on:"onAccent",link:"accentText",t1:"t1",t2:"t2",t3:"t3",tint:"accentDim",tintbd:"accentBorder"})}
 .iv{min-height:100dvh;background:var(--bg);color:var(--t1);font-family:var(--font-body);display:flex;flex-direction:column;align-items:center;padding:20px 16px calc(24px + env(safe-area-inset-bottom));-webkit-font-smoothing:antialiased}
 .iv *{box-sizing:border-box}
 .iv-brand{font-family:var(--font-display);font-size:22px;font-weight:600;color:var(--t1);text-decoration:none;align-self:center;margin-bottom:auto;padding:4px 0 24px}

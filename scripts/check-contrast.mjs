@@ -13,18 +13,12 @@ import fs from 'node:fs';
 const FILE = 'components/reach-app.jsx';
 const src = fs.readFileSync(FILE, 'utf8');
 
-// ── Pull the two palettes straight out of the file, so this can never drift
-// from what ships.
-function paletteAfter(label) {
-  const at = src.indexOf(label);
-  if (at < 0) throw new Error(`palette ${label} not found in ${FILE}`);
-  const out = {};
-  // Read forward to the closing brace of this palette block.
-  const chunk = src.slice(at, src.indexOf('\n  }', at));
-  for (const m of chunk.matchAll(/(\w+)\s*:\s*"(#[0-9A-Fa-f]{3,8})"/g)) out[m[1]] = m[2];
-  return out;
-}
-const THEMES = { light: paletteAfter('light: {'), dark: paletteAfter('dark: {') };
+// ── The two palettes, from the token file itself, so this can never drift
+// from what ships. Only flat hex values are measured; tints and gradients
+// are skipped, as before.
+const { PALETTE } = await import('../lib/tokens.ts');
+const flat = p => Object.fromEntries(Object.entries(p).filter(([, v]) => /^#[0-9A-Fa-f]{3,8}$/.test(String(v))));
+const THEMES = { light: flat(PALETTE.light), dark: flat(PALETTE.dark) };
 
 const toRgb = (hex) => {
   let h = hex.slice(1);

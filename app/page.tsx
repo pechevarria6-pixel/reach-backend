@@ -1,6 +1,7 @@
 import { auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { scopedVars } from '@/lib/tokens';
 
 // ─── The front door ──────────────────────────────────────────────────────
 // alcanzar.io used to redirect anyone signed out straight to a Clerk box that
@@ -36,9 +37,8 @@ const STEPS: Array<{ icon: string; title: string; body: string }> = [
 ];
 
 const CSS = `
-.lp{--pg:#DFE5E0;--bg:#EBEFEC;--s2:#E4EAE6;--bd:#D8DED4;--ac:#EC6032;--acd:#D24E24;--on:#2A1D06;--link:#2B583B;--t1:#142119;--t2:#576E61;--t3:#6B7F72;--mark:#B8912A;--glow:rgba(236,96,50,.14);
-  min-height:100dvh;background:var(--pg);color:var(--t1);font-family:var(--font-body);-webkit-font-smoothing:antialiased}
-:root[data-theme="dark"] .lp{--pg:#1F080F;--bg:#2C0E18;--s2:#3F1619;--bd:#5A2430;--ac:#C3A342;--acd:#A8892F;--on:#2A1D06;--link:#C3A342;--t1:#FEF7D9;--t2:#CFC182;--t3:#B89A6A;--mark:#C3A342;--glow:rgba(195,163,66,.16)}
+${scopedVars(".lp",{pg:"page",bg:"bg",s2:"s2",bd:"border",ac:"accent",acd:"accentDeep",on:"onAccent",link:"accentText",t1:"t1",t2:"t2",t3:"t3",mark:"mark",glow:"accentDim"})}
+.lp{min-height:100dvh;background:var(--pg);color:var(--t1);font-family:var(--font-body);-webkit-font-smoothing:antialiased}
 .lp *{box-sizing:border-box}
 .lp-in{max-width:960px;margin:0 auto;padding:0 16px}
 .lp-top{display:flex;align-items:center;justify-content:space-between;padding:18px 0}

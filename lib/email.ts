@@ -12,6 +12,7 @@
 // into a request that was doing something more important.
 import { Resend } from 'resend';
 import { emailButtonStyle } from '@/lib/brand';
+import { EMAIL } from '@/lib/tokens';
 
 const FROM = process.env.EMAIL_FROM || 'Reach <hello@alcanzar.io>';
 const SUPPORT = 'hello@alcanzar.io';
@@ -32,12 +33,12 @@ function escape(v: unknown): string {
 }
 
 const shell = (title: string, body: string) => `
-  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#241C10;">
-    <div style="font-size:20px;letter-spacing:-.01em;margin-bottom:20px;color:#8A6512;">reach</div>
+  <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:24px;color:${EMAIL.ink};">
+    <div style="font-size:20px;letter-spacing:-.01em;margin-bottom:20px;color:${EMAIL.link};">reach</div>
     <h1 style="font-size:22px;font-weight:600;line-height:1.25;margin:0 0 14px;">${title}</h1>
     ${body}
-    <p style="color:#7E6F52;font-size:12.5px;line-height:1.6;margin-top:28px;border-top:1px solid #E5DCCA;padding-top:16px;">
-      Sent by Reach &middot; <a href="https://www.alcanzar.io" style="color:#8A6512;">alcanzar.io</a><br>
+    <p style="color:${EMAIL.footer};font-size:12.5px;line-height:1.6;margin-top:28px;border-top:1px solid ${EMAIL.line};padding-top:16px;">
+      Sent by Reach &middot; <a href="https://www.alcanzar.io" style="color:${EMAIL.link};">alcanzar.io</a><br>
       Questions? Reply to this email or write to ${SUPPORT}.
     </p>
   </div>`;
@@ -71,11 +72,11 @@ export function sendPaymentReceipt(to: string, amountCents: number, planTitle: s
       We've received <strong>${amount}</strong> towards <strong>${escape(planTitle)}</strong>.
     </p>
     <table style="width:100%;font-size:14px;border-collapse:collapse;">
-      <tr><td style="padding:8px 0;color:#635539;">Amount</td><td style="padding:8px 0;text-align:right;"><strong>${amount}</strong></td></tr>
-      <tr><td style="padding:8px 0;color:#635539;">Trip</td><td style="padding:8px 0;text-align:right;">${escape(planTitle)}</td></tr>
-      <tr><td style="padding:8px 0;color:#635539;">Reference</td><td style="padding:8px 0;text-align:right;font-family:monospace;font-size:12px;">${escape(stripeId)}</td></tr>
+      <tr><td style="padding:8px 0;color:${EMAIL.muted};">Amount</td><td style="padding:8px 0;text-align:right;"><strong>${amount}</strong></td></tr>
+      <tr><td style="padding:8px 0;color:${EMAIL.muted};">Trip</td><td style="padding:8px 0;text-align:right;">${escape(planTitle)}</td></tr>
+      <tr><td style="padding:8px 0;color:${EMAIL.muted};">Reference</td><td style="padding:8px 0;text-align:right;font-family:monospace;font-size:12px;">${escape(stripeId)}</td></tr>
     </table>
-    <p style="font-size:14px;color:#635539;line-height:1.6;margin-top:16px;">
+    <p style="font-size:14px;color:${EMAIL.muted};line-height:1.6;margin-top:16px;">
       Keep this for your records. Your payment is held on Reach's Stripe account and is spent only on booking this trip. Whatever isn't spent can be refunded the same way you paid.
     </p>`), 'payment receipt');
 }
@@ -88,7 +89,7 @@ export function sendFundingNeeded(to: string, opts: { planTitle: string; groupNa
       <strong>${escape(opts.groupName)}</strong> is booking <strong>${escape(opts.planTitle)}</strong>.
       Your share is <strong>${share}</strong>.
     </p>
-    <p style="font-size:14px;color:#635539;line-height:1.6;margin:0 0 20px;">
+    <p style="font-size:14px;color:${EMAIL.muted};line-height:1.6;margin:0 0 20px;">
       Nothing is booked until everyone has paid, so the trip is waiting on this.
     </p>
     <a href="${escape(opts.url)}" style="${emailButtonStyle}">Pay your share</a>`), 'funding needed');
@@ -111,7 +112,7 @@ export function sendFullyFunded(to: string, opts: { planTitle: string; groupName
       Every one of <strong>${escape(opts.groupName)}</strong> has paid their share of
       <strong>${escape(opts.planTitle)}</strong>. ${total} collected.
     </p>
-    <p style="font-size:14px;color:#635539;line-height:1.6;margin:0 0 20px;">
+    <p style="font-size:14px;color:${EMAIL.muted};line-height:1.6;margin:0 0 20px;">
       Nothing is booked yet — one of you gives the word and Reach books the lot.
     </p>
     <a href="${escape(opts.url)}" style="${emailButtonStyle}">Book it</a>`), 'fully funded');
@@ -128,7 +129,7 @@ export function sendVoteNeeded(to: string, opts: { planTitle: string; groupName:
       <strong>${escape(opts.groupName)}</strong> is deciding on <strong>${escape(opts.planTitle)}</strong>
       and is waiting on you.
     </p>
-    ${list ? `<ul style="font-size:14px;color:#635539;margin:0 0 20px;padding-left:20px;">${list}</ul>` : ''}
+    ${list ? `<ul style="font-size:14px;color:${EMAIL.muted};margin:0 0 20px;padding-left:20px;">${list}</ul>` : ''}
     <a href="${escape(opts.url)}" style="${emailButtonStyle}">Cast your vote</a>`), 'vote needed');
 }
 
@@ -149,7 +150,7 @@ export function sendAnswersNeeded(to: string, opts: { planTitle: string; groupNa
       <strong>${escape(opts.groupName)}</strong> is planning <strong>${escape(opts.planTitle)}</strong>,
       and the ${options} are only put together once everyone going has answered the same few questions.
     </p>
-    <p style="font-size:14px;line-height:1.6;color:#635539;margin:0 0 20px;">
+    <p style="font-size:14px;line-height:1.6;color:${EMAIL.muted};margin:0 0 20px;">
       Your answers are yours — the group sees that you have answered, never what you said.
     </p>
     <a href="${escape(opts.url)}" style="${emailButtonStyle}">Say what you want</a>`), 'answers needed');
@@ -166,11 +167,11 @@ export function sendBookingConfirmation(to: string, opts: {
   // to a customer.
   const rows = opts.booked.map(i => `
     <tr>
-      <td style="padding:10px 0;border-bottom:1px solid #EFE8DA;">
+      <td style="padding:10px 0;border-bottom:1px solid ${EMAIL.rowLine};">
         <div style="font-weight:600;font-size:14px;">${escape(i.label)}</div>
-        ${i.detail ? `<div style="font-size:13px;color:#635539;margin-top:2px;">${escape(i.detail)}</div>` : ''}
+        ${i.detail ? `<div style="font-size:13px;color:${EMAIL.muted};margin-top:2px;">${escape(i.detail)}</div>` : ''}
       </td>
-      <td style="padding:10px 0;border-bottom:1px solid #EFE8DA;text-align:right;font-family:monospace;font-size:12px;color:#635539;white-space:nowrap;">
+      <td style="padding:10px 0;border-bottom:1px solid ${EMAIL.rowLine};text-align:right;font-family:monospace;font-size:12px;color:${EMAIL.muted};white-space:nowrap;">
         ${i.confirmation ? escape(i.confirmation) : ''}
       </td>
     </tr>`).join('');
@@ -205,7 +206,7 @@ export function sendDeletionConfirmation(to: string, deletionDate: string) {
     <p style="font-size:15px;line-height:1.6;margin:0 0 14px;">
       Your account and everything in it will be permanently deleted on <strong>${escape(deletionDate)}</strong>.
     </p>
-    <p style="font-size:14px;color:#635539;line-height:1.6;">
+    <p style="font-size:14px;color:${EMAIL.muted};line-height:1.6;">
       Records of payments already taken are kept where tax law requires it. Everything else goes.
       If you did not ask for this, write to ${SUPPORT} straight away and we will stop it.
     </p>`), 'deletion confirmation');
@@ -220,7 +221,7 @@ export function sendGroupInvite(
     shell(`${opts.groupEmoji || '✈️'} ${escape(opts.groupName)}`, `
       <p style="font-size:15px;line-height:1.6;margin:0 0 20px;">${who} to plan trips together on Reach.</p>
       <a href="${escape(opts.acceptUrl)}" style="${emailButtonStyle}">Join ${escape(opts.groupName)}</a>
-      <p style="color:#7E6F52;font-size:13px;line-height:1.6;margin-top:18px;">
+      <p style="color:${EMAIL.footer};font-size:13px;line-height:1.6;margin-top:18px;">
         Signing in with this address joins you automatically — the link is just a shortcut.
         The invitation expires in 30 days.
       </p>`), 'group invite');
@@ -247,16 +248,16 @@ export function sendItinerary(to: string, opts: {
   const fixedTotal = opts.fixed.reduce((a, f) => a + (f.cents ?? 0), 0);
   const dayTotal = opts.days.reduce((a, d) => a + (d.cents ?? 0), 0);
   const gaps = opts.fixed.filter(f => f.cents === null).length + opts.days.filter(d => d.cents === null && d.title).length;
-  const plus = gaps ? ` <span style="font-size:12px;font-weight:400;color:#635539;">+ ${gaps} not priced</span>` : '';
+  const plus = gaps ? ` <span style="font-size:12px;font-weight:400;color:${EMAIL.muted};">+ ${gaps} not priced</span>` : '';
 
   const fixedRows = opts.fixed.map(f => `
     <tr>
-      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;">
+      <td style="padding:8px 0;border-bottom:1px solid ${EMAIL.rowLine};">
         <div style="font-size:14px;">${escape(f.title)}</div>
-        ${f.detail ? `<div style="font-size:12px;color:#635539;margin-top:1px;">${escape(f.detail)}</div>` : ''}
-        <div style="font-size:12px;color:#635539;margin-top:2px;">${escape(f.state)}</div>
+        ${f.detail ? `<div style="font-size:12px;color:${EMAIL.muted};margin-top:1px;">${escape(f.detail)}</div>` : ''}
+        <div style="font-size:12px;color:${EMAIL.muted};margin-top:2px;">${escape(f.state)}</div>
       </td>
-      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;text-align:right;font-size:14px;white-space:nowrap;">${f.cents !== null ? money(f.cents) : 'Not priced yet'}</td>
+      <td style="padding:8px 0;border-bottom:1px solid ${EMAIL.rowLine};text-align:right;font-size:14px;white-space:nowrap;">${f.cents !== null ? money(f.cents) : 'Not priced yet'}</td>
     </tr>`).join('');
 
   // Cash-only is called out inline, because knowing you need notes for dinner
@@ -265,33 +266,33 @@ export function sendItinerary(to: string, opts: {
     const cash = d.payment && /cash only/i.test(d.payment);
     return `
     <tr>
-      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;">
-        <div style="font-size:11px;color:#7E6F52;text-transform:uppercase;letter-spacing:.06em;">${escape(d.when)}</div>
+      <td style="padding:8px 0;border-bottom:1px solid ${EMAIL.rowLine};">
+        <div style="font-size:11px;color:${EMAIL.footer};text-transform:uppercase;letter-spacing:.06em;">${escape(d.when)}</div>
         <div style="font-size:14px;margin-top:2px;">${escape(d.title)}</div>
-        ${d.payment ? `<div style="font-size:12px;margin-top:2px;color:${cash ? '#8A5A0B' : '#635539'};">${cash ? '&#128181; ' : ''}${escape(d.payment)}</div>` : ''}
+        ${d.payment ? `<div style="font-size:12px;margin-top:2px;color:${cash ? EMAIL.cash : EMAIL.muted};">${cash ? '&#128181; ' : ''}${escape(d.payment)}</div>` : ''}
       </td>
-      <td style="padding:8px 0;border-bottom:1px solid #EFE8DA;text-align:right;font-size:14px;white-space:nowrap;">${d.cents ? money(d.cents) : ''}</td>
+      <td style="padding:8px 0;border-bottom:1px solid ${EMAIL.rowLine};text-align:right;font-size:14px;white-space:nowrap;">${d.cents ? money(d.cents) : ''}</td>
     </tr>`;
   }).join('');
 
   return send(to, `${opts.planTitle} — your itinerary`, shell(escape(opts.planTitle), `
     <p style="font-size:15px;line-height:1.6;margin:0 0 4px;">${escape(opts.dates)}</p>
-    <p style="font-size:13px;color:#635539;margin:0 0 24px;">${escape(opts.groupName)}</p>
+    <p style="font-size:13px;color:${EMAIL.muted};margin:0 0 24px;">${escape(opts.groupName)}</p>
 
     ${fixedRows ? `
       <h2 style="font-size:15px;font-weight:600;margin:0 0 4px;">Booked through Reach</h2>
-      <p style="font-size:12.5px;color:#635539;margin:0 0 8px;">${opts.memberCount > 1
+      <p style="font-size:12.5px;color:${EMAIL.muted};margin:0 0 8px;">${opts.memberCount > 1
         ? 'Paid from what the group puts in. Each line says where it stands.'
         : 'Paid from what you put in. Each line says where it stands.'}</p>
       <table style="width:100%;border-collapse:collapse;">${fixedRows}</table>
       <p style="text-align:right;font-size:14px;font-weight:600;margin:8px 0 26px;">${money(fixedTotal)} per person</p>` : ''}
 
     <h2 style="font-size:15px;font-weight:600;margin:0 0 4px;">Day by day</h2>
-    <p style="font-size:12.5px;color:#635539;margin:0 0 8px;">What you spend as you go. Estimates, not a bill.</p>
+    <p style="font-size:12.5px;color:${EMAIL.muted};margin:0 0 8px;">What you spend as you go. Estimates, not a bill.</p>
     <table style="width:100%;border-collapse:collapse;">${dayRows}</table>
     <p style="text-align:right;font-size:14px;font-weight:600;margin:8px 0 26px;">${money(dayTotal)} per person</p>
 
-    <table style="width:100%;border-collapse:collapse;border-top:2px solid #241C10;">
+    <table style="width:100%;border-collapse:collapse;border-top:2px solid ${EMAIL.ink};">
       <tr>
         <td style="padding:12px 0;font-size:15px;font-weight:600;">Per person, all in</td>
         <td style="padding:12px 0;text-align:right;font-size:17px;font-weight:700;">${money(fixedTotal + dayTotal)}${plus}</td>

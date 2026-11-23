@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SHELL, SURFACE } from '@/lib/brand';
+import { PAPER } from '@/lib/tokens';
 
 export const metadata: Metadata = { robots: { index: true, follow: true } };
 
@@ -8,9 +9,9 @@ export const metadata: Metadata = { robots: { index: true, follow: true } };
 // tokens. They carry a small themed set of their own, following the same
 // data-theme attribute the shell stamps before paint.
 const css = `
-:root{--lg-bg:${SURFACE.light};--lg-page:${SHELL.light};--lg-ink:#241C10;--lg-mut:#63553A;--lg-line:#E5DCCA;--lg-acc:#8A6512;}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--lg-bg:${SURFACE.dark};--lg-page:${SHELL.dark};--lg-ink:#F3EBD9;--lg-mut:#AC9C7E;--lg-line:#332B1B;--lg-acc:#DDB259;}}
-:root[data-theme="dark"]{--lg-bg:${SURFACE.dark};--lg-page:${SHELL.dark};--lg-ink:#F3EBD9;--lg-mut:#AC9C7E;--lg-line:#332B1B;--lg-acc:#DDB259;}
+:root{--lg-bg:${SURFACE.light};--lg-page:${SHELL.light};--lg-ink:${PAPER.light.ink};--lg-mut:${PAPER.light.muted};--lg-line:${PAPER.light.line};--lg-acc:${PAPER.light.link};}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--lg-bg:${SURFACE.dark};--lg-page:${SHELL.dark};--lg-ink:${PAPER.dark.ink};--lg-mut:${PAPER.dark.muted};--lg-line:${PAPER.dark.line};--lg-acc:${PAPER.dark.link};}}
+:root[data-theme="dark"]{--lg-bg:${SURFACE.dark};--lg-page:${SHELL.dark};--lg-ink:${PAPER.dark.ink};--lg-mut:${PAPER.dark.muted};--lg-line:${PAPER.dark.line};--lg-acc:${PAPER.dark.link};}
 .lg-body{background:var(--lg-bg);color:var(--lg-ink);min-height:100dvh;margin:0;
   font-family:var(--font-body);line-height:1.65;}
 .lg-wrap{max-width:720px;margin:0 auto;padding-block:48px 80px;padding-left:20px;padding-right:20px;}

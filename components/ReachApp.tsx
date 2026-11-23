@@ -4,6 +4,7 @@ import { useUser, useClerk } from '@clerk/nextjs';
 import { BRAND, SURFACE } from '@/lib/brand';
 import { forgetThisDevice } from '@/lib/push-client';
 import ReachAppCoreUntyped from './reach-app.jsx';
+import { PAPER } from '@/lib/tokens';
 
 // reach-app.jsx is untyped JS, so TS infers no props for it. Declare the one
 // prop the wrapper actually passes.
@@ -33,7 +34,7 @@ export default function ReachAppWrapper() {
             That mismatch failed hydration on every load of the app — the last
             of three places with the same fault. */}
         <style dangerouslySetInnerHTML={{ __html:
-          `:root{--shell-surface:${SURFACE.light};--shell-ink:#241C10;}`
+          `:root{--shell-surface:${SURFACE.light};--shell-ink:${PAPER.light.ink};}`
           + `:root[data-theme="dark"]{--shell-surface:${SURFACE.dark};--shell-ink:${BRAND.t1};}` }} />
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 28, color: 'var(--shell-ink)' }}>reach</div>
         <div style={{ width: 32, height: 32, border: `3px solid ${BRAND.accent}`, borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />

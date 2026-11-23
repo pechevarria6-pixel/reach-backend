@@ -150,7 +150,7 @@ test('8: the plan header chip has fixed light-on-dark colours, not the page pill
   const plan = fn('PlanDetailScreen');
   assert.doesNotMatch(plan, /\{na&&<span className=\{`pill \$\{nextTone\(na\)\}`\}>\{na\.chip\}<\/span>\}/);
   assert.match(plan, /\{na&&<span className="pill" style=\{HEADER_CHIP\[nextTone\(na\)\]/);
-  assert.match(APP, /const HEADER_CHIP=\{\s*"pill-g":\{background:"rgba\(16,185,129,\.30\)",color:"#ecfdf5"\}/);
+  assert.match(APP, /const HEADER_CHIP=\{\s*"pill-g":\{background:C\.pillGood,color:C\.onPillGood\}/);
 });
 
 // ── 9. Minor ────────────────────────────────────────────────────────────

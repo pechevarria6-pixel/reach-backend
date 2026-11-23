@@ -1,6 +1,7 @@
 import { ImageResponse } from 'next/og';
 import { BRAND } from '@/lib/brand';
 import { frauncesFor } from '@/lib/og-font';
+import { FIXED } from '@/lib/tokens';
 
 // ─── The picture a shared link carries ───────────────────────────────────
 // A link to alcanzar.io pasted into a group chat showed no picture at all,
@@ -17,7 +18,7 @@ export default async function OpenGraphImage() {
     (
       <div style={{
         width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', background: `radial-gradient(circle at 50% 30%, #4A1B20 0%, ${BRAND.bg} 55%, ${BRAND.page} 100%)`,
+        justifyContent: 'center', background: `radial-gradient(circle at 50% 30%, ${FIXED.ogGlow} 0%, ${BRAND.bg} 55%, ${BRAND.page} 100%)`,
         color: BRAND.t1, fontFamily: font ? 'Fraunces' : 'serif',
       }}>
         {/* eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text */}
